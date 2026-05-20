@@ -130,11 +130,28 @@ jobs:
       id-token: write    # OIDC token for Sigstore-keyless signing
       contents: write    # SLSA caller example default; future-proofs upload-assets:true
       actions: read      # introspect this workflow run for the attestation
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a  # v2.1.0
+    # Tag-pinned, NOT SHA-pinned: SLSA's internal builder-fetch step
+    # refuses non-tag BUILDER_REF values with "Invalid ref... Expected
+    # ref of the form refs/tags/vX.Y.Z". Mitigated by slsa-framework's
+    # upstream tag-protection + immutable-release rules.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0  # allow:slsa-framework-action-not-sha-pinned — SLSA's builder-fetch refuses non-tag refs
     with:
-      base64-subjects: "${{ needs.validate.outputs.hashes }}"
-      upload-assets: false
-      provenance-name: blamejs-shop-${{ needs.validate.outputs.version }}.intoto.jsonl
+      base64-subjects:    "${{ needs.validate.outputs.hashes }}"
+      upload-assets:      false
+      provenance-name:    "blamejs-shop-${{ needs.validate.outputs.version }}.intoto.jsonl"
+      # SLSA's privacy detection walks workflow permissions rather
+      # than repo visibility and reports false positives even on
+      # public repos. Override is intentional — the Sigstore
+      # transparency-log entry is the operator-desired audit signal.
+      private-repository: true
+      # The SLSA workflow's `final` job ANDs every nested job's
+      # outcome including the skipped `upload-assets` job (we pass
+      # `upload-assets: false`); the empty outcome evaluates falsy.
+      # `continue-on-error: true` tells the SLSA workflow to report
+      # success when the underlying generator succeeded regardless
+      # of `final`'s strict AND. A real missing-artifact failure
+      # surfaces at the downstream `Download SLSA provenance` step.
+      continue-on-error:  true
 
   publish-and-release:
     name: Cosign + PQC sidecars + atomic GH release + npm publish
