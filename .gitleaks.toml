@@ -1,0 +1,37 @@
+title = "blamejs.shop gitleaks config"
+
+# Inherit gitleaks' default ruleset (AWS keys, GCP creds, GitHub tokens,
+# npm tokens, generic high-entropy strings, etc.) and add project-
+# specific allowlists below.
+[extend]
+useDefault = true
+
+# gitleaks 8.21+ requires the [[allowlists]] (plural) form; the
+# singular [allowlist] is deprecated. Each [[allowlists]] block is
+# independent — a finding is suppressed if ANY block matches.
+
+[[allowlists]]
+description = "Vendored blamejs tree — pre-built bundles ship high-entropy literals (PQC test vectors, X.509 cert fixtures, etc.). Upstream blamejs already runs gitleaks against itself; re-scanning the vendored copy is double work + lots of false positives."
+paths = [
+  '''^lib/vendor/blamejs/''',
+]
+
+[[allowlists]]
+description = "Release-signing PUBLIC key. The public key is committed under keys/release-pqc-pub.json so operators verify .mldsa.sig sidecars; the matching PRIVATE key lives only in the npm-publish environment secret RELEASE_PQC_SIGNING_KEY and is never in the repo. Allowlist the pub.json shape so its base64url payload isn't flagged."
+paths = [
+  '''^keys/release-pqc-pub\.json$''',
+]
+
+[[allowlists]]
+description = "Release-notes JSONs may quote token shapes for documentation purposes (e.g. an explanation of how an operator verifies a release). Allowlist the path; prose discipline (no real secrets in CHANGELOG) is enforced separately by the generator's leak-vocabulary sweep + reviewer checklist."
+paths = [
+  '''^release-notes/.*\.json$''',
+  '''^CHANGELOG\.md$''',
+]
+
+[[allowlists]]
+description = "Test fixtures + smoke logs may contain synthetic credential shapes for the purpose of exercising input-validation paths. The detectors that GUARD the fixture catalog live in scripts/ and tests/, not in gitleaks."
+paths = [
+  '''^test/.*fixtures?/''',
+  '''^\.test-output/''',
+]

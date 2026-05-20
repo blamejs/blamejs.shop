@@ -1,0 +1,42 @@
+# Node
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+.npm/
+
+# Test output (gitignored — smoke writes to .test-output/smoke.log)
+.test-output/
+
+# Build / dist
+dist/
+build/
+*.tgz
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Local-only state
+.env
+.env.*
+!.env.example
+
+# Local maintainer state (not for the repo)
+keys/release-pqc-priv.json
+keys/*-priv.*
+
+# Intermediate / scratch
+.scratch/
+.extract-staging/

@@ -1,0 +1,280 @@
+# Tag-triggered publish workflow. Tag `vX.Y.Z` on `main` →
+#
+#   1. validate (lint + smoke + vendor fetch + pack + SBOM)
+#   2. provenance (SLSA L3 reusable workflow, SHA-pinned)
+#   3. publish-and-release (cosign-sign SBOMs + PQC sidecars +
+#      atomic `gh release create` with full asset bundle + npm publish)
+#
+# The atomic create-with-assets pattern keeps the GH immutable-release
+# setting ON — the release locks AFTER creation, but the assets are
+# part of the initial create. Manual `gh release create` is NOT part
+# of the operator flow; the workflow is authoritative.
+#
+# Trust roots (each independently verifiable — see SECURITY.md):
+#   - SSH-signed commit + tag (verifiable via `git tag -v`)
+#   - SLSA L3 provenance (`<tarball>.intoto.jsonl` via slsa-verifier)
+#   - Sigstore-keyless SBOM signatures (`*.sigstore` via cosign)
+#   - SHA-256 + SHA3-512 byte digests
+#   - ML-DSA-65 PQC signature (`<tarball>.mldsa.sig` via vendored
+#     noble-post-quantum); skips gracefully if the operator hasn't
+#     completed the one-time `generate-release-signing-key.js` setup.
+
+name: npm publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build + lint + smoke without publishing to npm or creating the release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Lint, smoke, vendor fetch, pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_tag:  ${{ steps.version.outputs.is_tag }}
+      hashes:  ${{ steps.subjects.outputs.hashes }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.0.0
+        with: { node-version: '24.14.1' }
+
+      - name: Compute version + is_tag flag
+        id: version
+        run: |
+          set -euo pipefail
+          PKG_VERSION=$(node -e "console.log(require('./package.json').version)")
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "is_tag=true" >> "$GITHUB_OUTPUT"
+            if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+              echo "::error::package.json version ($PKG_VERSION) does not match pushed tag (v$TAG_VERSION)"
+              exit 1
+            fi
+          else
+            echo "is_tag=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: ESLint
+        run: npx eslint@latest --max-warnings 0 .
+
+      - name: Vendor blamejs
+        # Validate runs the vendor refresh + smoke against the latest
+        # blamejs release. If smoke fails because the upstream broke
+        # something, the publish blocks here — the existing release
+        # never ships against a broken vendor.
+        run: bash scripts/vendor-update.sh blamejs latest
+
+      - name: Smoke
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node test/smoke.js
+
+      - name: Pack tarball
+        run: |
+          mkdir -p dist
+          npm pack --pack-destination ./dist
+          ls -lh dist/
+
+      - name: Compute SLSA subjects (sha256, base64-w0)
+        id: subjects
+        run: |
+          set -euo pipefail
+          TARBALL=$(basename "$(ls dist/*.tgz | head -1)")
+          HASHES=$(cd dist && sha256sum "$TARBALL")
+          echo "[slsa-subjects] subjects:"
+          echo "$HASHES"
+          HASHES_B64=$(echo "$HASHES" | base64 -w0)
+          echo "hashes=$HASHES_B64" >> "$GITHUB_OUTPUT"
+
+      - name: Upload publish bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: publish-bundle
+          path: |
+            dist/*.tgz
+            package.json
+            CHANGELOG.md
+          if-no-files-found: error
+          retention-days: 1
+
+  provenance:
+    needs: validate
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.validate.outputs.is_tag == 'true' && !inputs.dry_run }}
+    # Permissions match the SLSA generic generator's documented
+    # caller example. `contents: write` is harmless here (we pass
+    # `upload-assets: false` so the upload job's `if:` skips it),
+    # and future-proofs an `upload-assets: true` flip. NOTE: the
+    # `slsa-framework/slsa-github-generator/*` action pattern AND
+    # `aquasecurity/setup-trivy/*` (transitive of trivy-action) must
+    # be in the GitHub organization's actions allowlist or the
+    # workflow startup_fails at parse time with no log file.
+    permissions:
+      id-token: write    # OIDC token for Sigstore-keyless signing
+      contents: write    # SLSA caller example default; future-proofs upload-assets:true
+      actions: read      # introspect this workflow run for the attestation
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a  # v2.1.0
+    with:
+      base64-subjects: "${{ needs.validate.outputs.hashes }}"
+      upload-assets: false
+      provenance-name: blamejs-shop-${{ needs.validate.outputs.version }}.intoto.jsonl
+
+  publish-and-release:
+    name: Cosign + PQC sidecars + atomic GH release + npm publish
+    needs: [validate, provenance]
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.validate.outputs.is_tag == 'true' && !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: write    # gh release create + asset attach
+      id-token: write    # OIDC for npm provenance + sigstore cosign
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.0.0
+        with:
+          node-version: '24.14.1'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download publish bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v7.0.1
+        with: { name: publish-bundle }
+
+      - name: Download SLSA provenance
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v7.0.1
+        with: { name: blamejs-shop-${{ needs.validate.outputs.version }}.intoto.jsonl }
+
+      - name: Checkout source (signer scripts + keys + release-notes)
+        # Checkout MUST run before any `node src/scripts/*` step
+        # because those scripts live in the source tree, not the
+        # publish-bundle artifact.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.0
+        with: { path: src }
+
+      - name: Vendor blamejs (signer scripts require the vendored framework)
+        # `sign-release-artifact.js` calls into the vendored
+        # `b.pqcSoftware.ml_dsa_65`. Refresh at the same tag the
+        # validate job pulled.
+        run: |
+          cd src
+          bash scripts/vendor-update.sh blamejs latest
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
+      - name: Release-digest sidecars (SHA-256 + SHA3-512)
+        run: |
+          set -euo pipefail
+          TARBALL=$(ls dist/*.tgz | head -1)
+          node src/scripts/sha3-digest.js "$TARBALL"
+
+      - name: PQC sidecar — ML-DSA-65 signature (graceful skip if not set up)
+        # Conditional on the operator having completed the one-time
+        # release-key setup. When either piece is missing the step
+        # skips with a warning and the release still ships with SLSA
+        # L3 + SBOM cosign sigs + SHA-256 + SHA3-512 digests.
+        id: pqc-sig
+        env:
+          RELEASE_PQC_SIGNING_KEY: ${{ secrets.RELEASE_PQC_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          # Single-quoted `printf '%s\n' '...'` — bash mustn't try to
+          # command-substitute the backticked code snippets inside
+          # double-quoted warning text.
+          if [ -z "${RELEASE_PQC_SIGNING_KEY:-}" ]; then
+            printf '%s\n' '::warning::RELEASE_PQC_SIGNING_KEY is empty — skipping the PQC sidecar.'
+            printf '%s\n' '::warning::Operator: run "node scripts/generate-release-signing-key.js" once, commit keys/release-pqc-pub.json, set the secret, then future releases pick up the sig automatically.'
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ ! -f src/keys/release-pqc-pub.json ]; then
+            printf '%s\n' '::warning::src/keys/release-pqc-pub.json is missing in the checked-out source — skipping the PQC sidecar.'
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TARBALL=$(ls dist/*.tgz | head -1)
+          ln -sfn src/keys keys
+          node src/scripts/sign-release-artifact.js "$TARBALL"
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release-page markdown
+        id: notes
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          node src/scripts/generate-changelog-entry.js "$VERSION" --release-page > release-notes.md
+          BYTE_COUNT=$(wc -c < release-notes.md | tr -d ' ')
+          if [ "$BYTE_COUNT" -lt 64 ]; then
+            echo "::error::release-page markdown is unexpectedly small ($BYTE_COUNT bytes)"
+            exit 1
+          fi
+          head -20 release-notes.md
+
+      - name: Create signed release with full asset bundle (atomic)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG:      v${{ needs.validate.outputs.version }}
+          VERSION:  ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists. The workflow is authoritative for release creation."
+            exit 1
+          fi
+          TARBALL=$(ls dist/*.tgz | head -1)
+          HEADLINE=$(node -e "console.log(require('./src/release-notes/v${VERSION}.json').headline)")
+          if [ -n "$HEADLINE" ]; then
+            TITLE="$TAG — $HEADLINE"
+          else
+            TITLE="$TAG"
+          fi
+          ASSETS=(
+            "$TARBALL"
+            "${TARBALL}.sha256"
+            "${TARBALL}.sha3-512"
+            "blamejs-shop-${VERSION}.intoto.jsonl"
+          )
+          if [ "${{ steps.pqc-sig.outputs.available }}" = "true" ]; then
+            ASSETS+=("${TARBALL}.mldsa.sig")
+          fi
+          gh release create "$TAG" \
+            "${ASSETS[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TITLE" \
+            --notes-file release-notes.md
+
+      - name: Publish to npm (with --provenance)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd dist
+          TARBALL=$(ls *.tgz | head -1)
+          npm publish "$TARBALL" --provenance --access public
+
+      - name: Verify the version landed on the registry
+        run: |
+          set -euo pipefail
+          REMOTE=$(npm view "$(node -e "console.log(require('./src/package.json').name)")" version)
+          if [ "$REMOTE" != "${{ needs.validate.outputs.version }}" ]; then
+            echo "::error::npm registry version $REMOTE does not match released version ${{ needs.validate.outputs.version }}"
+            exit 1
+          fi
+          echo "[publish] npm registry now serves ${{ needs.validate.outputs.version }}"

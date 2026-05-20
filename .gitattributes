@@ -1,0 +1,36 @@
+# Vendored blamejs — treat as immutable + binary-safe. The vendor
+# manifest pins versions; CRLF/LF conversion between Windows and
+# Linux checkouts must never touch the vendored tree (it ships the
+# noble-post-quantum bundle with embedded base64 + other byte-sensitive
+# data that would corrupt under line-ending rewrites).
+lib/vendor/** -text binary
+
+# Shell scripts MUST stay LF — they run inside Linux CI / container
+# steps where bash chokes on CRLF with "$'\r': command not found".
+*.sh text eol=lf
+
+# Derived artifacts the release-notes generator owns end-to-end —
+# rebuild emits LF, so pin LF here too. Without this, Windows
+# checkouts get CRLF and the `--check` drift gate in smoke would have
+# to keep eating the cost of normalizing both sides.
+CHANGELOG.md text eol=lf
+release-notes/*.json text eol=lf
+
+# Native modules — always binary.
+*.node binary
+*.so binary
+*.dylib binary
+*.dll binary
+*.a binary
+
+# Standard binary types.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.tgz binary
+*.pdf binary

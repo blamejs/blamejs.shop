@@ -1,0 +1,37 @@
+name: CodeQL SAST
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    # Weekly re-scan — catches any new CodeQL rule that lands
+    # between releases against the current main without waiting for
+    # the next push to trigger an analysis.
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL analysis (javascript-typescript)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.0
+      - uses: github/codeql-action/init@4e828ff8d448a8a6e532957b1811f387a63867e8  # v3.30.0
+        with:
+          languages: javascript-typescript
+          # The vendored blamejs tree comes from upstream; scan only
+          # our own surface so we get signal on integration code, not
+          # on the framework we vendor.
+          paths-ignore: |
+            lib/vendor/**
+      - uses: github/codeql-action/analyze@4e828ff8d448a8a6e532957b1811f387a63867e8  # v3.30.0
+        with:
+          category: "/language:javascript-typescript"
