@@ -34,7 +34,6 @@ desktop.ini
 !.env.example
 
 # Local maintainer state (not for the repo)
-CLAUDE.md
 keys/release-pqc-priv.json
 keys/*-priv.*
 
