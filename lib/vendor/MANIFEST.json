@@ -1,0 +1,19 @@
+{
+  "_comment": "Vendored dependencies — no npm runtime packages. Use `scripts/vendor-update.sh blamejs <tag>` to update.",
+  "_about": "blamejs.shop vendors a single framework — blamejs — which itself bundles every server-side crypto/identity dependency. The transitive packages blamejs ships are surfaced in its own MANIFEST.json at lib/vendor/blamejs/lib/vendor/MANIFEST.json — Trivy / Grype rely on that nested data for CVE attribution.",
+  "packages": {
+    "blamejs": {
+      "version": "0.11.6",
+      "tag": "v0.11.6",
+      "license": "Apache-2.0",
+      "author": "blamejs contributors",
+      "source": "https://github.com/blamejs/blamejs",
+      "_about": "The Node framework blamejs.shop builds on. Vendored as a shallow git clone of the release tag at lib/vendor/blamejs/. Run `npm run vendor blamejs <vX.Y.Z>` to refresh.",
+      "files": {
+        "server": "lib/vendor/blamejs/"
+      },
+      "bundler": "shallow git clone of release tag from github.com/blamejs/blamejs",
+      "bundledAt": "2026-05-19"
+    }
+  }
+}

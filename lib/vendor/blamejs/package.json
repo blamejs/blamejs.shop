@@ -1,0 +1,81 @@
+{
+  "name": "@blamejs/core",
+  "version": "0.11.6",
+  "description": "The Node framework that owns its stack.",
+  "license": "Apache-2.0",
+  "author": "blamejs contributors",
+  "homepage": "https://blamejs.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blamejs/blamejs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/blamejs/blamejs/issues"
+  },
+  "main": "index.js",
+  "bin": {
+    "blamejs": "bin/blamejs.js"
+  },
+  "keywords": [
+    "framework",
+    "web-framework",
+    "server-rendered",
+    "ssr",
+    "post-quantum",
+    "pqc",
+    "ml-kem",
+    "xchacha20-poly1305",
+    "slh-dsa",
+    "argon2",
+    "audit-chain",
+    "tamper-evident",
+    "vault",
+    "sealed-storage",
+    "encrypted-at-rest",
+    "mtls",
+    "webauthn",
+    "passkey",
+    "csrf",
+    "session",
+    "auth",
+    "permissions",
+    "rbac",
+    "sqlite",
+    "scheduler",
+    "jobs",
+    "backup",
+    "zero-dependencies",
+    "vendored-dependencies",
+    "supply-chain",
+    "provenance",
+    "slsa",
+    "lts",
+    "security-first",
+    "owns-its-stack"
+  ],
+  "engines": {
+    "node": ">=24.14.1"
+  },
+  "files": [
+    "index.js",
+    "bin/",
+    "lib/",
+    "CHANGELOG.md",
+    "LICENSE",
+    "LTS-CALENDAR.md",
+    "MIGRATING.md",
+    "NOTICE",
+    "README.md",
+    "sbom.cdx.json"
+  ],
+  "scripts": {
+    "test": "node test/smoke.js",
+    "fuzz": "npx --yes @jazzer.js/core fuzz/safe-json.fuzz.js -- -max_total_time=60",
+    "prepack": "node scripts/check-pack-against-gitignore.js",
+    "check:vendor-currency": "node scripts/check-vendor-currency.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.0",
+    "postject": "1.0.0-alpha.6"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "blamejs-shop",
+  "version": "0.0.1",
+  "description": "Open-source framework built on blamejs. Vendored stack, zero npm runtime deps, PQC-first crypto, security-on by default.",
+  "main": "lib/index.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/smoke.js",
+    "vendor": "bash scripts/vendor-update.sh"
+  },
+  "engines": {
+    "node": ">=24.14.1"
+  },
+  "files": [
+    "lib/",
+    "LICENSE",
+    "README.md",
+    "SECURITY.md",
+    "CHANGELOG.md"
+  ],
+  "keywords": [
+    "framework",
+    "blamejs",
+    "post-quantum",
+    "ml-kem-1024",
+    "ml-dsa-65",
+    "xchacha20-poly1305",
+    "security-first",
+    "zero-dependency",
+    "vendored"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blamejs/blamejs.shop.git"
+  },
+  "homepage": "https://github.com/blamejs/blamejs.shop"
+}

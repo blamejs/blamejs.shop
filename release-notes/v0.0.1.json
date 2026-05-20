@@ -1,0 +1,29 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.1",
+  "date": "2026-05-19",
+  "headline": "Foundation",
+  "summary": "Project scaffold for blamejs.shop — vendored blamejs framework + the release pipeline disciplines (structured release-notes generator, smoke-gated CHANGELOG rebuild, SLSA L3 provenance, Sigstore-keyless SBOM signatures, PQC sidecar signing). No feature surface yet; subsequent releases extend by composing the vendored blamejs primitives.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Project skeleton",
+          "body": "Initial repository layout: `lib/vendor/` for the vendored blamejs tree, `scripts/` for the release-pipeline helpers (generator, consolidator, sha3-digest, sign-release-artifact, generate-release-signing-key, vendor-update.sh), `test/smoke.js` orchestrator, `test/layer-0-primitives/codebase-patterns.test.js` discipline gate, `release-notes/` JSON source of truth, plus the standard operator-facing artifacts (README, SECURITY, CHANGELOG, LICENSE)."
+        },
+        {
+          "title": "Vendor toolchain for blamejs",
+          "body": "`scripts/vendor-update.sh blamejs <tag>` shallow-clones the requested release tag from `github.com/blamejs/blamejs` into `lib/vendor/blamejs/` and updates `lib/vendor/MANIFEST.json` with the version + bundled-at date. The script's `--check` mode is wired into the smoke gate so drift between the vendored copy and the latest published blamejs release fails pre-push."
+        },
+        {
+          "title": "Release pipeline disciplines",
+          "body": "Carries the same release flow blamejs runs: structured `release-notes/v<X>.json` generator with leak-vocabulary validation, consolidator that rolls non-current minors into `v<minor>.x.json`, `CHANGELOG.md` rebuilt end-to-end from the JSON tree, smoke gates on both `--check` modes so any drift between the JSONs and the markdown fails pre-push."
+        }
+      ]
+    }
+  ],
+  "references": [
+    { "label": "blamejs framework", "url": "https://github.com/blamejs/blamejs" }
+  ]
+}
