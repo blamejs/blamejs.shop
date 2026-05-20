@@ -28,8 +28,7 @@ throws a `MODULE_NOT_FOUND` with a pointer at the vendor script.
 ## Release flow
 
 The release flow is operator-driven (humans run it; CI gates each
-step). The full recipe lives in `CLAUDE.md` under "Release workflow"
-— summary:
+step):
 
 ```
 # 1. Bump package.json
@@ -58,9 +57,6 @@ gh run watch "$(gh run list --workflow=npm-publish.yml --limit 1 --json database
 
 ## Coding rules
 
-The full set of disciplines lives in `CLAUDE.md` under "Hard rules".
-Short version:
-
 - **Zero npm runtime deps.** blamejs is vendored; everything else is
   Node built-ins. Dev tooling (eslint, gitleaks, docker images) is
   fine — never ships.
@@ -81,7 +77,7 @@ Short version:
 - Every PR description includes a **Test plan** — checkbox list of
   the gates you ran locally (`eslint`, `smoke`, `codebase-patterns`,
   `gitleaks`).
-- PR titles follow the operator-facing voice from `CLAUDE.md`. No
+- PR titles describe the change in operator-facing voice. No
   internal vocabulary (phase / sweep / tier / batch / group /
   slice numbering), no AI-tooling attribution.
 

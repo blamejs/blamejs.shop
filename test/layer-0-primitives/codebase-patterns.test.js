@@ -6,6 +6,7 @@
 // codebase-patterns:allow-file empty-catch-swallow — catalog references the literal `catch (e) {}` shape it detects
 // codebase-patterns:allow-file fs-existssync-then-read-toctou — catalog references the literal `fs.existsSync(` shape it detects
 // codebase-patterns:allow-file regex-from-argv — catalog references the literal `new RegExp(... process.argv` shape it detects
+// codebase-patterns:allow-file internal-rulebook-vocabulary-in-source — runtime regex construction inevitably includes the patterns being detected
 
 // Re-exec under a 6 GiB old-space ceiling when the parent process did
 // not already raise the heap cap. Future detectors that cross-product
@@ -237,6 +238,29 @@ var KNOWN_ANTIPATTERNS = [
     scanScope:   "lib",
     description: "`new RegExp(<argv-derived>)` — operator-controlled input compiled into a regex source is a CodeQL regex-injection sink. Validate the input against a strict format gate before construction, OR use string `indexOf`/`startsWith` if you only need prefix matching",
     regex:       /new\s+RegExp\s*\([^)]*process\.argv/,
+    allowlist:   [],
+  },
+  {
+    // Operator-facing source files must not reference the framework's
+    // internal-rulebook artifact by name. Comments carry the discipline
+    // INLINE so a stranger reading the file sees what the rule says,
+    // not a pointer at a file they don't have. The regex below is the
+    // only place the leaked strings appear; the descriptive prose
+    // around it is intentionally token-free.
+    id:          "internal-rulebook-vocabulary-in-source",
+    scanScope:   "lib",
+    description: "Describe the rule inline in plain language; the comment carries the discipline itself, not a pointer at an internal rulebook file. Operator-facing files (and the lib/ surface they ship in) must not reference the framework's internal rulebook by name.",
+    // Built from char-class fragments so the literal token strings
+    // don't appear in the rendered detector description that error
+    // messages echo back at violators.
+    regex:       new RegExp(
+      "\\b(?:" +
+      [67, 76, 65, 85, 68, 69].map(function (c) { return String.fromCharCode(c); }).join("") + "\\.md" +
+      "|per\\s+" + [67, 76, 65, 85, 68, 69].map(function (c) { return String.fromCharCode(c); }).join("") + "\\b" +
+      "|per\\s+project\\s+rule\\s+\\u00a7" +
+      "|per\\s+rule\\s+\\u00a7\\d" +
+      ")"
+    ),
     allowlist:   [],
   },
 ];
