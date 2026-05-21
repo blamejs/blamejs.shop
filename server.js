@@ -79,6 +79,23 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         res.json({ ok: true, container: true });
       });
 
+      // Shared config primitive — operator-tunable runtime
+      // configuration (tax rules, shipping services, brand name).
+      // Built once at boot so the admin write-path and the storefront
+      // read-path share the same 30s in-memory cache; admin writes
+      // invalidate the entry for the read side.
+      var config = catalog && cart ? bShop.config.create({}) : null;
+
+      // Tax + shipping default tables — kick in when the operator
+      // hasn't seeded `tax.rules` / `shipping.services` in config.
+      // Zero-rate tax + a single $0 standard shipping service keeps
+      // the storefront browsable on a fresh deploy.
+      var DEFAULT_TAX_RULES = [];
+      var DEFAULT_SHIPPING_SERVICES = [
+        { id: "std", label: "Standard", zones: [{ country: "US", flat_amount_minor: 0 }] },
+      ];
+      var DEFAULT_SHIPPING_ID = "std";
+
       // Admin API — bearer-token-gated CRUD over catalog + orders +
       // refunds. Only mounts when ADMIN_API_KEY is present (operator
       // opts in by setting the secret). Stripe-backed refund routes
@@ -132,10 +149,29 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
             apiKey:        process.env.STRIPE_API_KEY,
             webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
           });
-          var sfTax = bShop.tax.create({ rules: [] });   // operator-configured later
-          var sfShipping = bShop.shipping.create({
-            services: [{ id: "std", label: "Standard", zones: [{ country: "US", flat_amount_minor: 0 }] }],
-          });
+          // Tax + shipping wrappers that re-read the operator's
+          // config on each call. The wrapped adapter is rebuilt per
+          // request from the latest `tax.rules` / `shipping.services`
+          // rows, so an operator PUT against `/admin/config/:key`
+          // takes effect on the next checkout (modulo the config
+          // primitive's 30s read cache). When the operator hasn't
+          // seeded a value, the documented zero-rate defaults apply.
+          var sfTax = {
+            name: "configured",
+            calculate: async function (ctx) {
+              var rules = await config.get("tax.rules", DEFAULT_TAX_RULES);
+              var adapter = bShop.tax.create({ rules: rules });
+              return await adapter.calculate(ctx);
+            },
+          };
+          var sfShipping = {
+            name: "configured",
+            rates: async function (ctx) {
+              var services = await config.get("shipping.services", DEFAULT_SHIPPING_SERVICES);
+              var adapter = bShop.shipping.create({ services: services });
+              return await adapter.rates(ctx);
+            },
+          };
           var sfCheckout = bShop.checkout.create({
             catalog: catalog, cart: cart, pricing: bShop.pricing,
             tax: sfTax, shipping: sfShipping, payment: sfPayment, order: sfOrder,
@@ -143,7 +179,12 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           sfDeps.order             = sfOrder;
           sfDeps.payment           = sfPayment;
           sfDeps.checkout          = sfCheckout;
-          sfDeps.default_shipping_id     = "std";
+          // Resolve the storefront's selected_shipping_id fallback
+          // from config; the resolver re-reads per checkout POST so
+          // operator changes don't need a container restart.
+          sfDeps.default_shipping_id = async function () {
+            return await config.get("shipping.default_id", DEFAULT_SHIPPING_ID);
+          };
           sfDeps.stripe_publishable_key = process.env.STRIPE_PUBLISHABLE_KEY || "";
         }
         bShop.storefront.mount(r, sfDeps);
