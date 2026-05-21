@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.15",
+  "date": "2026-05-20",
+  "headline": "README refresh — full primitive surface documented",
+  "summary": "The README's `What ships` section now reflects every primitive landed since the foundation patch: catalog, cart, pricing, tax, shipping, payment, order, checkout, email, storefront, admin. Includes a `Operator quick-start` block walking through `wrangler login` → resource provisioning → secret setting → migration apply → deploy → seed-a-product.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "README documents every primitive",
+          "body": "The `What ships` section is now split into Platform / Commerce primitives / Migrations applied to D1 / Tests subsections. Each primitive entry lists its module path, its function, and the composed blamejs surface it relies on. The Operator quick-start block carries the canonical wrangler one-time setup + deploy + seed-a-product command sequence so an operator landing on the repo has an unambiguous path from clone to live shop."
+        }
+      ]
+    }
+  ]
+}
