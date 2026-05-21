@@ -27,7 +27,7 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql"].map(function (f) {
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0007_discounts.sql"].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
 
@@ -215,12 +215,135 @@ async function _webhookBadSig() {
     /webhook signature invalid/);
 }
 
+// ---- discount flow ------------------------------------------------------
+//
+// Discounts wire into checkout via the optional `discounts` dep. The
+// orchestrator calls `discounts.resolve(...)` during quote, passes the
+// result to `pricing.totals(...)` as `ctx.discount_minor`, and calls
+// `discounts.redeem(...)` after the order persists on `confirm()`.
+
+async function _setupWithDiscounts() {
+  var query = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query });
+  var cart    = bShop.cart.create({ query: query, catalog: catalog });
+  var order   = bShop.order.create({ query: query });
+  var discounts = bShop.discounts.create({ query: query });
+  var tax     = bShop.tax.create({ rules: [] });
+  var shipping = bShop.shipping.create({ services: [
+    { id: "std", label: "Standard", zones: [{ country: "US", flat_amount_minor: 0 }] },
+  ]});
+  var webhookSecret = "whsec_test_disc_" + bShop.framework.crypto.generateToken(8);
+  var payment = _fakePayment(webhookSecret);
+  var checkout = bShop.checkout.create({
+    catalog: catalog, cart: cart, pricing: bShop.pricing,
+    tax: tax, shipping: shipping, payment: payment, order: order,
+    discounts: discounts,
+  });
+
+  var p = await catalog.products.create({ slug: "disc-co", title: "DiscTest", status: "active" });
+  var v = await catalog.variants.create(p.id, { sku: "DC-1" });
+  await catalog.prices.set(v.id, { currency: "USD", amount_minor: 10000 });
+  var sid = bShop.framework.uuid.v7();
+  var c = await cart.create(sid, { currency: "USD" });
+  await cart.addLine(c.id, { variant_id: v.id, qty: 1 });
+
+  return { query: query, catalog: catalog, cart: cart, order: order,
+           checkout: checkout, discounts: discounts, cartRow: c,
+           sessionId: sid, variant: v };
+}
+
+async function _discountFlow() {
+  var s = await _setupWithDiscounts();
+  await s.discounts.create({ code: "co-pct25", type: "percent_off", value_bps_or_minor: 2500 });
+
+  // quote — coupon applied
+  var q = await s.checkout.quote({
+    cart_id: s.cartRow.id,
+    ship_to: { country: "US" },
+    selected_shipping_id: "std",
+    discount_code: "co-pct25",
+  });
+  check("quote applies discount",         q.totals.discount_minor === 2500);
+  check("quote grand_total reduced",      q.totals.grand_total_minor === 7500);
+  check("quote carries discount row",     q.discount && q.discount.discount && q.discount.discount.code === "CO-PCT25");
+  check("quote discount has no reason",    !q.discount.reason);
+
+  // quote without coupon — discount stays zero
+  var q2 = await s.checkout.quote({
+    cart_id: s.cartRow.id,
+    ship_to: { country: "US" },
+    selected_shipping_id: "std",
+  });
+  check("quote without code has no discount",    q2.totals.discount_minor === 0);
+  check("quote without code has null discount",  q2.discount === null);
+
+  // confirm — redeem fires + persists to order
+  var result = await s.checkout.confirm({
+    cart_id: s.cartRow.id,
+    ship_to: { country: "US" },
+    selected_shipping_id: "std",
+    customer: { email: "buyer@example.com" },
+    discount_code: "co-pct25",
+    idempotency_key: "idemp_disc_xxxxxxxx",
+  });
+  check("confirm returns order",                     result.order && result.order.id);
+  check("confirm persists discount_minor",           result.order.discount_minor === 2500);
+  check("confirm carries discount in response",      result.discount && !result.discount.reason);
+
+  // Discount.uses incremented + ledger row persisted
+  var d = await s.discounts.byCode("co-pct25");
+  check("discount uses incremented",                 d.uses === 1);
+  var ledger = await s.discounts.redemptions(d.id);
+  check("redemption ledger has row",                 ledger.rows.length === 1);
+  check("redemption FKs to order",                   ledger.rows[0].order_id === result.order.id);
+}
+
+async function _discountFlowRefused() {
+  var s = await _setupWithDiscounts();
+  // No coupon row created → resolve returns { reason: 'unknown-code' }
+  // quote should NOT throw — discount_minor stays 0 + .discount carries
+  // the reason for the storefront to render.
+  var q = await s.checkout.quote({
+    cart_id: s.cartRow.id,
+    ship_to: { country: "US" },
+    selected_shipping_id: "std",
+    discount_code: "no-such",
+  });
+  check("refused-code quote doesn't throw",  q.totals.discount_minor === 0);
+  check("refused-code grand_total full",      q.totals.grand_total_minor === 10000);
+  check("refused-code carries reason",        q.discount && q.discount.reason === "unknown-code");
+}
+
+async function _discountFlowExpiredOnConfirm() {
+  // An expired coupon resolves to a refusal — confirm() must NOT call
+  // redeem (no row persisted, no uses bump) but should still complete
+  // the order at the un-discounted total.
+  var s = await _setupWithDiscounts();
+  await s.discounts.create({ code: "stale", type: "percent_off", value_bps_or_minor: 5000,
+                              ends_at: Date.now() - 60000 });
+  var result = await s.checkout.confirm({
+    cart_id: s.cartRow.id,
+    ship_to: { country: "US" },
+    selected_shipping_id: "std",
+    customer: { email: "buyer@example.com" },
+    discount_code: "stale",
+    idempotency_key: "idemp_stale_xxxxxxxx",
+  });
+  check("expired confirms at full total",       result.order.grand_total_minor === 10000);
+  check("expired carries refusal reason",        result.discount && result.discount.reason === "expired");
+  var d = await s.discounts.byCode("stale");
+  check("expired uses NOT incremented",          d.uses === 0);
+}
+
 async function run() {
   await _quote();
   await _confirm();
   await _confirmRefusesZeroTotal();
   await _webhookDispatchHappyPath();
   await _webhookBadSig();
+  await _discountFlow();
+  await _discountFlowRefused();
+  await _discountFlowExpiredOnConfirm();
 }
 
 module.exports = { run: run };

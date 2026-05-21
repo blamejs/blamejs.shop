@@ -85,13 +85,15 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
             webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
           });
         }
-        var config = bShop.config.create({});
+        var config    = bShop.config.create({});
+        var discounts = bShop.discounts.create({});
         bShop.admin.mount(r, {
-          token:   process.env.ADMIN_API_KEY,
-          catalog: catalog,
-          order:   order,
-          payment: payment,
-          config:  config,
+          token:     process.env.ADMIN_API_KEY,
+          catalog:   catalog,
+          order:     order,
+          payment:   payment,
+          config:    config,
+          discounts: discounts,
         });
       }
 
@@ -104,6 +106,8 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // Stripe is configured. Without these the storefront stays
         // browsable but checkout-routes don't mount.
         var sfDeps = { catalog: catalog, cart: cart };
+        var sfDiscounts = bShop.discounts.create({});
+        sfDeps.discounts = sfDiscounts;
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = bShop.order.create({});
           var sfPayment = bShop.payment.create({
@@ -117,6 +121,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           var sfCheckout = bShop.checkout.create({
             catalog: catalog, cart: cart, pricing: bShop.pricing,
             tax: sfTax, shipping: sfShipping, payment: sfPayment, order: sfOrder,
+            discounts: sfDiscounts,
           });
           sfDeps.order             = sfOrder;
           sfDeps.payment           = sfPayment;

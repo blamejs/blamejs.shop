@@ -1,0 +1,47 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.29",
+  "date": "2026-05-21",
+  "headline": "Discount / coupon primitive",
+  "summary": "Operator-defined coupon codes with case-insensitive lookup, percent-off and fixed-off semantics, time windows, usage caps, and a per-order redemption ledger. The storefront cart page gains a coupon input; the priced quote subtracts the resolved discount when valid and surfaces a refusal reason inline when it isn't.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Migration `0007_discounts.sql`",
+          "body": "Two tables. `discounts` carries the rule definition: `code` (UNIQUE, case-insensitive index via `lower(code)`), `type` (`percent_off` or `fixed_off`, CHECK-enforced), `value_bps_or_minor` (basis points for percent_off, minor units for fixed_off), `currency` (required for fixed_off, NULL for percent_off — CHECK-enforced), `min_subtotal_minor`, `max_uses`, `uses`, `starts_at`, `ends_at`, `active`. Percent values are capped at 10000 (100%) by a column CHECK so a malformed write at the SQL boundary still refuses. `discount_redemptions` is the per-order ledger appended on `checkout.confirm` success — analytics queries answer 'how many times was SUMMER25 used last week' without rescanning the orders table."
+        },
+        {
+          "title": "`discounts` primitive",
+          "body": "`lib/discounts.js` ships `create({ query })` returning `{ create, get, byCode, list, update, delete, resolve, redeem, redemptions, REASONS }`. `byCode(code)` matches case-insensitively via `lower(code)` — operators publish `summer-25` in marketing copy, customers type `SUMMER-25` in the form, both resolve to the same row. `resolve({ code, subtotal_minor, currency })` returns `{ discount_minor, discount, reason? }` and NEVER throws on refusal (returns `{ discount_minor: 0, reason }`) so the storefront can render the refusal inline. Reason codes: `unknown-code`, `not-active`, `expired`, `not-yet-active`, `below-min-subtotal`, `wrong-currency`, `max-uses-exhausted`. `redeem(discountId, orderId)` is atomic on the use cap via conditional UPDATE — two concurrent confirmers can't push `uses` past `max_uses`, the second one's UPDATE matches 0 rows and we throw `DISCOUNT_EXHAUSTED`. Percent calc: `Math.floor(subtotal_minor * value_bps_or_minor / 10000)`. The resolver clamps the computed discount to the cart subtotal so a `$50` coupon on a `$10` cart caps at `$10`."
+        },
+        {
+          "title": "`checkout` integration",
+          "body": "`quote()` and `confirm()` accept optional `discount_code`. When present, the orchestrator calls `discounts.resolve(...)` against the live subtotal + cart currency and passes the result as `ctx.discount_minor` to `pricing.totals(...)`. The quote response carries `discount` alongside `totals` so the storefront knows whether to render 'Coupon ABC applied' or 'Coupon ABC: expired'. On `confirm()` success the orchestrator calls `discounts.redeem(...)` after the order row persists so the redemption ledger reflects only orders that actually existed; concurrent confirmers racing the use cap surface as a hard error on the losing branch."
+        },
+        {
+          "title": "Storefront — coupon input on the cart page",
+          "body": "`/cart` renders an `<input name=\"code\">` form posting to `/cart/coupon`. The applied code is stored in a `shop_coupon` cookie scoped Path=/cart and Path=/checkout (one Set-Cookie per path), HttpOnly + Secure + SameSite=Lax. When the cookie is present the `/cart` route resolves the code against the live subtotal and passes the result to `renderCart` as `opts.applied_coupon`. The cart summary gains a `Discount` line when the coupon applies + a red strip with the reason when it doesn't (operator-readable: 'That coupon has expired', 'Cart total is below the coupon's minimum', etc.). On `POST /checkout` the cookie value is forwarded to `checkout.confirm(...)` as `discount_code`; on success the cookie is cleared so the next session doesn't carry the redeemed code forward."
+        },
+        {
+          "title": "Admin routes",
+          "body": "`POST /admin/discounts` (create), `GET /admin/discounts?limit=&offset=&active=` (paginated list), `GET /admin/discounts/:id` (single), `PATCH /admin/discounts/:id` (update), `DELETE /admin/discounts/:id`, `GET /admin/discounts/:id/redemptions?limit=` (recent redemptions for analytics). All routes write to the `shop_admin.discount.<verb>` audit namespace alongside existing admin write events. Validation refuses bad code shape, missing currency for `fixed_off`, percent values > 10000, and UNIQUE-constraint conflicts on `code` (surfaced as RFC 9457 400 rather than 500)."
+        }
+      ]
+    },
+    {
+      "heading": "Detectors",
+      "items": [
+        {
+          "title": "Layer 1 — `discounts`",
+          "body": "`test/layer-1-state/discounts.test.js` exercises create + get + byCode (case-insensitive match) + list + update + delete; resolve happy-path for both percent + fixed; refusals for each reason code (`unknown-code`, `not-active`, `expired`, `not-yet-active`, `below-min-subtotal`, `wrong-currency`, `max-uses-exhausted`); redeem increments `uses` + inserts a ledger row; redeem refuses when `max_uses` is exhausted (atomic conditional UPDATE matches 0 rows); validation refuses bad code shape, missing currency on fixed_off, and percent value > 10000."
+        },
+        {
+          "title": "Layer 1 — `checkout` discount flow",
+          "body": "`test/layer-1-state/checkout.test.js` gains a `_discountFlow` cluster covering quote returning the discount line + reduced grand_total, confirm calling redeem so `uses` becomes 1 + a row appears in `discount_redemptions`, refused codes surfacing as `{ reason }` on the quote without throwing, and the order row carrying the persisted `discount_minor`."
+        }
+      ]
+    }
+  ]
+}
