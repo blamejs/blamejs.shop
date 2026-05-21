@@ -1,0 +1,35 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.5",
+  "date": "2026-05-20",
+  "headline": "Order primitive — FSM-driven post-checkout record",
+  "summary": "The order primitive composes the freshly-landed `b.fsm` upstream surface to drive the post-checkout lifecycle. Orders persist in D1 with a versioned transition log; every state change goes through the FSM so illegal transitions throw at the framework boundary instead of corrupting the order record.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`order` — FSM-driven post-checkout record",
+          "body": "`lib/order.js` ships `create({ query })` returning `{ createFromCart, get, byPaymentIntent, transition, setPaymentIntent, TERMINAL_STATES }`. States: pending → paid → fulfilling → shipped → delivered, plus refunded / cancelled (terminal). Events: mark_paid, start_fulfillment, mark_shipped, mark_delivered, cancel, refund. Each transition fires through `b.fsm` (which refuses illegal events at the framework boundary) and appends a row to `order_transitions` so the lifecycle is auditable end-to-end. `byPaymentIntent(piId)` is the lookup webhook handlers use to map Stripe events back to the local order."
+        },
+        {
+          "title": "Migration `0003_order.sql`",
+          "body": "Three tables: `orders` (row per checkout, captures cart snapshot + totals + ship_to JSON + payment_intent_id with a unique index), `order_lines` (snapshot of cart_lines at order creation — immutable post-checkout), `order_transitions` (one row per FSM transition, including the initial `__init__ → pending` create-event). FK cascade on order delete removes lines + transitions."
+        },
+        {
+          "title": "Vendor refresh blamejs v0.11.24 → v0.11.25",
+          "body": "Upstream v0.11.25 ships `b.fsm` (auditable in-process FSM with guards + onEnter/onExit + concurrent-transition serialization + toJSON/restore round-trip) and `b.money` (decimal-safe money with currency-aware arithmetic and conversion). Order composes `b.fsm`. Pricing will adopt `b.money` in a follow-up patch — the current `Intl.NumberFormat`-based formatter stays for now since it covers the storefront rendering use case."
+        }
+      ]
+    },
+    {
+      "heading": "Detectors",
+      "items": [
+        {
+          "title": "Layer 1 — `order`",
+          "body": "`test/layer-1-state/order.test.js` exercises createFromCart (persist + lines + init transition), the happy path (pending → paid → fulfilling → shipped → delivered with metadata captured on each transition), illegal transition refusal (can't ship before paying, can't deliver from pending, unknown events refused), cancel + refund branches, setPaymentIntent's pending-only constraint + byPaymentIntent lookup, and every validation entry point."
+        }
+      ]
+    }
+  ]
+}
