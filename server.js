@@ -85,11 +85,13 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
             webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
           });
         }
+        var config = bShop.config.create({});
         bShop.admin.mount(r, {
           token:   process.env.ADMIN_API_KEY,
           catalog: catalog,
           order:   order,
           payment: payment,
+          config:  config,
         });
       }
 
