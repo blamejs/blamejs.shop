@@ -1,0 +1,50 @@
+:root {
+  --ink:      #191919;
+  --ink-2:    #414141;
+  --mute:     #727272;
+  --hair:     #d9d9d9;
+  --paper:    #ffffff;
+  --bg:       #fafafa;
+  --accent:   #fa4f09;
+  --accent-d: #d8410a;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; color: var(--ink); background: var(--paper); font-size: 16px; line-height: 1.6; }
+h1, h2, h3 { font-family: 'Montserrat', ui-sans-serif, system-ui, sans-serif; font-weight: 700; letter-spacing: -0.01em; line-height: 1.2; margin: 0 0 .75rem; }
+a { color: var(--ink); text-decoration: none; }
+a:hover { color: var(--accent); }
+.site-header { border-bottom: 1px solid var(--hair); background: var(--paper); position: sticky; top: 0; z-index: 10; }
+.site-header__inner { max-width: 72rem; margin: 0 auto; padding: 1.25rem 1.5rem; display: flex; justify-content: space-between; align-items: center; gap: 1.5rem; }
+.brand { display: flex; align-items: center; gap: .65rem; font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.15rem; }
+.brand img { height: 2rem; width: auto; display: block; }
+.site-nav { display: flex; gap: 1.75rem; align-items: center; font-size: .95rem; font-weight: 500; }
+.site-nav .cart-pill { display: inline-flex; align-items: center; gap: .4rem; padding: .35rem .8rem; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: .85rem; }
+.site-nav .cart-pill:hover { background: var(--accent); }
+main { max-width: 72rem; margin: 0 auto; padding: 3rem 1.5rem 6rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 1.5rem; }
+.card { background: var(--paper); border: 1px solid var(--hair); border-radius: 8px; padding: 1.25rem; transition: transform .15s ease, box-shadow .15s ease; }
+.card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px -12px rgba(25,25,25,.15); }
+.card h2 { margin: 0 0 .5rem; font-size: 1.05rem; }
+.card .price { color: var(--accent); font-weight: 600; font-size: 1.05rem; margin: .25rem 0 1rem; }
+.card-link { display: inline-block; color: var(--ink); border-bottom: 1px solid currentColor; padding-bottom: 1px; font-size: .9rem; font-weight: 500; }
+.card-link:hover { color: var(--accent); }
+article h2 { font-size: 2rem; margin-bottom: 1rem; }
+article p { color: var(--ink-2); margin-bottom: 2rem; max-width: 44rem; }
+table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+thead th { text-align: left; padding: .8rem .9rem; border-bottom: 2px solid var(--ink); font-family: 'Montserrat', sans-serif; font-weight: 600; font-size: .8rem; letter-spacing: .04em; text-transform: uppercase; color: var(--mute); }
+tbody td { padding: .9rem; border-bottom: 1px solid var(--hair); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: none; }
+.price { font-weight: 600; }
+.total { font-weight: 700; color: var(--ink); border-top: 2px solid var(--ink); }
+.empty { color: var(--mute); font-style: italic; text-align: center; padding: 3rem 1rem; }
+.summary-table { max-width: 24rem; margin-left: auto; margin-top: 2rem; background: var(--bg); padding: 1rem 1.25rem; border-radius: 8px; }
+.summary-table td { padding: .4rem 0; border: none; }
+.btn, button[type="submit"] { background: var(--accent); color: var(--paper); border: none; padding: .55rem 1.1rem; border-radius: 6px; font-family: 'Inter', sans-serif; font-weight: 500; font-size: .9rem; cursor: pointer; transition: background .15s ease; }
+.btn:hover, button[type="submit"]:hover { background: var(--accent-d); }
+input[type="number"] { padding: .45rem .55rem; border: 1px solid var(--hair); border-radius: 6px; font-family: inherit; font-size: .9rem; }
+form { display: inline-flex; gap: .5rem; align-items: center; }
+.hero { padding: 4rem 0 5rem; text-align: center; border-bottom: 1px solid var(--hair); margin-bottom: 3.5rem; background: linear-gradient(180deg, var(--paper) 0%, var(--bg) 100%); }
+.hero h2 { font-size: 2.75rem; margin-bottom: 1rem; max-width: 32rem; margin-left: auto; margin-right: auto; }
+.hero p { color: var(--mute); max-width: 32rem; margin: 0 auto; font-size: 1.05rem; }
+.hero .accent { color: var(--accent); }

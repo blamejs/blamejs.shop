@@ -1,0 +1,38 @@
+{% extends "layout" %}
+{% block body %}
+<section>
+  <h2>Your cart</h2>
+  <table>
+    <thead><tr><th>SKU</th><th>Qty</th><th>Unit</th><th>Total</th><th></th></tr></thead>
+    <tbody>
+      {% if has_lines %}
+      {% for l in lines %}
+      <tr>
+        <td>{{ l.sku }}</td>
+        <td>
+          <form method="post" action="/cart/lines/{{ l.id }}/update" style="display:inline-flex; gap:.4rem;">
+            <input type="number" name="qty" value="{{ l.qty }}" min="1" max="99" style="width:4rem;">
+            <button type="submit" style="background:transparent; color:var(--mute); padding:.45rem .7rem; border:1px solid var(--hair);">Update</button>
+          </form>
+        </td>
+        <td class="price">{{ l.unit }}</td>
+        <td class="price">{{ l.total }}</td>
+        <td>
+          <form method="post" action="/cart/lines/{{ l.id }}/remove">
+            <button type="submit" style="background:transparent; color:var(--mute); padding:.45rem .7rem; border:1px solid var(--hair);">Remove</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      {% else %}
+      <tr><td colspan="5" class="empty">Your cart is empty.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+  <table class="summary-table">
+    <tr><td>Subtotal</td><td align="right">{{ subtotal }}</td></tr>
+    <tr class="total"><td>Total</td><td align="right">{{ total }}</td></tr>
+  </table>
+  <p style="text-align:right; margin-top:1.5rem;"><a href="/checkout" class="btn" style="display:inline-block; text-decoration:none;">Checkout →</a></p>
+</section>
+{% endblock %}

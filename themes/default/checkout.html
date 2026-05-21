@@ -1,0 +1,19 @@
+{% extends "layout" %}
+{% block body %}
+<section>
+  <h2>Checkout</h2>
+  <p>Enter your shipping details to proceed to payment.</p>
+  <form method="post" action="/checkout" style="display:block; max-width:32rem; margin-top:2rem;">
+    <p><label>Email<br><input type="email" name="email" required style="width:100%; padding:.55rem .65rem; border:1px solid var(--hair); border-radius:6px;"></label></p>
+    <p><label>Name<br><input type="text" name="name" required style="width:100%; padding:.55rem .65rem; border:1px solid var(--hair); border-radius:6px;"></label></p>
+    <p><label>Country (ISO 3166-1 alpha-2)<br><input type="text" name="country" value="US" maxlength="2" pattern="[A-Z]{2}" required style="width:6rem; padding:.55rem .65rem; border:1px solid var(--hair); border-radius:6px;"></label></p>
+    <p><label>State<br><input type="text" name="state" maxlength="5" style="width:6rem; padding:.55rem .65rem; border:1px solid var(--hair); border-radius:6px;"></label></p>
+    <p><label>Postal code<br><input type="text" name="postal" maxlength="16" style="width:10rem; padding:.55rem .65rem; border:1px solid var(--hair); border-radius:6px;"></label></p>
+    <table class="summary-table">
+      <tr><td>Subtotal</td><td align="right">{{ subtotal }}</td></tr>
+      <tr class="total"><td>Total <small style="font-weight:400; color:var(--mute);">(plus tax + shipping)</small></td><td align="right">{{ subtotal }}</td></tr>
+    </table>
+    <p style="margin-top:1.5rem;"><button type="submit">Continue to payment →</button></p>
+  </form>
+</section>
+{% endblock %}

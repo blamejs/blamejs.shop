@@ -1,0 +1,28 @@
+{% extends "layout" %}
+{% block body %}
+<article>
+  <h2>{{ product.title }}</h2>
+  <p>{{ product.description }}</p>
+  <table>
+    <thead><tr><th>Variant</th><th>SKU</th><th>Price</th><th></th></tr></thead>
+    <tbody>
+      {% if has_variants %}
+      {% for v in variants %}
+      <tr>
+        <td>{{ v.title }}</td><td>{{ v.sku }}</td><td class="price">{{ v.price }}</td>
+        <td>
+          <form method="post" action="/cart/lines">
+            <input type="hidden" name="variant_id" value="{{ v.id }}">
+            <input type="number" name="qty" value="1" min="1" max="99" style="width:4rem">
+            <button type="submit">Add to cart</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      {% else %}
+      <tr><td colspan="3" class="empty">No variants available.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</article>
+{% endblock %}
