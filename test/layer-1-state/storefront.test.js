@@ -110,6 +110,50 @@ async function _xssEscape() {
   check("normal slug passes through", html.indexOf("/products/x") !== -1);
 }
 
+async function _checkoutForm() {
+  var html = storefront.renderCheckoutForm({
+    lines:  [{ sku: "X-1", qty: 1, unit_amount_minor: 2999, unit_currency: "USD" }],
+    totals: { subtotal_minor: 2999, currency: "USD" },
+    shop_name: "Acme",
+  });
+  check("checkout form has email field",    /name=\"email\"/.test(html));
+  check("checkout form has country field",   /name=\"country\"/.test(html));
+  check("checkout form shows subtotal",       html.indexOf("$29.99") !== -1);
+  check("checkout form POSTs to /checkout",   /action=\"\/checkout\"/.test(html));
+}
+
+async function _payPage() {
+  var html = storefront.renderPayPage({
+    order:           { id: "ord_test", grand_total_minor: 7218, currency: "USD" },
+    client_secret:   "pi_xxx_secret_yyy",
+    publishable_key: "pk_test_123",
+    shop_name:       "Acme",
+  });
+  check("pay page loads Stripe.js",          html.indexOf("https://js.stripe.com/v3/") !== -1);
+  check("pay page injects pk as JSON",        html.indexOf("\"pk_test_123\"") !== -1);
+  check("pay page injects client_secret",      html.indexOf("\"pi_xxx_secret_yyy\"") !== -1);
+  check("pay page shows total",                html.indexOf("$72.18") !== -1);
+  check("pay page references order id",        html.indexOf("ord_test") !== -1);
+}
+
+async function _orderPage() {
+  var html = storefront.renderOrder({
+    order: {
+      id: "ord_test", status: "paid", currency: "USD",
+      subtotal_minor:    5998,
+      tax_minor:         525,
+      shipping_minor:    695,
+      grand_total_minor: 7218,
+      lines: [{ sku: "X-1", qty: 2, unit_amount_minor: 2999, unit_currency: "USD", line_total_minor: 5998 }],
+    },
+    shop_name: "Acme",
+  });
+  check("order page shows status",        html.indexOf("paid") !== -1);
+  check("order page lists line",           html.indexOf("X-1") !== -1);
+  check("order page shows tax",            html.indexOf("$5.25") !== -1);
+  check("order page shows total",          html.indexOf("$72.18") !== -1);
+}
+
 async function _validation() {
   assert.throws(function () { storefront.renderHome();             }, /products required/);
   assert.throws(function () { storefront.renderHome({});             }, /products required/);
@@ -125,6 +169,9 @@ async function run() {
   await _productNoVariants();
   await _cart();
   await _cartEmpty();
+  await _checkoutForm();
+  await _payPage();
+  await _orderPage();
   await _xssEscape();
   await _validation();
 }

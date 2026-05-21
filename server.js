@@ -98,7 +98,31 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // Falls back to a JSON identity ping when there's no D1
       // (local dev without a Worker bridge).
       if (catalog && cart) {
-        bShop.storefront.mount(r, { catalog: catalog, cart: cart });
+        // Build the optional checkout + payment + order deps when
+        // Stripe is configured. Without these the storefront stays
+        // browsable but checkout-routes don't mount.
+        var sfDeps = { catalog: catalog, cart: cart };
+        if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
+          var sfOrder = bShop.order.create({});
+          var sfPayment = bShop.payment.create({
+            apiKey:        process.env.STRIPE_API_KEY,
+            webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+          });
+          var sfTax = bShop.tax.create({ rules: [] });   // operator-configured later
+          var sfShipping = bShop.shipping.create({
+            services: [{ id: "std", label: "Standard", zones: [{ country: "US", flat_amount_minor: 0 }] }],
+          });
+          var sfCheckout = bShop.checkout.create({
+            catalog: catalog, cart: cart, pricing: bShop.pricing,
+            tax: sfTax, shipping: sfShipping, payment: sfPayment, order: sfOrder,
+          });
+          sfDeps.order             = sfOrder;
+          sfDeps.payment           = sfPayment;
+          sfDeps.checkout          = sfCheckout;
+          sfDeps.default_shipping_id     = "std";
+          sfDeps.stripe_publishable_key = process.env.STRIPE_PUBLISHABLE_KEY || "";
+        }
+        bShop.storefront.mount(r, sfDeps);
       } else {
         r.get("/", function (_req, res) {
           res.json({

@@ -178,6 +178,7 @@ export class ShopContainer extends Container {
       D1_BRIDGE_PATH:                    env.D1_BRIDGE_PATH            || "/_/db/query",
       STRIPE_API_KEY:                    env.STRIPE_API_KEY            || "",
       STRIPE_WEBHOOK_SECRET:             env.STRIPE_WEBHOOK_SECRET     || "",
+      STRIPE_PUBLISHABLE_KEY:            env.STRIPE_PUBLISHABLE_KEY    || "",
       ADMIN_API_KEY:                     env.ADMIN_API_KEY             || "",
     };
   }
