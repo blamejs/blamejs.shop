@@ -139,10 +139,25 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // Falls back to a JSON identity ping when there's no D1
       // (local dev without a Worker bridge).
       if (catalog && cart) {
+        // Optional file-backed theme. When SHOP_THEME is set, every
+        // storefront page renders through `<themes>/<name>/*.html`
+        // with the bundled `default` theme as the fallback chain.
+        // Operators upload theme assets (CSS, fonts, images) to R2
+        // under `themes/<name>/...`; the Worker's `/assets/themes/<name>/*`
+        // pass-through serves them.
+        var sfTheme = null;
+        if (process.env.SHOP_THEME) {
+          sfTheme = bShop.theme.create({
+            themesDir: process.env.SHOP_THEMES_DIR || "./themes",
+            name:      process.env.SHOP_THEME,
+            fallback:  process.env.SHOP_THEME_FALLBACK || "default",
+          });
+        }
         // Build the optional checkout + payment + order deps when
         // Stripe is configured. Without these the storefront stays
         // browsable but checkout-routes don't mount.
         var sfDeps = { catalog: catalog, cart: cart };
+        if (sfTheme) sfDeps.theme = sfTheme;
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = bShop.order.create({});
           var sfPayment = bShop.payment.create({
