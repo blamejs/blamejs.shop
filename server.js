@@ -86,12 +86,25 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           });
         }
         var config = bShop.config.create({});
+        // R2 upload bridge — the admin /admin/media/upload route uses
+        // this to push fetched image bytes through the Worker into the
+        // bound R2 bucket. Wired only when the operator has set the
+        // bridge credentials (same auth as the D1 bridge).
+        var r2_bridge = null;
+        if (process.env.D1_BRIDGE_URL && process.env.D1_BRIDGE_SECRET) {
+          r2_bridge = bShop.r2Bridge.create({
+            bridgeUrl:    process.env.D1_BRIDGE_URL,
+            bridgeSecret: process.env.D1_BRIDGE_SECRET,
+            bridgePath:   process.env.R2_BRIDGE_PATH || "/_/r2/put",
+          });
+        }
         bShop.admin.mount(r, {
-          token:   process.env.ADMIN_API_KEY,
-          catalog: catalog,
-          order:   order,
-          payment: payment,
-          config:  config,
+          token:     process.env.ADMIN_API_KEY,
+          catalog:   catalog,
+          order:     order,
+          payment:   payment,
+          config:    config,
+          r2_bridge: r2_bridge,
         });
       }
 
