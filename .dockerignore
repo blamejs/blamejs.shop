@@ -1,0 +1,44 @@
+# Source-control + editor + OS noise
+.git
+.github
+.gitattributes
+.gitignore
+.gitleaks.toml
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test output + scratch
+.test-output
+.scratch
+.extract-staging
+
+# Local-only state + maintainer secrets
+.env
+.env.*
+!.env.example
+keys/*-priv.*
+keys/release-pqc-priv.json
+
+# Visual reference material — not shipped in the image
+.template
+
+# Local node_modules (we ship zero npm runtime deps; nothing should be here)
+node_modules
+npm-debug.log*
+
+# Container infra — built by wrangler, not consumed in the image
+wrangler.toml
+worker
+Dockerfile
+.dockerignore
+
+# Note: release-notes/, CHANGELOG.md, docs/, CONTRIBUTING.md,
+# ARCHITECTURE.md are intentionally NOT excluded — the in-image
+# smoke test reads them to run the consolidator + changelog-rebuild
+# gates that protect the release pipeline. The runtime stage COPYs
+# only the files it ships (lib/, server.js, package.json,
+# LICENSE/README/SECURITY), so build-context size doesn't reach the
+# runtime image either way.

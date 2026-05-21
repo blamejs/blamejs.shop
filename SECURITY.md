@@ -112,4 +112,28 @@ node -e "
 
 ## Application checklist
 
-*(populate as primitives land — same convention as blamejs's `SECURITY.md`)*
+- **D1 bridge secret.** When deploying on Cloudflare, the container
+  reaches D1 through a Worker service binding. The bridge is gated by
+  a shared-secret header (`X-D1-Bridge-Secret`) so the route only
+  accepts SQL from the bound container even if the binding is
+  accidentally exposed. Generate ≥ 32 bytes of OS randomness and set
+  the value identically on the Worker (`wrangler secret put
+  D1_BRIDGE_SECRET`) and the container env. Rotate quarterly or after
+  any Worker-credential compromise.
+- **Stripe webhook signature.** Inbound `POST` to
+  `/api/webhooks/stripe` is signature-verified at the Worker edge
+  (HMAC-SHA256 over `<timestamp>.<body>`, 5-minute tolerance window)
+  before forwarding to the container. The container also re-verifies
+  defense-in-depth once the payment primitive lands. An unsigned or
+  out-of-window delivery never touches origin resources.
+- **Worker → Container trust boundary.** The Worker treats the
+  container as untrusted-for-D1: it never proxies arbitrary headers
+  into D1, only the explicit `sql` + `params` from the bridge body.
+  The container treats the Worker as untrusted-for-customer-data: it
+  re-validates every input from forwarded requests against the
+  framework's `b.guard*` primitives.
+- **Vault passphrase at boot.** `VAULT_PASSPHRASE` is read from
+  `wrangler secret`, never logged, and used once to unseal the
+  framework's at-rest key material. Operators MUST rotate the
+  passphrase via `b.vault.rotate` after any container image rebuild
+  that changed a vendored crypto dependency.

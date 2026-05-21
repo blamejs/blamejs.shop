@@ -7,6 +7,7 @@
 // codebase-patterns:allow-file fs-existssync-then-read-toctou — catalog references the literal `fs.existsSync(` shape it detects
 // codebase-patterns:allow-file regex-from-argv — catalog references the literal `new RegExp(... process.argv` shape it detects
 // codebase-patterns:allow-file internal-rulebook-vocabulary-in-source — runtime regex construction inevitably includes the patterns being detected
+// codebase-patterns:allow-file non-shop-require — catalog file describes the require shape it detects
 
 // Re-exec under a 6 GiB old-space ceiling when the parent process did
 // not already raise the heap cap. Future detectors that cross-product
@@ -238,6 +239,22 @@ var KNOWN_ANTIPATTERNS = [
     scanScope:   "lib",
     description: "`new RegExp(<argv-derived>)` — operator-controlled input compiled into a regex source is a CodeQL regex-injection sink. Validate the input against a strict format gate before construction, OR use string `indexOf`/`startsWith` if you only need prefix matching",
     regex:       /new\s+RegExp\s*\([^)]*process\.argv/,
+    allowlist:   [],
+  },
+  {
+    // Reaching for node:crypto in lib/ — first confirm whether the
+    // composed blamejs primitive already covers the use case. Most
+    // hash / hmac / random API calls in shop code should compose
+    // with b.crypto.* (sha3Hash, namespaceHash, hmacSha3,
+    // generateBytes, generateToken, randomInt, timingSafeEqual) or
+    // b.uuid.* (v4 / v7) rather than the raw node:crypto API.
+    // Allow with `// allow:node-crypto-instead-of-b-crypto — <reason>`
+    // when there's an algorithm or shape blamejs doesn't expose
+    // (rare — most crypto needs are covered).
+    id:          "non-shop-require",
+    scanScope:   "lib",
+    description: "`require()` in lib/ whose target is anything other than a relative shop module (`./…` or `../…`). Compose with the b.* primitive instead: b.crypto replaces node:crypto, b.uuid replaces node:crypto.randomUUID, b.safeUrl replaces node:url, b.atomicFile replaces node:fs writes, b.objectStore replaces node:fs reads against remote storage. Bare package names also violate the zero-npm-runtime-deps rule outright. Allow with a per-line `// allow:non-shop-require — <reason>` marker when the dependency is genuinely unavoidable.",
+    regex:       /\brequire\s*\(\s*['"](?!\.)/,
     allowlist:   [],
   },
   {

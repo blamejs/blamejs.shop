@@ -1,0 +1,80 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.2",
+  "date": "2026-05-20",
+  "headline": "Cloudflare deploy + D1 backend + first commerce primitives",
+  "summary": "First feature patch: complete Cloudflare deploy topology (Container + Worker + D1 + R2 + KV + Durable Objects), a `b.externalDb` adapter that targets D1 over the Worker service binding, and the first three commerce primitives — catalog (products, variants, prices, inventory, media), cart (anonymous + authenticated, price-snapshotted lines, merge on login), pricing (pure-function money math). All composed on blamejs primitives — UUIDs from `b.uuid.v7`, identifier safety from `b.guardUuid` and `b.guardMime`, cursor HMAC tagging from `b.pagination`, identifier quoting from `b.safeSql`, error responses via `b.problemDetails`, key derivation via `b.crypto.namespaceHash`.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Cloudflare deploy topology",
+          "body": "`Dockerfile` (multi-stage Node 24-alpine build, non-root runtime, tini PID 1, in-image smoke gate), `.dockerignore`, and `wrangler.toml` wiring the Worker, the Container, a D1 database binding, an R2 assets bucket, a KV sessions namespace, and the Durable Object classes. Operators provision the resources with `wrangler d1 create` / `wrangler r2 bucket create` / `wrangler kv namespace create`, paste the returned ids into `wrangler.toml`, set five `BLAMEJS_*_PASSPHRASE` secrets via `wrangler secret put`, and run `wrangler deploy`."
+        },
+        {
+          "title": "Edge router Worker",
+          "body": "`worker/index.js` — serves `/_/health` inline, passes `/assets/*` through to R2 with fingerprint-aware cache headers, verifies Stripe webhook signatures (`stripe-signature` HMAC-SHA256 over `<timestamp>.<body>` with a 5-minute tolerance window) before forwarding to the container, exposes the D1 query bridge under `/_/db/query` (gated by a shared-secret header), and forwards everything else to the container via the `Container` base class from `@cloudflare/containers` (handles lifecycle, readiness wait, port routing, scheme rewrite)."
+        },
+        {
+          "title": "InventoryLock Durable Object",
+          "body": "Per-SKU serialization point for stock decrement and release operations. Each SKU resolves to a single Durable Object instance so concurrent `decrement-if-available` calls from multiple container replicas queue safely; authoritative stock counts live in D1. Exposed as the `INVENTORY` binding."
+        },
+        {
+          "title": "`externaldbD1` — Cloudflare D1 adapter for `b.externalDb`",
+          "body": "`lib/externaldb-d1.js` implements the `{ connect, query, close, dialect }` shape `b.externalDb.init` consumes, with two operating modes: service-binding (recommended — container reaches D1 through a sibling Worker, no D1 API token in the container) and rest-api (direct calls for development). Wire-protocol contract: SQLite parameter placeholders (`?1, ?2, ...`), `{ rows, rowCount, lastRowId }` result shape normalized across modes, AbortController-backed timeouts, jittered exponential retry on 5xx / 429 / transient network errors via `b.crypto.randomInt`."
+        },
+        {
+          "title": "`catalog` — products, variants, prices, inventory, media",
+          "body": "`lib/catalog.js` ships five sub-modules composed on `b.externalDb` against the `0001_catalog.sql` schema. Products with slug + status (draft/active/archived), variants with options JSON + position + weight + shipping flag, versioned prices (set closes prior, multi-currency independent), inventory with stock-on-hand + held counts, media attached at product or variant scope with R2 keys and content-type validation. v7 UUID primary keys for B-tree locality. `b.guardUuid` for id validation (RFC 9562 threat catalog), `b.guardMime` for content-type validation, `b.safeSql.assertOneOf` + `b.safeSql.quoteIdentifier` for update-column allowlist, `b.pagination.encodeCursor` / `decodeCursor` for HMAC-tagged tuple cursors on `products.list`."
+        },
+        {
+          "title": "`cart` — anonymous + authenticated carts",
+          "body": "`lib/cart.js` ships against the `0002_cart.sql` schema. Carts are keyed by `session_id` (sealed-cookie origin), survive container restarts (D1, not session memory), enforce one active cart per session via a partial unique index. `addLine` snapshots `unit_amount_minor` + `unit_currency` at add time from `catalog.prices.current()` (or an explicit override), de-duplicates by `(cart_id, variant_id)` by bumping qty. `merge(fromCartId, toCartId)` adopts an anonymous cart into a customer cart on login — line collisions sum qty, the source cart marks abandoned. `setStatus(cartId, 'converted')` makes a cart immutable post-checkout."
+        },
+        {
+          "title": "`pricing` — pure-function money math",
+          "body": "`lib/pricing.js` ships `lineTotal(line)`, `subtotal(lines)`, `totals(cart, lines, ctx)`, and `format(amount_minor, currency, opts?)`. Every primitive operates in integer minor units (no floats), refuses to add across currencies (multi-currency carts throw), refuses negative discount/tax/shipping, and refuses discount > subtotal. `format()` composes `Intl.NumberFormat` for locale-correct rendering — zero-decimal currencies like JPY are handled automatically via the ISO 4217 minor-digit count."
+        },
+        {
+          "title": "Read-only public catalog API",
+          "body": "`GET /api/catalog/products?status=&limit=&cursor=` returns a paginated product list (cursor is HMAC-tagged via `b.pagination`). `GET /api/catalog/products/:slug` returns one product with its variants + media. Errors surface as RFC 9457 problem documents via `b.problemDetails.respond` (TypeError → 400, missing slug → 404 with a stable `type` URN). Admin writes land later behind `lib/admin.js` (passkey + step-up); until then writes go through the wrangler CLI or direct D1 access."
+        },
+        {
+          "title": "`docs/deploy-cloudflare.md`",
+          "body": "Operator-facing deploy recipe: one-time `wrangler` resource setup, secret management (`BLAMEJS_*_PASSPHRASE`, `D1_BRIDGE_SECRET`, `STRIPE_WEBHOOK_SECRET`), container env reference, `wrangler deploy`, verification curl commands, local development (`wrangler dev --remote` + `docker run` for offline smoke), and rollback flow."
+        }
+      ]
+    },
+    {
+      "heading": "Detectors",
+      "items": [
+        {
+          "title": "Layer 0 — `non-shop-require`",
+          "body": "`test/layer-0-primitives/codebase-patterns.test.js` adds a detector that refuses any `require()` in `lib/` whose target isn't a relative shop module (`./…` or `../…`). Forces operators to either compose with the blamejs equivalent (`b.crypto.sha3Hash` replaces `node:crypto.createHash`, `b.uuid.v7` replaces `node:crypto.randomUUID`, `b.safeUrl` replaces `node:url`, `b.atomicFile` replaces `node:fs` writes, etc.) or document the unavoidable dependency with a per-line `// allow:non-shop-require — <reason>` marker. Bare package names also surface here, reinforcing the zero-npm-runtime-deps rule."
+        },
+        {
+          "title": "Layer 1 — `externaldb-d1` adapter contract",
+          "body": "`test/layer-1-state/externaldb-d1.test.js` covers factory validation, service-binding wire shape, rest-api wire shape, worker-side error envelope mapping, HTTP 5xx retry, HTTP 4xx terminal, transient network error retry, and AbortController-backed timeout surfacing as a `D1_TIMEOUT` typed error."
+        },
+        {
+          "title": "Layer 1 — `catalog`",
+          "body": "`test/layer-1-state/catalog.test.js` runs every catalog op (products / variants / prices / inventory / media — create, read, list, update, archive/restore, cascade delete) against an in-memory `node:sqlite` database loaded from the live `0001_catalog.sql` so every CHECK / UNIQUE / FOREIGN KEY in the shipped schema is exercised end-to-end."
+        },
+        {
+          "title": "Layer 1 — `cart`",
+          "body": "`test/layer-1-state/cart.test.js` exercises cart lifecycle (create, add/update/remove lines, listLines), price-snapshot fallback, partial-unique active-cart constraint, merge with collision/non-collision lines, customer attachment, post-conversion immutability, and validation error shapes."
+        },
+        {
+          "title": "Layer 1 — `pricing`",
+          "body": "`test/layer-1-state/pricing.test.js` exercises `lineTotal`, `subtotal` (multi-currency refusal, empty-cart shape), `totals` (discount/tax/shipping arithmetic, discount-exceeds-subtotal refusal, cart-vs-lines currency mismatch refusal), and `format` against USD, EUR, and JPY (zero-decimal currency)."
+        }
+      ]
+    }
+  ],
+  "references": [
+    { "label": "Cloudflare Containers", "url": "https://developers.cloudflare.com/containers/" },
+    { "label": "Cloudflare D1",         "url": "https://developers.cloudflare.com/d1/" },
+    { "label": "blamejs externalDb",    "url": "https://github.com/blamejs/blamejs/blob/main/lib/external-db.js" }
+  ]
+}

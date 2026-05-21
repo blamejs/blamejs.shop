@@ -17,7 +17,27 @@ node test/smoke.js
 
 ## What ships
 
-*(populate as primitives land — same convention as blamejs's `README.md`)*
+- **Cloudflare deploy topology** — `Dockerfile` (multi-stage Node LTS,
+  non-root, tini PID 1, vendor refresh + smoke run as build stages),
+  `wrangler.toml` (Container + Worker + D1 + R2 + KV + Durable
+  Objects), `worker/index.js` (edge router: health, asset
+  pass-through, Stripe webhook signature pre-verification, D1
+  service-binding bridge, container forward).
+- **`b.externalDb` adapter for Cloudflare D1** — `lib/externaldb-d1.js`
+  ships the `{ connect, query, close, dialect }` shape `b.externalDb`
+  consumes. Service-binding mode (container → Worker → D1, no D1 API
+  token in the container) and REST-API mode (direct
+  `api.cloudflare.com/.../d1/database/<id>/query`). Normalized
+  `{ rows, rowCount, lastRowId }` result envelope, jittered retry on
+  transient errors, AbortController-backed query timeouts.
+- **InventoryLock Durable Object** — per-SKU serialization point for
+  stock decrement / release, so concurrent checkouts across
+  container replicas can't oversell.
+- **`docs/deploy-cloudflare.md`** — operator deploy recipe end-to-end.
+
+Commerce primitives (catalog, cart, checkout, payment, order,
+inventory, tax, shipping, refund, admin, storefront theming) land in
+subsequent releases.
 
 ## Vendoring blamejs
 

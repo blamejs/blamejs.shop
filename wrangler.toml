@@ -1,0 +1,92 @@
+# Cloudflare deploy configuration for blamejs.shop.
+#
+# Topology:
+#   - One Worker (`worker/index.js`) — edge router. Handles static
+#     asset pass-through to R2, health-check, the D1 bridge endpoint
+#     consumed by the container, and the inbound Stripe webhook edge
+#     pre-verification. Everything else forwards to the container.
+#   - One Container (Dockerfile in repo root) — runs the Node
+#     application server. Talks to D1 exclusively through the Worker
+#     service binding (the container never holds a D1 API token).
+#   - One D1 database — application data. Bound to the Worker only.
+#   - One R2 bucket — product media + theme assets. Bound to the
+#     Worker only; the container issues signed-URL uploads via
+#     `b.objectStore`.
+#   - One KV namespace — sessions store.
+#   - Two Durable Object classes — InventoryLock (per-SKU
+#     serialization) and ShopContainer (wraps the running container
+#     instance).
+#
+# Secrets (Stripe webhook secret, D1-bridge shared secret, etc.) are
+# set via `wrangler secret put <NAME>` — never committed to this file.
+
+name = "blamejs-shop"
+main = "worker/index.js"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Tunables exposed to the Worker. Secrets live in `wrangler secret`,
+# not here. `D1_BRIDGE_PATH` is the internal Worker route the
+# container hits for SQL; `STRIPE_WEBHOOK_PATH` is the inbound route
+# the Worker pre-verifies before forwarding to the container.
+# `D1_BRIDGE_URL` is the Worker's own public origin — passed through
+# to the container so its externalDb D1 adapter knows where to call
+# back. Swap to the custom domain when the zone is wired to the
+# Worker.
+D1_BRIDGE_URL       = "https://blamejs-shop.coocoo.workers.dev"
+D1_BRIDGE_PATH      = "/_/db/query"
+STRIPE_WEBHOOK_PATH = "/api/webhooks/stripe"
+ASSET_PREFIX        = "/assets/"
+HEALTH_PATH         = "/_/health"
+
+# --- Container ------------------------------------------------------
+# Cloudflare Containers boots from the Dockerfile in the repo root.
+# `instance_type` + `max_instances` are operator-tuned; sane defaults
+# for a small shop are below. The Worker reaches the container via
+# the SHOP durable-object binding (also declared below).
+[[containers]]
+class_name     = "ShopContainer"
+image          = "./Dockerfile"
+instance_type  = "standard-1"
+max_instances  = 4
+name           = "blamejs-shop-container"
+
+# --- Durable Objects ------------------------------------------------
+[[durable_objects.bindings]]
+name       = "INVENTORY"
+class_name = "InventoryLock"
+
+[[durable_objects.bindings]]
+name       = "SHOP"
+class_name = "ShopContainer"
+
+[[migrations]]
+tag                = "v1"
+new_sqlite_classes = ["InventoryLock", "ShopContainer"]
+
+# --- D1 -------------------------------------------------------------
+# Single primary database, region ENAM. Apply migrations with
+# `wrangler d1 migrations apply blamejs-shop`.
+[[d1_databases]]
+binding         = "DB"
+database_name   = "blamejs-shop"
+database_id     = "09db7e87-83b8-48cf-84aa-ffe200e877b9"
+migrations_dir  = "./migrations-d1"
+
+# --- R2 -------------------------------------------------------------
+[[r2_buckets]]
+binding     = "ASSETS"
+bucket_name = "blamejs-shop-assets"
+
+# --- KV -------------------------------------------------------------
+# Sessions store. The container's `b.session` is configured with an
+# HTTP-shaped store adapter pointed at the Worker's session bridge
+# (added when the session bridge lands).
+[[kv_namespaces]]
+binding = "SESSIONS"
+id      = "4ab407a276104993bf07f04938ac2630"
+
+# --- Observability --------------------------------------------------
+[observability.logs]
+enabled = true

@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "frameworkVersion": "0.11.6",
-  "createdAt": "2026-05-19T23:15:10.189Z",
+  "frameworkVersion": "0.11.24",
+  "createdAt": "2026-05-21T02:28:46.797Z",
   "exports": {
     "a2a": {
       "type": "object",
@@ -5512,6 +5512,19 @@
           "arity": 1
         },
         "parse": {
+          "type": "function",
+          "arity": 1
+        }
+      }
+    },
+    "cert": {
+      "type": "object",
+      "members": {
+        "CertError": {
+          "type": "function",
+          "arity": 4
+        },
+        "create": {
           "type": "function",
           "arity": 1
         }
@@ -34596,6 +34609,10 @@
                   "type": "primitive",
                   "valueType": "string"
                 },
+                "expunge": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
                 "fetch": {
                   "type": "primitive",
                   "valueType": "string"
@@ -36385,6 +36402,15 @@
               "arity": 1
             },
             "create": {
+              "type": "function",
+              "arity": 1
+            }
+          }
+        },
+        "send": {
+          "type": "object",
+          "members": {
+            "deliver": {
               "type": "function",
               "arity": 1
             }
