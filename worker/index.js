@@ -22,7 +22,15 @@ import { Container, getContainer } from "@cloudflare/containers";
 //                                   compatibility_flag or
 //                                   misconfiguration shouldn't leak
 //                                   raw SQL execution).
-//   5. everything else            — forward to the container via the
+//   5. <R2_BRIDGE_PATH>           — media upload bridge consumed by
+//                                   the container's r2Bridge adapter.
+//                                   Same shared-secret header as the
+//                                   D1 bridge; the body is binary, the
+//                                   object key + content-type ride in
+//                                   request headers. The Worker writes
+//                                   to the R2 binding so the container
+//                                   never holds an R2 API token.
+//   6. everything else            — forward to the container via the
 //                                   SHOP service binding.
 //
 // No commerce / business logic lives here. The Worker is a thin
@@ -176,6 +184,7 @@ export class ShopContainer extends Container {
       D1_BRIDGE_URL:                     env.D1_BRIDGE_URL             || "",
       D1_BRIDGE_SECRET:                  env.D1_BRIDGE_SECRET          || "",
       D1_BRIDGE_PATH:                    env.D1_BRIDGE_PATH            || "/_/db/query",
+      R2_BRIDGE_PATH:                    env.R2_BRIDGE_PATH            || "/_/r2/put",
       STRIPE_API_KEY:                    env.STRIPE_API_KEY            || "",
       STRIPE_WEBHOOK_SECRET:             env.STRIPE_WEBHOOK_SECRET     || "",
       STRIPE_PUBLISHABLE_KEY:            env.STRIPE_PUBLISHABLE_KEY    || "",
@@ -267,7 +276,43 @@ export default {
       }
     }
 
-    // 5. Everything else — forward to the container.
+    // 5. R2 upload bridge — the container's r2Bridge adapter calls
+    //    this to stream media bytes to the bound R2 bucket. Same
+    //    shared-secret gate as the D1 bridge; the key + content-type
+    //    ride in request headers so the body stays a clean binary
+    //    stream. The key shape is re-validated here so a compromised
+    //    secret can't write arbitrary paths into the bucket.
+    var r2Path = env.R2_BRIDGE_PATH || "/_/r2/put";
+    if (pathname === r2Path && request.method === "POST") {
+      var r2Secret = request.headers.get("x-d1-bridge-secret");
+      if (!env.D1_BRIDGE_SECRET || !_timingSafeEqual(r2Secret || "", env.D1_BRIDGE_SECRET)) {
+        return _json({ ok: false, error: "UNAUTHORIZED" }, 401);
+      }
+      if (!env.ASSETS) {
+        return _json({ ok: false, error: "R2_NOT_BOUND" }, 503);
+      }
+      var key = request.headers.get("x-r2-key");
+      var contentType = request.headers.get("x-r2-content-type");
+      if (!key || key.length > 1024 || key.charAt(0) === "/" || key.indexOf("..") !== -1) {
+        return _json({ ok: false, error: "INVALID_KEY" }, 400);
+      }
+      if (!contentType || contentType.length > 255 ||
+          !/^[\w.+\-]+\/[\w.+\-]+(?:\s*;\s*[\w.+\-]+=[\w.+\-"]+)*$/.test(contentType)) {
+        return _json({ ok: false, error: "INVALID_CONTENT_TYPE" }, 400);
+      }
+      try {
+        var body = await request.arrayBuffer();
+        if (!body || body.byteLength === 0) {
+          return _json({ ok: false, error: "EMPTY_BODY" }, 400);
+        }
+        await env.ASSETS.put(key, body, { httpMetadata: { contentType: contentType } });
+        return _json({ ok: true, key: key, size: body.byteLength });
+      } catch (e) {
+        return _json({ ok: false, error: "PUT_FAILED", message: (e && e.message) || String(e) }, 500);
+      }
+    }
+
+    // 6. Everything else — forward to the container.
     return _forwardToContainer(request, env);
   },
 };
