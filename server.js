@@ -61,8 +61,15 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // Body parser — populates req.body from form-encoded + JSON
       // request bodies. Mounted before any POST handler so the
       // storefront cart-write routes can read form fields without
-      // re-parsing.
-      r.use(b.middleware.bodyParser());
+      // re-parsing. The text sub-parser opts in `text/csv` so the
+      // admin bulk-import route reads the raw CSV bytes as a string
+      // — bumped limit covers the 1 MiB import cap with headroom.
+      r.use(b.middleware.bodyParser({
+        text: {
+          limit:        b.constants.BYTES.mib(2),
+          contentTypes: ["text/plain", "text/csv"],
+        },
+      }));
 
       // Liveness + readiness — the Worker short-circuits /_/health
       // at the edge, but the container also responds so the
@@ -98,13 +105,15 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
             bridgePath:   process.env.R2_BRIDGE_PATH || "/_/r2/put",
           });
         }
+        var catalogImport = bShop.catalogImport.create({ catalog: catalog });
         bShop.admin.mount(r, {
-          token:     process.env.ADMIN_API_KEY,
-          catalog:   catalog,
-          order:     order,
-          payment:   payment,
-          config:    config,
-          r2_bridge: r2_bridge,
+          token:         process.env.ADMIN_API_KEY,
+          catalog:       catalog,
+          order:         order,
+          payment:       payment,
+          config:        config,
+          r2_bridge:     r2_bridge,
+          catalogImport: catalogImport,
         });
       }
 

@@ -40,7 +40,8 @@ Every primitive is composed on the vendored blamejs surface — no npm runtime d
 | **`lib/checkout.js`** | Orchestrator. `quote()` returns priced quote; `confirm()` creates PaymentIntent + persists order in pending; `handleStripeEvent()` verifies webhook + fires the FSM transition (idempotent on re-delivery). |
 | **`lib/email.js`** | Transactional templates — order receipt, ship notification, refund confirmation. Strict `{{var}}` renderer with HTML escape + refusal of unknown / unused placeholders. Composed on `b.mail` (DKIM/SPF/DMARC/BIMI upstream). |
 | **`lib/storefront.js`** | Server-rendered HTML — home (product grid), product detail, cart (editable lines), checkout shipping form, Stripe Elements pay page, order confirmation. Default theme uses the `blamejs.shop` brand identity (R2-served logo, `#191919` ink + `#fa4f09` accent palette, Montserrat + Inter typography). |
-| **`lib/admin.js`** | Bearer-token-gated CRUD over catalog + orders + refunds. Token compared via `b.crypto.timingSafeEqual`. Errors as RFC 9457 problem documents via `b.problemDetails`. Audit emission on every mutation. |
+| **`lib/admin.js`** | Bearer-token-gated CRUD over catalog + orders + refunds + bulk CSV import. Token compared via `b.crypto.timingSafeEqual`. Errors as RFC 9457 problem documents via `b.problemDetails`. Audit emission on every mutation. |
+| **`lib/catalog-import.js`** | Bulk CSV import — `POST /admin/catalog/import` accepts a `text/csv` body, parses via `b.csv`, content-safety-filters every cell through `b.guardCsv` (formula-injection / bidi / control / dangerous-function denylist), validates exact header order, de-dupes rows by `product_slug`, returns per-row errors without aborting. Default 1 MiB / 10000 rows caps. |
 
 ### Migrations applied to D1
 
@@ -50,7 +51,7 @@ Every primitive is composed on the vendored blamejs surface — no npm runtime d
 
 ### Tests
 
-12 layer-1 test suites (~120 assertions) all running against in-memory `node:sqlite` loaded from the live migrations. Schema CHECK / UNIQUE / FK constraints exercised end-to-end.
+14 layer-1 test suites all running against in-memory `node:sqlite` loaded from the live migrations. Schema CHECK / UNIQUE / FK constraints exercised end-to-end.
 
 ## Operator quick-start
 
