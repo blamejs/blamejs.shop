@@ -36,7 +36,7 @@ async function _verifierHappyPath() {
   var sig    = _sign(secret, ts, body);
 
   var s = payment.create({ apiKey: "sk_test_x", webhookSecret: secret });
-  var r = s.verifyWebhook({ "stripe-signature": "t=" + ts + ",v1=" + sig }, body);
+  var r = await s.verifyWebhook({ "stripe-signature": "t=" + ts + ",v1=" + sig }, body);
   check("verifier ok on valid sig",      r.ok === true);
   check("verifier parses event JSON",     r.event.type === "payment_intent.succeeded");
   check("verifier returns full event",    r.event.id === "evt_1");
@@ -49,7 +49,7 @@ async function _verifierHeaderCaseInsensitive() {
   var sig    = _sign(secret, ts, body);
   var s      = payment.create({ apiKey: "sk_test_x", webhookSecret: secret });
 
-  var r = s.verifyWebhook({ "Stripe-Signature": "t=" + ts + ",v1=" + sig }, body);
+  var r = await s.verifyWebhook({ "Stripe-Signature": "t=" + ts + ",v1=" + sig }, body);
   check("verifier handles Title-Case header", r.ok === true);
 }
 
@@ -64,12 +64,12 @@ async function _verifierMultipleSignatures() {
   var sigNew = _sign(newSecret, ts, body);
 
   var sNew = payment.create({ apiKey: "sk_test_x", webhookSecret: newSecret });
-  var rOld = sNew.verifyWebhook({ "stripe-signature": "t=" + ts + ",v1=" + sigOld + ",v1=" + sigNew }, body);
+  var rOld = await sNew.verifyWebhook({ "stripe-signature": "t=" + ts + ",v1=" + sigOld + ",v1=" + sigNew }, body);
   check("verifier matches one of multiple v1= sigs", rOld.ok === true);
 
   // Rotated to the old secret only — accept anyway since either sig matches.
   var sOld = payment.create({ apiKey: "sk_test_x", webhookSecret: oldSecret });
-  var rNew = sOld.verifyWebhook({ "stripe-signature": "t=" + ts + ",v1=" + sigOld + ",v1=" + sigNew }, body);
+  var rNew = await sOld.verifyWebhook({ "stripe-signature": "t=" + ts + ",v1=" + sigOld + ",v1=" + sigNew }, body);
   check("verifier matches sig under old secret", rNew.ok === true);
 }
 
@@ -82,31 +82,31 @@ async function _verifierRejects() {
   var s = payment.create({ apiKey: "sk_test_x", webhookSecret: secret });
 
   // Bad signature
-  var r1 = s.verifyWebhook({ "stripe-signature": "t=" + ts + ",v1=" + "00".repeat(32) }, body);
+  var r1 = await s.verifyWebhook({ "stripe-signature": "t=" + ts + ",v1=" + "00".repeat(32) }, body);
   check("verifier rejects wrong sig", r1.ok === false && r1.reason === "signature-mismatch");
 
   // No header
-  var r2 = s.verifyWebhook({}, body);
+  var r2 = await s.verifyWebhook({}, body);
   check("verifier rejects no header", r2.ok === false && r2.reason === "no-signature");
 
   // Outside tolerance window
   var oldTs = ts - 600;   // 10 minutes ago (default tolerance = 5 min)
   var oldSig = _sign(secret, oldTs, body);
-  var r3 = s.verifyWebhook({ "stripe-signature": "t=" + oldTs + ",v1=" + oldSig }, body);
+  var r3 = await s.verifyWebhook({ "stripe-signature": "t=" + oldTs + ",v1=" + oldSig }, body);
   check("verifier rejects timestamp outside window", r3.ok === false && r3.reason === "timestamp-outside-tolerance");
 
   // Body mutated → signature mismatch
-  var r4 = s.verifyWebhook({ "stripe-signature": "t=" + ts + ",v1=" + goodSig }, body + " ");
+  var r4 = await s.verifyWebhook({ "stripe-signature": "t=" + ts + ",v1=" + goodSig }, body + " ");
   check("verifier rejects mutated body", r4.ok === false && r4.reason === "signature-mismatch");
 
   // No timestamp segment
-  var r5 = s.verifyWebhook({ "stripe-signature": "v1=" + goodSig }, body);
+  var r5 = await s.verifyWebhook({ "stripe-signature": "v1=" + goodSig }, body);
   check("verifier rejects missing t=", r5.ok === false && r5.reason === "no-signature");
 
   // Malformed body — valid sig over the malformed body BUT JSON.parse throws
   var malformed = "{not json";
   var malformedSig = _sign(secret, ts, malformed);
-  var r6 = s.verifyWebhook({ "stripe-signature": "t=" + ts + ",v1=" + malformedSig }, malformed);
+  var r6 = await s.verifyWebhook({ "stripe-signature": "t=" + ts + ",v1=" + malformedSig }, malformed);
   check("verifier passes sig check but reports bad-json", r6.ok === false && r6.reason === "bad-json");
 }
 
@@ -115,7 +115,7 @@ async function _verifierBodyTypeGuard() {
   // Caller must pass the RAW body string. Passing a parsed object
   // would be a programmer error (the signature is over the raw
   // bytes, not the round-tripped JSON).
-  assert.throws(function () { s.verifyWebhook({}, { id: 1 }); }, /rawBody must be the request body string/);
+  await assert.rejects(s.verifyWebhook({}, { id: 1 }), /rawBody must be the request body string/);
 }
 
 async function _formEncoder() {
