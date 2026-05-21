@@ -1,0 +1,39 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.4",
+  "date": "2026-05-20",
+  "headline": "Payment primitive — Stripe adapter",
+  "summary": "Stripe inbound webhook signature verification and outbound API calls (PaymentIntent create / retrieve / confirm / cancel + Refund) composed on `b.httpClient` and `b.crypto.timingSafeEqual`. No `stripe` npm dependency — every byte is either a Node built-in or a vendored blamejs primitive. The pluggable adapter contract lets future Adyen / Mollie / Paddle adapters land without changing caller code.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`payment.stripe` — Stripe adapter",
+          "body": "`lib/payment.js` exposes `payment.create({ apiKey, webhookSecret })` returning `{ name, verifyWebhook, createPaymentIntent, retrievePaymentIntent, confirmPaymentIntent, cancelPaymentIntent, refund }`. Every outbound call accepts an explicit `idempotencyKey` so the caller (checkout / refund worker) controls retry safety. `verifyWebhook(headers, rawBody)` parses the `stripe-signature` header (multiple `v1=` entries supported for secret rotation), enforces a ±5-minute timestamp tolerance, runs constant-time signature compare via `b.crypto.timingSafeEqual`, and returns `{ ok, event }` on success or `{ ok: false, reason }` on rejection (`no-signature`, `timestamp-outside-tolerance`, `signature-mismatch`, `bad-json`). The body MUST be the raw request string — passing a parsed object throws."
+        },
+        {
+          "title": "Outbound API via `b.httpClient`",
+          "body": "Stripe calls flow through `b.httpClient.request()` so the SSRF gate, retry policy, circuit breaker, ALPN HTTP/2 transport, and TLS 1.3 minimum all apply by default. Bodies are form-encoded with Stripe's bracket-notation for nested params (`metadata[order_id]=ord_1`, `automatic_payment_methods[enabled]=true`). The 15-second per-request timeout is operator-tunable via `payment.create({ timeoutMs })`."
+        },
+        {
+          "title": "Pluggable adapter contract",
+          "body": "`payment.create({ adapter: \"stripe\", ... })` is the v1 surface. Unknown adapter names throw at construction time so a typo (`paddle` / `mollie`) surfaces before any payment flow runs. Future adapters expose the same `{ verifyWebhook, createPaymentIntent, ... }` shape — callers (checkout / order) bind to the contract, not the provider."
+        }
+      ]
+    },
+    {
+      "heading": "Detectors",
+      "items": [
+        {
+          "title": "Layer 1 — `payment`",
+          "body": "`test/layer-1-state/payment.test.js` exercises the webhook verifier (valid signature, case-insensitive header, multiple v1= entries for secret rotation, signature mismatch, timestamp-outside-tolerance, mutated body, missing timestamp, malformed JSON), refuses pre-parsed-object bodies, exercises the form encoder for nested + array params, exercises factory validation (`apiKey` + `webhookSecret` required, unknown adapter rejected), and exercises `createPaymentIntent` / `refund` input validation. Outbound API integration tests run against real Stripe in a later patch."
+        }
+      ]
+    }
+  ],
+  "references": [
+    { "label": "Stripe Webhooks", "url": "https://docs.stripe.com/webhooks" },
+    { "label": "Stripe Payment Intents API", "url": "https://docs.stripe.com/api/payment_intents" }
+  ]
+}
