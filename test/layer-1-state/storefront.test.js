@@ -162,6 +162,90 @@ async function _validation() {
   assert.throws(function () { storefront.renderCart();             }, /opts required/);
 }
 
+async function _layoutTokens() {
+  // Every page renderer hands back the same shell — assert the design-system
+  // tokens, the reset hooks the page renderers depend on, and the new search
+  // form land in every rendered document.
+  var html = storefront.renderHome({ products: [], shop_name: "Acme" });
+
+  // Palette tokens.
+  check("layout declares --ink token",       html.indexOf("--ink:") !== -1);
+  check("layout declares --ink-2 token",      html.indexOf("--ink-2:") !== -1);
+  check("layout declares --mute token",       html.indexOf("--mute:") !== -1);
+  check("layout declares --hair token",       html.indexOf("--hair:") !== -1);
+  check("layout declares --paper token",      html.indexOf("--paper:") !== -1);
+  check("layout declares --bg token",         html.indexOf("--bg:") !== -1);
+  check("layout declares --accent token",     html.indexOf("--accent:") !== -1);
+  check("layout declares --accent-d token",   html.indexOf("--accent-d:") !== -1);
+
+  // Typography tokens.
+  check("layout declares --font-display",    html.indexOf("--font-display:") !== -1);
+  check("layout declares --font-body",       html.indexOf("--font-body:") !== -1);
+  check("layout declares --text-xs",          html.indexOf("--text-xs:") !== -1);
+  check("layout declares --text-sm",          html.indexOf("--text-sm:") !== -1);
+  check("layout declares --text-base",        html.indexOf("--text-base:") !== -1);
+  check("layout declares --text-lg",          html.indexOf("--text-lg:") !== -1);
+  check("layout declares --text-xl",          html.indexOf("--text-xl:") !== -1);
+  check("layout declares --text-2xl",         html.indexOf("--text-2xl:") !== -1);
+  check("layout declares --text-3xl",         html.indexOf("--text-3xl:") !== -1);
+
+  // Spacing scale.
+  check("layout declares --space-0",   html.indexOf("--space-0:") !== -1);
+  check("layout declares --space-1",   html.indexOf("--space-1:") !== -1);
+  check("layout declares --space-2",   html.indexOf("--space-2:") !== -1);
+  check("layout declares --space-3",   html.indexOf("--space-3:") !== -1);
+  check("layout declares --space-4",   html.indexOf("--space-4:") !== -1);
+  check("layout declares --space-5",   html.indexOf("--space-5:") !== -1);
+  check("layout declares --space-6",   html.indexOf("--space-6:") !== -1);
+  check("layout declares --space-7",   html.indexOf("--space-7:") !== -1);
+  check("layout declares --space-8",   html.indexOf("--space-8:") !== -1);
+
+  // Radius, shadow, motion.
+  check("layout declares --radius-sm",     html.indexOf("--radius-sm:") !== -1);
+  check("layout declares --radius-md",     html.indexOf("--radius-md:") !== -1);
+  check("layout declares --radius-lg",     html.indexOf("--radius-lg:") !== -1);
+  check("layout declares --shadow-sm",     html.indexOf("--shadow-sm:") !== -1);
+  check("layout declares --shadow-md",     html.indexOf("--shadow-md:") !== -1);
+  check("layout declares --ease-out",      html.indexOf("--ease-out:") !== -1);
+  check("layout declares --duration-fast", html.indexOf("--duration-fast:") !== -1);
+  check("layout declares --duration-mid",  html.indexOf("--duration-mid:") !== -1);
+
+  // Reset + a11y hooks the page renderers rely on.
+  check("layout sets box-sizing reset",       html.indexOf("box-sizing: border-box") !== -1);
+  check("layout uses :focus-visible outline",  html.indexOf(":focus-visible") !== -1);
+  check("layout respects reduced-motion",      html.indexOf("prefers-reduced-motion: no-preference") !== -1);
+  check("layout uses tabular-nums for prices", html.indexOf("tabular-nums") !== -1);
+  check("layout offers skip-link target",       html.indexOf("id=\"main\"") !== -1);
+
+  // Shared classes the other page-redesign agents will compose against.
+  check("layout defines .grid class",         html.indexOf(".grid") !== -1);
+  check("layout defines .card class",         html.indexOf(".card") !== -1);
+  check("layout defines .btn class",          html.indexOf(".btn") !== -1);
+  check("layout defines .btn-secondary class", html.indexOf(".btn-secondary") !== -1);
+  check("layout defines .summary-table class", html.indexOf(".summary-table") !== -1);
+  check("layout defines .empty class",        html.indexOf(".empty") !== -1);
+  check("layout defines .cart-pill class",    html.indexOf(".cart-pill") !== -1);
+  check("layout defines .hero class",         html.indexOf(".hero") !== -1);
+
+  // Header search form lands and POSTs to /search via GET.
+  check("header has site-search form",      html.indexOf("class=\"site-search\"") !== -1);
+  check("search form targets /search",      html.indexOf("action=\"/search\"") !== -1);
+  check("search form uses GET method",       html.indexOf("method=\"get\"") !== -1);
+  check("search form has q input",          html.indexOf("name=\"q\"") !== -1);
+  check("search form input is type=search", html.indexOf("type=\"search\"") !== -1);
+
+  // Footer ships brand + tagline + primitive list + copyright.
+  check("footer is rendered",                 html.indexOf("class=\"site-footer\"") !== -1);
+  check("footer lists 'Built on blamejs'",     html.indexOf("Built on blamejs") !== -1);
+  check("footer lists 'Server-rendered'",     html.indexOf("Server-rendered") !== -1);
+  check("footer lists 'PQC-first'",           html.indexOf("PQC-first") !== -1);
+  check("footer shows copyright year",        /&copy; \d{4}/.test(html));
+
+  // Fonts: both font families load + the display font binds h1-h3.
+  check("layout loads Montserrat",  html.indexOf("family=Montserrat") !== -1);
+  check("layout loads Inter",       html.indexOf("Inter:wght") !== -1);
+}
+
 async function run() {
   await _home();
   await _homeEmpty();
@@ -174,6 +258,7 @@ async function run() {
   await _orderPage();
   await _xssEscape();
   await _validation();
+  await _layoutTokens();
 }
 
 module.exports = { run: run };
