@@ -72,6 +72,27 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         res.json({ ok: true, container: true });
       });
 
+      // Admin API — bearer-token-gated CRUD over catalog + orders +
+      // refunds. Only mounts when ADMIN_API_KEY is present (operator
+      // opts in by setting the secret). Stripe-backed refund routes
+      // only mount when STRIPE_API_KEY is also present.
+      if (catalog && cart && process.env.ADMIN_API_KEY) {
+        var order   = bShop.order.create({});
+        var payment = null;
+        if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
+          payment = bShop.payment.create({
+            apiKey:        process.env.STRIPE_API_KEY,
+            webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+          });
+        }
+        bShop.admin.mount(r, {
+          token:   process.env.ADMIN_API_KEY,
+          catalog: catalog,
+          order:   order,
+          payment: payment,
+        });
+      }
+
       // Storefront — HTML pages for end customers. Mounts the
       // home / product / cart routes when the data layer is wired.
       // Falls back to a JSON identity ping when there's no D1
