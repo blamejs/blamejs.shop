@@ -1,0 +1,35 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.22",
+  "date": "2026-05-21",
+  "headline": "Analytics primitive + admin dashboard",
+  "summary": "Operator-facing read-only aggregates over the orders table: window summary (order counts + net revenue + per-status buckets), revenue-by-day, top SKUs by units sold, and recent orders. Surfaced as JSON under `/admin/analytics/*` and rendered as a single-page server-rendered HTML dashboard at `/admin/dashboard`. Revenue counts `cancelled` orders at zero and subtracts `refunded` orders so the headline number tracks what reached the bank.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`analytics` primitive",
+          "body": "`lib/analytics.js` ships `create({ query })` returning `{ summary, revenueByDay, topSKUs, recentOrders }`. Each method takes an `{ since, until }` window (epoch milliseconds, defaults to last 30 days, refused above 1 year span). `summary` returns `{ currency, total_orders, total_revenue_minor, by_status }` per currency — a single object for single-currency windows, an array when multiple currencies are in scope. `revenueByDay` groups by `date(updated_at/1000, 'unixepoch')` so the bins are calendar-aligned UTC days. `topSKUs` joins `order_lines` to `orders` for the window filter and excludes cancelled + refunded orders from the units count. `recentOrders` returns the most-recent N orders for the activity feed. Revenue policy: `cancelled` excluded entirely, `refunded` subtracts, every other status adds at face value."
+        },
+        {
+          "title": "Admin analytics routes",
+          "body": "`lib/admin.js` mounts `GET /admin/analytics/summary`, `GET /admin/analytics/revenue-by-day`, `GET /admin/analytics/top-skus`, `GET /admin/analytics/recent-orders` returning JSON, plus `GET /admin/dashboard` returning a server-rendered HTML page. Routes only register when `deps.analytics` is supplied — operators opt in by constructing the primitive and passing it into `admin.mount`. The dashboard is `noindex,nofollow` and bearer-token gated alongside the existing admin surface. Query-param validation refuses non-integer `since` / `until` / `limit` with a 400."
+        },
+        {
+          "title": "Server-rendered HTML dashboard",
+          "body": "`admin.renderDashboard` lays out an eight-card stat grid (orders + net revenue + the six FSM status buckets), an inline SVG sparkline of revenue-by-day, a top-SKUs table, and a recent-orders activity panel with status pills. Matches the storefront brand palette (`#191919` ink, `#fa4f09` accent, Montserrat headlines, Inter body). Multi-currency operators see a secondary `Other currencies in window` block with per-currency totals. Zero client-side JavaScript — every value is rendered server-side and HTML-escaped through a strict `{{var}}` substitution that refuses unknown / unused placeholders."
+        }
+      ]
+    },
+    {
+      "heading": "Detectors",
+      "items": [
+        {
+          "title": "Layer 1 — `analytics`",
+          "body": "`test/layer-1-state/analytics.test.js` seeds rows across pending / paid / fulfilling / refunded / cancelled statuses + multiple UTC days + multiple currencies, then asserts: `summary` returns the per-status bucket counts with refunded subtracting and cancelled excluded from revenue; the empty-window case returns a zero-filled USD shape; the multi-currency window returns an alphabetically-sorted array. `revenueByDay` groups by UTC calendar day, sorts day ASC, applies the refund-subtracts / cancelled-excluded policy. `topSKUs` aggregates units across multiple orders, sorts by units_sold DESC, excludes cancelled order lines, honors LIMIT. `recentOrders` orders by created_at DESC with the right row shape. Validation covers non-integer `since` / `until`, `since >= until`, windows > 1 year, and limits outside `[1, 100]`. Admin-route smoke covers the bearer gate, JSON route shapes, HTML dashboard shape (DOCTYPE + SVG + status pill + escaped shop name), and the bad-param 400 path."
+        }
+      ]
+    }
+  ]
+}
