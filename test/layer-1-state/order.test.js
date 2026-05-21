@@ -192,6 +192,79 @@ async function _setPaymentIntent() {
   check("setPaymentIntent refuses non-pending", blocked === null);
 }
 
+async function _listForCustomer() {
+  var q = _makeQuery();
+  var catalog = bShop.catalog.create({ query: q });
+  var cart    = bShop.cart.create({ query: q, catalog: catalog });
+  var order   = bShop.order.create({ query: q });
+  var seed = await _seed(catalog, cart);
+  var customerId = _validUUID();
+
+  // Three orders attached to the same customer — created sequentially
+  // so updated_at ordering is meaningful.
+  var inputs = [];
+  for (var i = 0; i < 3; i += 1) {
+    var sid = _validUUID();
+    var c   = await cart.create(sid, { currency: "USD" });
+    await cart.addLine(c.id, { variant_id: seed.variant.id, qty: 1 });
+    var oi = _orderInput(seed);
+    oi.cart_id     = c.id;
+    oi.session_id  = sid;
+    oi.customer_id = customerId;
+    var ord = await order.createFromCart(oi);
+    inputs.push(ord);
+    // Bump updated_at by transitioning so the FIRST inserted order
+    // ends up with the LATEST updated_at (and surfaces last in DESC).
+    // Reverse the relationship by transitioning earlier orders.
+  }
+  // Transition the first one (oldest) so its updated_at is bumped
+  // past the others — confirms ordering follows updated_at DESC, not
+  // created_at. Spin the event loop briefly so Date.now() advances
+  // past the previous insert batch's millisecond.
+  await helpers.waitUntil(function () { return Date.now() > inputs[2].updated_at; },
+    { timeoutMs: 100, label: "ms tick before transition" });
+  await order.transition(inputs[0].id, "mark_paid");
+
+  var page = await order.listForCustomer(customerId, { limit: 10 });
+  check("listForCustomer returns 3 rows",       page.rows.length === 3);
+  check("listForCustomer rows include lines",    Array.isArray(page.rows[0].lines) && page.rows[0].lines.length === 1);
+  check("listForCustomer hydrates ship_to",      page.rows[0].ship_to.country === "US");
+  check("listForCustomer next_cursor is null",   page.next_cursor === null);
+  // Top row should be the one most recently transitioned (inputs[0]).
+  check("listForCustomer orders by updated_at DESC",
+    page.rows[0].id === inputs[0].id);
+
+  // Pagination — limit=2 should produce a non-null cursor.
+  var pageA = await order.listForCustomer(customerId, { limit: 2 });
+  check("listForCustomer paginates",             pageA.rows.length === 2 && typeof pageA.next_cursor === "string");
+  var pageB = await order.listForCustomer(customerId, { limit: 2, cursor: pageA.next_cursor });
+  check("listForCustomer cursor pages forward",  pageB.rows.length === 1);
+  var seen = {};
+  pageA.rows.concat(pageB.rows).forEach(function (r) { seen[r.id] = true; });
+  check("listForCustomer covers all orders",     Object.keys(seen).length === 3);
+
+  // Other customers' orders are excluded.
+  var emptyPage = await order.listForCustomer(_validUUID(), { limit: 10 });
+  check("listForCustomer scopes by customer_id", emptyPage.rows.length === 0);
+
+  // Cursor tamper — supply a cursor signed by a different secret
+  var otherOrder = bShop.order.create({ query: q, cursorSecret: "different-secret-entirely" });
+  // First produce a valid cursor via the OTHER order's secret
+  // referencing the same customer (will throw HMAC-mismatch when
+  // decoded by our `order` instance).
+  await otherOrder.listForCustomer(customerId, { limit: 2 });   // warm up — no cursor needed
+  // Forging by hand: tamper the cursor from pageA
+  var tampered = pageA.next_cursor.slice(0, -2) + (pageA.next_cursor.endsWith("==") ? "AA" : "XX");
+  await assert.rejects(
+    order.listForCustomer(customerId, { limit: 2, cursor: tampered }),
+    /cursor/i,
+  );
+
+  // Limit validation
+  await assert.rejects(order.listForCustomer(customerId, { limit: 0 }),    /limit/);
+  await assert.rejects(order.listForCustomer(customerId, { limit: 9999 }), /limit/);
+}
+
 async function _validation() {
   var q = _makeQuery();
   var order = bShop.order.create({ query: q });
@@ -215,6 +288,7 @@ async function run() {
   await _illegalTransitionRefused();
   await _cancelAndRefund();
   await _setPaymentIntent();
+  await _listForCustomer();
   await _validation();
 }
 
