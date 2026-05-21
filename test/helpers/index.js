@@ -12,6 +12,7 @@
  */
 
 var assert = require("node:assert");
+var http   = require("node:http");
 
 var _checks = 0;
 
@@ -52,10 +53,137 @@ async function waitUntilEqual(getter, expected, opts) {
   }, opts);
 }
 
+// ---- HTTP integration-test client + cookie jar -------------------------
+//
+// Layer 2 helpers — a thin `node:http` client wrapper that returns the
+// parsed response (status / headers / body string) plus a cookie jar
+// that captures Set-Cookie values and replays them as a single `Cookie`
+// header on subsequent requests against the same origin. Built on
+// `node:http` directly so the integration suite stays inside the
+// zero-npm-runtime-deps envelope. The jar ignores the `Secure`
+// attribute (loopback test traffic is plaintext by design); every
+// other attribute is parsed for completeness but only `Max-Age=0`
+// (immediate-expiry) actually evicts an entry.
+
+function cookieJar() {
+  // name -> { value, expiresAt? }
+  var store = {};
+
+  function _parseSetCookie(raw) {
+    var parts = String(raw).split(";");
+    if (!parts.length) return null;
+    var nv = parts[0].trim();
+    var eq = nv.indexOf("=");
+    if (eq <= 0) return null;
+    var name  = nv.slice(0, eq).trim();
+    var value = nv.slice(eq + 1).trim();
+    var maxAge;
+    for (var i = 1; i < parts.length; i += 1) {
+      var attr = parts[i].trim();
+      var ai = attr.indexOf("=");
+      if (ai > 0) {
+        var ak = attr.slice(0, ai).trim().toLowerCase();
+        var av = attr.slice(ai + 1).trim();
+        if (ak === "max-age") maxAge = parseInt(av, 10);
+      }
+    }
+    return { name: name, value: value, maxAge: maxAge };
+  }
+
+  return {
+    capture: function (headers) {
+      if (!headers) return;
+      var raw = headers["set-cookie"];
+      if (!raw) return;
+      var list = Array.isArray(raw) ? raw : [raw];
+      for (var i = 0; i < list.length; i += 1) {
+        var c = _parseSetCookie(list[i]);
+        if (!c) continue;
+        if (c.maxAge === 0) { delete store[c.name]; continue; }
+        store[c.name] = { value: c.value };
+      }
+    },
+    header: function () {
+      var names = Object.keys(store);
+      if (!names.length) return null;
+      var pairs = [];
+      for (var i = 0; i < names.length; i += 1) {
+        pairs.push(names[i] + "=" + store[names[i]].value);
+      }
+      return pairs.join("; ");
+    },
+    get: function (name) {
+      return store[name] ? store[name].value : null;
+    },
+  };
+}
+
+// Issue a single HTTP request against an already-bound port. Returns
+// `{ status, headers, body }` — body is a UTF-8 string. The default
+// headers match a real browser shape (User-Agent + Accept-Language +
+// Sec-Fetch-Mode) so the framework's bot-guard middleware doesn't
+// block the request when the operator hasn't explicitly disabled it.
+// Form-encoded POSTs are the common shape on the storefront — pass
+// `opts.form` as a plain object and the helper sets the content-type +
+// serializes the body.
+async function httpRequest(opts) {
+  if (!opts || typeof opts !== "object")    throw new TypeError("httpRequest: opts required");
+  if (!opts.port)                            throw new TypeError("httpRequest: opts.port required");
+  if (!opts.path)                            throw new TypeError("httpRequest: opts.path required");
+  var method = (opts.method || "GET").toUpperCase();
+  var headers = Object.assign({
+    "user-agent":       "blamejs-shop-test/1.0",
+    "accept-language":  "en-US,en;q=0.9",
+    "sec-fetch-mode":   "navigate",
+    "accept":           "text/html,application/xhtml+xml",
+  }, opts.headers || {});
+  if (opts.jar) {
+    var cookieHeader = opts.jar.header();
+    if (cookieHeader) headers["cookie"] = cookieHeader;
+  }
+  var bodyBuf = null;
+  if (opts.form) {
+    var pairs = [];
+    for (var k in opts.form) {
+      if (!Object.prototype.hasOwnProperty.call(opts.form, k)) continue;
+      pairs.push(encodeURIComponent(k) + "=" + encodeURIComponent(opts.form[k]));
+    }
+    bodyBuf = Buffer.from(pairs.join("&"), "utf8");
+    headers["content-type"]   = "application/x-www-form-urlencoded";
+    headers["content-length"] = String(bodyBuf.length);
+  } else if (opts.body != null) {
+    bodyBuf = Buffer.isBuffer(opts.body) ? opts.body : Buffer.from(String(opts.body), "utf8");
+    headers["content-length"] = String(bodyBuf.length);
+  }
+  return await new Promise(function (resolve, reject) {
+    var req = http.request({
+      host:    opts.host || "127.0.0.1",
+      port:    opts.port,
+      method:  method,
+      path:    opts.path,
+      headers: headers,
+    }, function (res) {
+      var chunks = [];
+      res.on("data", function (c) { chunks.push(c); });
+      res.on("end", function () {
+        var body = Buffer.concat(chunks).toString("utf8");
+        if (opts.jar) opts.jar.capture(res.headers);
+        resolve({ status: res.statusCode, headers: res.headers, body: body });
+      });
+      res.on("error", reject);
+    });
+    req.on("error", reject);
+    if (bodyBuf) req.write(bodyBuf);
+    req.end();
+  });
+}
+
 module.exports = {
   assert:         assert,
   check:          check,
   getChecks:      getChecks,
   waitUntil:      waitUntil,
   waitUntilEqual: waitUntilEqual,
+  cookieJar:      cookieJar,
+  httpRequest:    httpRequest,
 };
