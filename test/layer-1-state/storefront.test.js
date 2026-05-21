@@ -27,7 +27,7 @@ async function _home() {
   check("home includes shop name",      html.indexOf("Acme Shop") !== -1);
   check("home lists both products",      html.indexOf("Widget Pro") !== -1 && html.indexOf("Widget Lite") !== -1);
   check("home includes prices",          html.indexOf("$29.99") !== -1 && html.indexOf("$19.99") !== -1);
-  check("home renders cart count",        html.indexOf("Cart (2)") !== -1);
+  check("home renders cart count",        html.indexOf("Cart · 2") !== -1);
   check("home has product links",         html.indexOf("/products/widget-pro") !== -1);
   check("home is full HTML doc",          html.indexOf("<!DOCTYPE html>") === 0);
 }
@@ -81,7 +81,7 @@ async function _cart() {
   check("cart lists both lines",   html.indexOf("ABC-1") !== -1 && html.indexOf("ABC-2") !== -1);
   check("cart shows line totals",   html.indexOf("$59.98") !== -1 && html.indexOf("$19.99") !== -1);
   check("cart shows subtotal",      html.indexOf("$79.97") !== -1);
-  check("cart count = line count",  html.indexOf("Cart (2)") !== -1);
+  check("cart count = line count",  html.indexOf("Cart · 2") !== -1);
 }
 
 async function _cartEmpty() {
@@ -92,7 +92,7 @@ async function _cartEmpty() {
   });
   check("empty cart shows empty copy",  html.indexOf("Your cart is empty") !== -1);
   check("empty cart shows $0",            html.indexOf("$0.00") !== -1);
-  check("empty cart count = 0",            html.indexOf("Cart (0)") !== -1);
+  check("empty cart count = 0",            html.indexOf("Cart · 0") !== -1);
 }
 
 async function _xssEscape() {
