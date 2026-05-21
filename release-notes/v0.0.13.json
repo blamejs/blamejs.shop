@@ -1,0 +1,30 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.13",
+  "date": "2026-05-20",
+  "headline": "Cart line mutations — update qty + remove",
+  "summary": "Cart page becomes interactive: every line shows an inline qty input + Update button and a Remove button. POST routes wire to `cart.updateLine` and `cart.removeLine`. A Checkout call-to-action button anchors the cart summary so customers can advance through the flow without typing a URL.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Editable cart lines",
+          "body": "`lib/storefront.js` now ships `CART_LINE_EDITABLE` — replaces the read-only line template with one that includes an inline `<form method=\"post\" action=\"/cart/lines/:id/update\">` carrying the qty input and a separate `<form method=\"post\" action=\"/cart/lines/:id/remove\">` for line removal. HTML forms only support GET/POST so the verb lives in the path (no `_method` override hack)."
+        },
+        {
+          "title": "POST /cart/lines/:id/update + /remove",
+          "body": "Two new route handlers in `storefront.mount`. Update validates qty (1..99) + calls `cart.updateLine(lineId, { qty })`; returns 404 when the line is unknown. Remove calls `cart.removeLine(lineId)`. Both 303 redirect to `/cart` on success so a refresh of the result doesn't replay the mutation. Errors from the cart primitive map to 400 (TypeError) or 500 (anything else)."
+        },
+        {
+          "title": "Checkout CTA on the cart page",
+          "body": "Cart summary now anchors a `<a class=\"btn\" href=\"/checkout\">Checkout →</a>` button so customers can progress without typing the URL. The button inherits the accent color from the default theme — same affordance as the in-page Update/Add-to-Cart buttons."
+        },
+        {
+          "title": "Vendor refresh blamejs v0.11.35 → v0.11.36",
+          "body": "Caught up to upstream."
+        }
+      ]
+    }
+  ]
+}
