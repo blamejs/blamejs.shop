@@ -126,6 +126,69 @@ async function _products() {
   check("list pagination skips prior page", !anyDupe);
 }
 
+async function _search() {
+  var catalog = bShop.catalog.create({ query: _makeQuery() });
+
+  await catalog.products.create({ slug: "blue-widget",   title: "Blue Widget",   description: "A sturdy widget in cobalt blue.",  status: "active" });
+  await catalog.products.create({ slug: "red-widget",    title: "Red Widget",    description: "A sturdy widget in crimson red.",  status: "active" });
+  await catalog.products.create({ slug: "green-gadget",  title: "Green Gadget",  description: "A gadget with eco-friendly trim.",  status: "active" });
+  await catalog.products.create({ slug: "draft-thing",   title: "Draft Thing",   description: "Not yet published.",                  status: "draft" });
+  await catalog.products.create({ slug: "old-thing",     title: "Old Thing",     description: "Discontinued.",                       status: "archived" });
+  await catalog.products.create({ slug: "literal-100",   title: "Literal 100%",  description: "Contains a percent sign literally.",  status: "active" });
+
+  var titleHit = await catalog.products.search({ q: "Widget", status: "active" });
+  check("search matches by title",          titleHit.rows.length === 2);
+  check("search returns next_cursor=null when under limit", titleHit.next_cursor === null);
+  var slugs = titleHit.rows.map(function (r) { return r.slug; }).sort().join(",");
+  check("search returns expected widgets",   slugs === "blue-widget,red-widget");
+
+  var descHit = await catalog.products.search({ q: "eco-friendly", status: "active" });
+  check("search matches by description",     descHit.rows.length === 1 && descHit.rows[0].slug === "green-gadget");
+
+  var caseHit = await catalog.products.search({ q: "WIDGET", status: "active" });
+  check("search is case-insensitive (upper q)", caseHit.rows.length === 2);
+  var caseHit2 = await catalog.products.search({ q: "blue", status: "active" });
+  check("search is case-insensitive (lower q vs mixed title)", caseHit2.rows.length === 1 && caseHit2.rows[0].slug === "blue-widget");
+
+  var emptyHit = await catalog.products.search({ q: "   ", status: "active" });
+  check("search empty (whitespace) q returns empty rows", Array.isArray(emptyHit.rows) && emptyHit.rows.length === 0 && emptyHit.next_cursor === null);
+  var emptyHit2 = await catalog.products.search({ q: "", status: "active" });
+  check("search empty (\"\") q returns empty rows",       emptyHit2.rows.length === 0);
+
+  // LIKE-metacharacter escape: searching for `100%` matches only the
+  // literal `100%` row, not every row (which a non-escaped `%` would
+  // produce as a wildcard).
+  var literalHit = await catalog.products.search({ q: "100%", status: "active" });
+  check("search escapes `%` LIKE wildcard",  literalHit.rows.length === 1 && literalHit.rows[0].slug === "literal-100");
+  var underscoreHit = await catalog.products.search({ q: "_idget", status: "active" });
+  check("search escapes `_` LIKE wildcard",  underscoreHit.rows.length === 0);
+
+  var noStatus = await catalog.products.search({ q: "Thing" });
+  check("search without status returns draft + archived",
+    noStatus.rows.length === 2 &&
+    noStatus.rows.some(function (r) { return r.status === "draft";    }) &&
+    noStatus.rows.some(function (r) { return r.status === "archived"; }));
+
+  // Pagination: seed enough matches to overflow a small page.
+  var catalog2 = bShop.catalog.create({ query: _makeQuery() });
+  for (var i = 0; i < 7; i += 1) {
+    await catalog2.products.create({ slug: "pageable-" + i, title: "Pageable Item " + i, description: "match-me", status: "active" });
+  }
+  var page1 = await catalog2.products.search({ q: "Pageable", limit: 3 });
+  check("search paginates page1",            page1.rows.length === 3 && typeof page1.next_cursor === "string");
+  var page2 = await catalog2.products.search({ q: "Pageable", limit: 3, cursor: page1.next_cursor });
+  check("search paginates page2 distinct",   page2.rows.length === 3);
+  var idsP1 = page1.rows.map(function (r) { return r.id; });
+  var anyDupe = page2.rows.some(function (r) { return idsP1.indexOf(r.id) !== -1; });
+  check("search pagination skips prior page", !anyDupe);
+
+  await assert.rejects(catalog.products.search({ q: 42 }),                  /q must be a string/);
+  await assert.rejects(catalog.products.search({ q: "a".repeat(201) }),    /≤ 200/);
+  await assert.rejects(catalog.products.search({ q: "x", status: "junk" }), /status must be/);
+  await assert.rejects(catalog.products.search({ q: "x", limit: 0 }),       /limit must be 1\.\.\./);
+  await assert.rejects(catalog.products.search({ q: "x", limit: 1000 }),    /limit must be 1\.\.\./);
+}
+
 async function _variants() {
   var catalog = bShop.catalog.create({ query: _makeQuery() });
   var p = await catalog.products.create({ slug: "v-test", title: "VT", status: "active" });
@@ -281,6 +344,7 @@ async function _cascadeDelete() {
 
 async function run() {
   await _products();
+  await _search();
   await _variants();
   await _prices();
   await _inventory();

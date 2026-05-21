@@ -95,6 +95,55 @@ async function _cartEmpty() {
   check("empty cart count = 0",            html.indexOf("Cart · 0") !== -1);
 }
 
+async function _search() {
+  var html = storefront.renderSearch({
+    q: "widget",
+    products: [
+      { slug: "widget-pro", title: "Widget Pro", starting_price_minor: 2999, starting_price_currency: "USD" },
+    ],
+    shop_name:  "Acme Shop",
+    cart_count: 0,
+  });
+  check("search shows header",            html.indexOf("Search results") !== -1);
+  check("search shows match summary",      html.indexOf("Showing 1 match") !== -1);
+  check("search renders product card",     html.indexOf("Widget Pro") !== -1);
+  check("search renders product price",     html.indexOf("$29.99") !== -1);
+  check("search header form pre-fills q",   html.indexOf("value=\"widget\"") !== -1);
+  check("search is a full HTML doc",        html.indexOf("<!DOCTYPE html>") === 0);
+
+  var pluralHtml = storefront.renderSearch({
+    q: "widget",
+    products: [
+      { slug: "a", title: "Widget A", starting_price_minor: 100 },
+      { slug: "b", title: "Widget B", starting_price_minor: 200 },
+    ],
+    shop_name: "Acme",
+  });
+  check("search pluralizes 'matches'", pluralHtml.indexOf("Showing 2 matches") !== -1);
+}
+
+async function _searchEmpty() {
+  var html = storefront.renderSearch({ q: "nothing-matches", products: [], shop_name: "Acme" });
+  check("empty search shows no-match copy",  html.indexOf("No products matched") !== -1);
+  check("empty search includes the query",    html.indexOf("nothing-matches") !== -1);
+
+  var emptyQ = storefront.renderSearch({ q: "", products: [], shop_name: "Acme" });
+  check("blank q shows prompt copy",         emptyQ.indexOf("Type a query above") !== -1);
+}
+
+async function _searchXss() {
+  // Customer-supplied q with a `<script>` tag — must be HTML-escaped
+  // both in the summary line AND in the header input's `value` so
+  // there's no avenue for reflected-XSS via the search input.
+  var html = storefront.renderSearch({
+    q: "<script>alert(1)</script>",
+    products: [],
+    shop_name:  "Acme",
+  });
+  check("search XSS: <script> not rendered raw", html.indexOf("<script>alert(1)") === -1);
+  check("search XSS: escaped form in summary",    html.indexOf("&lt;script&gt;") !== -1);
+}
+
 async function _xssEscape() {
   // Product title with XSS attempt — must be HTML-escaped.
   var html = storefront.renderHome({
@@ -160,6 +209,9 @@ async function _validation() {
   assert.throws(function () { storefront.renderProduct();          }, /product required/);
   assert.throws(function () { storefront.renderProduct({});          }, /product required/);
   assert.throws(function () { storefront.renderCart();             }, /opts required/);
+  assert.throws(function () { storefront.renderSearch();             }, /q \(string\) required/);
+  assert.throws(function () { storefront.renderSearch({});             }, /q \(string\) required/);
+  assert.throws(function () { storefront.renderSearch({ q: 42 });   }, /q \(string\) required/);
 }
 
 async function _layoutTokens() {
@@ -256,6 +308,9 @@ async function run() {
   await _checkoutForm();
   await _payPage();
   await _orderPage();
+  await _search();
+  await _searchEmpty();
+  await _searchXss();
   await _xssEscape();
   await _validation();
   await _layoutTokens();

@@ -1,0 +1,39 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.20",
+  "date": "2026-05-21",
+  "headline": "Catalog product search — storefront + admin",
+  "summary": "Customers and operators can now search the product catalog by free-text query. The storefront header gains a search box that routes to `GET /search`, and the admin API gains `GET /admin/products/search?q=` for draft + archived visibility. The matcher runs case-insensitive `LIKE` against `title` and `description`, escaping the `%` / `_` LIKE wildcards so a query like `100%` matches only the literal substring.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`catalog.products.search({ q, status?, limit?, cursor? })`",
+          "body": "Lowercased substring match against `title` + `description` via SQLite `LIKE ... ESCAPE '\\'`. The user-supplied `q` is trimmed, capped at 200 chars, and has `%` / `_` / `\\` escaped before binding so wildcard characters in the query never widen the match. Results are sorted `updated_at DESC, id DESC` and paginated through the same HMAC-tagged tuple cursor that `products.list` uses — operators can hand-roll their own admin search UIs on top without re-implementing keyset pagination. Empty / whitespace-only `q` returns `{rows: [], next_cursor: null}` rather than throwing, so storefront and admin route handlers can render an empty-state page without a try/catch."
+        },
+        {
+          "title": "Storefront search route + header form",
+          "body": "`GET /search?q=<query>` calls `catalog.products.search({ q, status: \"active\", limit: 24 })` and renders the new `renderSearch(opts)` page. The shared layout header gains a `<form action=\"/search\" method=\"get\">` input that pre-fills with the current query on the results page. The query is HTML-escaped through the strict template engine so a reflected `<script>` payload lands as escaped text inside both the summary line and the input's `value` attribute."
+        },
+        {
+          "title": "Admin search route",
+          "body": "`GET /admin/products/search?q=&limit=&cursor=` returns the full `{rows, next_cursor}` page with no status filter — admins see draft + archived products alongside active ones so a mis-published slug is findable before promotion. The route is bearer-token gated under the existing `ADMIN_API_KEY` and slices `q` to 200 chars before handing to the primitive."
+        }
+      ]
+    },
+    {
+      "heading": "Detectors",
+      "items": [
+        {
+          "title": "Layer 1 — `catalog._search`",
+          "body": "`test/layer-1-state/catalog.test.js` covers: title match, description match, case-insensitivity in both directions, empty / whitespace-only query returning empty rows, LIKE-metacharacter escape (`100%` matches only the literal `100%` product, `_idget` returns zero rows), status filter behavior (no-status returns draft + archived), pagination round-trip with cursor distinctness, and TypeError shape for non-string / over-length / bad-status / bad-limit input."
+        },
+        {
+          "title": "Layer 1 — `storefront._search`",
+          "body": "`test/layer-1-state/storefront.test.js` covers `renderSearch` output shape (header, summary, product grid, pre-filled input), singular vs plural summary, empty-state copy distinguishing blank `q` from `q with no matches`, and reflected-XSS escape on a `<script>`-bearing query."
+        }
+      ]
+    }
+  ]
+}
