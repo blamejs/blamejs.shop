@@ -1,0 +1,31 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.8",
+  "date": "2026-05-20",
+  "headline": "Storefront — server-rendered HTML for end customers",
+  "summary": "Minimum viable storefront: read-only HTML for home (product list), product detail, and cart. Renderers are pure functions composable in isolation; `mount(router, deps)` wires them into a `b.router` instance. Inline string templates with the strict `{{var}}` renderer the email primitive uses — HTML-escaped substitution, refusal of unknown / unused placeholders. The full theme primitive (file-backed templates via `b.template`, asset fingerprinting, theme inheritance, customer-buildable themes) lands in v1.x.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`storefront` — server-rendered HTML",
+          "body": "`lib/storefront.js` ships pure-function renderers (`renderHome`, `renderProduct`, `renderCart`, `renderNotFound`) plus a `mount(router, deps)` that registers the read-only GET routes against a `b.router` instance. The home page lists active products with their starting USD price; the product page shows title, description, and a variant table with SKUs + per-variant prices; the cart page renders lines + subtotal + grand total. Every substituted value is HTML-escaped via the strict renderer — XSS attempts through a product title surface as `&lt;script&gt;` in the rendered markup, never as executable HTML."
+        },
+        {
+          "title": "Wired into `server.js`",
+          "body": "When the data layer is configured (`D1_BRIDGE_URL` + `D1_BRIDGE_SECRET` present), the container boot mounts `bShop.storefront.mount(router, { catalog, cart })` so `GET /`, `GET /products/:slug`, and `GET /cart` serve HTML directly. Without the data layer, the container falls back to the JSON identity ping (useful for local smoke without wrangler dev)."
+        }
+      ]
+    },
+    {
+      "heading": "Detectors",
+      "items": [
+        {
+          "title": "Layer 1 — `storefront`",
+          "body": "`test/layer-1-state/storefront.test.js` exercises each renderer: home with products + empty state + cart count, product detail with variants + missing-variants empty state, cart with lines + subtotal + grand total + empty state. XSS escape verified by injecting `<script>` into a product title and asserting it's rendered as `&lt;script&gt;`. Validation tests at every entry point."
+        }
+      ]
+    }
+  ]
+}

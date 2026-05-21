@@ -36,6 +36,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
   // bridge credentials. Initializes externalDb before createApp so
   // the framework's cluster-mode boot picks it up automatically.
   var catalog = null;
+  var cart    = null;
   if (process.env.D1_BRIDGE_URL && process.env.D1_BRIDGE_SECRET) {
     var d1 = bShop.externaldbD1.create({
       mode:         "service-binding",
@@ -51,6 +52,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
     // restarts; rotating D1_BRIDGE_SECRET also rotates cursors.
     var cursorSecret = b.crypto.namespaceHash("catalog-cursor", process.env.D1_BRIDGE_SECRET);
     catalog = bShop.catalog.create({ cursorSecret: cursorSecret });
+    cart    = bShop.cart.create({ catalog: catalog });
   }
 
   var app = await b.createApp({
@@ -64,16 +66,23 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         res.json({ ok: true, container: true });
       });
 
-      // Placeholder home — replaced once `lib/storefront.js` lands.
-      r.get("/", function (_req, res) {
-        res.json({
-          name:    "blamejs-shop",
-          version: require("./package.json").version,
-          framework: {
-            blamejs: require("./lib/vendor/MANIFEST.json").packages.blamejs.version,
-          },
+      // Storefront — HTML pages for end customers. Mounts the
+      // home / product / cart routes when the data layer is wired.
+      // Falls back to a JSON identity ping when there's no D1
+      // (local dev without a Worker bridge).
+      if (catalog && cart) {
+        bShop.storefront.mount(r, { catalog: catalog, cart: cart });
+      } else {
+        r.get("/", function (_req, res) {
+          res.json({
+            name:    "blamejs-shop",
+            version: require("./package.json").version,
+            framework: {
+              blamejs: require("./lib/vendor/MANIFEST.json").packages.blamejs.version,
+            },
+          });
         });
-      });
+      }
 
       // Read-only public catalog API. Admin writes live behind
       // `lib/admin.js` (passkey + step-up) once that primitive
