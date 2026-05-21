@@ -54,10 +54,19 @@ async function _product() {
     },
     shop_name: "Acme",
   });
-  check("product page shows title",       html.indexOf("Widget Pro") !== -1);
-  check("product page shows description",  html.indexOf("The pro variant") !== -1);
-  check("product page lists variant SKUs", html.indexOf("WDG-PRO-BLK-L") !== -1 && html.indexOf("WDG-PRO-BLK-M") !== -1);
-  check("product page shows prices",       html.indexOf("$29.99") !== -1);
+  check("product page shows title",                html.indexOf("Widget Pro") !== -1);
+  check("product page shows description",           html.indexOf("The pro variant") !== -1);
+  check("product page lists variant SKUs",          html.indexOf("WDG-PRO-BLK-L") !== -1 && html.indexOf("WDG-PRO-BLK-M") !== -1);
+  check("product page shows prices",                html.indexOf("$29.99") !== -1);
+  check("product page reserves .pdp-media slot",     html.indexOf("class=\"pdp-media\"") !== -1);
+  check("media slot uses first SKU as placeholder",  html.indexOf("WDG-PRO-BLK-L") !== -1);
+  check("product page uses radio variant picker",    /name="variant_id"[^>]*type="radio"|type="radio"[^>]*name="variant_id"/.test(html));
+  check("first variant pre-selected",                /type="radio"[^>]*value="v1"[^>]*checked|checked[^>]*value="v1"/.test(html));
+  check("product page has variant-card markup",      html.indexOf("variant-card") !== -1);
+  check("product page has accordion sections",       html.indexOf("<details") !== -1 && html.indexOf("Shipping") !== -1 && html.indexOf("Returns") !== -1);
+  check("primary CTA uses .btn class",                html.indexOf("class=\"btn btn-block\"") !== -1);
+  check("Add-to-cart CTA copy present",               html.indexOf("Add to cart") !== -1);
+  check("Free-shipping quiet line present",           html.indexOf("Free standard shipping") !== -1);
 }
 
 async function _productNoVariants() {
@@ -66,22 +75,60 @@ async function _productNoVariants() {
     variants: [], prices: {},
     shop_name: "Acme",
   });
-  check("no-variant product shows empty row", html.indexOf("No variants available") !== -1);
+  check("no-variant product shows empty row",       html.indexOf("No variants available") !== -1);
+  check("no-variant page still has media slot",      html.indexOf("class=\"pdp-media\"") !== -1);
+}
+
+async function _pdpQtyStepper() {
+  var html = storefront.renderProduct({
+    product:   { slug: "widget", title: "Widget", description: "" },
+    variants:  [{ id: "v1", sku: "WDG-1", title: "Default", options: {} }],
+    prices:    { v1: { amount_minor: 1500, currency: "USD" } },
+    shop_name: "Acme",
+  });
+  check("qty stepper wraps the number input",   html.indexOf("qty-stepper") !== -1);
+  check("qty input has name=qty",                /name="qty"/.test(html));
+  check("qty input default = 1",                  /name="qty"[^>]*value="1"|value="1"[^>]*name="qty"/.test(html));
+  check("qty input min=1",                        /min="1"/.test(html));
+  check("qty input max=99",                       /max="99"/.test(html));
+  check("qty stepper has decrement button",       /data-step="-1"/.test(html));
+  check("qty stepper has increment button",       /data-step="1"/.test(html));
+  check("CTA is the .btn-block primary",          html.indexOf("class=\"btn btn-block\"") !== -1);
+  check("form POSTs to /cart/lines",               /action="\/cart\/lines"/.test(html));
 }
 
 async function _cart() {
   var html = storefront.renderCart({
     lines: [
-      { sku: "ABC-1", qty: 2, unit_amount_minor: 2999, unit_currency: "USD" },
-      { sku: "ABC-2", qty: 1, unit_amount_minor: 1999, unit_currency: "USD" },
+      { id: "l1", sku: "ABC-1", title: "Alpha / Large", qty: 2, unit_amount_minor: 2999, unit_currency: "USD" },
+      { id: "l2", sku: "ABC-2", title: "Beta / Medium", qty: 1, unit_amount_minor: 1999, unit_currency: "USD" },
     ],
     totals: { subtotal_minor: 7997, grand_total_minor: 7997, currency: "USD" },
     shop_name: "Acme",
   });
-  check("cart lists both lines",   html.indexOf("ABC-1") !== -1 && html.indexOf("ABC-2") !== -1);
-  check("cart shows line totals",   html.indexOf("$59.98") !== -1 && html.indexOf("$19.99") !== -1);
-  check("cart shows subtotal",      html.indexOf("$79.97") !== -1);
-  check("cart count = line count",  html.indexOf("Cart · 2") !== -1);
+  check("cart lists both lines",         html.indexOf("ABC-1") !== -1 && html.indexOf("ABC-2") !== -1);
+  check("cart shows line titles",         html.indexOf("Alpha / Large") !== -1 && html.indexOf("Beta / Medium") !== -1);
+  check("cart shows line totals",         html.indexOf("$59.98") !== -1 && html.indexOf("$19.99") !== -1);
+  check("cart shows subtotal",            html.indexOf("$79.97") !== -1);
+  check("cart count = line count",        html.indexOf("Cart · 2") !== -1);
+  check("cart uses .cart-line list items", html.indexOf("class=\"cart-line\"") !== -1);
+  check("cart has quiet Remove control",   html.indexOf("class=\"cart-line__remove\"") !== -1);
+  check("cart has continue-shopping link", html.indexOf("Continue shopping") !== -1);
+}
+
+async function _cartStickySummary() {
+  var html = storefront.renderCart({
+    lines: [
+      { id: "l1", sku: "ABC-1", title: "Alpha", qty: 1, unit_amount_minor: 2999, unit_currency: "USD" },
+    ],
+    totals: { subtotal_minor: 2999, grand_total_minor: 2999, currency: "USD" },
+    shop_name: "Acme",
+  });
+  check("summary uses .summary-table class",    html.indexOf("summary-table") !== -1);
+  check("summary uses .cart-summary class",     html.indexOf("cart-summary") !== -1);
+  check("summary has position:sticky styling",   html.indexOf("position: sticky") !== -1);
+  check("summary has tax + shipping line",       html.indexOf("Tax and shipping calculated at checkout") !== -1);
+  check("summary has Checkout primary CTA",      /href="\/checkout"[^>]*class="btn[^"]*"/.test(html));
 }
 
 async function _cartEmpty() {
@@ -90,9 +137,9 @@ async function _cartEmpty() {
     totals: { subtotal_minor: 0, grand_total_minor: 0, currency: "USD" },
     shop_name: "Acme",
   });
-  check("empty cart shows empty copy",  html.indexOf("Your cart is empty") !== -1);
-  check("empty cart shows $0",            html.indexOf("$0.00") !== -1);
-  check("empty cart count = 0",            html.indexOf("Cart · 0") !== -1);
+  check("empty cart shows empty copy",          html.indexOf("Your cart is empty") !== -1);
+  check("empty cart shows Browse-the-shop CTA",  html.indexOf("Browse the shop") !== -1);
+  check("empty cart count = 0",                  html.indexOf("Cart · 0") !== -1);
 }
 
 async function _xssEscape() {
@@ -167,8 +214,10 @@ async function run() {
   await _homeEmpty();
   await _product();
   await _productNoVariants();
+  await _pdpQtyStepper();
   await _cart();
   await _cartEmpty();
+  await _cartStickySummary();
   await _checkoutForm();
   await _payPage();
   await _orderPage();

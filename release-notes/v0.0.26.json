@@ -1,0 +1,34 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.26",
+  "date": "2026-05-21",
+  "headline": "Storefront redesign — product detail page + cart",
+  "summary": "The default storefront's product detail page and cart adopt a retail-feel two-column layout. The PDP swaps the variant table for a media slot plus a radio-driven variant picker, a +/- quantity stepper, a full-width primary CTA, and accordion sections for description, shipping, and returns. The cart switches to an item list paired with a sticky summary sidebar showing subtotal, a tax-and-shipping-at-checkout note, and the primary checkout CTA.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Product detail page",
+          "body": "`renderProduct` returns a two-column layout (stacked on narrow viewports). The left column reserves a 1:1 `.pdp-media` slot — when the caller provides `opts.media[0].r2_key` the slot renders `<img src=\"/assets/{r2_key}\">`, otherwise it shows the first variant's SKU as a placeholder badge. The right column renders title, starting price, a 140-char short description, the variant picker, quantity stepper, and the primary CTA. The full description, shipping copy, and returns copy live in `<details>`/`<summary>` accordion sections below the fold so no client JS is required to toggle them."
+        },
+        {
+          "title": "Variant picker",
+          "body": "Variants render as a vertical stack of radio cards (`<input type=\"radio\" name=\"variant_id\">`) instead of a table. Each card shows the variant title, SKU as muted secondary text, and price; the selected card glows with the accent color via CSS `:has(input:checked)`. The first variant is preselected so single-variant products are one click to add."
+        },
+        {
+          "title": "Quantity stepper",
+          "body": "The PDP and cart-line quantity inputs are wrapped in a `.qty-stepper` component with `−` / `+` buttons (driven by inline JS via `data-step` attributes). The stepper falls back to the bare `<input type=\"number\">` when JS is disabled — the number input still validates `min=\"1\" max=\"99\"` natively and the form posts whatever value is present."
+        },
+        {
+          "title": "Cart page",
+          "body": "`renderCart` returns a two-column grid: an item list (`<ul class=\"cart-lines\">`) on the left and a sticky `.summary-table` sidebar on the right. Each line shows the variant title, SKU, an inline quantity stepper, the line total in the accent color, and a quiet text-link Remove control. The summary shows subtotal, a muted \"Tax and shipping calculated at checkout\" line, total, and a full-width Checkout CTA. A continue-shopping link sits below the line list."
+        },
+        {
+          "title": "Empty cart",
+          "body": "The empty-cart view is now a dedicated centered card with a \"Browse the shop\" primary CTA back to the home page rather than an empty table row."
+        }
+      ]
+    }
+  ]
+}
