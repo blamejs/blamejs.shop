@@ -123,7 +123,7 @@ export class InventoryLock {
       // Single-DO-instance serialization — concurrent calls queue.
       return await this.state.blockConcurrencyWhile(async () => {
         const row = await this.env.DB.prepare(
-          "SELECT stock_on_hand, stock_held FROM inventory WHERE sku = ?1",
+          "SELECT stock_on_hand, stock_held, low_stock_threshold FROM inventory WHERE sku = ?1",
         ).bind(body.sku).first();
         if (!row) return _json({ ok: false, error: "UNKNOWN_SKU" }, 404);
         const available = row.stock_on_hand - row.stock_held;
@@ -131,6 +131,16 @@ export class InventoryLock {
         await this.env.DB.prepare(
           "UPDATE inventory SET stock_held = stock_held + ?1, updated_at = ?2 WHERE sku = ?3",
         ).bind(body.qty, Date.now(), body.sku).run();
+        // After-decrement low-stock check. If post-decrement available
+        // is strictly below the configured threshold, POST to the
+        // container's alert endpoint. The container holds the alerts
+        // primitive (writes the row + fans out webhooks + logs); the
+        // DO is the serialization point, not the alert sink. Fire-
+        // and-forget — alert delivery must not gate the stock hold.
+        const postAvailable = available - body.qty;
+        if (row.low_stock_threshold != null && postAvailable < row.low_stock_threshold) {
+          this._postLowStockAlert(body.sku, postAvailable, row.low_stock_threshold);
+        }
         return _json({ ok: true, held: body.qty });
       });
     }
@@ -147,6 +157,28 @@ export class InventoryLock {
       });
     }
     return _json({ ok: false, error: "UNKNOWN_ROUTE" }, 404);
+  }
+
+  // Fire-and-forget POST to the container's low-stock alert endpoint.
+  // Uses the SHOP service binding directly (not the public hostname)
+  // so the request never leaves the Cloudflare network. The shared
+  // `D1_BRIDGE_SECRET` authenticates the call — same trust root as
+  // the SQL bridge, since both flow Worker → container.
+  _postLowStockAlert(sku, available, threshold) {
+    try {
+      const url = new URL("/_/low-stock-alert", "http://shop.container");
+      const req = new Request(url.toString(), {
+        method: "POST",
+        headers: {
+          "content-type":          "application/json; charset=utf-8",
+          "x-d1-bridge-secret":    this.env.D1_BRIDGE_SECRET || "",
+        },
+        body: JSON.stringify({ sku, available, threshold }),
+      });
+      const container = getContainer(this.env.SHOP, "singleton");
+      // Don't await — the decrement caller already got its response.
+      container.fetch(req).catch(() => { /* drop-silent — alert delivery is best-effort */ });
+    } catch (_e) { /* drop-silent — alert delivery is best-effort */ }
   }
 }
 
@@ -310,6 +342,20 @@ export default {
       } catch (e) {
         return _json({ ok: false, error: "PUT_FAILED", message: (e && e.message) || String(e) }, 500);
       }
+    }
+
+    // 6. Low-stock alert callback — invoked by the InventoryLock DO
+    //    after a decrement that crosses the configured threshold.
+    //    Gated by the same shared secret as the D1 bridge so a
+    //    publicly-reachable URL can't fabricate an alert. The
+    //    container handles the actual fan-out (alert row + webhooks
+    //    + log line) via the inventory-alerts primitive.
+    if (pathname === "/_/low-stock-alert" && request.method === "POST") {
+      const lowStockSecret = request.headers.get("x-d1-bridge-secret");
+      if (!env.D1_BRIDGE_SECRET || !_timingSafeEqual(lowStockSecret || "", env.D1_BRIDGE_SECRET)) {
+        return _json({ ok: false, error: "UNAUTHORIZED" }, 401);
+      }
+      return _forwardToContainer(request, env);
     }
 
     // 6. Everything else — forward to the container.
