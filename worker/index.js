@@ -275,35 +275,39 @@ export default {
 async function _forwardToContainer(request, env) {
   // Single logical container instance for now ("singleton"). The
   // Container base class' getContainer() handles routing, auto-start,
-  // readiness wait, and scheme rewrite. Cold-start race conditions
-  // can surface as 500 "Failed to start container" — retry once with
-  // a brief backoff so a single cold start doesn't bubble to the
-  // shopper. POST bodies are buffered locally for the retry; GET
-  // requests have no body, so the clone is cheap.
+  // readiness wait, and scheme rewrite. Cold-start races can surface
+  // as 500 "Failed to start container" / 503 "no Container instance"
+  // because the SDK's default port-wait is ~8s and a fresh Node +
+  // blamejs boot under provisioning load can exceed that. We retry
+  // up to 3 times with exponential backoff (2s, 4s, 8s — total ~14s
+  // patience for the cold-start window). POST bodies buffer once
+  // and re-serve on each retry; GET / HEAD have no body and clone
+  // cheaply.
   const container = getContainer(env.SHOP, "singleton");
   const method = request.method.toUpperCase();
-  const buffered = method === "GET" || method === "HEAD" ? null : await request.arrayBuffer();
-  function _retryRequest() {
-    if (buffered === null) return new Request(request, {});
+  const hasBody = method !== "GET" && method !== "HEAD";
+  const buffered = hasBody ? await request.arrayBuffer() : null;
+  function _attemptRequest() {
+    if (!hasBody) return new Request(request, {});
     return new Request(request.url, {
       method:  request.method,
       headers: request.headers,
       body:    buffered.slice(0),
     });
   }
-  let res = await container.fetch(buffered === null ? request : _retryRequest());
-  if (res.status === 500 || res.status === 503) {
-    // Container cold-start failures emit text/plain with a stable
-    // "Failed to start container" prefix. Other 5xx may be legitimate
-    // application errors; retry conservatively for the cold-start
-    // signature only.
-    const peek = res.clone();
-    const bodyPreview = (await peek.text()).slice(0, 64);
-    if (bodyPreview.startsWith("Failed to start container") ||
-        bodyPreview.indexOf("There is no Container instance") !== -1) {
-      await new Promise((r) => setTimeout(r, 1500));
-      res = await container.fetch(_retryRequest());
-    }
+  function _isColdStartFailure(bodyPreview) {
+    return bodyPreview.startsWith("Failed to start container") ||
+           bodyPreview.indexOf("There is no Container instance") !== -1;
   }
-  return res;
+  const backoffMs = [0, 2000, 4000, 8000];   // first attempt is immediate
+  let res = null;
+  for (let i = 0; i < backoffMs.length; i += 1) {
+    if (backoffMs[i] > 0) await new Promise((r) => setTimeout(r, backoffMs[i]));
+    res = await container.fetch(_attemptRequest());
+    if (res.status !== 500 && res.status !== 503) return res;
+    const peek = res.clone();
+    const bodyPreview = (await peek.text()).slice(0, 96);
+    if (!_isColdStartFailure(bodyPreview)) return res;   // legitimate 5xx
+  }
+  return res;   // exhausted retries — surface the last 5xx
 }
