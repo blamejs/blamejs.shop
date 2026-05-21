@@ -1,0 +1,48 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.30",
+  "date": "2026-05-21",
+  "headline": "Bulk catalog CSV import via admin",
+  "summary": "Operators upload a CSV to bulk-create products + variants + prices + inventory in a single request. The admin API gains `POST /admin/catalog/import` (Content-Type: `text/csv`, optional `?dry_run=true`) — rows sharing a `product_slug` collapse to one parent product (first row wins for title / status / description), each row attaches a variant + price + inventory entry, and per-row errors are collected and returned alongside the success counts so the operator can re-upload with fixes.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`catalogImport` primitive",
+          "body": "`lib/catalog-import.js` ships `create({ catalog })` returning `{ importCsv }`. Parses through `b.csv` (RFC 4180), content-safety-filters every cell through `b.guardCsv` strict profile (refuses formula-injection cells starting with `=` / `+` / `-` / `@`, bidi overrides, C0 control bytes, null bytes, dangerous-function denylist including `WEBSERVICE` / `HYPERLINK` / `IMPORTXML`), then validates the exact 10-column header before any row is processed. Numeric columns (`variant_weight_grams`, `price_amount_minor`, `inventory_qty`) accept only `/^\\d+$/` — trailing garbage like `\"100abc\"` refuses outright rather than coercing through `parseInt`. Slug + SKU pass through the catalog primitive's existing validators."
+        },
+        {
+          "title": "Admin route `POST /admin/catalog/import`",
+          "body": "Accepts `Content-Type: text/csv` body + `?dry_run=true|false` query param. Returns `{ created: { products, variants, prices, inventory_rows }, errors: [{ row_index, message }], rows, dry_run }`. The audit row is written to the `shop_admin.catalog.import` action with the per-run summary (row count, error count, created counts). Mounts only when `catalogImport` is wired into `admin.mount()` deps — operators opt in implicitly by passing the dep."
+        },
+        {
+          "title": "`text/csv` body parser",
+          "body": "`server.js` extends the body parser's `text` sub-parser content-type list to include `text/csv` alongside `text/plain` and bumps the limit to 2 MiB so the importer's own 1 MiB cap binds first. Existing JSON / urlencoded / multipart routes are unaffected."
+        }
+      ]
+    },
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Size caps default 1 MiB / 10000 rows",
+          "body": "Configurable per call via `opts.maxBytes` / `opts.maxRows`. Catches accidental wrong-file uploads (an OS image, a database dump) before any parse cycle is spent. Refuses with a `TypeError` rather than a row-error — the whole upload is rejected."
+        },
+        {
+          "title": "Not atomic — partial failure leaves partial state",
+          "body": "D1 doesn't expose multi-row transactions cleanly across the HTTP bridge. Inserts run sequentially and rely on the catalog primitive's existing `slug` + `sku` UNIQUE constraints for idempotency. A row that errors midway leaves the rows before it persisted; the operator re-uploads the same CSV to fill in the gaps, and rows that already landed surface as duplicate-slug / duplicate-SKU row-errors on the retry."
+        }
+      ]
+    },
+    {
+      "heading": "Detectors",
+      "items": [
+        {
+          "title": "Layer 1 — `catalog-import`",
+          "body": "`test/layer-1-state/catalog-import.test.js` exercises the 3-product / 5-variant happy path against an in-memory SQLite loaded from `migrations-d1/0001_catalog.sql`, multi-variant-per-product de-dupe (first row's title / status / description win), `dry_run: true` returning the same counts without writing, header validation refusing wrong-column-order / short / empty CSV, per-row errors collected without aborting (bad slug / bad SKU / non-numeric cell), duplicate-slug-across-runs surfacing as a row-error without corrupting the first upload, `maxBytes` / `maxRows` refusing outright, and `b.guardCsv` refusing formula-injection cells (`=cmd|/c calc!A1`, `+SUM(...)`, `=WEBSERVICE(...)`)."
+        }
+      ]
+    }
+  ]
+}
