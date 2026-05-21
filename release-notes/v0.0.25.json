@@ -1,0 +1,39 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.25",
+  "date": "2026-05-21",
+  "headline": "Home page redesign — hero, product cards, friendlier empty state",
+  "summary": "The default storefront home page gains a confident, accessible hero with a primary CTA that anchors to the product grid below. Product cards render an image-ready 4:3 media area with an accent SKU badge, prominent accent-colored price, and a fully-clickable tile that lifts on hover. The empty state now points the operator at the admin API instead of dead-ending with one line of italic copy.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Home hero section",
+          "body": "`HOME_HERO` renders an `<h1>` with a clamped responsive type scale, an eyebrow tag, an accent-highlighted word in the headline, a primary CTA (`Explore shop ↓`) that anchors to `#products` directly above the grid, and a secondary `View source` link. A subtle dual-radial gradient adds depth without clip-art. The hero collapses to a single column under 640px with stacked CTAs."
+        },
+        {
+          "title": "Product card",
+          "body": "`PRODUCT_CARD` now renders a 4:3 media area (image-ready — falls back to an initials placeholder when the catalog row carries no media), an accent SKU badge in the top-left, a Montserrat-600 title, an accent-colored price with tabular numerals, and a `View product →` cue. The entire card is a single anchor, so the whole tile is clickable. Hover state lifts the card -3px with a soft shadow and shifts the arrow 2px — wrapped in `@media (prefers-reduced-motion: no-preference)` so motion-averse visitors see only the border-color change."
+        },
+        {
+          "title": "Friendlier empty state",
+          "body": "`renderHome` with zero products now renders a dashed-border, centered panel: `No products yet` headline plus copy that points the operator at `POST /admin/products`. The hero still renders above the empty panel so first visitors see the framework identity even before the catalog is seeded."
+        },
+        {
+          "title": "Graceful null-price handling",
+          "body": "When a product has no current price row, the card shows an em-dash in muted text (via `product-card__price--unset`) instead of leaking `null` or breaking the layout. The price class is set inline from `renderHome` based on whether `starting_price_minor` is present."
+        }
+      ]
+    },
+    {
+      "heading": "Detectors",
+      "items": [
+        {
+          "title": "Layer 1 — home hero + card surface",
+          "body": "`test/layer-1-state/storefront.test.js` gains a `_homeHero` cluster that asserts the hero is rendered with an `<h1>`, the headline copy is intact, the accent class wraps `open-source`, the primary CTA reads `Explore shop` and anchors to `#products`, and the grid anchor target exists. `_homeEmpty` now asserts the friendlier copy and the admin-API hint. A new `_homeMissingPrice` test exercises the `starting_price_minor: null` path."
+        }
+      ]
+    }
+  ]
+}

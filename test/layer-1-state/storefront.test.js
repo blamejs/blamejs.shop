@@ -30,11 +30,43 @@ async function _home() {
   check("home renders cart count",        html.indexOf("Cart · 2") !== -1);
   check("home has product links",         html.indexOf("/products/widget-pro") !== -1);
   check("home is full HTML doc",          html.indexOf("<!DOCTYPE html>") === 0);
+  check("home cards use product-card class", html.indexOf("product-card") !== -1);
+  check("home cards expose initials",        html.indexOf("product-card__media-fallback") !== -1);
+  check("home cards link the whole tile",    /<a href="\/products\/widget-pro" class="product-card__link"/.test(html));
+}
+
+async function _homeHero() {
+  var html = storefront.renderHome({
+    products: [], shop_name: "Acme Shop", cart_count: 0,
+  });
+  check("hero section is rendered",          html.indexOf("hero-home") !== -1);
+  check("hero headline copy is intact",       html.indexOf("An <span class=\"accent\">open-source</span> shop") !== -1);
+  check("hero subhead copy is intact",        html.indexOf("Server-rendered HTML.") !== -1 && html.indexOf("PQC-first crypto.") !== -1);
+  check("hero accent class wraps the word",   /<span class="accent">open-source<\/span>/.test(html));
+  check("hero primary CTA is present",        html.indexOf("Explore shop") !== -1);
+  check("hero primary CTA anchors to grid",   html.indexOf("href=\"#products\"") !== -1);
+  check("hero grid anchor target exists",     html.indexOf("id=\"products\"") !== -1);
+  check("hero has an h1, not h2",             html.indexOf("<h1 id=\"home-hero-title\">") !== -1);
 }
 
 async function _homeEmpty() {
   var html = storefront.renderHome({ products: [], shop_name: "Acme" });
-  check("empty home shows no-products copy", html.indexOf("No products yet") !== -1);
+  check("empty home shows friendlier copy",      html.indexOf("No products yet") !== -1);
+  check("empty home directs to admin API",        html.indexOf("admin API") !== -1);
+  check("empty home references POST /admin/products", html.indexOf("POST /admin/products") !== -1);
+  check("empty home still renders the hero",       html.indexOf("hero-home") !== -1);
+}
+
+async function _homeMissingPrice() {
+  // When the catalog product has no current price row, the card
+  // should show the "—" sentinel and still render without throwing.
+  var html = storefront.renderHome({
+    products: [{ slug: "no-price", title: "No Price Yet", starting_price_minor: null }],
+    shop_name: "Acme",
+  });
+  check("null-price card renders the em-dash",  html.indexOf("—") !== -1);
+  check("null-price card uses the unset class",  html.indexOf("product-card__price--unset") !== -1);
+  check("null-price card still links to PDP",     html.indexOf("/products/no-price") !== -1);
 }
 
 async function _product() {
@@ -164,7 +196,9 @@ async function _validation() {
 
 async function run() {
   await _home();
+  await _homeHero();
   await _homeEmpty();
+  await _homeMissingPrice();
   await _product();
   await _productNoVariants();
   await _cart();
