@@ -1,0 +1,43 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.31",
+  "date": "2026-05-21",
+  "headline": "Inventory low-stock alerts",
+  "summary": "Per-SKU low-stock thresholds with optional alert fan-out. When a SKU's available stock (`stock_on_hand - stock_held`) drops below its configured threshold, the framework writes an `inventory_alerts` row, emits a `b.log.warn` line, and (when an outbound-webhooks dep is wired) fans out an `inventory.low_stock` event. The hot-path decrement DO triggers the alert; admin routes set thresholds and list recent fires.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`inventoryAlerts` primitive",
+          "body": "`lib/inventory-alerts.js` ships `create({ query, webhooks?, logger? })` returning `{ check, fire, checkAndFire, list }`. `check(sku)` is a pure SELECT that returns `{ alert, available, threshold }`. `fire(sku, available, threshold)` persists a row in `inventory_alerts`, calls `webhooks.send(\"inventory.low_stock\", payload)` when the webhooks dep is wired, and always calls `logger.warn(...)`. `checkAndFire(sku)` is the common-case one-call wrapper. The logger defaults to `b.log` bound with `component: \"inventory-alerts\"` so emitted lines are filterable in the aggregator. Webhooks and logger sinks are drop-silent on throw — the persisted alert row is the source of truth, observability failures never roll it back."
+        },
+        {
+          "title": "`catalog.inventory.setThreshold` + `checkLowStock`",
+          "body": "`catalog.inventory.setThreshold(sku, threshold)` writes the per-SKU threshold (non-negative integer or `null` to disable). `catalog.inventory.checkLowStock(sku)` returns the same `{ alert, available, threshold }` shape as the alerts primitive's `check`. The catalog factory accepts an `onStockChange(sku)` callback that fires after every `inventory.release` / `inventory.restock` so the alerts primitive can hook in without the catalog needing to know about it."
+        },
+        {
+          "title": "Migration `0008_inventory_thresholds.sql`",
+          "body": "Adds `low_stock_threshold INTEGER` (nullable) to the existing `inventory` table via `ALTER TABLE`. Creates `inventory_alerts` (`id` TEXT PK uuid7, `sku` TEXT, `available_at_alert` INTEGER, `threshold` INTEGER, `fired_at` INTEGER) with composite indexes on `(sku, fired_at)` and `(fired_at)` for admin listing. The `sku` column is a loose FK — alert rows survive inventory deletion so the audit trail outlives the SKU."
+        },
+        {
+          "title": "Worker InventoryLock decrement → alert callback",
+          "body": "After every decrement that succeeds, the DO reads `low_stock_threshold` alongside the stock columns. If post-decrement available is strictly below the threshold, the DO POSTs to a new `/_/low-stock-alert` Worker endpoint (gated by the same `D1_BRIDGE_SECRET` as the SQL bridge). The Worker forwards to the container, which runs the alerts primitive — writes the row, fans out webhooks, emits the log line. Fire-and-forget at every hop so alert delivery never gates the stock hold."
+        },
+        {
+          "title": "Admin routes",
+          "body": "`PATCH /admin/inventory/:sku/threshold` (body `{ threshold }`) sets or clears the threshold; the mutation is audited under `shop_admin.inventory.set_threshold`. `GET /admin/inventory/alerts` returns the most recent alerts (defaults to the 100 newest by `fired_at` DESC); optional `?sku=` narrows to a single SKU's history, `?limit=` + `?offset=` page through older alerts."
+        }
+      ]
+    },
+    {
+      "heading": "Detectors",
+      "items": [
+        {
+          "title": "Layer 1 — `inventory-alerts`",
+          "body": "`test/layer-1-state/inventory-alerts.test.js` exercises setThreshold + checkLowStock round-trip (no-threshold default, above-threshold, below-threshold, cleared, unknown SKU), below-threshold fire writes the row + logger line + webhook send with the full payload, above-threshold returns null without touching any sink, threshold-null disables the alert path, the webhooks dep is genuinely optional (logger still fires), list pagination with limit + offset and SKU narrowing, validation refusals at every entry point (bad sku / threshold / available / limit / offset / mis-shaped deps), and the catalog `onStockChange` callback firing the alert path on `inventory.release` end-to-end."
+        }
+      ]
+    }
+  ]
+}
