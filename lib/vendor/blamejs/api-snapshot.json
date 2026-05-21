@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "frameworkVersion": "0.11.25",
-  "createdAt": "2026-05-21T04:54:34.838Z",
+  "frameworkVersion": "0.11.35",
+  "createdAt": "2026-05-21T20:20:19.516Z",
   "exports": {
     "a2a": {
       "type": "object",
@@ -5569,6 +5569,147 @@
           "arity": 1
         },
         "parse": {
+          "type": "function",
+          "arity": 1
+        }
+      }
+    },
+    "calendar": {
+      "type": "object",
+      "members": {
+        "CalendarError": {
+          "type": "function",
+          "arity": 4
+        },
+        "JSCAL_ALERT_ACTIONS": {
+          "type": "object",
+          "members": {
+            "display": {
+              "type": "primitive",
+              "valueType": "number"
+            },
+            "email": {
+              "type": "primitive",
+              "valueType": "number"
+            }
+          }
+        },
+        "JSCAL_FREQUENCIES": {
+          "type": "object",
+          "members": {
+            "daily": {
+              "type": "primitive",
+              "valueType": "number"
+            },
+            "hourly": {
+              "type": "primitive",
+              "valueType": "number"
+            },
+            "minutely": {
+              "type": "primitive",
+              "valueType": "number"
+            },
+            "monthly": {
+              "type": "primitive",
+              "valueType": "number"
+            },
+            "secondly": {
+              "type": "primitive",
+              "valueType": "number"
+            },
+            "weekly": {
+              "type": "primitive",
+              "valueType": "number"
+            },
+            "yearly": {
+              "type": "primitive",
+              "valueType": "number"
+            }
+          }
+        },
+        "JSCAL_TASK_PROGRESS": {
+          "type": "object",
+          "members": {
+            "cancelled": {
+              "type": "primitive",
+              "valueType": "number"
+            },
+            "completed": {
+              "type": "primitive",
+              "valueType": "number"
+            },
+            "in-process": {
+              "type": "primitive",
+              "valueType": "number"
+            },
+            "needs-action": {
+              "type": "primitive",
+              "valueType": "number"
+            }
+          }
+        },
+        "JSCAL_TYPES": {
+          "type": "object",
+          "members": {
+            "Alert": {
+              "type": "primitive",
+              "valueType": "string"
+            },
+            "Event": {
+              "type": "primitive",
+              "valueType": "string"
+            },
+            "Group": {
+              "type": "primitive",
+              "valueType": "string"
+            },
+            "Link": {
+              "type": "primitive",
+              "valueType": "string"
+            },
+            "Location": {
+              "type": "primitive",
+              "valueType": "string"
+            },
+            "Participant": {
+              "type": "primitive",
+              "valueType": "string"
+            },
+            "Recurrence": {
+              "type": "primitive",
+              "valueType": "string"
+            },
+            "Task": {
+              "type": "primitive",
+              "valueType": "string"
+            },
+            "TimeZone": {
+              "type": "primitive",
+              "valueType": "string"
+            }
+          }
+        },
+        "MAX_EXPAND_INSTANCES": {
+          "type": "primitive",
+          "valueType": "number"
+        },
+        "MAX_EXPAND_SPAN_MS": {
+          "type": "primitive",
+          "valueType": "number"
+        },
+        "expandRecurrence": {
+          "type": "function",
+          "arity": 2
+        },
+        "fromIcal": {
+          "type": "function",
+          "arity": 2
+        },
+        "toIcal": {
+          "type": "function",
+          "arity": 2
+        },
+        "validate": {
           "type": "function",
           "arity": 1
         }
@@ -21275,6 +21416,10 @@
               "type": "primitive",
               "valueType": "boolean"
             },
+            "GETMETADATA": {
+              "type": "primitive",
+              "valueType": "boolean"
+            },
             "GETQUOTA": {
               "type": "primitive",
               "valueType": "boolean"
@@ -21315,6 +21460,10 @@
               "type": "primitive",
               "valueType": "boolean"
             },
+            "NOTIFY": {
+              "type": "primitive",
+              "valueType": "boolean"
+            },
             "RENAME": {
               "type": "primitive",
               "valueType": "boolean"
@@ -21324,6 +21473,10 @@
               "valueType": "boolean"
             },
             "SELECT": {
+              "type": "primitive",
+              "valueType": "boolean"
+            },
+            "SETMETADATA": {
               "type": "primitive",
               "valueType": "boolean"
             },
@@ -35949,6 +36102,14 @@
                   "type": "function",
                   "arity": 4
                 },
+                "decrypt": {
+                  "type": "function",
+                  "arity": 1
+                },
+                "encrypt": {
+                  "type": "function",
+                  "arity": 1
+                },
                 "experimental": {
                   "type": "object",
                   "members": {
@@ -35982,6 +36143,19 @@
                 "verify": {
                   "type": "function",
                   "arity": 1
+                },
+                "wkd": {
+                  "type": "object",
+                  "members": {
+                    "computeUrl": {
+                      "type": "function",
+                      "arity": 2
+                    },
+                    "fetch": {
+                      "type": "function",
+                      "arity": 2
+                    }
+                  }
                 }
               }
             },
@@ -36882,6 +37056,10 @@
                       "type": "primitive",
                       "valueType": "number"
                     },
+                    "GETMETADATA": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
                     "ID": {
                       "type": "primitive",
                       "valueType": "number"
@@ -36914,6 +37092,10 @@
                       "type": "primitive",
                       "valueType": "number"
                     },
+                    "NOTIFY": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
                     "RENAME": {
                       "type": "primitive",
                       "valueType": "number"
@@ -36923,6 +37105,10 @@
                       "valueType": "number"
                     },
                     "SELECT": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "SETMETADATA": {
                       "type": "primitive",
                       "valueType": "number"
                     },
@@ -36959,6 +37145,70 @@
                 "jmap": {
                   "type": "object",
                   "members": {
+                    "Calendar/changes": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "Calendar/get": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "Calendar/query": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "Calendar/queryChanges": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "Calendar/set": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "CalendarEvent/changes": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "CalendarEvent/copy": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "CalendarEvent/get": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "CalendarEvent/query": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "CalendarEvent/queryChanges": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "CalendarEvent/set": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "CalendarEventNotification/changes": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "CalendarEventNotification/get": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "CalendarEventNotification/query": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "CalendarEventNotification/queryChanges": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "CalendarEventNotification/set": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
                     "Core/echo": {
                       "type": "primitive",
                       "valueType": "number"
@@ -37044,6 +37294,18 @@
                       "valueType": "number"
                     },
                     "Mailbox/set": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "ParticipantIdentity/changes": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "ParticipantIdentity/get": {
+                      "type": "primitive",
+                      "valueType": "number"
+                    },
+                    "ParticipantIdentity/set": {
                       "type": "primitive",
                       "valueType": "number"
                     },

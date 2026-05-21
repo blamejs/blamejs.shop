@@ -269,11 +269,38 @@ export default {
   },
 };
 
-function _forwardToContainer(request, env) {
+async function _forwardToContainer(request, env) {
   // Single logical container instance for now ("singleton"). The
   // Container base class' getContainer() handles routing, auto-start,
-  // readiness wait, and scheme rewrite. When shopper-scoped affinity
-  // becomes useful (e.g. per-cart DO sessions), swap the name for a
-  // cart-bound identifier.
-  return getContainer(env.SHOP, "singleton").fetch(request);
+  // readiness wait, and scheme rewrite. Cold-start race conditions
+  // can surface as 500 "Failed to start container" — retry once with
+  // a brief backoff so a single cold start doesn't bubble to the
+  // shopper. POST bodies are buffered locally for the retry; GET
+  // requests have no body, so the clone is cheap.
+  const container = getContainer(env.SHOP, "singleton");
+  const method = request.method.toUpperCase();
+  const buffered = method === "GET" || method === "HEAD" ? null : await request.arrayBuffer();
+  function _retryRequest() {
+    if (buffered === null) return new Request(request, {});
+    return new Request(request.url, {
+      method:  request.method,
+      headers: request.headers,
+      body:    buffered.slice(0),
+    });
+  }
+  let res = await container.fetch(buffered === null ? request : _retryRequest());
+  if (res.status === 500 || res.status === 503) {
+    // Container cold-start failures emit text/plain with a stable
+    // "Failed to start container" prefix. Other 5xx may be legitimate
+    // application errors; retry conservatively for the cold-start
+    // signature only.
+    const peek = res.clone();
+    const bodyPreview = (await peek.text()).slice(0, 64);
+    if (bodyPreview.startsWith("Failed to start container") ||
+        bodyPreview.indexOf("There is no Container instance") !== -1) {
+      await new Promise((r) => setTimeout(r, 1500));
+      res = await container.fetch(_retryRequest());
+    }
+  }
+  return res;
 }

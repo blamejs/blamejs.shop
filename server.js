@@ -58,6 +58,12 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
   var app = await b.createApp({
     dataDir: DATA_DIR,
     routes: function (r) {
+      // Body parser — populates req.body from form-encoded + JSON
+      // request bodies. Mounted before any POST handler so the
+      // storefront cart-write routes can read form fields without
+      // re-parsing.
+      r.use(b.middleware.bodyParser());
+
       // Liveness + readiness — the Worker short-circuits /_/health
       // at the edge, but the container also responds so the
       // container's own Docker HEALTHCHECK probe lights up before
