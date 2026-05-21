@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.16",
+  "date": "2026-05-20",
+  "headline": "`pricing.format` composes upstream `b.money`",
+  "summary": "The currency-rendering path on every storefront / email / order page now flows through the framework's Money class (`b.money.fromMinorUnits(bigint, currency).format(locale)`) instead of constructing `Intl.NumberFormat` inline. Output is byte-identical for every supported currency (USD / EUR / GBP / JPY zero-decimal all match prior renders); the win is framework-policy alignment — Money owns ISO 4217 currency exponents and locale-correct fraction-digit selection across the entire blamejs ecosystem.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "`pricing.format` swaps inline `Intl.NumberFormat` for `b.money`",
+          "body": "`lib/pricing.js` now coerces the `Number` minor-unit at the boundary into a `BigInt`, hands it to `b.money.fromMinorUnits(bigint, currency)`, and calls `.format(locale)`. The upstream Money primitive carries the ISO 4217 catalog (code → exponent) so JPY (exp=0), KRW (exp=0), and JOD (exp=3) all render correctly without us re-implementing the table. The pricing primitive's external API (`Number` minor units) is unchanged — every existing consumer (cart, checkout, order, storefront, email) keeps its current call shape."
+        }
+      ]
+    }
+  ]
+}
