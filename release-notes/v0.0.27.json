@@ -1,0 +1,39 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.27",
+  "date": "2026-05-21",
+  "headline": "Checkout, payment, and order confirmation pages redesigned",
+  "summary": "The three checkout-flow surfaces — shipping form, Stripe Elements payment page, and post-purchase order confirmation — gain a shared three-step progress indicator (Shipping · Payment · Confirmation) and a redesigned layout. The shipping form moves to a two-column layout (form + sticky order summary), groups inputs under Contact + Shipping address sections, marks required fields, and adds field-level help text. The pay page centers a single column with an itemized summary above the Stripe Elements mount, a full-width pay button, and a reassurance row. The order confirmation opens with a checkmark hero, an accent-bordered status pill, and a two-column items + summary block. The Stripe integration is unchanged — same publishable key + client_secret injection, same Payment Element mount, same return_url.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Checkout shipping form",
+          "body": "`renderCheckoutForm` now produces a two-column desktop layout (form 60% / order summary 40%, sticky) collapsing to a single column under 56rem. Fields are grouped under Contact and Shipping address headings, required fields carry a subtle accent asterisk, and each field has field-level help (`We'll send your receipt here.`, `ISO 3166-1 alpha-2 code (e.g. US, GB, DE).`). The submit CTA reuses the LAYOUT `.btn` class and renders full-width with a muted `← Back to cart` link below. The sticky sidebar uses the existing `.summary-table` shape and shows `Calculated at next step` for shipping + tax pending the payment step. Inputs gain `autocomplete` hints (`email`, `name`, `country`, `address-level1`, `postal-code`)."
+        },
+        {
+          "title": "Pay page",
+          "body": "`renderPayPage` now renders a single 28rem-wide centered column with the itemized order summary at the top (subtotal, tax, shipping, total — total emphasized via the `.total` row), the Stripe Elements mount inside a bordered + padded frame, and a full-width `Pay {{total}}` button using the `.btn` class. A reassurance row under the button reads `🔒 Encrypted by Stripe · ⏱ Charged once`. The payment-message status line gains subtle padding + border-radius so it sits naturally above the button. The Stripe.js script tag, publishable-key + client_secret JSON injection, and `return_url` wiring are unchanged."
+        },
+        {
+          "title": "Order confirmation",
+          "body": "`renderOrder` now opens with a hero block — accent-color checkmark glyph in a circle, `Thanks for your order` headline, muted order id — followed by an accent-bordered status pill (`Status: paid`). Items + summary render in a two-column grid on desktop (items 60%, summary 40%) collapsing to stacked on mobile. The items table uses tabular-numeric digits via `font-variant-numeric`. A `What's next` block at the bottom tells the customer they'll receive a shipping email, with a muted `← Back to shop` link to `/`."
+        },
+        {
+          "title": "Three-step progress indicator",
+          "body": "All three checkout-flow pages render a shared `Shipping · Payment · Confirmation` progress legend at the top. The active step uses the accent color (filled pill); completed steps use the ink outline; upcoming steps stay muted. The legend is rendered via an internal `_stepIndicator(active)` helper so the three pages share one source of truth for the labels + the active-step semantics. Marked `aria-label=\"Checkout progress\"` for assistive-tech consumers."
+        }
+      ]
+    },
+    {
+      "heading": "Detectors",
+      "items": [
+        {
+          "title": "Layer 1 — storefront checkout / pay / order renderers",
+          "body": "`test/layer-1-state/storefront.test.js` updates `_checkoutForm` (asserts Contact + Shipping address section headings, required-field marker, `.btn`-classed CTA, back-to-cart link, order summary), `_payPage` (asserts itemized subtotal + tax + shipping + total render, `.btn`-classed CTA, payment-element mount target, reassurance row), and `_orderPage` (asserts thank-you headline, status pill, what's-next copy, back-to-shop link). Adds a new `_stepIndicator` cluster that asserts each of the three pages labels the three steps, carries the `Checkout progress` aria-label, marks the matching step active, and does NOT mark the other two active."
+        }
+      ]
+    }
+  ]
+}

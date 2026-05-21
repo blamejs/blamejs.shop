@@ -116,24 +116,41 @@ async function _checkoutForm() {
     totals: { subtotal_minor: 2999, currency: "USD" },
     shop_name: "Acme",
   });
-  check("checkout form has email field",    /name=\"email\"/.test(html));
-  check("checkout form has country field",   /name=\"country\"/.test(html));
-  check("checkout form shows subtotal",       html.indexOf("$29.99") !== -1);
-  check("checkout form POSTs to /checkout",   /action=\"\/checkout\"/.test(html));
+  check("checkout form has email field",      /name=\"email\"/.test(html));
+  check("checkout form has country field",     /name=\"country\"/.test(html));
+  check("checkout form shows subtotal",         html.indexOf("$29.99") !== -1);
+  check("checkout form POSTs to /checkout",     /action=\"\/checkout\"/.test(html));
+  check("checkout form has contact section",    html.indexOf("Contact") !== -1);
+  check("checkout form has shipping section",   html.indexOf("Shipping address") !== -1);
+  check("checkout form CTA uses .btn class",    /class=\"btn\"[^>]*type=\"submit\"|<button[^>]*class=\"btn\"/.test(html));
+  check("checkout form has back-to-cart link",  /href=\"\/cart\"/.test(html) && html.indexOf("Back to cart") !== -1);
+  check("checkout form has order summary",      html.indexOf("Order summary") !== -1);
+  check("checkout form marks required fields",  html.indexOf("class=\"req\"") !== -1);
 }
 
 async function _payPage() {
   var html = storefront.renderPayPage({
-    order:           { id: "ord_test", grand_total_minor: 7218, currency: "USD" },
+    order: {
+      id: "ord_test", currency: "USD",
+      subtotal_minor:    5998,
+      tax_minor:         525,
+      shipping_minor:    695,
+      grand_total_minor: 7218,
+    },
     client_secret:   "pi_xxx_secret_yyy",
     publishable_key: "pk_test_123",
     shop_name:       "Acme",
   });
-  check("pay page loads Stripe.js",          html.indexOf("https://js.stripe.com/v3/") !== -1);
-  check("pay page injects pk as JSON",        html.indexOf("\"pk_test_123\"") !== -1);
-  check("pay page injects client_secret",      html.indexOf("\"pi_xxx_secret_yyy\"") !== -1);
-  check("pay page shows total",                html.indexOf("$72.18") !== -1);
-  check("pay page references order id",        html.indexOf("ord_test") !== -1);
+  check("pay page loads Stripe.js",            html.indexOf("https://js.stripe.com/v3/") !== -1);
+  check("pay page injects pk as JSON",          html.indexOf("\"pk_test_123\"") !== -1);
+  check("pay page injects client_secret",        html.indexOf("\"pi_xxx_secret_yyy\"") !== -1);
+  check("pay page shows total",                  html.indexOf("$72.18") !== -1);
+  check("pay page shows subtotal",                html.indexOf("$59.98") !== -1);
+  check("pay page shows tax",                    html.indexOf("$5.25") !== -1);
+  check("pay page references order id",          html.indexOf("ord_test") !== -1);
+  check("pay page CTA uses .btn class",          /<button[^>]*class=\"btn\"/.test(html));
+  check("pay page mounts payment-element",        html.indexOf("id=\"payment-element\"") !== -1);
+  check("pay page has reassurance row",          html.indexOf("Encrypted by Stripe") !== -1);
 }
 
 async function _orderPage() {
@@ -148,10 +165,83 @@ async function _orderPage() {
     },
     shop_name: "Acme",
   });
-  check("order page shows status",        html.indexOf("paid") !== -1);
-  check("order page lists line",           html.indexOf("X-1") !== -1);
-  check("order page shows tax",            html.indexOf("$5.25") !== -1);
-  check("order page shows total",          html.indexOf("$72.18") !== -1);
+  check("order page shows status",            html.indexOf("paid") !== -1);
+  check("order page lists line",               html.indexOf("X-1") !== -1);
+  check("order page shows tax",                html.indexOf("$5.25") !== -1);
+  check("order page shows total",              html.indexOf("$72.18") !== -1);
+  check("order page has thank-you headline",    html.indexOf("Thanks for your order") !== -1);
+  check("order page renders status pill",      html.indexOf("order-status") !== -1);
+  check("order page tells the customer what's next", html.indexOf("We'll email you when your order ships") !== -1);
+  check("order page links back to shop",        /href=\"\/\"/.test(html) && html.indexOf("Back to shop") !== -1);
+}
+
+async function _stepIndicator() {
+  var checkoutHtml = storefront.renderCheckoutForm({
+    lines: [{ sku: "X-1", qty: 1, unit_amount_minor: 2999, unit_currency: "USD" }],
+    totals: { subtotal_minor: 2999, currency: "USD" },
+    shop_name: "Acme",
+  });
+  var payHtml = storefront.renderPayPage({
+    order: {
+      id: "ord_test", currency: "USD",
+      subtotal_minor: 2999, tax_minor: 0, shipping_minor: 0, grand_total_minor: 2999,
+    },
+    client_secret: "pi_x_secret_y", publishable_key: "pk_test_x", shop_name: "Acme",
+  });
+  var orderHtml = storefront.renderOrder({
+    order: {
+      id: "ord_test", status: "paid", currency: "USD",
+      subtotal_minor: 2999, tax_minor: 0, shipping_minor: 0, grand_total_minor: 2999,
+      lines: [{ sku: "X-1", qty: 1, unit_amount_minor: 2999, unit_currency: "USD" }],
+    },
+    shop_name: "Acme",
+  });
+
+  // All three pages render the same three-step legend.
+  [checkoutHtml, payHtml, orderHtml].forEach(function (html, i) {
+    var label = ["checkout", "pay", "order"][i];
+    check(label + " step indicator labels each step",
+      html.indexOf("Shipping") !== -1 &&
+      html.indexOf("Payment") !== -1 &&
+      html.indexOf("Confirmation") !== -1);
+    check(label + " step indicator carries a-progress aria",
+      html.indexOf("aria-label=\"Checkout progress\"") !== -1);
+  });
+
+  // Only the matching step on each page carries `is-active`. We
+  // anchor on the step's text to stay resilient against minor markup
+  // shuffles around the surrounding sep elements.
+  function _activeMatches(html, label) {
+    var re = new RegExp("class=\"is-active\"[^>]*>[^<]*<[^>]*>[^<]*<\\/[^>]*>\\s*" + label);
+    return re.test(html);
+  }
+  // Cheaper match: find the `is-active` class near each label.
+  function _stepIsActive(html, label) {
+    var idx = html.indexOf(label);
+    if (idx === -1) return false;
+    // Find the most recent <li ...> before the label.
+    var liStart = html.lastIndexOf("<li", idx);
+    if (liStart === -1) return false;
+    var liChunk = html.slice(liStart, idx);
+    return liChunk.indexOf("is-active") !== -1;
+  }
+
+  check("checkout marks Shipping active", _stepIsActive(checkoutHtml, "Shipping"));
+  check("checkout does NOT mark Payment active",      !_stepIsActive(checkoutHtml, "Payment"));
+  check("checkout does NOT mark Confirmation active", !_stepIsActive(checkoutHtml, "Confirmation"));
+
+  check("pay marks Payment active", _stepIsActive(payHtml, "Payment"));
+  check("pay does NOT mark Shipping active",     !_stepIsActive(payHtml, "Shipping"));
+  check("pay does NOT mark Confirmation active", !_stepIsActive(payHtml, "Confirmation"));
+
+  check("order marks Confirmation active", _stepIsActive(orderHtml, "Confirmation"));
+  check("order does NOT mark Shipping active", !_stepIsActive(orderHtml, "Shipping"));
+  check("order does NOT mark Payment active",  !_stepIsActive(orderHtml, "Payment"));
+
+  // The `_activeMatches` helper is retained for the case where the
+  // template author later shifts to a structurally-anchored shape;
+  // suppress unused-helper noise without removing the regex form.
+  void _activeMatches;
 }
 
 async function _validation() {
@@ -172,6 +262,7 @@ async function run() {
   await _checkoutForm();
   await _payPage();
   await _orderPage();
+  await _stepIndicator();
   await _xssEscape();
   await _validation();
 }
