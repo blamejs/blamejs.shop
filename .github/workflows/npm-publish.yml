@@ -383,11 +383,23 @@ jobs:
           npm publish "$TARBALL" --provenance --access public
 
       - name: Verify the version landed on the registry
+        # The npm registry CDN takes several seconds to propagate a
+        # freshly-published manifest — the immediate `npm view` after
+        # `npm publish` returns a 404 even on a successful publish.
+        # Retry with backoff for ~30 seconds before flagging the
+        # discrepancy.
         run: |
           set -euo pipefail
-          REMOTE=$(npm view "$(node -e "console.log(require('./src/package.json').name)")" version)
-          if [ "$REMOTE" != "${{ needs.validate.outputs.version }}" ]; then
-            echo "::error::npm registry version $REMOTE does not match released version ${{ needs.validate.outputs.version }}"
-            exit 1
-          fi
-          echo "[publish] npm registry now serves ${{ needs.validate.outputs.version }}"
+          PKG_NAME="$(node -e "console.log(require('./src/package.json').name)")"
+          TARGET="${{ needs.validate.outputs.version }}"
+          for attempt in 1 2 3 4 5 6; do
+            REMOTE=$(npm view "$PKG_NAME" version 2>/dev/null || true)
+            if [ "$REMOTE" = "$TARGET" ]; then
+              echo "[publish] npm registry now serves $TARGET (attempt $attempt)"
+              exit 0
+            fi
+            echo "[publish] attempt $attempt — registry reports '$REMOTE', want '$TARGET'; sleeping 6s…"
+            sleep 6
+          done
+          echo "::error::npm registry never propagated $TARGET after 36s of retries"
+          exit 1
