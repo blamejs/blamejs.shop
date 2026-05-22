@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.43",
+  "date": "2026-05-22",
+  "headline": "Search results — image-bearing product cards (consistent with the home grid)",
+  "summary": "The search results page rendered text-only `PRODUCT_CARD` tiles — title + price + 'View product →' link — while the home catalog grid (v0.0.42) shifted to clickable image-bearing `product-card` tiles. This release unifies the two surfaces: search results now go through the same `_buildProductCard(p)` picker so a hit lands a real hero-image tile when the product carries media, and the text-only fallback when it doesn't. The same `asset_prefix` override the home renderer accepts also works on the search renderer.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "`storefront.renderSearch({ products, asset_prefix? })` uses `_buildProductCard`",
+          "body": "Same render-time picker the home grid uses — when a result product carries `hero_media`, the card renders as the image-bearing tile; without media, the text-only fallback. `asset_prefix` defaults to `/assets/` and can be overridden for operators on a different R2 binding or CDN remap."
+        },
+        {
+          "title": "Search route fetches `catalog.media.listForProduct` per hit",
+          "body": "`GET /search` now calls the media lookup alongside the existing variants + prices loop. The first attached media row becomes `product.hero_media` on the data shape `renderSearch` consumes — same shape the home route v0.0.42 emits."
+        }
+      ]
+    }
+  ]
+}
