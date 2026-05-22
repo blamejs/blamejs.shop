@@ -172,6 +172,10 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // ships with this deploy via `r2_bridge` / `D1_BRIDGE_URL`),
         // so wire it whenever the data layer is present.
         sfDeps.customers = bShop.customers.create({});
+        // Newsletter signups — opts the /newsletter route in. The
+        // primitive only needs the externalDb query handle (which
+        // ships with this deploy via D1_BRIDGE_URL).
+        sfDeps.newsletter = bShop.newsletter.create({});
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = bShop.order.create({ cursorSecret: orderCursorSecret });
           var sfPayment = bShop.payment.create({

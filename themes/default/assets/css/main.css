@@ -1471,6 +1471,37 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
 }
 
 /* =================================================================
+   NEWSLETTER THANK-YOU (and error)
+   ================================================================= */
+.newsletter-thanks {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: var(--space-9) var(--gutter);
+}
+.newsletter-thanks__card {
+  background: var(--paper);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-lg);
+  padding: var(--space-7) var(--space-6);
+  text-align: center;
+  box-shadow: var(--shadow-md);
+}
+.newsletter-thanks__title {
+  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  margin: var(--space-3) 0 var(--space-4);
+  letter-spacing: -0.02em;
+}
+.newsletter-thanks__lede {
+  color: var(--mute);
+  margin: 0 0 var(--space-6);
+  font-size: var(--text-lg);
+  line-height: 1.55;
+}
+.newsletter-thanks__cta {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-3);
+}
+
+/* =================================================================
    404 / NOT FOUND
    ================================================================= */
 .not-found {
