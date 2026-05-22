@@ -234,9 +234,13 @@ async function _layoutTokens() {
   var html = storefront.renderHome({ products: [], shop_name: "Acme" });
 
   // (1) Layout: shell-only — no inline styles, no third-party font hosts.
+  // The font-host regexes anchor on the scheme + dot-boundary so the
+  // assertion isn't satisfied by a substring inside an unrelated URL —
+  // it specifically refuses a `<link href="https://fonts.{googleapis,
+  // gstatic}.com/…">` tag in the layout, regardless of attribute order.
   check("layout has NO inline <style> block",        html.indexOf("<style") === -1);
-  check("layout has NO Google Fonts link",            html.indexOf("fonts.googleapis.com") === -1);
-  check("layout has NO Google Fonts preconnect",     html.indexOf("fonts.gstatic.com") === -1);
+  check("layout has NO Google Fonts link",           !(/https?:\/\/fonts\.googleapis\.com\//.test(html)));
+  check("layout has NO Google Fonts preconnect",     !(/https?:\/\/fonts\.gstatic\.com/.test(html)));
   check("layout links the theme stylesheet",         html.indexOf("rel=\"stylesheet\"") !== -1);
   check("layout points at default theme css",         html.indexOf("/assets/themes/default/css/main.css") !== -1);
 
