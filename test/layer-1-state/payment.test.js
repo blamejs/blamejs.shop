@@ -143,6 +143,255 @@ async function _factoryValidation() {
   assert.throws(function () { payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_x", adapter: "paddle" }); }, /unknown adapter/);
 }
 
+// ---- Idempotency cache --------------------------------------------------
+//
+// Stripe API calls go through `b.httpClient.request`; the primitive
+// now accepts an `httpClient` override (same shape as r2Bridge) so a
+// stubbed transport can capture the call without touching the
+// network. The `query` opt is the second injection point — when
+// supplied, mutating calls go through a SELECT/INSERT round-trip
+// against an in-memory table; without it the primitive behaves
+// identically to the pre-idempotency surface.
+
+function _fakeHttp(responses) {
+  var calls = [];
+  var i = 0;
+  return {
+    calls: calls,
+    httpClient: {
+      request: async function (opts) {
+        calls.push(opts);
+        var r = responses[Math.min(i, responses.length - 1)];
+        i += 1;
+        var bodyStr = typeof r.body === "string" ? r.body : JSON.stringify(r.body);
+        return {
+          statusCode: r.status,
+          headers:    r.headers || { "content-type": "application/json" },
+          body:       Buffer.from(bodyStr, "utf8"),
+        };
+      },
+    },
+  };
+}
+
+// Minimal in-memory `query` that satisfies the SELECT / INSERT /
+// DELETE shapes the idempotency layer issues. Returns the D1-style
+// `{ rows: [...] }` envelope; DELETE surfaces `meta.changes` so
+// `cleanupExpired` can report what it removed.
+function _fakeQuery() {
+  var rows = [];
+  var calls = [];
+  function _selectByKey(key) {
+    for (var i = 0; i < rows.length; i += 1) {
+      if (rows[i].idempotency_key === key) return rows[i];
+    }
+    return null;
+  }
+  var query = async function (sql, params) {
+    calls.push({ sql: sql, params: params });
+    if (/^SELECT/.test(sql) && /FROM payment_idempotency/.test(sql)) {
+      var hit = _selectByKey(params[0]);
+      return { rows: hit ? [hit] : [] };
+    }
+    if (/^INSERT INTO payment_idempotency/.test(sql)) {
+      rows.push({
+        idempotency_key: params[0],
+        operation:       params[1],
+        request_hash:    params[2],
+        response_status: params[3],
+        response_body:   params[4],
+        created_at:      params[5],
+        expires_at:      params[6],
+      });
+      return { rows: [], meta: { changes: 1 } };
+    }
+    if (/^DELETE FROM payment_idempotency/.test(sql)) {
+      var cutoff = params[0];
+      var before = rows.length;
+      rows = rows.filter(function (r) { return r.expires_at >= cutoff; });
+      return { rows: [], meta: { changes: before - rows.length } };
+    }
+    throw new Error("fakeQuery: unhandled SQL: " + sql);
+  };
+  return {
+    query:    query,
+    calls:    calls,
+    rows:     function () { return rows.slice(); },
+    setRows:  function (r) { rows = r; },
+  };
+}
+
+async function _idempotencyReplayPaymentIntent() {
+  var fake  = _fakeHttp([{ status: 200, body: { id: "pi_abc", amount: 2999, currency: "usd" } }]);
+  var store = _fakeQuery();
+  var s = payment.create({
+    apiKey:        "sk_test_x",
+    webhookSecret: "whsec_xxxxxxxx",
+    httpClient:    fake.httpClient,
+    query:         store.query,
+  });
+
+  var key   = "ord_42_pi_create_v1";
+  var input = { amount_minor: 2999, currency: "usd", metadata: { order_id: "ord_42" } };
+
+  var r1 = await s.createPaymentIntent(input, key);
+  check("first call returns Stripe response",        r1.id === "pi_abc");
+  check("first call hit Stripe (1 http request)",     fake.calls.length === 1);
+  check("first call wrote cache row",                 store.rows().length === 1);
+  check("cached row carries operation",               store.rows()[0].operation === "payment_intent.create");
+  check("cached row carries 200 status",              store.rows()[0].response_status === 200);
+  check("cached row hashes request, not stores raw",  store.rows()[0].request_hash.length === 128);   // SHA3-512 hex
+  check("cache row has 24h expiry window",            store.rows()[0].expires_at - store.rows()[0].created_at === payment.IDEMPOTENCY_TTL_MS);
+
+  // Second call — same key, same hash → replay (no second Stripe hit).
+  var r2 = await s.createPaymentIntent(input, key);
+  check("replay returns stored response",             r2.id === "pi_abc");
+  check("replay did NOT hit Stripe",                  fake.calls.length === 1);
+  check("replay flag exposed",                        r2._replayed === true);
+}
+
+async function _idempotencyCollisionThrows() {
+  var fake  = _fakeHttp([{ status: 200, body: { id: "pi_first", amount: 100 } }]);
+  var store = _fakeQuery();
+  var s = payment.create({
+    apiKey:        "sk_test_x",
+    webhookSecret: "whsec_xxxxxxxx",
+    httpClient:    fake.httpClient,
+    query:         store.query,
+  });
+
+  var key = "shared_key_collision_v1";
+  await s.createPaymentIntent({ amount_minor: 100, currency: "usd" }, key);
+
+  // Same key, DIFFERENT body (attacker tries to replay a larger
+  // amount). The primitive MUST refuse — silently returning the
+  // stored response would charge the original amount but make the
+  // caller believe the new amount succeeded.
+  await assert.rejects(
+    s.createPaymentIntent({ amount_minor: 99999, currency: "usd" }, key),
+    /idempotency_key collision \(different inputs\)/,
+  );
+  check("collision did NOT issue a second Stripe call", fake.calls.length === 1);
+}
+
+async function _idempotencyBypassWhenNoQuery() {
+  // No `query` factory opt → idempotency is fully disabled. Each
+  // call hits Stripe regardless of whether an idempotency_key is
+  // passed (Stripe's own server-side cache is unaffected — we just
+  // don't add the local replay layer).
+  var fake = _fakeHttp([
+    { status: 200, body: { id: "pi_1" } },
+    { status: 200, body: { id: "pi_2" } },
+  ]);
+  var s = payment.create({
+    apiKey:        "sk_test_x",
+    webhookSecret: "whsec_xxxxxxxx",
+    httpClient:    fake.httpClient,
+  });
+  var key = "same_key_no_cache_v1";
+  var r1 = await s.createPaymentIntent({ amount_minor: 500, currency: "usd" }, key);
+  var r2 = await s.createPaymentIntent({ amount_minor: 500, currency: "usd" }, key);
+  check("no-query: both calls hit Stripe",  fake.calls.length === 2);
+  check("no-query: distinct responses",      r1.id === "pi_1" && r2.id === "pi_2");
+  check("no-query: idempotency header sent", fake.calls[0].headers["idempotency-key"] === key);
+}
+
+async function _idempotencyRefundAndSubscription() {
+  // Same replay shape applies to refund + subscriptions.create.
+  var fake = _fakeHttp([
+    { status: 200, body: { id: "re_1", amount: 500 } },
+    { status: 200, body: { id: "sub_1", status: "active" } },
+  ]);
+  var store = _fakeQuery();
+  var s = payment.create({
+    apiKey:        "sk_test_x",
+    webhookSecret: "whsec_xxxxxxxx",
+    httpClient:    fake.httpClient,
+    query:         store.query,
+  });
+
+  // refund — first call hits Stripe, second replays.
+  var refundInput = { payment_intent: "pi_abcd1234", amount_minor: 500, reason: "requested_by_customer" };
+  await s.refund(refundInput, "rf_key_v1");
+  var rf2 = await s.refund(refundInput, "rf_key_v1");
+  check("refund first call hits Stripe",   fake.calls.length === 1);
+  check("refund replays from cache",       rf2.id === "re_1" && rf2._replayed === true);
+  check("refund stored under refund.create operation",
+        store.rows().filter(function (r) { return r.operation === "refund.create"; }).length === 1);
+
+  // subscriptions.create — first call hits Stripe, second replays.
+  var subInput = { customer: "cus_abcd1234", items: [{ price: "price_1" }] };
+  await s.subscriptions.create(subInput, "sub_key_v1");
+  var sc2 = await s.subscriptions.create(subInput, "sub_key_v1");
+  check("subscriptions.create first hits Stripe",  fake.calls.length === 2);
+  check("subscriptions.create replays",             sc2.id === "sub_1" && sc2._replayed === true);
+  check("subscription.create operation recorded",
+        store.rows().filter(function (r) { return r.operation === "subscription.create"; }).length === 1);
+
+  // Collision check on refund — same key, different amount.
+  await assert.rejects(
+    s.refund({ payment_intent: "pi_abcd1234", amount_minor: 9999, reason: "requested_by_customer" }, "rf_key_v1"),
+    /idempotency_key collision/,
+  );
+  check("refund collision did not re-hit Stripe", fake.calls.length === 2);
+}
+
+async function _idempotencyKeyValidation() {
+  var fake  = _fakeHttp([{ status: 200, body: { id: "pi_1" } }]);
+  var store = _fakeQuery();
+  var s = payment.create({
+    apiKey:        "sk_test_x",
+    webhookSecret: "whsec_xxxxxxxx",
+    httpClient:    fake.httpClient,
+    query:         store.query,
+  });
+  await assert.rejects(s.createPaymentIntent({ amount_minor: 1, currency: "usd" }, "short"),
+                       /idempotency_key must be a string between 8 and 255/);
+  await assert.rejects(s.createPaymentIntent({ amount_minor: 1, currency: "usd" }, 12345),
+                       /idempotency_key must be a string between 8 and 255/);
+}
+
+async function _cleanupExpired() {
+  var store = _fakeQuery();
+  var now = 1_700_000_000_000;
+  store.setRows([
+    { idempotency_key: "old_1", operation: "payment_intent.create", request_hash: "h1", response_status: 200, response_body: "{}", created_at: now - 90000000, expires_at: now - 10000 },
+    { idempotency_key: "old_2", operation: "refund.create",         request_hash: "h2", response_status: 200, response_body: "{}", created_at: now - 90000000, expires_at: now - 1 },
+    { idempotency_key: "fresh", operation: "subscription.create",   request_hash: "h3", response_status: 200, response_body: "{}", created_at: now,             expires_at: now + 86400000 },
+  ]);
+  var s = payment.create({
+    apiKey:        "sk_test_x",
+    webhookSecret: "whsec_xxxxxxxx",
+    query:         store.query,
+    now:           function () { return now; },
+  });
+  var removed = await s.cleanupExpired();
+  check("cleanupExpired removed two expired rows",   removed === 2);
+  check("cleanupExpired left the fresh row in place", store.rows().length === 1 && store.rows()[0].idempotency_key === "fresh");
+
+  // Without query, cleanupExpired refuses (idempotency is opt-in;
+  // calling cleanup on a primitive that never wrote to the table
+  // would silently no-op, which hides a misconfiguration).
+  var s2 = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx" });
+  await assert.rejects(s2.cleanupExpired(), /requires `query` factory opt/);
+}
+
+async function _canonicalHashStable() {
+  // Key order doesn't matter; arrays preserve their order.
+  var h1 = payment._canonicalHash({ b: 2, a: 1, c: [1, 2] });
+  var h2 = payment._canonicalHash({ a: 1, c: [1, 2], b: 2 });
+  check("canonical hash stable across key order", h1 === h2);
+  var h3 = payment._canonicalHash({ a: 1, c: [2, 1], b: 2 });
+  check("canonical hash sensitive to array order", h1 !== h3);
+}
+
+async function _factoryRejectsBadOptionTypes() {
+  assert.throws(function () { payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", query: 42 }); },
+                /query must be a function/);
+  assert.throws(function () { payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", now: 42 }); },
+                /now must be a function/);
+}
+
 async function _inputValidation() {
   var s = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx" });
   // createPaymentIntent
@@ -167,6 +416,14 @@ async function run() {
   await _formEncoder();
   await _factoryValidation();
   await _inputValidation();
+  await _idempotencyReplayPaymentIntent();
+  await _idempotencyCollisionThrows();
+  await _idempotencyBypassWhenNoQuery();
+  await _idempotencyRefundAndSubscription();
+  await _idempotencyKeyValidation();
+  await _cleanupExpired();
+  await _canonicalHashStable();
+  await _factoryRejectsBadOptionTypes();
 }
 
 module.exports = { run: run };
