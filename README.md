@@ -8,7 +8,7 @@
 
 Open-source ecommerce framework built on [blamejs](https://github.com/blamejs/blamejs). Vendored stack, zero npm runtime deps, PQC-first crypto, security-on by default.
 
-Live demo: **https://blamejs-shop.coocoo.workers.dev/**
+Homepage: **https://blamejs.shop**
 
 ## Requirements
 
@@ -121,7 +121,9 @@ npx wrangler d1 migrations apply blamejs-shop --remote
 npx wrangler deploy
 
 # 5. Seed a product via the admin API
-curl -X POST https://<your-worker>.workers.dev/admin/products \
+#    (replace the host with your own worker route or custom domain;
+#    the reference deploy lives at https://blamejs.shop)
+curl -X POST https://your-shop.example.com/admin/products \
   -H "Authorization: Bearer $ADMIN_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"slug":"first","title":"First product","status":"active"}'
