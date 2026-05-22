@@ -229,7 +229,8 @@ jobs:
 
       - name: Download SLSA provenance
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v7.0.1
-        with: { name: blamejs-shop-${{ needs.validate.outputs.version }}.intoto.jsonl }
+        with:
+          name: blamejs-shop-${{ needs.validate.outputs.version }}.intoto.jsonl
 
       - name: Verify NPM_TOKEN is reachable
         # Fail loud + early if the NPM_TOKEN secret isn't visible to

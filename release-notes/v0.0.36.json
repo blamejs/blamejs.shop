@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.36",
+  "date": "2026-05-22",
+  "headline": "Publish workflow YAML — refactor the SLSA download-artifact step out of flow mapping so the parser accepts it",
+  "summary": "The release `npm-publish.yml` workflow couldn't start. `download-artifact` for the SLSA provenance file used YAML flow-mapping form (`with: { name: blamejs-shop-${{ … }}.intoto.jsonl }`) and the parser read the `}}` inside the GitHub expression as the flow-collection close. Rewritten as block form, the workflow parses and the publish pipeline runs.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "`npm-publish.yml` — `download-artifact` step parses correctly",
+          "body": "The SLSA provenance download step at the publish job mixed YAML flow-mapping `{ … }` with a GitHub `${{ … }}` expression. The parser hit the `}}` inside the expression as a flow-mapping close, rejecting the whole document at parse time (no jobs ever materialised — the run surfaced as `startup_failure`). Rewriting the step as block form (`with:` / `  name: …` on its own line) fixes the parse error. No semantic change to the workflow."
+        }
+      ]
+    }
+  ]
+}
