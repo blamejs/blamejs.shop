@@ -171,7 +171,7 @@ async function _summaryMultiCurrency() {
 async function _revenueByDay() {
   var q = _makeQuery();
   var analytics = bShop.analytics.create({ query: q.query });
-  var now = Date.now();
+  var _now = Date.now();
   // Pick three discrete UTC days. Use noon UTC to avoid edge cases
   // at the day boundary.
   var d1 = Date.UTC(2026, 0, 10, 12, 0, 0);
