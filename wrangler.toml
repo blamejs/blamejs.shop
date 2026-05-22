@@ -34,7 +34,7 @@ compatibility_flags = ["nodejs_compat"]
 # to the container so its externalDb D1 adapter knows where to call
 # back. Swap to the custom domain when the zone is wired to the
 # Worker.
-D1_BRIDGE_URL       = "https://blamejs-shop.coocoo.workers.dev"
+D1_BRIDGE_URL       = "https://blamejs.shop"
 D1_BRIDGE_PATH      = "/_/db/query"
 STRIPE_WEBHOOK_PATH = "/api/webhooks/stripe"
 ASSET_PREFIX        = "/assets/"
