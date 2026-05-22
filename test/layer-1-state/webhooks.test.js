@@ -28,8 +28,14 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0004_shop_config.sql", "0005_webhooks.sql"]
-  .map(function (f) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f); });
+var MIGS = [
+  "0001_catalog.sql",
+  "0002_cart.sql",
+  "0003_order.sql",
+  "0004_shop_config.sql",
+  "0005_webhooks.sql",
+  "0017_webhook_dlq.sql",
+].map(function (f) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f); });
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -292,6 +298,230 @@ async function _orderTransitionFanout() {
   check("delivery row persisted", deliveries.rows.length === 1 && deliveries.rows[0].event_type === "order.mark_paid");
 }
 
+// _mockClock — returns { now, advance } that the webhooks primitive
+// consumes via opts.now. `advance(ms)` jumps the clock forward so a
+// test can walk through the exponential backoff schedule without
+// waiting wall-clock seconds.
+function _mockClock(startMs) {
+  var t = (typeof startMs === "number") ? startMs : Date.now();
+  return {
+    now:     function () { return t; },
+    advance: function (ms) { t += ms; return t; },
+    set:     function (ms) { t = ms; },
+  };
+}
+
+async function _retryBackoff() {
+  var q = _makeQuery();
+  var clock = _mockClock(1700000000000);
+  // Transport always 500 — every attempt fails so the row walks the
+  // full backoff schedule before landing in the DLQ.
+  var transport = _captureTransport([{ statusCode: 500 }]);
+  var webhooks = bShop.webhooks.create({
+    query:     q,
+    transport: transport,
+    now:       clock.now,
+    retry:     { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 2 },
+  });
+  await webhooks.endpoints.create({ url: "https://example.com/", events: "*" });
+
+  var d = await webhooks.send("order.mark_paid", { x: 1 });
+  check("first failure persisted",       d[0].last_status === 500);
+  check("first attempt counted",         d[0].attempts === 1);
+  check("first failure schedules retry", d[0].next_retry_at != null);
+  check("backoff #1 is +60s",
+    d[0].next_retry_at - d[0].last_attempted_at === 60 * 1000);
+
+  // Advance to the scheduled retry, run processRetries — attempt 2.
+  clock.advance(60 * 1000);
+  var batch2 = await webhooks.processRetries({ now: clock.now() });
+  check("processRetries returns attempted row", batch2.length === 1);
+  check("backoff #2 is +5m",
+    batch2[0].next_retry_at - batch2[0].last_attempted_at === 300 * 1000);
+  check("attempts=2 after second failure", batch2[0].attempts === 2);
+
+  // Attempt 3 — +30m.
+  clock.advance(300 * 1000);
+  var batch3 = await webhooks.processRetries({ now: clock.now() });
+  check("backoff #3 is +30m",
+    batch3[0].next_retry_at - batch3[0].last_attempted_at === 1800 * 1000);
+  check("attempts=3 after third failure", batch3[0].attempts === 3);
+
+  // Attempt 4 — +4h.
+  clock.advance(1800 * 1000);
+  var batch4 = await webhooks.processRetries({ now: clock.now() });
+  check("backoff #4 is +4h",
+    batch4[0].next_retry_at - batch4[0].last_attempted_at === 14400 * 1000);
+  check("attempts=4 after fourth failure", batch4[0].attempts === 4);
+}
+
+async function _dlqAfterFiveAttempts() {
+  var q = _makeQuery();
+  var clock = _mockClock(1700000000000);
+  var transport = _captureTransport([{ statusCode: 500 }]);
+  var webhooks = bShop.webhooks.create({
+    query:     q,
+    transport: transport,
+    now:       clock.now,
+    retry:     { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 2 },
+  });
+  var ep = await webhooks.endpoints.create({ url: "https://example.com/", events: "*" });
+
+  // Initial send — attempts becomes 1.
+  await webhooks.send("order.mark_paid", { x: 1 });
+  // Walk attempts 2..5. After the fifth failure the row should be
+  // in the DLQ.
+  var schedule = [60, 300, 1800, 14400];
+  for (var i = 0; i < schedule.length; i += 1) {
+    clock.advance(schedule[i] * 1000);
+    await webhooks.processRetries({ now: clock.now() });
+  }
+
+  // Final row state — attempts === 5, no next retry, no delivery.
+  var rows = await q("SELECT * FROM webhook_deliveries WHERE endpoint_id = ?1", [ep.id]);
+  check("delivery exhausted",          rows.rows.length === 1);
+  check("attempts hit MAX_ATTEMPTS",   rows.rows[0].attempts === 5);
+  check("no next retry after DLQ move", rows.rows[0].next_retry_at == null);
+  check("never delivered",              rows.rows[0].delivered_at == null);
+
+  // DLQ row exists.
+  var dlq = await webhooks.dlq.list(ep.id);
+  check("dlq has the dropped row",         dlq.length === 1);
+  check("dlq carries last_status",         dlq[0].last_status === 500);
+  check("dlq carries last_error",          typeof dlq[0].last_error === "string" && dlq[0].last_error.length > 0);
+  check("dlq references original delivery",dlq[0].delivery_id === rows.rows[0].id);
+  check("dlq carries the payload",         typeof dlq[0].payload_json === "string" && dlq[0].payload_json.indexOf("\"x\":1") !== -1);
+  check("dlq attempts matches",            dlq[0].attempts === 5);
+  check("dlq dropped_at recorded",         typeof dlq[0].dropped_at === "number");
+  check("dlq first/last attempted set",    typeof dlq[0].first_attempted_at === "number" &&
+                                            typeof dlq[0].last_attempted_at === "number");
+
+  // processRetries on an empty schedule is a no-op.
+  var none = await webhooks.processRetries({ now: clock.now() });
+  check("no more retries due", none.length === 0);
+}
+
+async function _replayFromDlq() {
+  var q = _makeQuery();
+  var clock = _mockClock(1700000000000);
+  // First five attempts fail (500), every attempt after replay
+  // succeeds (200). The captured transport always returns whatever
+  // is at the tail of the queue, so chain failures then a 200.
+  var transport = _captureTransport([
+    { statusCode: 500 }, { statusCode: 500 }, { statusCode: 500 }, { statusCode: 500 }, { statusCode: 500 },
+    { statusCode: 200 },
+  ]);
+  var webhooks = bShop.webhooks.create({
+    query:     q,
+    transport: transport,
+    now:       clock.now,
+    retry:     { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 2 },
+  });
+  var ep = await webhooks.endpoints.create({ url: "https://example.com/", events: "*" });
+
+  // Walk to the DLQ.
+  await webhooks.send("order.mark_paid", { x: 1 });
+  var schedule = [60, 300, 1800, 14400];
+  for (var i = 0; i < schedule.length; i += 1) {
+    clock.advance(schedule[i] * 1000);
+    await webhooks.processRetries({ now: clock.now() });
+  }
+  var dlqRows = await webhooks.dlq.list(ep.id);
+  check("dlq has one row before replay", dlqRows.length === 1);
+
+  // Replay — the receiver is now healthy.
+  var replayed = await webhooks.replayFromDlq(dlqRows[0].id);
+  check("replay produced a delivery",        replayed != null);
+  check("replay starts at attempts=1",       replayed.attempts === 1);
+  check("replay delivered",                  replayed.delivered_at != null && replayed.last_status === 200);
+  check("replay carries the original event", replayed.event_type === "order.mark_paid");
+
+  // DLQ row is gone.
+  var dlqAfter = await webhooks.dlq.list(ep.id);
+  check("dlq empty after replay", dlqAfter.length === 0);
+
+  // Replay unknown id returns null.
+  var none = await webhooks.replayFromDlq(bShop.framework.uuid.v7());
+  check("replay unknown returns null", none === null);
+}
+
+async function _rateLimitRefuses() {
+  var q = _makeQuery();
+  var clock = _mockClock(1700000000000);
+  // Always 200 — we're testing the rate-limit gate, not delivery
+  // failures. Generous in-call retry budget never needed.
+  var transport = _captureTransport([{ statusCode: 200 }]);
+  var webhooks = bShop.webhooks.create({
+    query:     q,
+    transport: transport,
+    now:       clock.now,
+  });
+  var ep = await webhooks.endpoints.create({
+    url:                    "https://example.com/",
+    events:                 "*",
+    rate_limit_per_minute:  60,
+  });
+
+  // Fire 61 deliveries inside a 60s window. The 61st should be
+  // refused with last_error === "rate-limited".
+  for (var i = 0; i < 61; i += 1) {
+    // Small clock-jitter inside the window keeps every row inside
+    // the sliding count; we never cross the 60s boundary.
+    if (i > 0 && (i % 10) === 0) clock.advance(100);
+    await webhooks.send("order.mark_paid", { i: i });
+  }
+  var rows = await q(
+    "SELECT * FROM webhook_deliveries WHERE endpoint_id = ?1 ORDER BY created_at ASC",
+    [ep.id],
+  );
+  check("61 delivery rows total", rows.rows.length === 61);
+  var delivered = rows.rows.filter(function (r) { return r.delivered_at != null; });
+  var refused   = rows.rows.filter(function (r) { return r.last_error === "rate-limited"; });
+  check("60 delivered", delivered.length === 60);
+  check("1 refused as rate-limited", refused.length === 1);
+  check("the 61st is the refused row", refused[0].created_at === rows.rows[60].created_at);
+
+  // After the window slides past, deliveries resume.
+  clock.advance(61 * 1000);
+  var d62 = await webhooks.send("order.mark_paid", { i: 62 });
+  check("post-window send delivers", d62[0].delivered_at != null);
+}
+
+async function _signatureRoundTrip() {
+  var q = _makeQuery();
+  var webhooks = bShop.webhooks.create({ query: q });
+
+  var secret = "whsec_" + bShop.framework.crypto.generateToken(24);
+  var payload = JSON.stringify({ id: "evt_1", amount: 100 });
+  var header = webhooks.signOutgoing(payload, secret);
+  check("header starts with t=", header.indexOf("t=") === 0);
+  check("header carries v1=",    header.indexOf(",v1=") !== -1);
+
+  var info = await webhooks.verifyIncoming(payload, header, secret);
+  check("verifyIncoming accepts our signature", info && info.ok === true);
+  check("verifyIncoming reports v1 scheme",     info.scheme === "v1");
+
+  // Tampered payload — same signature, different body.
+  var tampered = JSON.stringify({ id: "evt_1", amount: 999999 });
+  var threw = false;
+  try { await webhooks.verifyIncoming(tampered, header, secret); }
+  catch (_e) { threw = true; }
+  check("verifyIncoming refuses tampered payload", threw === true);
+
+  // Wrong secret refused.
+  var threwSecret = false;
+  try { await webhooks.verifyIncoming(payload, header, "whsec_other"); }
+  catch (_e) { threwSecret = true; }
+  check("verifyIncoming refuses wrong secret", threwSecret === true);
+
+  // Empty signature header refused at the entry tier.
+  await assert.rejects(webhooks.verifyIncoming(payload, "", secret), /signatureHeader/);
+  // Missing payload refused.
+  await assert.rejects(webhooks.verifyIncoming(null, header, secret), /payload/);
+  // Tolerance floor enforced.
+  await assert.rejects(webhooks.verifyIncoming(payload, header, secret, 10), /toleranceSeconds/);
+}
+
 async function run() {
   await _crud();
   await _urlValidation();
@@ -301,6 +531,11 @@ async function run() {
   await _retryOnTransient();
   await _manualRetry();
   await _orderTransitionFanout();
+  await _retryBackoff();
+  await _dlqAfterFiveAttempts();
+  await _replayFromDlq();
+  await _rateLimitRefuses();
+  await _signatureRoundTrip();
 }
 
 module.exports = { run: run };

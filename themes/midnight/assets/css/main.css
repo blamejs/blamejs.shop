@@ -1,0 +1,71 @@
+/* =================================================================
+   blamejs.shop — midnight theme
+   Dark-by-default reskin of the bundled `default` theme.
+
+   How this works
+   --------------
+   The framework's `lib/theme.js` primitive resolves a missing
+   template by falling through to `default`. HTML therefore inherits
+   automatically; only the stylesheet differs. This file imports the
+   default theme's `main.css` from the same origin (the framework's
+   CSP is `style-src 'self'`, so the URL must be same-origin —
+   third-party `@import` is rejected by the browser), then overrides
+   exclusively the CSS custom properties declared in `:root`.
+
+   Operators authoring their own theme should follow the same shape:
+   import default, override tokens, add narrow per-surface fixes for
+   any element that hard-codes a colour outside the token system
+   (the header backdrop and footer below are the only such elements
+   the default ships).
+   ================================================================= */
+
+@import url("/assets/themes/default/css/main.css");
+
+:root {
+  /* ---- palette (dark inversion) --------------------------------- */
+  --ink:        #f5f5f5;
+  --ink-2:      #d4d4d4;
+  --ink-3:      #b5b5b5;
+  --mute:       #a0a0a0;
+  --mute-2:     #7a7a7a;
+  --mute-3:     #5a5a5a;
+  --hair:       #2a2a2a;
+  --hair-2:     #1f1f1f;
+  --paper:      #0d0d0d;
+  --bg:         #1a1a1a;
+  --bg-2:       #232323;
+  --accent:     #ff8a3a;
+  --accent-d:   #fa4f09;
+  --accent-l:   #2a1a10;
+  --accent-glow:rgba(255,138,58,0.4);
+  --success:    #5fc97a;
+  --danger:     #ff5d54;
+  --focus-ring: var(--accent);
+
+  /* ---- shadows on dark surfaces are blacker, not lighter ------- */
+  --shadow-sm:  0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:  0 12px 28px -16px rgba(0,0,0,.6);
+  --shadow-lg:  0 32px 64px -28px rgba(0,0,0,.7);
+  --shadow-accent: 0 24px 48px -16px var(--accent-glow);
+}
+
+/* ---- surface fixes for elements that bypass the token system ---
+   The default header uses an explicit white blur backdrop and the
+   footer uses `--ink` as its background. Under midnight `--ink` is
+   light (#f5f5f5), so the footer would flip to a light bar against
+   a dark page — wrong direction. Pin both to literal dark values. */
+
+.site-header {
+  background: rgba(13,13,13,0.92);
+  border-bottom-color: var(--hair);
+}
+
+.site-footer {
+  background: #0a0a0a;
+  border-top-color: var(--hair);
+}
+
+/* The utility bar, marquee, framework band, hero--dark, newsletter
+   band and pay-card message all read --ink or set their own dark
+   gradients — they remain correct under the inverted tokens, so no
+   override is needed here. */

@@ -28,7 +28,7 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql"].map(function (f) {
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0019_analytics_events.sql"].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
 
@@ -264,6 +264,280 @@ async function _validation() {
   await assert.rejects(analytics.recentOrders({ limit: 101 }),                     /limit/);
 }
 
+// ---- event-stream coverage --------------------------------------------
+
+async function _recordEventHappy() {
+  var q = _makeQuery();
+  var analytics = bShop.analytics.create({ query: q.query });
+
+  var rawSession = "sess_" + bShop.framework.uuid.v7();
+  var out = await analytics.recordEvent({
+    event_type:        "pdp_view",
+    session_id:        rawSession,
+    product_id:        "prod-abc",
+    page_url:          "/p/abc",
+    user_agent_class:  "desktop",
+    payload:           { ref: "homepage-hero" },
+  });
+  check("recordEvent returns id (uuid v7 length 32)",   typeof out.id === "string" && out.id.length >= 26);
+  check("recordEvent returns occurred_at (epoch ms)",   Number.isInteger(out.occurred_at) && out.occurred_at > 0);
+
+  // The row landed — and the raw session_id was hashed (SHA3-512
+  // hex is 128 chars; the raw string was 36-ish chars).
+  var row = q.raw.prepare("SELECT * FROM analytics_events WHERE id = ?").get(out.id);
+  check("recordEvent persisted exactly one row",        !!row);
+  check("session_id_hash is hex (hashed)",               /^[0-9a-f]{128}$/.test(row.session_id_hash));
+  check("raw session_id NEVER persisted to the row",     row.session_id_hash !== rawSession);
+  check("event_type stored verbatim",                    row.event_type === "pdp_view");
+  check("product_id surfaced on denorm column",          row.product_id === "prod-abc");
+  check("payload_json stored as JSON",                   row.payload_json === JSON.stringify({ ref: "homepage-hero" }));
+  check("user_agent_class stored",                       row.user_agent_class === "desktop");
+  check("customer_id_hash NULL when only session given", row.customer_id_hash === null);
+
+  // Second call with the same raw session hashes to the same value
+  // (deterministic namespace hash).
+  var out2 = await analytics.recordEvent({
+    event_type: "wishlist_add",
+    session_id: rawSession,
+    product_id: "prod-abc",
+  });
+  var row2 = q.raw.prepare("SELECT * FROM analytics_events WHERE id = ?").get(out2.id);
+  check("repeat hash is identical (deterministic)",      row2.session_id_hash === row.session_id_hash);
+
+  // customer_id-only event lands too (session_id_hash falls back
+  // to a customer-scoped hash so the NOT NULL column has a value).
+  var rawCustomer = "cust-" + bShop.framework.uuid.v7();
+  var out3 = await analytics.recordEvent({
+    event_type:  "newsletter_signup",
+    customer_id: rawCustomer,
+  });
+  var row3 = q.raw.prepare("SELECT * FROM analytics_events WHERE id = ?").get(out3.id);
+  check("customer-only event has customer_id_hash",      /^[0-9a-f]{128}$/.test(row3.customer_id_hash));
+  check("customer-only event has session_id_hash too",   /^[0-9a-f]{128}$/.test(row3.session_id_hash));
+  check("raw customer_id NEVER persisted",               row3.customer_id_hash !== rawCustomer);
+}
+
+async function _recordEventRefusals() {
+  var q = _makeQuery();
+  var analytics = bShop.analytics.create({ query: q.query });
+
+  // Bad event_type
+  await assert.rejects(analytics.recordEvent({ event_type: "lol_view", session_id: "s1" }), /event_type must be one of/);
+  await assert.rejects(analytics.recordEvent({ event_type: "",         session_id: "s1" }), /event_type must be one of/);
+  await assert.rejects(analytics.recordEvent({ session_id: "s1" }),                          /event_type must be one of/);
+
+  // Missing both session and customer
+  await assert.rejects(analytics.recordEvent({ event_type: "pdp_view" }), /at least one of session_id/);
+
+  // Oversized payload (5 KiB)
+  var big = { blob: "x".repeat(5000) };
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "pdp_view", session_id: "s1", payload: big }),
+    /payload exceeds/,
+  );
+
+  // Bad occurred_at
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "pdp_view", session_id: "s1", occurred_at: -1 }),
+    /occurred_at must be/,
+  );
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "pdp_view", session_id: "s1", occurred_at: "yesterday" }),
+    /occurred_at must be/,
+  );
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "pdp_view", session_id: "s1", occurred_at: 1.5 }),
+    /occurred_at must be/,
+  );
+
+  // Raw email refused everywhere it could leak
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "pdp_view", session_id: "alice@example.com" }),
+    /session_id looks like a raw email/,
+  );
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "pdp_view", session_id: "s1", customer_id: "bob@example.com" }),
+    /customer_id looks like a raw email/,
+  );
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "search_query", session_id: "s1", search_q: "carol@example.com" }),
+    /search_q looks like a raw email/,
+  );
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "pdp_view", session_id: "s1", page_url: "/u/dan@example.com" }),
+    /page_url looks like a raw email/,
+  );
+
+  // Raw IPv4 refused
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "pdp_view", session_id: "192.168.1.1" }),
+    /session_id looks like a raw IP/,
+  );
+  // Raw IPv6 refused
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "pdp_view", session_id: "2001:db8::1" }),
+    /session_id looks like a raw IP/,
+  );
+
+  // Bad payload shape (array, not plain object)
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "pdp_view", session_id: "s1", payload: [1, 2, 3] }),
+    /payload must be a plain object/,
+  );
+
+  // Bad user_agent_class
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "pdp_view", session_id: "s1", user_agent_class: "smartfridge" }),
+    /user_agent_class must be one of/,
+  );
+
+  // Oversized search_q / page_url / product_id / session_id
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "search_query", session_id: "s1", search_q: "q".repeat(300) }),
+    /search_q exceeds/,
+  );
+  await assert.rejects(
+    analytics.recordEvent({ event_type: "pdp_view", session_id: "z".repeat(600) }),
+    /session_id exceeds/,
+  );
+
+  // No row landed despite every refusal above
+  var rowCount = q.raw.prepare("SELECT COUNT(*) AS n FROM analytics_events").get().n;
+  check("no rows landed after every refusal", Number(rowCount) === 0);
+}
+
+async function _topSearchTerms() {
+  var q = _makeQuery();
+  var analytics = bShop.analytics.create({ query: q.query });
+  var now   = Date.now();
+  var from  = now - 7 * DAY;
+
+  // "boots" wins (3 hits), "jacket" second (2), "scarf" third (1)
+  await analytics.recordEvent({ event_type: "search_query", session_id: "s-a", search_q: "boots",  occurred_at: from + 1 * DAY });
+  await analytics.recordEvent({ event_type: "search_query", session_id: "s-b", search_q: "boots",  occurred_at: from + 2 * DAY });
+  await analytics.recordEvent({ event_type: "search_query", session_id: "s-c", search_q: "boots",  occurred_at: from + 3 * DAY });
+  await analytics.recordEvent({ event_type: "search_query", session_id: "s-d", search_q: "jacket", occurred_at: from + 4 * DAY });
+  await analytics.recordEvent({ event_type: "search_query", session_id: "s-e", search_q: "jacket", occurred_at: from + 5 * DAY });
+  await analytics.recordEvent({ event_type: "search_query", session_id: "s-f", search_q: "scarf",  occurred_at: from + 6 * DAY });
+  // Non-search event with a search_q-shaped column — must NOT
+  // contaminate the search-terms aggregate (filter is on
+  // event_type='search_query').
+  await analytics.recordEvent({ event_type: "pdp_view",     session_id: "s-g", search_q: "noise",  occurred_at: from + 6 * DAY });
+
+  var rows = await analytics.topSearchTerms({ from: from, to: now, limit: 10 });
+  check("topSearchTerms returns 3 rows",        rows.length === 3);
+  check("boots wins with count 3",              rows[0].search_q === "boots"  && rows[0].count === 3);
+  check("jacket second with count 2",           rows[1].search_q === "jacket" && rows[1].count === 2);
+  check("scarf third with count 1",             rows[2].search_q === "scarf"  && rows[2].count === 1);
+
+  var limited = await analytics.topSearchTerms({ from: from, to: now, limit: 1 });
+  check("topSearchTerms honors limit=1",        limited.length === 1 && limited[0].search_q === "boots");
+}
+
+async function _topViewedProducts() {
+  var q = _makeQuery();
+  var analytics = bShop.analytics.create({ query: q.query });
+  var now  = Date.now();
+  var from = now - 7 * DAY;
+
+  // PROD-X: 4 views, PROD-Y: 2 views, PROD-Z (cart_add only): excluded
+  await analytics.recordEvent({ event_type: "pdp_view", session_id: "s1", product_id: "PROD-X", occurred_at: from + 1 * DAY });
+  await analytics.recordEvent({ event_type: "pdp_view", session_id: "s2", product_id: "PROD-X", occurred_at: from + 2 * DAY });
+  await analytics.recordEvent({ event_type: "pdp_view", session_id: "s3", product_id: "PROD-X", occurred_at: from + 3 * DAY });
+  await analytics.recordEvent({ event_type: "pdp_view", session_id: "s4", product_id: "PROD-X", occurred_at: from + 4 * DAY });
+  await analytics.recordEvent({ event_type: "pdp_view", session_id: "s5", product_id: "PROD-Y", occurred_at: from + 5 * DAY });
+  await analytics.recordEvent({ event_type: "pdp_view", session_id: "s6", product_id: "PROD-Y", occurred_at: from + 6 * DAY });
+  await analytics.recordEvent({ event_type: "cart_add", session_id: "s7", product_id: "PROD-Z", occurred_at: from + 6 * DAY });
+
+  var rows = await analytics.topViewedProducts({ from: from, to: now });
+  check("topViewedProducts returns 2 rows (cart_add excluded)", rows.length === 2);
+  check("PROD-X first with 4 views",                            rows[0].product_id === "PROD-X" && rows[0].count === 4);
+  check("PROD-Y second with 2 views",                           rows[1].product_id === "PROD-Y" && rows[1].count === 2);
+}
+
+async function _funnel() {
+  var q = _makeQuery();
+  var analytics = bShop.analytics.create({ query: q.query });
+  var now  = Date.now();
+  var from = now - 7 * DAY;
+
+  // 10 PDP views, 4 cart adds, 2 checkout starts, 1 checkout
+  // complete → 1/10 = 10% conversion.
+  var i;
+  for (i = 0; i < 10; i += 1) {
+    await analytics.recordEvent({ event_type: "pdp_view", session_id: "v" + i, product_id: "P1", occurred_at: from + 1 * DAY + i });
+  }
+  for (i = 0; i < 4; i += 1) {
+    await analytics.recordEvent({ event_type: "cart_add", session_id: "v" + i, product_id: "P1", occurred_at: from + 2 * DAY + i });
+  }
+  for (i = 0; i < 2; i += 1) {
+    await analytics.recordEvent({ event_type: "checkout_start", session_id: "v" + i, occurred_at: from + 3 * DAY + i });
+  }
+  await analytics.recordEvent({ event_type: "checkout_complete", session_id: "v0", occurred_at: from + 4 * DAY });
+
+  var f = await analytics.funnel({ from: from, to: now });
+  check("funnel.pdp_views = 10",              f.pdp_views === 10);
+  check("funnel.cart_adds = 4",                f.cart_adds === 4);
+  check("funnel.checkout_starts = 2",          f.checkout_starts === 2);
+  check("funnel.checkout_completes = 1",       f.checkout_completes === 1);
+  check("funnel.conversion_rate = 0.1",        Math.abs(f.conversion_rate - 0.1) < 1e-9);
+
+  // Zero-traffic window — conversion rate is 0, not NaN.
+  var empty = await analytics.funnel({ from: now - 365 * DAY + 1, to: now - 100 * DAY });
+  check("empty window conversion_rate = 0",    empty.conversion_rate === 0);
+  check("empty window counts all 0",           empty.pdp_views === 0 && empty.checkout_completes === 0);
+}
+
+async function _sessionFlow() {
+  var q = _makeQuery();
+  var analytics = bShop.analytics.create({ query: q.query });
+  var now  = Date.now();
+  var sess = "sess-flow-target";
+
+  // Out-of-order inserts; the primitive returns them
+  // chronologically ASC.
+  await analytics.recordEvent({ event_type: "checkout_start", session_id: sess, occurred_at: now - 1 * DAY });
+  await analytics.recordEvent({ event_type: "pdp_view",       session_id: sess, product_id: "P", occurred_at: now - 5 * DAY });
+  await analytics.recordEvent({ event_type: "cart_add",       session_id: sess, product_id: "P", occurred_at: now - 3 * DAY });
+  // Decoy from a different session
+  await analytics.recordEvent({ event_type: "pdp_view",       session_id: "other-session", product_id: "P", occurred_at: now - 4 * DAY });
+
+  var rows = await analytics.sessionFlow(sess);
+  check("sessionFlow returns 3 events (decoy excluded)",        rows.length === 3);
+  check("sessionFlow events sorted chronologically",            rows[0].event_type === "pdp_view" && rows[1].event_type === "cart_add" && rows[2].event_type === "checkout_start");
+  check("sessionFlow surfaces session_id_hash (hex)",           /^[0-9a-f]{128}$/.test(rows[0].session_id_hash));
+  check("sessionFlow events all share the same session_id_hash", rows[0].session_id_hash === rows[1].session_id_hash && rows[1].session_id_hash === rows[2].session_id_hash);
+  check("sessionFlow payload re-decoded to object",             typeof rows[0].payload === "object");
+
+  // Refusal on raw-PII session_id
+  await assert.rejects(analytics.sessionFlow("alice@example.com"), /looks like a raw email/);
+  await assert.rejects(analytics.sessionFlow(""),                  /session_id required/);
+  await assert.rejects(analytics.sessionFlow(sess, { limit: 0 }),   /limit/);
+  await assert.rejects(analytics.sessionFlow(sess, { limit: 501 }), /limit/);
+}
+
+async function _dropAfter() {
+  var q = _makeQuery();
+  var analytics = bShop.analytics.create({ query: q.query });
+  var now = Date.now();
+
+  await analytics.recordEvent({ event_type: "pdp_view", session_id: "old-1", occurred_at: now - 90 * DAY });
+  await analytics.recordEvent({ event_type: "pdp_view", session_id: "old-2", occurred_at: now - 91 * DAY });
+  await analytics.recordEvent({ event_type: "pdp_view", session_id: "new-1", occurred_at: now - 5  * DAY });
+  await analytics.recordEvent({ event_type: "pdp_view", session_id: "new-2", occurred_at: now - 1  * DAY });
+
+  // Delete everything older than 30 days
+  var r = await analytics.dropAfter(now - 30 * DAY);
+  check("dropAfter reports 2 rows deleted", r.deleted === 2);
+
+  var remaining = q.raw.prepare("SELECT COUNT(*) AS n FROM analytics_events").get().n;
+  check("2 fresh rows remain",              Number(remaining) === 2);
+
+  // Bad ts refused
+  await assert.rejects(analytics.dropAfter(-1),       /ts must be/);
+  await assert.rejects(analytics.dropAfter("today"),  /ts must be/);
+}
+
 async function _adminRoutes() {
   // Smoke the analytics admin routes through the bearer-gate wrapper.
   var q = _makeQuery();
@@ -400,6 +674,13 @@ async function run() {
   await _recentOrders();
   await _defaultWindow();
   await _validation();
+  await _recordEventHappy();
+  await _recordEventRefusals();
+  await _topSearchTerms();
+  await _topViewedProducts();
+  await _funnel();
+  await _sessionFlow();
+  await _dropAfter();
   await _adminRoutes();
   await _renderDashboard();
 }
