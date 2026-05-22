@@ -1,0 +1,52 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.41",
+  "date": "2026-05-22",
+  "headline": "Newsletter signup primitive — POST `/newsletter` enrolls a visitor, designed thank-you page on either branch",
+  "summary": "The storefront footer + newsletter band already rendered an email form that posted to `/newsletter`, but no handler was mounted — submitting the form 404'd. This release ships a `newsletter` primitive (`lib/newsletter.js`) that composes `b.guardEmail` for RFC-shape validation, `b.crypto.namespaceHash` for dedup, and stores rows in `newsletter_signups` (new migration `0010_newsletter_signups.sql`). The storefront's POST `/newsletter` route hands the form payload to the primitive and renders a designed thank-you card on success — with separate copy for the `new` (just enrolled) and `dedup` (already on the list) branches — and a designed error card on validation refusal.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`newsletter` primitive (`lib/newsletter.js`)",
+          "body": "`bShop.newsletter.create({ query? })` returns `{ signup, byEmailHash, count, EMAIL_NAMESPACE }`. `signup({ email, source })` normalises the email (trim + lowercase), validates via `b.guardEmail(addr, { profile: 'strict' })`, hashes through `b.crypto.namespaceHash('newsletter-email', normalised)` for the dedup key, and runs an `INSERT OR IGNORE` so a repeat signup is an idempotent no-op. Returns `{ id, status: 'new' | 'dedup', email_normalized }`. `byEmailHash(hash)` is the operator lookup for an unsubscribe flow. `count()` returns the active signups for an optional live newsletter-band stat."
+        },
+        {
+          "title": "Migration `0010_newsletter_signups.sql`",
+          "body": "New table — `id` UUID PRIMARY KEY, `email_hash` UNIQUE (the namespaceHash dedup key), `email_normalized` (the canonical address an operator needs to actually send a message; D1's encrypted-at-rest default + the operator's access controls cover the PII posture), `source` TEXT (defaults to `storefront-footer`, validated against `/[a-z0-9][a-z0-9._-]*[a-z0-9]/`), `created_at` epoch ms, `unsubscribed_at` NULL until the user opts out (the opt-out flow ships in a follow-up; the column lands now so existing rows don't need a schema rewrite). Two indexes — `created_at` for time-range broadcasts, `source` for channel-attribution filters."
+        },
+        {
+          "title": "Storefront route — POST `/newsletter`",
+          "body": "Mounts only when `deps.newsletter` is wired (operators that don't construct the primitive get a clean 404 instead of a misleading 200). Catches `TypeError` (input refusals — bad email format, oversized source string, control bytes) and renders the designed error card with HTTP 400; everything else (D1 unreachable, vault hiccup) renders the same card with HTTP 500. Success renders the thank-you card with HTTP 200 and adapts the copy to the `new` vs `dedup` branch."
+        },
+        {
+          "title": "Designed thank-you + error cards",
+          "body": "`renderNewsletterThanks(opts)` and `renderNewsletterError(opts)` both wrap the layout shell with an `eyebrow` + centred title + lede + dual-CTA card (`Back to the shop →` primary, `Star on GitHub` ghost). The `dedup` branch reads 'You're already on the list.' so a double-submit isn't a silent failure."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "`server.js` wires `bShop.newsletter.create({})` into `sfDeps`",
+          "body": "Constructed alongside `customers` inside the `if (catalog && cart)` block; the primitive only needs `b.externalDb.query` which the deploy already provisions via the Worker's `D1_BRIDGE_URL`."
+        },
+        {
+          "title": "`lib/index.js` exports `newsletter`",
+          "body": "Same shape as the rest of the shop primitives — `var n = bShop.newsletter.create({});`."
+        }
+      ]
+    },
+    {
+      "heading": "Detectors",
+      "items": [
+        {
+          "title": "Layer 1 coverage continues to gate input refusal at every entry point",
+          "body": "The newsletter primitive defers shape checks to `b.guardEmail` (already covered by the framework's own test suite) and `b.crypto.namespaceHash` (ditto). The shop layer's contribution is `_normalizeSource` (regex + length cap) and the idempotent dedup flow; the layer-1 smoke surface continues to refuse missing-input + wrong-type + over-length cases on every public entry point in the shop primitives."
+        }
+      ]
+    }
+  ]
+}
