@@ -1,0 +1,30 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.49",
+  "date": "2026-05-22",
+  "headline": "README refresh — scoped install command, live-demo URL, refreshed primitive table + migration list",
+  "summary": "The README hadn't been touched since v0.0.43; the install snippet still pointed at the unscoped `blamejs-shop` name and the primitives table listed only the original commerce surface. Operators landing on the GitHub repo now see the correct `npm install @blamejs/blamejs-shop`, the live demo URL, badges for npm + license + SLSA L3, and a primitives table that includes `customers`, `subscriptions`, `newsletter`, and `theme` alongside the original commerce stack.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "README — install snippet uses `@blamejs/blamejs-shop`",
+          "body": "Replaces the unscoped clone-and-smoke recipe with `npm install @blamejs/blamejs-shop` + the `require()` shape that resolves the framework + adapters. The local clone path stays as the secondary recipe for operators who want to develop against the repo. Three badges land in the header — npm version, Apache-2.0 license, SLSA Level 3."
+        },
+        {
+          "title": "README — primitive table extended",
+          "body": "Adds rows for `customers` (passkey-only, email hash-only), `subscriptions` (Stripe-backed recurring), `newsletter` (signup primitive shipped in v0.0.41), and `theme` (file-backed templates). The `storefront` row gains the full surface description — utility bar, sticky header, dark hero with code-preview card, marquee, featured-product callout, collections grid, framework feature band, designed catalog grid, newsletter band, and the four-column footer. `admin` row mentions the subscription-plan routes."
+        },
+        {
+          "title": "README — migration list updated",
+          "body": "Lists migrations 0001-0010 (catalog, cart, order, shop_config, webhooks, customers, inventory_thresholds, subscriptions, newsletter_signups) so operators don't have to grep the directory to know what schema lands. Adds the demo-seed recipe (`scripts/seed-sample-products.sql` + `scripts/seed-sample-product-media.sql`) for one-shot population of the live demo's four products + their SVG hero images."
+        },
+        {
+          "title": "Live-demo URL pinned",
+          "body": "`https://blamejs-shop.coocoo.workers.dev/` lands in the README header so operators evaluating the framework can see a real deployed instance rendering the storefront design system end-to-end before committing to wiring their own Cloudflare account."
+        }
+      ]
+    }
+  ]
+}
