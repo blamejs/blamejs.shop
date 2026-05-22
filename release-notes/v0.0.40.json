@@ -1,0 +1,39 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.40",
+  "date": "2026-05-22",
+  "headline": "Product detail page — gallery wired to real `media` rows with a branded SVG placeholder fallback",
+  "summary": "The PDP gallery used to render a giant initial-letter mark as a placeholder regardless of what the product looked like. The storefront now reads `catalog.media.listForProduct(product.id)` on every PDP request — when at least one media row exists, the first row drives the hero `<figure>` (with `alt_text` for a11y) and up to three more rows feed the thumbnail strip. The letter-mark falls through as a clean default when no media has been attached yet. A demo-seed pair (`scripts/seed-sample-product-media.sql` + four brand-colored SVG images under `scripts/sample-product-images/`) ships alongside the existing sample-products seed.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`storefront._buildPdpGallery(product, media, assetPrefix)`",
+          "body": "Composes the PDP hero figure + thumbnail strip from `catalog.media` rows. When `media` is non-empty, the first row becomes `<figure class=\"pdp__media pdp__media--image\"><img src=\"<asset_prefix><r2_key>\" alt=\"<alt_text>\"></figure>` (with `loading=\"eager\"` since it's above-the-fold), the next three drive thumbs, and missing thumb slots render as dashed-border placeholders so a single-image product still occupies the four-slot grid. When `media` is empty the gallery falls back to the letter-mark placeholder so a freshly-seeded product never renders an empty square. All template substitutions go through `_render`'s HTML-escape; URLs and alt text are attribute-escaped via a local `_escAttr` helper so an operator-supplied `r2_key` containing `\"` or `<` lands as escaped text inside the attribute."
+        },
+        {
+          "title": "`scripts/seed-sample-product-media.sql`",
+          "body": "Idempotent media seed: one `media` row per seeded product pointing at `products/<slug>.svg` with `content_type = image/svg+xml`, 800×800, `position = 0`, and human-readable `alt_text`. Run alongside the existing `scripts/seed-sample-products.sql` via `wrangler d1 execute blamejs-shop --remote --file=scripts/seed-sample-product-media.sql`. Drop the rows with `DELETE FROM media WHERE id LIKE '00000000-0000-7000-8000-0000000000%';` when replacing with operator-supplied media."
+        },
+        {
+          "title": "`scripts/sample-product-images/` — reference SVGs",
+          "body": "Four 800×800 SVG product placeholders matching the seeded catalog: `operator-tee.svg` (charcoal + accent shield silhouette + tee mark), `edge-reader.svg` (navy + hardware silhouette with status LEDs + monospace label), `operator-license.svg` (purple + ML-DSA-signed card mockup), `starter-bundle.svg` (orange gradient + stacked-box composition representing the three component SKUs). Each uses only the design-system palette + system font stack — no external font fetches, no raster assets. Operators copy these into their own R2 prefix as a starting point or replace them entirely; the demo seed expects them at R2 key `products/<slug>.svg`."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "`storefront.renderProduct({ product, variants, prices, media, ... })`",
+          "body": "Accepts an optional `media` array of media rows. When supplied, the gallery renders the real image; when omitted (the current contract for callers that don't read media — including the layer-1 test fixtures), the gallery renders the letter-mark placeholder. Backward-compatible — existing callers that don't pass `media` continue to render the placeholder, exactly the v0.0.39 behavior. The PDP storefront route (`GET /products/:slug`) now calls `deps.catalog.media.listForProduct(product.id)` and threads the result through."
+        },
+        {
+          "title": "Theme CSS — `.pdp__media--image` variant",
+          "body": "When the gallery hero is a real image, the `--image` modifier swaps the gradient placeholder backdrop for `var(--paper)`, removes the orange radial-glow `::after` decoration, and lets the `<img>` fill the square via `object-fit: cover`. Thumbnail `<img>` elements get the same `object-fit: cover` treatment so the strip stays uniform across portrait and landscape source images."
+        }
+      ]
+    }
+  ]
+}

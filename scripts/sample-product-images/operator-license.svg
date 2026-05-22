@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="Operator License — one-year individual playbook archive license">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2a0f5c"/>
+      <stop offset="100%" stop-color="#6a1bff"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1a1a"/>
+      <stop offset="100%" stop-color="#3a3a3a"/>
+    </linearGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="800" height="800" fill="url(#g)"/>
+  <rect width="800" height="800" fill="url(#grid)"/>
+
+  <!-- License card with PQC sig stripe -->
+  <g transform="translate(400,440) rotate(-4)">
+    <rect x="-260" y="-150" width="520" height="300" rx="20" fill="url(#card)" stroke="rgba(255,255,255,0.2)" stroke-width="2"/>
+    <rect x="-260" y="-150" width="520" height="40" rx="20" fill="#fa4f09"/>
+    <rect x="-260" y="-130" width="520" height="20" fill="#fa4f09"/>
+    <text x="-240" y="-122" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="16" font-weight="700" letter-spacing="0.24em" fill="#ffffff">OPERATOR LICENSE · 1Y</text>
+    <text x="-240" y="-50" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="600" fill="rgba(255,255,255,0.7)">Holder</text>
+    <text x="-240" y="-12" font-family="ui-sans-serif, system-ui, sans-serif" font-size="32" font-weight="800" fill="#ffffff">operator@blamejs.shop</text>
+    <text x="-240" y="46" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="500" letter-spacing="0.2em" fill="rgba(255,255,255,0.5)">VALID THROUGH 2027-05-22</text>
+    <g transform="translate(-240,80)">
+      <rect x="0" y="0" width="280" height="40" rx="6" fill="rgba(0,0,0,0.35)"/>
+      <text x="14" y="28" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="14" fill="rgba(255,255,255,0.78)">ml-dsa-65: oK9d3v…q42</text>
+    </g>
+    <g transform="translate(160,80)">
+      <circle cx="0" cy="20" r="20" fill="#fa4f09"/>
+      <text x="0" y="27" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="800" fill="#ffffff" text-anchor="middle">PQC</text>
+    </g>
+  </g>
+
+  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" fill="#ffffff">
+    <text x="60" y="92" font-size="22" font-weight="700" letter-spacing="0.24em" fill="#b67aff">CATALOG · DIGITAL</text>
+    <text x="60" y="148" font-size="64" font-weight="800" letter-spacing="-0.02em">Operator License</text>
+    <text x="60" y="194" font-size="22" font-weight="500" fill="rgba(255,255,255,0.7)">ML-DSA-signed delivery · 1-year term</text>
+    <text x="60" y="752" font-size="18" font-weight="600" letter-spacing="0.16em" fill="rgba(255,255,255,0.45)">OPR-LIC-1Y</text>
+  </g>
+</svg>

@@ -934,6 +934,25 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
   background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
   pointer-events: none;
 }
+.pdp__media--image {
+  /* When the gallery hero is a real product image, drop the
+     gradient backdrop + radial glow that mark the placeholder
+     state and let the image fill the square. */
+  background: var(--paper);
+  padding: 0;
+}
+.pdp__media--image::after { display: none; }
+.pdp__media--image img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.pdp__thumbs li img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: inherit;
+}
 .pdp__media-mark {
   font-family: var(--font-display);
   font-size: clamp(6rem, 14vw, 12rem);

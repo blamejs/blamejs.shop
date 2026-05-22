@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="Edge Reader v1 — single-purpose serial console reader">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a1f44"/>
+      <stop offset="100%" stop-color="#2c4d8a"/>
+    </linearGradient>
+    <linearGradient id="hwBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a1a1a"/>
+      <stop offset="100%" stop-color="#0d0d0d"/>
+    </linearGradient>
+    <radialGradient id="led" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#fa4f09" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#fa4f09" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="800" height="800" fill="url(#g)"/>
+  <rect width="800" height="800" fill="url(#grid)"/>
+
+  <!-- hardware silhouette -->
+  <g transform="translate(400,460)">
+    <rect x="-220" y="-100" width="440" height="200" rx="16" fill="url(#hwBody)" stroke="rgba(255,255,255,0.18)" stroke-width="2"/>
+    <rect x="-180" y="-60" width="120" height="40" rx="4" fill="rgba(255,255,255,0.08)"/>
+    <rect x="-50" y="-60" width="140" height="40" rx="4" fill="rgba(255,255,255,0.08)"/>
+    <rect x="100" y="-60" width="80" height="40" rx="4" fill="rgba(255,255,255,0.08)"/>
+    <circle cx="-180" cy="40" r="10" fill="url(#led)"/>
+    <circle cx="-180" cy="40" r="6" fill="#fa4f09"/>
+    <circle cx="-150" cy="40" r="6" fill="rgba(255,255,255,0.25)"/>
+    <circle cx="-120" cy="40" r="6" fill="rgba(255,255,255,0.25)"/>
+    <text x="180" y="48" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="20" font-weight="700" fill="rgba(255,255,255,0.6)" text-anchor="end">EDGE v1</text>
+  </g>
+
+  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" fill="#ffffff">
+    <text x="60" y="92" font-size="22" font-weight="700" letter-spacing="0.24em" fill="#7fb1ff">CATALOG · HARDWARE</text>
+    <text x="60" y="148" font-size="64" font-weight="800" letter-spacing="-0.02em">Edge Reader v1</text>
+    <text x="60" y="194" font-size="22" font-weight="500" fill="rgba(255,255,255,0.65)">USB-C · serial console · hardware RNG</text>
+    <text x="60" y="752" font-size="18" font-weight="600" letter-spacing="0.16em" fill="rgba(255,255,255,0.45)">EDG-RDR-V1</text>
+  </g>
+</svg>
