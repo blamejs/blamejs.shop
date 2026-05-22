@@ -72,12 +72,47 @@ npx wrangler secret put D1_BRIDGE_SECRET < .bridge-secret
 
 ## Apply database migrations
 
-Application schema lives under `migrations-d1/` (added when the
-first commerce primitive lands). Apply it before the first deploy:
+Application schema lives under `migrations-d1/`. Apply it before the
+first deploy:
 
 ```bash
-npx wrangler d1 migrations apply blamejs-shop
+npx wrangler d1 migrations apply blamejs-shop --remote
 ```
+
+The shipped migration set:
+
+| File                                      | What                                                              |
+|-------------------------------------------|-------------------------------------------------------------------|
+| `0001_catalog.sql`                        | products, variants, prices, inventory, media                      |
+| `0002_cart.sql`                           | carts, cart_lines (partial-unique active-cart-per-session)        |
+| `0003_order.sql`                          | orders, order_lines, order_transitions (FSM audit log)            |
+| `0004_shop_config.sql`                    | shop_config (operator-tunable runtime config)                     |
+| `0005_webhooks.sql`                       | webhook subscriptions + deliveries (signed fan-out)               |
+| `0006_customers.sql`                      | customers + passkey_credentials                                   |
+| `0008_inventory_thresholds.sql`           | low-stock alert thresholds + alerts                               |
+| `0009_subscriptions.sql`                  | subscription_plans + subscriptions (Stripe-mirrored)              |
+| `0010_newsletter_signups.sql`             | newsletter signups with hash-based dedup                          |
+
+Numbering is monotonically increasing; gaps (e.g. no `0007`) reflect
+reservations that landed in a different release and are intentional.
+Never renumber an applied migration.
+
+## Seed demo content (optional)
+
+To populate the four reference products (Operator Tee, Edge Reader v1,
+Operator License, Starter Bundle) with their brand-coloured SVG hero
+images, run the seed scripts against the remote D1 instance:
+
+```bash
+npx wrangler d1 execute blamejs-shop --remote \
+  --file=scripts/seed-sample-products.sql
+npx wrangler d1 execute blamejs-shop --remote \
+  --file=scripts/seed-sample-product-media.sql
+```
+
+Both files use `INSERT OR IGNORE`, so re-running them is a no-op —
+safe to wire into a post-deploy hook if the shop is meant to ship
+with the demo catalog visible.
 
 ## Container env
 
@@ -105,6 +140,40 @@ This builds the Dockerfile, pushes the container image to
 Cloudflare's registry, and updates the Worker. The first deploy can
 take a few minutes for the image build; subsequent deploys are fast
 because Cloudflare caches the vendored layer.
+
+## Wire a custom domain
+
+The first deploy publishes the Worker on a
+`<worker>.<subdomain>.workers.dev` URL. For a production shop, bind
+the Worker to your own zone so requests resolve directly under your
+brand domain (the reference deploy lives at <https://blamejs.shop>):
+
+1. Add the zone to Cloudflare. From the dashboard: **Websites → Add
+   a site →** enter the apex (e.g. `your-shop.example.com` or the
+   bare apex `example.com`), pick the Free plan, and update your
+   registrar's nameservers to the two Cloudflare assigns.
+2. Bind the Worker to the route. From the Worker page in the
+   dashboard: **Settings → Domains & Routes → Add → Custom Domain**,
+   select the zone, and enter the hostname you want
+   (`shop.example.com`, or the apex `example.com`). Cloudflare
+   provisions the edge cert and DNS automatically and routes every
+   matching request to the Worker.
+3. Alternatively, declare the route in `wrangler.toml` and redeploy:
+   ```toml
+   routes = [
+     { pattern = "your-shop.example.com", custom_domain = true }
+   ]
+   ```
+   `wrangler deploy` reconciles the route on next push.
+4. Verify TLS once DNS has propagated:
+   ```bash
+   curl -fsSL https://your-shop.example.com/_/health
+   openssl s_client -connect your-shop.example.com:443 -servername your-shop.example.com </dev/null 2>/dev/null \
+     | openssl x509 -noout -issuer -subject -dates
+   ```
+
+The `Verify` commands below use `https://blamejs.shop` as a stand-in
+— substitute your own bound hostname.
 
 ## Verify
 

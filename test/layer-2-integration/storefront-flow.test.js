@@ -216,7 +216,7 @@ async function _run() {
 
     var cartEmpty = await helpers.httpRequest({ port: handle.port, path: "/cart", jar: jar });
     check("cart after remove returns 200",          cartEmpty.status === 200);
-    check("cart after remove is empty",             cartEmpty.body.indexOf("Your cart is empty") !== -1);
+    check("cart after remove renders empty card",   cartEmpty.body.indexOf("cart-empty__card") !== -1);
     check("cart pill shows count 0",                cartEmpty.body.indexOf("Cart, 0 items") !== -1);
 
     // Round-trip the assert module to keep the layer-2 surface in

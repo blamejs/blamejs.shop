@@ -51,6 +51,36 @@ function _text(s, status) {
   return new Response(s, { status: status || 200, headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
+// Redact known sensitive shapes before emitting to Worker logs. The
+// Worker logs flow into Cloudflare's logging pipeline (tail / Logpush /
+// dashboard) — anything emitted here may persist on Cloudflare-side
+// storage. Redaction targets:
+//   - Bearer tokens / x-d1-bridge-secret headers
+//   - Stripe-Signature header values (t=...,v1=...)
+//   - JWT-like dotted tri-segment tokens
+//   - long hex strings (>=32 chars) — webhook secrets, HMAC sigs, IDs
+//   - shop_sid / shop_auth cookie pairs
+// Inputs that aren't strings pass through coerced to string; null/
+// undefined become the empty string so log calls stay total.
+function _redact(s) {
+  if (s == null) return "";
+  let out = typeof s === "string" ? s : String(s);
+  // Authorization: Bearer <token>
+  out = out.replace(/(Bearer\s+)[A-Za-z0-9._\-~+/=]+/gi, "$1<redacted>");
+  // Stripe-Signature header value
+  out = out.replace(/\bt=\d+\s*,\s*v1=[a-f0-9]+(?:\s*,\s*v\d+=[a-f0-9]+)*/gi, "<redacted-stripe-signature>");
+  // JWT-like tri-segment dotted token
+  out = out.replace(/\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "<redacted-jwt>");
+  // shop_sid / shop_auth cookie value (anything until ; or end)
+  out = out.replace(/\b(shop_sid|shop_auth)=[^;\s]+/gi, "$1=<redacted>");
+  // Bridge / admin secret headers (key=value style, common log shape)
+  out = out.replace(/\b(x-d1-bridge-secret|x-admin-api-key|d1_bridge_secret|admin_api_key|stripe_webhook_secret|stripe_api_key)\s*[:=]\s*\S+/gi, "$1=<redacted>");
+  // Long hex / base64-ish run — webhook secrets, HMAC sigs, opaque tokens
+  out = out.replace(/\b[a-f0-9]{32,}\b/gi, "<redacted-hex>");
+  out = out.replace(/\b[A-Za-z0-9_-]{40,}\b/g, "<redacted-token>");
+  return out;
+}
+
 function _timingSafeEqual(a, b) {
   if (typeof a !== "string" || typeof b !== "string") return false;
   if (a.length !== b.length) return false;
@@ -232,7 +262,7 @@ export class ShopContainer extends Container {
 
   onStart()  { console.log("ShopContainer started"); }
   onStop()   { console.log("ShopContainer stopped"); }
-  onError(e) { console.error("ShopContainer error:", e && e.stack || e); }
+  onError(e) { console.error("ShopContainer error:", _redact(e && e.stack || e)); }
 }
 
 // ---- Worker entrypoint ----------------------------------------------------
@@ -245,6 +275,19 @@ export default {
     // 1. Health probe — short-circuit before any binding lookup.
     if (pathname === (env.HEALTH_PATH || "/_/health")) {
       return _json({ ok: true, edge: true });
+    }
+
+    // Operator-friendly deploy-verification probe. No auth — purely
+    // diagnostic, surfaces only build/version hints (no secrets). The
+    // worker SHA is sourced from env.WORKER_VERSION (set at deploy
+    // time by the wrangler build, otherwise "unknown"); the container
+    // image hint comes from env.CONTAINER_IMAGE_HINT.
+    if (pathname === "/_/version" && (request.method === "GET" || request.method === "HEAD")) {
+      return _json({
+        worker:          env.WORKER_VERSION || "unknown",
+        container_image: env.CONTAINER_IMAGE_HINT || "unknown",
+        time:            new Date().toISOString(),
+      });
     }
 
     // 2. Static assets — pass through to R2 with cache headers.
@@ -263,6 +306,27 @@ export default {
       const fingerprinted = /\.[a-f0-9]{8,}\.[a-z0-9]+$/.test(key);
       headers.set("cache-control", fingerprinted ? ASSET_CACHE_CONTROL_IMMUTABLE : ASSET_CACHE_CONTROL_DEFAULT);
       return new Response(obj.body, { headers });
+    }
+
+    // 2b. /robots.txt edge fallback — crawlers must always get a
+    //     clean answer even while the container is cold-starting,
+    //     otherwise they index the warming page (noindex, but still
+    //     noisy). An R2-uploaded robots.txt under <ASSET_PREFIX>
+    //     would have already won above; this only catches the bare
+    //     `/robots.txt` request when no asset overrides it. The
+    //     response is intentionally minimal — operators who want a
+    //     richer policy upload one into R2.
+    if (pathname === "/robots.txt" && (request.method === "GET" || request.method === "HEAD")) {
+      return new Response(
+        "User-agent: *\nAllow: /\nSitemap: https://blamejs.shop/sitemap.xml\n",
+        {
+          status:  200,
+          headers: {
+            "content-type":  "text/plain; charset=utf-8",
+            "cache-control": "public, max-age=3600",
+          },
+        },
+      );
     }
 
     // 3. Stripe webhook — verify at the edge before forwarding. The
@@ -400,11 +464,22 @@ async function _forwardToContainer(request, env) {
            bodyPreview.indexOf("There is no Container instance") !== -1 ||
            bodyPreview.indexOf("The container is not running") !== -1;
   }
-  // First attempt is immediate; remaining slots double until we
-  // cover a realistic Node + blamejs cold-start window (~60s).
-  // CF firecracker provisioning + image pull + Node + blamejs init
-  // can exceed 30s under load. The doubled budget eats one extra
-  // worker invocation but keeps the warming-up fallback rare.
+  // First attempt is immediate; remaining slots double until the
+  // cumulative wait covers a realistic Node + blamejs cold-start
+  // window. The documented standard-2 cold-start is ~30s; firecracker
+  // provisioning + image pull + Node + blamejs init can hit the
+  // upper bound under provisioning load. Cumulative budget below:
+  //   attempt 1: t=0
+  //   attempt 2: t=2s
+  //   attempt 3: t=6s
+  //   attempt 4: t=14s
+  //   attempt 5: t=30s   (covers the documented window)
+  //   attempt 6: t=60s   (slack for image-pull contention)
+  // Six attempts is the smallest schedule that (a) probes inside the
+  // first 2s (most warm hits), (b) lands an attempt at the documented
+  // cold-start boundary (30s), and (c) reserves one slot beyond it.
+  // Trimming the trailing 30s slot would push the visitor to the
+  // warming page even on a textbook cold start.
   const backoffMs = [0, 2000, 4000, 8000, 16000, 30000];
   let res = null;
   let lastWasColdStart = false;
@@ -421,11 +496,16 @@ async function _forwardToContainer(request, env) {
   // designed "warming up" page that auto-refreshes instead of the
   // raw SDK error string.
   if (lastWasColdStart && (method === "GET" || method === "HEAD")) {
-    return new Response(_warmingHtml(), {
+    // Real-browser navigations get a faster refresh; XHR/fetch clients
+    // get the slower 8s cadence (they shouldn't be hammering retries).
+    const fetchMode = request.headers.get("sec-fetch-mode") || "";
+    const isNavigate = fetchMode === "navigate";
+    const refreshSeconds = isNavigate ? 5 : 8;
+    return new Response(_warmingHtml(request.url, refreshSeconds), {
       status:  503,
       headers: {
         "content-type":  "text/html; charset=utf-8",
-        "retry-after":   "8",
+        "retry-after":   String(refreshSeconds),
         "cache-control": "no-store",
       },
     });
@@ -433,12 +513,24 @@ async function _forwardToContainer(request, env) {
   return res;
 }
 
-function _warmingHtml() {
+function _warmingHtml(canonicalUrl, refreshSeconds) {
+  const refresh = (refreshSeconds === 5 || refreshSeconds === 8) ? refreshSeconds : 8;
+  // HTML-escape the canonical URL — the inbound URL is attacker-
+  // controlled (any path the visitor types), so injecting it raw
+  // into an href would be an XSS vector.
+  const safeCanonical = String(canonicalUrl || "https://blamejs.shop/")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
   return "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
     + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
     + "<title>Warming up — blamejs.shop</title>"
     + "<link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/logo.png\">"
-    + "<meta http-equiv=\"refresh\" content=\"8\">"
+    + "<link rel=\"canonical\" href=\"" + safeCanonical + "\">"
+    + "<meta name=\"robots\" content=\"noindex, nofollow\">"
+    + "<meta http-equiv=\"refresh\" content=\"" + refresh + "\">"
     + "<style>"
     + ":root{--ink:#191919;--mute:#5e5e5e;--accent:#fa4f09;--bg:#fafafa;--paper:#fff;--hair:#e6e6e6;}"
     + "*{box-sizing:border-box}html,body{margin:0;padding:0}"
@@ -461,7 +553,10 @@ function _warmingHtml() {
     + "<main class=\"card\">"
     + "<div class=\"brand\"><img src=\"/assets/brand/logo.png\" alt=\"\"><span>blamejs.shop</span></div>"
     + "<h1>Warming up the <span class=\"accent\">shop</span>&hellip;</h1>"
-    + "<p><span class=\"dot\"></span>This page will refresh automatically once the server is ready.</p>"
+    + "<p aria-live=\"polite\" role=\"status\">"
+    + "<span class=\"dot\" aria-hidden=\"true\"></span>"
+    + "Warming up the shop — this page will refresh automatically once the server is ready."
+    + "</p>"
     + "<div class=\"meta\">First request after an idle period. Subsequent requests will be fast.</div>"
     + "</main></body></html>";
 }

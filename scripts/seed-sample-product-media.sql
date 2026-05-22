@@ -30,3 +30,51 @@ INSERT OR IGNORE INTO media (id, product_id, variant_id, r2_key, content_type, w
   ('00000000-0000-7000-8000-000000000034', '00000000-0000-7000-8000-000000000004', NULL,
    'products/starter-bundle.svg', 'image/svg+xml', 800, 800, 0,
    'Starter Bundle — Operator Tee, Edge Reader v1, and Operator License at one SKU', 1779000000000);
+
+-- Operator Hoodie
+INSERT OR IGNORE INTO media (id, product_id, variant_id, r2_key, content_type, width, height, position, alt_text, created_at) VALUES
+  ('00000000-0000-7000-8000-000000000035', '00000000-0000-7000-8000-000000000005', NULL,
+   'products/operator-hoodie.svg', 'image/svg+xml', 800, 800, 0,
+   'Operator Hoodie — heavyweight fleece pullover with chest shield wordmark', 1779000000000);
+
+-- Vault Stick
+INSERT OR IGNORE INTO media (id, product_id, variant_id, r2_key, content_type, width, height, position, alt_text, created_at) VALUES
+  ('00000000-0000-7000-8000-000000000036', '00000000-0000-7000-8000-000000000006', NULL,
+   'products/vault-stick.svg', 'image/svg+xml', 800, 800, 0,
+   'Vault Stick — USB-A hardware authenticator with ML-DSA-65 keypair and touch attest', 1779000000000);
+
+-- Signing Cable
+INSERT OR IGNORE INTO media (id, product_id, variant_id, r2_key, content_type, width, height, position, alt_text, created_at) VALUES
+  ('00000000-0000-7000-8000-000000000037', '00000000-0000-7000-8000-000000000007', NULL,
+   'products/signing-cable.svg', 'image/svg+xml', 800, 800, 0,
+   'Signing Cable — USB-C cable with in-line ML-DSA-65 signing chip', 1779000000000);
+
+-- Build Pass
+INSERT OR IGNORE INTO media (id, product_id, variant_id, r2_key, content_type, width, height, position, alt_text, created_at) VALUES
+  ('00000000-0000-7000-8000-000000000038', '00000000-0000-7000-8000-000000000008', NULL,
+   'products/build-pass.svg', 'image/svg+xml', 800, 800, 0,
+   'Build Pass — annual CI license with signed-receipt artifact attachments', 1779000000000);
+
+-- Audit Log Kit
+INSERT OR IGNORE INTO media (id, product_id, variant_id, r2_key, content_type, width, height, position, alt_text, created_at) VALUES
+  ('00000000-0000-7000-8000-000000000039', '00000000-0000-7000-8000-000000000009', NULL,
+   'products/audit-log-kit.svg', 'image/svg+xml', 800, 800, 0,
+   'Audit Log Kit — three serial-numbered hardcover notebooks with wax-style seal', 1779000000000);
+
+-- Self-Hosted Plan
+INSERT OR IGNORE INTO media (id, product_id, variant_id, r2_key, content_type, width, height, position, alt_text, created_at) VALUES
+  ('00000000-0000-7000-8000-00000000003a', '00000000-0000-7000-8000-00000000000a', NULL,
+   'products/self-hosted-plan.svg', 'image/svg+xml', 800, 800, 0,
+   'Self-Hosted Plan — annual support license for self-hosted blamejs deployments', 1779000000000);
+
+-- Operator Mug
+INSERT OR IGNORE INTO media (id, product_id, variant_id, r2_key, content_type, width, height, position, alt_text, created_at) VALUES
+  ('00000000-0000-7000-8000-00000000003b', '00000000-0000-7000-8000-00000000000b', NULL,
+   'products/operator-mug.svg', 'image/svg+xml', 800, 800, 0,
+   'Operator Mug — 11oz stoneware mug with fired-ceramic shield wordmark', 1779000000000);
+
+-- Sticker Pack
+INSERT OR IGNORE INTO media (id, product_id, variant_id, r2_key, content_type, width, height, position, alt_text, created_at) VALUES
+  ('00000000-0000-7000-8000-00000000003c', '00000000-0000-7000-8000-00000000000c', NULL,
+   'products/sticker-pack.svg', 'image/svg+xml', 800, 800, 0,
+   'Sticker Pack — six die-cut weather-rated vinyl decals', 1779000000000);

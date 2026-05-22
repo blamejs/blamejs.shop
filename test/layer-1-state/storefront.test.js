@@ -99,9 +99,10 @@ async function _cartEmpty() {
     totals: { subtotal_minor: 0, grand_total_minor: 0, currency: "USD" },
     shop_name: "Acme",
   });
-  check("empty cart shows empty copy",  html.indexOf("Your cart is empty") !== -1);
-  check("empty cart shows $0",            html.indexOf("$0.00") !== -1);
-  check("empty cart count = 0",            html.indexOf("Cart, 0 items") !== -1);
+  check("empty cart renders empty-state card",  html.indexOf("cart-empty__card") !== -1);
+  check("empty cart shows empty-state title",   html.indexOf("Your cart is empty") !== -1);
+  check("empty cart offers browse CTA",         html.indexOf("Browse products") !== -1);
+  check("empty cart count = 0",                  html.indexOf("Cart, 0 items") !== -1);
 }
 
 async function _search() {
