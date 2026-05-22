@@ -1,0 +1,31 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.42",
+  "date": "2026-05-22",
+  "headline": "Home catalog grid — product cards now render the hero image alongside title + price",
+  "summary": "The home page catalog grid used text-only cards (`<h2>` + price + 'View product →' link). When a product carries at least one `catalog.media` row, the card now renders as a clickable image-bearing tile — square hero image at the top, then a single-row meta strip with title + accent-colored price. Products without media keep the existing text-only card so a freshly-listed product with no images yet renders cleanly.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`PRODUCT_CARD_IMAGE` template + `_buildProductCard(p)` picker",
+          "body": "When a product carries an `image_url`, the renderer emits an `<a class=\"product-card\">` wrapper with a square `<figure class=\"product-card__media\">` hero (`object-fit: cover`) above a meta strip holding the title and price. Hover lifts the card and darkens the border. When no media exists the existing `PRODUCT_CARD` text-only tile is the fallback. The picker keeps the template engine's HTML-escape behavior — `image_url` + `alt_text` flow through `_render`, never bypassing the escape."
+        },
+        {
+          "title": "Home route fetches media per product",
+          "body": "`GET /` now calls `deps.catalog.media.listForProduct(product.id)` alongside the existing `variants.listForProduct` + `prices.current` lookups. The first media row becomes `product.hero_media` on the data shape `renderHome` consumes; products with no attached media stay at `hero_media = null` and the renderer drops back to the text-only card."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "`storefront.renderHome({ products, asset_prefix? })` — `asset_prefix` defaults to `/assets/`",
+          "body": "Image URLs are built as `assetPrefix + p.hero_media.r2_key` so operators on a custom asset prefix (different R2 binding, CDN remap) can override without forking the renderer. Backward-compatible — when `asset_prefix` is omitted the default lands at the Worker's `/assets/*` static-asset bridge."
+        }
+      ]
+    }
+  ]
+}
