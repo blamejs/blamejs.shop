@@ -1,0 +1,31 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.48",
+  "date": "2026-05-22",
+  "headline": "Home page — featured-product callout between the primitives marquee and the collections grid",
+  "summary": "The home page rhythm went marquee → 6-tile collections grid → framework band, so a single product never got more than the four-tile catalog card's surface area to introduce itself. This release inserts a split callout (square hero image on the left, copy column with `Featured` eyebrow + title + description + accent-coloured price + `View product →` CTA on the right) between the marquee and the collections grid. The render picks the first product with attached media; operators wrapping `renderHome` can override the selection via `opts.featured`.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`.featured-product` section",
+          "body": "Sits between the primitives marquee and the collections grid. Two-column grid at desktop (square hero + copy column), stacks to image-above-copy at <64rem with a 16/10 image aspect ratio. Title is a `clamp(1.75rem, 3vw, 2.5rem)` headline; price renders in the display font at `--text-2xl` with the accent colour + tabular-nums. Image is wrapped in an anchor to the PDP and has a hover-scale of `1.03` driven through the existing `--duration-slow` ease curve. The card itself has a hairline border on `var(--paper)` so it reads as a content tile, not a hero band — keeps the dark hero above and the framework band below as the page's main rhythm changes."
+        },
+        {
+          "title": "`storefront.renderHome({ ..., featured? })` selection override",
+          "body": "When `opts.featured` is supplied the renderer uses it verbatim (shape: `{ title, description, price, slug, image_url, image_alt }`). When absent, the renderer scans the active-products list for the first row with `image_url` and uses that as the featured pick. Products without media are skipped; when no product has media the callout renders as an empty string and the page rhythm falls back to marquee → collections directly."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Product data shape — `description` carried through",
+          "body": "The renderHome `products.map(...)` projection now includes `description` (from the catalog products row) so the featured callout's lede can pull product-specific copy. Existing callers that didn't pass a description continue to render — the callout falls back to a stock 'Server-rendered, PQC-secured, shipped from origin' line."
+        }
+      ]
+    }
+  ]
+}
