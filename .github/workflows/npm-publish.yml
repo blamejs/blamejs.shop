@@ -110,6 +110,12 @@ jobs:
         # actually shipping under lib/vendor/* read from MANIFEST.json,
         # generated via `scripts/build-vendored-sbom.js`.
         run: |
+          # `npm sbom` walks the installed dep tree to emit components;
+          # without a node_modules it errors with `ESBOMPROBLEMS missing:
+          # <devDep>` even when `--omit=dev` would have excluded it from
+          # the output. Install devDeps first so the tree resolves; the
+          # `--omit=dev` filter on `npm sbom` keeps the SBOM clean.
+          npm install --no-audit --no-fund --ignore-scripts
           npm sbom --sbom-format=cyclonedx --sbom-type=application --omit=dev > sbom.cdx.json
           node scripts/build-vendored-sbom.js > sbom.vendored.cdx.json
           # Refuse the publish if any runtime dep snuck in. The
