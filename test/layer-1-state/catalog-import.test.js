@@ -188,7 +188,7 @@ async function _badSlugOrSkuRowError() {
   var ok4 = await catalog.products.bySlug("ok-4");
   check("ok-1 persisted",  ok1 !== null);
   check("ok-4 persisted",  ok4 !== null);
-  var bad = await catalog.products.bySlug("ok-1");   // any-slug lookup of "Has Spaces" would throw — skip
+  var _bad = await catalog.products.bySlug("ok-1");  // any-slug lookup of "Has Spaces" would throw — skip
   check("at least 2 variants persisted", result.created.variants >= 2);
 }
 

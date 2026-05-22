@@ -116,7 +116,9 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
             webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
           });
         }
-        var config = bShop.config.create({});
+        // config is already constructed at the top of the routes
+        // function (line 87) when catalog && cart are present; the
+        // admin block reuses that handle.
         // R2 upload bridge — the admin /admin/media/upload route uses
         // this to push fetched image bytes through the Worker into the
         // bound R2 bucket. Wired only when the operator has set the
