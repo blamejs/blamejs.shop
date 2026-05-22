@@ -1,0 +1,51 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.53",
+  "date": "2026-05-22",
+  "headline": "Docs refresh, sample catalog tripled, designed empty-cart card, worker hardening",
+  "summary": "Four surfaces refresh in one release. `SECURITY.md` + `CONTRIBUTING.md` + `docs/deploy-cloudflare.md` cover the scoped package name + custom domain + the full 0001-0010 migration table. The sample catalog grows from 4 products to 12 (Operator Hoodie, Vault Stick, Signing Cable, Build Pass, Audit Log Kit, Self-Hosted Plan, Operator Mug, Sticker Pack — each with its own brand-coloured SVG hero). The empty-cart row gains a designed `cart-empty` card with the brand 🛒 icon, eyebrow + title + lede + dual CTAs (`Browse products` primary, `Find a specific product` ghost linking the header search). The Worker gets a `/robots.txt` edge fallback (so crawlers get a clean answer even during container cold-start), the warming-up page picks up `noindex`/`canonical`/`aria-live`/refresh tuned to `Sec-Fetch-Mode`, and a new `/_/version` probe surfaces deploy state.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Sample catalog grows from 4 to 12 products with brand-coloured SVG heroes",
+          "body": "`scripts/sample-product-images/{operator-hoodie,vault-stick,signing-cable,build-pass,audit-log-kit,self-hosted-plan,operator-mug,sticker-pack}.svg` ship as the next round of reference imagery. Apparel SVGs use dark-ink gradients with accent-orange illustrations; hardware uses navy-to-blue gradients with grey/black device silhouettes + accent-orange chip highlights; digital uses purple-to-navy with credential-artifact motifs carrying a visible PQC / ML-DSA seal; bundles use deep-orange or green with stacked-object compositions. All 800×800 viewBox, system font stack, monospace SKU at bottom-right. `scripts/seed-sample-products.sql` + `scripts/seed-sample-product-media.sql` extend with the matching catalog + media rows (UUIDv7 ids continue the existing numbering 0005-000c)."
+        },
+        {
+          "title": "Designed empty-cart card",
+          "body": "`renderCart` emits a `.cart-empty` section instead of a bare `<td colspan>` row when there are no lines. The card carries the brand emoji in a dashed-border circle, `Cart` eyebrow, `Your cart is empty` headline, a lede that explains how the cart holds the add-time price, and dual CTAs — `Browse products →` (primary, → `/`) + `Find a specific product` (ghost, anchors `#site-search-q` for header-search focus without inline JS). Populated cart gains a `Shop / Cart` breadcrumb above the section head, matching the PDP's pattern."
+        },
+        {
+          "title": "Worker `/robots.txt` edge fallback",
+          "body": "Even during container cold-start, the Worker now serves a minimal `User-agent: *\\nAllow: /\\nSitemap: https://blamejs.shop/sitemap.xml\\n` directly at the edge with a 1h cache. Crawlers never see the warming page for robots probes. R2-uploaded `/assets/robots.txt` overrides still win for operators with a custom policy."
+        },
+        {
+          "title": "Worker `/_/version` deploy probe",
+          "body": "Operator-friendly diagnostic endpoint returning `{ worker, container_image, time }`. No auth required (pure read-only probe); use it to verify a deploy reached the edge before sending traffic."
+        },
+        {
+          "title": "`CONTRIBUTING.md`",
+          "body": "210 lines covering: dev environment setup (clone → vendor-update → smoke), the release workflow (release-notes JSON → CHANGELOG rebuild → branch → PR → admin merge → tag → publish), code conventions (CommonJS, `var`, zero npm runtime deps, compose `b.*` primitives, vendored tree read-only, security defaults non-opt-in, PQC-first), how to run + write tests (smoke + layer-0/1/2, `waitUntil` over `setTimeout`), the explicit list of artifacts each publish produces, and a pointer to `SECURITY.md` for vuln reporting."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Warming-up page — `noindex`, canonical, ARIA-live, refresh tuned to navigation mode",
+          "body": "The cold-start fallback page picks up `<meta name=\"robots\" content=\"noindex, nofollow\">` + a canonical link so crawlers don't index the placeholder. The auto-refresh interval shifts based on `Sec-Fetch-Mode` — 5 seconds for `navigate` requests (real visitor in a browser tab), 8 seconds for non-navigation fetches (XHR/fetch/Stripe.js probes that shouldn't spam the container). A new `aria-live=\"polite\"` region announces the warming state to screen readers."
+        },
+        {
+          "title": "`SECURITY.md` — Stripe webhook clause updated to match shipped code",
+          "body": "The container's defense-in-depth verification clause used a placeholder phrase from before `lib/payment.js` shipped. Now describes the actual `b.webhook.verify` call (alg `hmac-sha256-stripe`) running inside `lib/payment.js` before any FSM transition. Every other audit point matched the workflow output as-is — SLSA L3 provenance, Sigstore-keyless SBOM signatures, SHA-256 + SHA3-512 digests, ML-DSA-65 PQC sidecar."
+        },
+        {
+          "title": "`docs/deploy-cloudflare.md` — custom-domain section + 0001-0010 migration table + demo-seed step",
+          "body": "Adds a `Wire a custom domain` section (zone-add → Worker custom-domain bind → `wrangler.toml` route alternative → TLS verify). Replaces the bare-paragraph migration mention with the explicit 0001-0010 table (calling out the intentional `0007` gap from the abandoned discounts work). Adds a `Seed demo content` section that runs both seed SQL files via `wrangler d1 execute --remote`. Switches the existing migration-apply step to `--remote` for clarity."
+        }
+      ]
+    }
+  ]
+}

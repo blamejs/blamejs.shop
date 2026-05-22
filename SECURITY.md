@@ -123,9 +123,11 @@ node -e "
 - **Stripe webhook signature.** Inbound `POST` to
   `/api/webhooks/stripe` is signature-verified at the Worker edge
   (HMAC-SHA256 over `<timestamp>.<body>`, 5-minute tolerance window)
-  before forwarding to the container. The container also re-verifies
-  defense-in-depth once the payment primitive lands. An unsigned or
-  out-of-window delivery never touches origin resources.
+  before forwarding to the container. The container re-verifies the
+  same signature defense-in-depth via `b.webhook.verify` (alg
+  `hmac-sha256-stripe`) inside `lib/payment.js` before any FSM
+  transition runs. An unsigned or out-of-window delivery never
+  touches origin resources.
 - **Worker → Container trust boundary.** The Worker treats the
   container as untrusted-for-D1: it never proxies arbitrary headers
   into D1, only the explicit `sql` + `params` from the bridge body.
