@@ -27,14 +27,23 @@ async function _home() {
   check("home includes shop name",      html.indexOf("Acme Shop") !== -1);
   check("home lists both products",      html.indexOf("Widget Pro") !== -1 && html.indexOf("Widget Lite") !== -1);
   check("home includes prices",          html.indexOf("$29.99") !== -1 && html.indexOf("$19.99") !== -1);
-  check("home renders cart count",        html.indexOf("Cart · 2") !== -1);
+  check("home renders cart count",        html.indexOf("Cart, 2 items") !== -1);
   check("home has product links",         html.indexOf("/products/widget-pro") !== -1);
   check("home is full HTML doc",          html.indexOf("<!DOCTYPE html>") === 0);
 }
 
 async function _homeEmpty() {
   var html = storefront.renderHome({ products: [], shop_name: "Acme" });
-  check("empty home shows no-products copy", html.indexOf("No products yet") !== -1);
+  // Empty catalog still ships the storefront shell + hero + supporting
+  // sections — visitors see a designed surface, not a placeholder.
+  check("empty home renders dark hero",            html.indexOf("class=\"hero hero--dark\"") !== -1);
+  check("empty home has hero code preview",         html.indexOf("class=\"hero__card\"") !== -1);
+  check("empty home shows marquee",                 html.indexOf("class=\"marquee\"") !== -1);
+  check("empty home shows collections",            html.indexOf("class=\"collections__grid\"") !== -1);
+  check("empty home shows framework band",         html.indexOf("class=\"framework-band\"") !== -1);
+  check("empty home renders catalog section",      html.indexOf("class=\"catalog-section\"") !== -1);
+  check("empty home shows admin curl snippet",      html.indexOf("class=\"catalog-empty__code\"") !== -1);
+  check("empty home anchors at #catalog",          html.indexOf("id=\"catalog\"") !== -1);
 }
 
 async function _product() {
@@ -81,7 +90,7 @@ async function _cart() {
   check("cart lists both lines",   html.indexOf("ABC-1") !== -1 && html.indexOf("ABC-2") !== -1);
   check("cart shows line totals",   html.indexOf("$59.98") !== -1 && html.indexOf("$19.99") !== -1);
   check("cart shows subtotal",      html.indexOf("$79.97") !== -1);
-  check("cart count = line count",  html.indexOf("Cart · 2") !== -1);
+  check("cart count = line count",  html.indexOf("Cart, 2 items") !== -1);
 }
 
 async function _cartEmpty() {
@@ -92,7 +101,7 @@ async function _cartEmpty() {
   });
   check("empty cart shows empty copy",  html.indexOf("Your cart is empty") !== -1);
   check("empty cart shows $0",            html.indexOf("$0.00") !== -1);
-  check("empty cart count = 0",            html.indexOf("Cart · 0") !== -1);
+  check("empty cart count = 0",            html.indexOf("Cart, 0 items") !== -1);
 }
 
 async function _search() {
@@ -124,11 +133,12 @@ async function _search() {
 
 async function _searchEmpty() {
   var html = storefront.renderSearch({ q: "nothing-matches", products: [], shop_name: "Acme" });
-  check("empty search shows no-match copy",  html.indexOf("No products matched") !== -1);
+  check("empty search shows no-match copy",  html.indexOf("Nothing in the catalog matched") !== -1);
   check("empty search includes the query",    html.indexOf("nothing-matches") !== -1);
+  check("empty search shows browse fallback", html.indexOf("Browse the full catalog") !== -1);
 
   var emptyQ = storefront.renderSearch({ q: "", products: [], shop_name: "Acme" });
-  check("blank q shows prompt copy",         emptyQ.indexOf("Type a query above") !== -1);
+  check("blank q shows prompt copy",         emptyQ.indexOf("Use the search box in the header") !== -1);
 }
 
 async function _searchXss() {
@@ -215,87 +225,81 @@ async function _validation() {
 }
 
 async function _layoutTokens() {
-  // Every page renderer hands back the same shell — assert the design-system
-  // tokens, the reset hooks the page renderers depend on, and the new search
-  // form land in every rendered document.
+  // The storefront layout MUST NOT inline its design system. CSS belongs
+  // in the theme stylesheet so operators can override it without touching
+  // the framework — and the framework's CSP defaults (style-src 'self')
+  // block inline <style> blocks anyway. This test enforces that contract.
+  var fs   = require("fs");
+  var path = require("path");
   var html = storefront.renderHome({ products: [], shop_name: "Acme" });
 
-  // Palette tokens.
-  check("layout declares --ink token",       html.indexOf("--ink:") !== -1);
-  check("layout declares --ink-2 token",      html.indexOf("--ink-2:") !== -1);
-  check("layout declares --mute token",       html.indexOf("--mute:") !== -1);
-  check("layout declares --hair token",       html.indexOf("--hair:") !== -1);
-  check("layout declares --paper token",      html.indexOf("--paper:") !== -1);
-  check("layout declares --bg token",         html.indexOf("--bg:") !== -1);
-  check("layout declares --accent token",     html.indexOf("--accent:") !== -1);
-  check("layout declares --accent-d token",   html.indexOf("--accent-d:") !== -1);
+  // (1) Layout: shell-only — no inline styles, no third-party font hosts.
+  // The font-host regexes anchor on the scheme + dot-boundary so the
+  // assertion isn't satisfied by a substring inside an unrelated URL —
+  // it specifically refuses a `<link href="https://fonts.{googleapis,
+  // gstatic}.com/…">` tag in the layout, regardless of attribute order.
+  check("layout has NO inline <style> block",        html.indexOf("<style") === -1);
+  check("layout has NO Google Fonts link",           !(/https?:\/\/fonts\.googleapis\.com\//.test(html)));
+  check("layout has NO Google Fonts preconnect",     !(/https?:\/\/fonts\.gstatic\.com/.test(html)));
+  check("layout links the theme stylesheet",         html.indexOf("rel=\"stylesheet\"") !== -1);
+  check("layout points at default theme css",         html.indexOf("/assets/themes/default/css/main.css") !== -1);
 
-  // Typography tokens.
-  check("layout declares --font-display",    html.indexOf("--font-display:") !== -1);
-  check("layout declares --font-body",       html.indexOf("--font-body:") !== -1);
-  check("layout declares --text-xs",          html.indexOf("--text-xs:") !== -1);
-  check("layout declares --text-sm",          html.indexOf("--text-sm:") !== -1);
-  check("layout declares --text-base",        html.indexOf("--text-base:") !== -1);
-  check("layout declares --text-lg",          html.indexOf("--text-lg:") !== -1);
-  check("layout declares --text-xl",          html.indexOf("--text-xl:") !== -1);
-  check("layout declares --text-2xl",         html.indexOf("--text-2xl:") !== -1);
-  check("layout declares --text-3xl",         html.indexOf("--text-3xl:") !== -1);
+  // (2) Layout: HTML structure the page renderers + a11y consumers depend on.
+  check("layout offers skip-link target",             html.indexOf("id=\"main\"") !== -1);
+  check("utility bar rendered",                       html.indexOf("class=\"utility-bar\"") !== -1);
+  check("header has site-search form",                html.indexOf("class=\"site-search\"") !== -1);
+  check("search form targets /search",                html.indexOf("action=\"/search\"") !== -1);
+  check("search form uses GET method",                html.indexOf("method=\"get\"") !== -1);
+  check("search form has q input",                    html.indexOf("name=\"q\"") !== -1);
+  check("search form input is type=search",           html.indexOf("type=\"search\"") !== -1);
+  check("nav has account icon link",                  html.indexOf("class=\"site-nav__icon\"") !== -1);
+  check("cart pill has count badge",                  html.indexOf("class=\"cart-pill__count\"") !== -1);
+  check("newsletter band rendered",                   html.indexOf("class=\"newsletter-band\"") !== -1);
+  check("newsletter form posts email",                 html.indexOf("name=\"email\"") !== -1);
+  check("footer is rendered",                         html.indexOf("class=\"site-footer\"") !== -1);
+  check("footer has Shop column",                      html.indexOf(">Shop</h4>") !== -1);
+  check("footer has Framework column",                html.indexOf(">Framework</h4>") !== -1);
+  check("footer has Operators column",                html.indexOf(">Operators</h4>") !== -1);
+  check("footer references blamejs",                  html.indexOf("built on blamejs") !== -1);
+  check("footer shows copyright year",                 /&copy; \d{4}/.test(html));
 
-  // Spacing scale.
-  check("layout declares --space-0",   html.indexOf("--space-0:") !== -1);
-  check("layout declares --space-1",   html.indexOf("--space-1:") !== -1);
-  check("layout declares --space-2",   html.indexOf("--space-2:") !== -1);
-  check("layout declares --space-3",   html.indexOf("--space-3:") !== -1);
-  check("layout declares --space-4",   html.indexOf("--space-4:") !== -1);
-  check("layout declares --space-5",   html.indexOf("--space-5:") !== -1);
-  check("layout declares --space-6",   html.indexOf("--space-6:") !== -1);
-  check("layout declares --space-7",   html.indexOf("--space-7:") !== -1);
-  check("layout declares --space-8",   html.indexOf("--space-8:") !== -1);
+  // (3) Operator override: passing `theme_css` swaps the stylesheet URL.
+  var overridden = storefront.renderHome({
+    products:  [],
+    shop_name: "Acme",
+    theme_css: "/assets/themes/acme/css/main.css",
+  });
+  check("theme_css override replaces stylesheet URL", overridden.indexOf("/assets/themes/acme/css/main.css") !== -1);
+  check("theme_css override drops default URL",        overridden.indexOf("/assets/themes/default/css/main.css") === -1);
 
-  // Radius, shadow, motion.
-  check("layout declares --radius-sm",     html.indexOf("--radius-sm:") !== -1);
-  check("layout declares --radius-md",     html.indexOf("--radius-md:") !== -1);
-  check("layout declares --radius-lg",     html.indexOf("--radius-lg:") !== -1);
-  check("layout declares --shadow-sm",     html.indexOf("--shadow-sm:") !== -1);
-  check("layout declares --shadow-md",     html.indexOf("--shadow-md:") !== -1);
-  check("layout declares --ease-out",      html.indexOf("--ease-out:") !== -1);
-  check("layout declares --duration-fast", html.indexOf("--duration-fast:") !== -1);
-  check("layout declares --duration-mid",  html.indexOf("--duration-mid:") !== -1);
-
-  // Reset + a11y hooks the page renderers rely on.
-  check("layout sets box-sizing reset",       html.indexOf("box-sizing: border-box") !== -1);
-  check("layout uses :focus-visible outline",  html.indexOf(":focus-visible") !== -1);
-  check("layout respects reduced-motion",      html.indexOf("prefers-reduced-motion: no-preference") !== -1);
-  check("layout uses tabular-nums for prices", html.indexOf("tabular-nums") !== -1);
-  check("layout offers skip-link target",       html.indexOf("id=\"main\"") !== -1);
-
-  // Shared classes the other page-redesign agents will compose against.
-  check("layout defines .grid class",         html.indexOf(".grid") !== -1);
-  check("layout defines .card class",         html.indexOf(".card") !== -1);
-  check("layout defines .btn class",          html.indexOf(".btn") !== -1);
-  check("layout defines .btn-secondary class", html.indexOf(".btn-secondary") !== -1);
-  check("layout defines .summary-table class", html.indexOf(".summary-table") !== -1);
-  check("layout defines .empty class",        html.indexOf(".empty") !== -1);
-  check("layout defines .cart-pill class",    html.indexOf(".cart-pill") !== -1);
-  check("layout defines .hero class",         html.indexOf(".hero") !== -1);
-
-  // Header search form lands and POSTs to /search via GET.
-  check("header has site-search form",      html.indexOf("class=\"site-search\"") !== -1);
-  check("search form targets /search",      html.indexOf("action=\"/search\"") !== -1);
-  check("search form uses GET method",       html.indexOf("method=\"get\"") !== -1);
-  check("search form has q input",          html.indexOf("name=\"q\"") !== -1);
-  check("search form input is type=search", html.indexOf("type=\"search\"") !== -1);
-
-  // Footer ships brand + tagline + primitive list + copyright.
-  check("footer is rendered",                 html.indexOf("class=\"site-footer\"") !== -1);
-  check("footer lists 'Built on blamejs'",     html.indexOf("Built on blamejs") !== -1);
-  check("footer lists 'Server-rendered'",     html.indexOf("Server-rendered") !== -1);
-  check("footer lists 'PQC-first'",           html.indexOf("PQC-first") !== -1);
-  check("footer shows copyright year",        /&copy; \d{4}/.test(html));
-
-  // Fonts: both font families load + the display font binds h1-h3.
-  check("layout loads Montserrat",  html.indexOf("family=Montserrat") !== -1);
-  check("layout loads Inter",       html.indexOf("Inter:wght") !== -1);
+  // (4) The shipped default theme stylesheet carries the design system —
+  //     palette tokens, typography scale, shared classes the page
+  //     renderers compose against. Read it off disk because that's the
+  //     artifact operators actually upload to R2.
+  var css = fs.readFileSync(path.join(__dirname, "../../themes/default/assets/css/main.css"), "utf8");
+  var tokens = [
+    "--ink:", "--ink-2:", "--mute:", "--hair:", "--paper:", "--bg:",
+    "--accent:", "--accent-d:",
+    "--font-display:", "--font-body:",
+    "--text-xs:", "--text-sm:", "--text-base:", "--text-lg:",
+    "--text-xl:", "--text-2xl:", "--text-3xl:",
+    "--space-0:", "--space-1:", "--space-2:", "--space-3:", "--space-4:",
+    "--space-5:", "--space-6:", "--space-7:", "--space-8:",
+    "--radius-sm:", "--radius-md:", "--radius-lg:",
+    "--shadow-sm:", "--shadow-md:",
+    "--ease-out:", "--duration-fast:", "--duration-mid:",
+  ];
+  for (var i = 0; i < tokens.length; i += 1) {
+    check("theme css declares " + tokens[i] + " token", css.indexOf(tokens[i]) !== -1);
+  }
+  check("theme css sets box-sizing reset",        css.indexOf("box-sizing: border-box") !== -1);
+  check("theme css uses :focus-visible outline",  css.indexOf(":focus-visible") !== -1);
+  check("theme css respects reduced-motion",      css.indexOf("prefers-reduced-motion") !== -1);
+  check("theme css uses tabular-nums for prices", css.indexOf("tabular-nums") !== -1);
+  var classes = [".grid", ".card", ".btn", ".btn-secondary", ".summary-table", ".empty", ".cart-pill", ".hero"];
+  for (var j = 0; j < classes.length; j += 1) {
+    check("theme css defines " + classes[j] + " class", css.indexOf(classes[j]) !== -1);
+  }
 }
 
 async function run() {

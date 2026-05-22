@@ -48,7 +48,7 @@ HEALTH_PATH         = "/_/health"
 [[containers]]
 class_name     = "ShopContainer"
 image          = "./Dockerfile"
-instance_type  = "standard-1"
+instance_type  = "standard-2"
 max_instances  = 4
 name           = "blamejs-shop-container"
 

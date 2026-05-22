@@ -176,7 +176,7 @@ async function _run() {
     check("cart lists SKU",                         cartPage.body.indexOf("WDG-PRO-BLK-L") !== -1);
     check("cart shows qty=2 line",                  /value=\"2\"/.test(cartPage.body));
     check("cart shows line total $59.98",           cartPage.body.indexOf("$59.98") !== -1);
-    check("cart pill shows count 1",                cartPage.body.indexOf("Cart · 1") !== -1);
+    check("cart pill shows count 1",                cartPage.body.indexOf("Cart, 1 items") !== -1);
 
     // Extract the cart-line id from the embedded update form's action
     // path: /cart/lines/<line_id>/update. The HTML form is the only
@@ -217,7 +217,7 @@ async function _run() {
     var cartEmpty = await helpers.httpRequest({ port: handle.port, path: "/cart", jar: jar });
     check("cart after remove returns 200",          cartEmpty.status === 200);
     check("cart after remove is empty",             cartEmpty.body.indexOf("Your cart is empty") !== -1);
-    check("cart pill shows count 0",                cartEmpty.body.indexOf("Cart · 0") !== -1);
+    check("cart pill shows count 0",                cartEmpty.body.indexOf("Cart, 0 items") !== -1);
 
     // Round-trip the assert module to keep the layer-2 surface in
     // the same accounting bucket as the layer-1 tests above.
