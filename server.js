@@ -86,6 +86,13 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // invalidate the entry for the read side.
       var config = catalog && cart ? bShop.config.create({}) : null;
 
+      // Cursor HMAC key for order.listForCustomer — same derivation
+      // pattern as catalog's cursor secret. Required in production
+      // since v0.0.28 wired customer-account-scoped pagination.
+      var orderCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("order-cursor", process.env.D1_BRIDGE_SECRET)
+        : "order-cursor-secret-dev-only";
+
       // Tax + shipping default tables — kick in when the operator
       // hasn't seeded `tax.rules` / `shipping.services` in config.
       // Zero-rate tax + a single $0 standard shipping service keeps
@@ -101,7 +108,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // opts in by setting the secret). Stripe-backed refund routes
       // only mount when STRIPE_API_KEY is also present.
       if (catalog && cart && process.env.ADMIN_API_KEY) {
-        var order   = bShop.order.create({});
+        var order   = bShop.order.create({ cursorSecret: orderCursorSecret });
         var payment = null;
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           payment = bShop.payment.create({
@@ -158,8 +165,13 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // browsable but checkout-routes don't mount.
         var sfDeps = { catalog: catalog, cart: cart };
         if (sfTheme) sfDeps.theme = sfTheme;
+        // Customer accounts — opts the /account/* routes in. The
+        // primitive only needs the externalDb query handle (which
+        // ships with this deploy via `r2_bridge` / `D1_BRIDGE_URL`),
+        // so wire it whenever the data layer is present.
+        sfDeps.customers = bShop.customers.create({});
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
-          var sfOrder = bShop.order.create({});
+          var sfOrder = bShop.order.create({ cursorSecret: orderCursorSecret });
           var sfPayment = bShop.payment.create({
             apiKey:        process.env.STRIPE_API_KEY,
             webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,

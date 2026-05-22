@@ -48,3 +48,9 @@ keys/*-priv.*
 # Local visual reference material — the two ecommerce-template zips
 # are reference for the future theme primitive, not shipped code.
 .template/
+
+# Visual-verification artifacts — Playwright drops PNG snapshots at
+# the repo root (live-*.png, e2e-*.png) and under `.playwright-mcp/`
+# while testing the storefront UI; never part of the release surface.
+/*.png
+.playwright-mcp/

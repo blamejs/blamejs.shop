@@ -1,0 +1,122 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.35",
+  "date": "2026-05-22",
+  "headline": "Storefront redesign — multi-section landing, designed cart / PDP / checkout, theme CSS extracted to an external stylesheet",
+  "summary": "Every storefront page now ships through the same design system — utility bar, sticky header with search + cart pill, dark hero with code-preview card, primitives marquee, collections grid, framework feature band, designed catalog empty state, newsletter band, and a four-column footer. Cart, product, checkout, pay, order, account login / register / dashboard, search, /admin, and 404 each got their own designed treatment. The theme's design tokens moved out of inline `<style>` blocks (which `style-src 'self'` blocks) into `themes/default/assets/css/main.css`, served same-origin from R2 with a build-time version cache-buster. Operators override the look by uploading a replacement CSS at the same R2 key or by passing `theme_css` to the storefront renderers.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Storefront layout — utility bar + designed header + multi-column footer",
+          "body": "`LAYOUT` in `lib/storefront.js` now wraps every page in a thin top utility bar (live status pill, primitive strapline, GitHub call-to-action), a sticky header with the wordmark logo + pill search input + Shop / Framework nav + circular account icon + cart pill with count badge, and a four-column footer (brand + GitHub / npm / RSS social, Shop, Framework, Operators) plus a bottom strip with copyright + Security / Privacy / Terms links. The same shell wraps every page renderer."
+        },
+        {
+          "title": "Home page composition",
+          "body": "Six sections, all server-rendered. Dark hero with eyebrow + version pill, headline with accent on `nothing`, lede, primary + ghost CTAs, a four-stat row, and a tilted glass code-preview card showing a `bShop.checkout.finalize(…)` snippet with syntax highlighting. A CSS-only infinite-scroll marquee lists twelve framework primitives (ML-KEM-1024, ML-DSA-65, XChaCha20-Poly1305, SHAKE256, Argon2id, SLSA L3 provenance, Sigstore-keyless SBOM, Trusted Types, Stripe-first payments, WebAuthn passkeys, server-rendered HTML, zero npm runtime deps). A six-tile collections grid (Apparel, Hardware, Digital, Subscriptions, Bundles, Gift cards) with per-tile gradient art and hover-arrow circles. A dark framework feature band with split copy + four numbered feature cards. A catalog section that renders product cards when seeded and a designed empty state otherwise — dashed-placeholder tile grid + 'Add the first product' copy + a literal `curl POST /admin/products` snippet."
+        },
+        {
+          "title": "Product detail page",
+          "body": "Two-column layout with breadcrumb (Shop / Product), a square gallery placeholder showing the product initial as a large semi-transparent mark with an orange radial glow + four thumbnail squares, and an info column with eyebrow + title + description + three status badges (In stock, Ships from origin, Stripe-secured checkout) + a variant table with title / SKU code chip / accent-colored price / qty input + Add to cart button. The mobile breakpoint stacks the gallery above the info column and hides the SKU + Action header columns on narrow viewports."
+        },
+        {
+          "title": "Cart / checkout / pay / order page redesigns",
+          "body": "Cart page is a two-column grid: line table on the left (SKU code chip, qty input with Update button, unit + line price, Remove button), sticky Order Summary card on the right (totals list with grand-total row, full-width Continue to checkout CTA, tax + shipping note). Checkout form is a vertical form-stack with grouped uppercase labels, inline country / state / postal row, and a designed Order Summary panel. Pay page hosts the Stripe Payment Element inside a designed card with a full-width Pay button + payment message line. Order confirmation shows a status badge (`In stock`-style chip) + a two-column items / totals layout. Every form input + button + table now uses the shared design tokens."
+        },
+        {
+          "title": "Account login / register / dashboard",
+          "body": "Login + register are centered single-column auth cards with the design tokens — eyebrow + title + lede + form-stack + full-width submit + auth-message line + alt link (`New here?` / `Already have one?`). The passkey ceremony JS is unchanged. Dashboard shows a head row (eyebrow + name + lede on the left, Sign-out button on the right) followed by a recent-orders table in a designed body card."
+        },
+        {
+          "title": "Search page",
+          "body": "Search now opens with a left-aligned section head (eyebrow + dynamic title + summary + `All products →` shortcut) followed by either the product grid or a dashed-border empty card with a magnifier icon + `We don't carry that yet` + `Browse the full catalog` CTA. The empty state copy adapts to a blank query (`Use the search box in the header to look for a product…`) vs a no-match query (`Nothing in the catalog matched …`)."
+        },
+        {
+          "title": "Default theme stylesheet — extracted to `themes/default/assets/css/main.css`",
+          "body": "The 346-line inline `<style>` block in the layout is gone. Every design token (palette, type scale, spacing, radius, shadow, motion, container width), reset, atom (eyebrow, link-arrow, btn-primary, btn-ghost, btn-secondary, dot), and component (header, utility bar, cart pill, hero, marquee, collections, framework band, value cards, PDP, cart, checkout, pay, order, auth, account dash, search, 404, admin landing, newsletter, footer) ships from `themes/default/assets/css/main.css` (~12 KB). The layout references it as `<link rel=\"stylesheet\" href=\"/assets/themes/default/css/main.css?v=<package-version>\">`. The Worker's static-asset bridge passes the request straight to R2 with `Cache-Control: public, max-age=300`. Operators override by uploading their own stylesheet to the same R2 key, or by passing `opts.theme_css` to any storefront renderer."
+        },
+        {
+          "title": "Worker cold-start envelope + warming-up fallback page",
+          "body": "`worker/index.js` bumps `sleepAfter` from `30s` to `15m` so normal browsing keeps the container warm. The cold-start retry budget grows to roughly 60 seconds (`[0, 2000, 4000, 8000, 16000, 30000]` ms backoff slots) to cover Cloudflare's container provisioning + the framework's boot-time SLH-DSA-SHAKE-256f audit-signing keypair generation. If every retry still hits a closed port, the visitor lands on a designed `Warming up — blamejs.shop` page that auto-refreshes every eight seconds, instead of the SDK's raw `Failed to start container` text."
+        },
+        {
+          "title": "Container instance type → `standard-2`",
+          "body": "`wrangler.toml` sets `instance_type = \"standard-2\"`. The `standard-1` profile (0.5 vCPU) couldn't reliably finish the boot-time SLH-DSA-SHAKE-256f keypair generation inside the worker's retry budget on cold starts; `standard-2` reduces the cold-start window comfortably under the new 60-second budget."
+        }
+      ]
+    },
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`/admin` landing page",
+          "body": "Operators (and the footer link) now land on a designed HTML page at `/admin` that explains the API-only posture and shows four curl examples (create a product, search products, restock inventory, issue a refund) as syntax-highlighted code cards, plus a sidebar note linking to `lib/admin.js` on GitHub. Every other `/admin/*` route remains a bearer-token-gated JSON endpoint. The HTML route only mounts inside the storefront's standard mount; no admin API behavior changed."
+        },
+        {
+          "title": "Designed 404 page via `router.onNotFound`",
+          "body": "Every unmatched route — `GET`, `POST`, anything — now renders a designed not-found page (gradient `404` numeral + 'That page slipped the catalog.' copy + Back-to-shop + View-your-cart CTAs) inside the standard layout, instead of the framework's default `<h1>404 Not Found</h1>` text body. Wired through `router.onNotFound`, so it covers paths and verbs uniformly."
+        },
+        {
+          "title": "Live hero stat — `Products live` count",
+          "body": "The first stat in the hero now reflects the actual catalog size (the count of `status='active'` products returned to the home renderer). Empty catalogs show an em-dash. The remaining three stats stay hardcoded brand-facing values (`npm runtime deps: 0`, `Default crypto: PQC`, `License: Apache 2.0`)."
+        },
+        {
+          "title": "Customer accounts wired into storefront mount",
+          "body": "`server.js` constructs `bShop.customers.create({})` and threads it into `sfDeps.customers`, opting the `/account/login`, `/account/register`, `/account` dashboard, and the passkey ceremony JSON endpoints into the deploy. The customers primitive itself shipped in `v0.0.28` but its routes were never mounted in the storefront."
+        },
+        {
+          "title": "`scripts/seed-sample-products.sql` — demo catalog seed",
+          "body": "One-shot SQL seed for the demo storefront: four products (Operator Tee, Edge Reader v1, Operator License, Starter Bundle), four variants, four current-price rows, and an inventory row each. Run with `wrangler d1 execute blamejs-shop --remote --file=scripts/seed-sample-products.sql`. Uses `INSERT OR IGNORE` so re-running is idempotent. Operators replace this with their own catalog through the admin API once they have one."
+        }
+      ]
+    },
+    {
+      "heading": "Removed",
+      "items": [
+        {
+          "title": "Inline `<style>` block + Google Fonts dependency",
+          "body": "The framework's default `Content-Security-Policy: style-src 'self'` blocks both inline `<style>` blocks and external-host stylesheets. The 346-line layout style block + the `fonts.googleapis.com` + `fonts.gstatic.com` `<link>` tags are gone; the layout now uses a system font stack (`ui-sans-serif, system-ui, -apple-system, …`) so no third-party host needs to be allow-listed in CSP. The theme stylesheet is the single source of truth for typography."
+        },
+        {
+          "title": "`style=\"\"` attributes on every storefront renderer",
+          "body": "Twenty-six inline `style=\"\"` attributes across the cart, checkout, pay, order, and account renderers were the other half of the inline-style CSP problem. They're replaced by semantic class hooks (`cart-line__update`, `cart-line__btn`, `form-stack`, `form-row`, `form-row--inline`, `form-field__input--xs`, `pay-card`, `pay-card__element`, `pay-card__submit`, `pay-card__message`, `checkout-summary`, etc.) defined in the theme stylesheet."
+        }
+      ]
+    },
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "License copy — three places said `MIT` when the framework ships under Apache 2.0",
+          "body": "The utility bar pill, the hero stats row, and the footer copyright line each labelled the project `MIT`. The actual `LICENSE` is Apache 2.0 and `package.json#license` has always been `Apache-2.0`. All three render the correct text now."
+        },
+        {
+          "title": "Collection-tile gradients",
+          "body": "The six home-page collection tiles ship per-tile gradient art (orange, charcoal, purple, green, coral, navy) plus a corner-highlight overlay. A later `.collection-card__art` rule was clobbering the per-tile `--N` modifiers via `background-image` shorthand specificity, leaving every tile gray. Tiles now store the gradient as a `--card-gradient` custom property per modifier so both the highlight overlay and the base gradient compose correctly."
+        },
+        {
+          "title": "Hover specificity on the on-dark secondary CTA",
+          "body": "The hero's `VIEW ON GITHUB` ghost button rendered with the default dark text (`a.btn-secondary` selector outranked `.btn-secondary--on-dark`) so the text was invisible on the dark hero. The on-dark modifier now uses `a.btn-secondary.btn-secondary--on-dark` to bump specificity, restoring the white text + translucent border."
+        }
+      ]
+    },
+    {
+      "heading": "Migration",
+      "items": [
+        {
+          "title": "Theme override path",
+          "body": "Operators replace the default look in one of three ways: (1) upload a replacement `main.css` to R2 at `themes/default/css/main.css` — same key, same `<link>` URL, no code change required; (2) pass `opts.theme_css` to any storefront renderer (`renderHome`, `renderProduct`, `renderCart`, …) to point a request at a different stylesheet URL; (3) register a named theme via the `theme` primitive and let the storefront's `assetUrl(\"css/main.css\")` resolve to `/assets/themes/<name>/css/main.css`. The page-level `?v=<package-version>` cache-buster appends automatically when no explicit `theme_css` is supplied."
+        },
+        {
+          "title": "Demo seed",
+          "body": "`wrangler d1 execute blamejs-shop --remote --file=scripts/seed-sample-products.sql` lands four demo products with one active USD price each + initial inventory. Idempotent. Drop the rows with `DELETE FROM products WHERE id LIKE '00000000-0000-7000-8000-%';` when replacing with a real catalog."
+        },
+        {
+          "title": "Vendor refresh — blamejs `v0.11.44`",
+          "body": "`scripts/vendor-update.sh blamejs latest` refreshed the vendored framework to `v0.11.44`. Carries the framework's own storefront-test, security-header, csp middleware, and router refinements through to this deploy."
+        }
+      ]
+    }
+  ]
+}

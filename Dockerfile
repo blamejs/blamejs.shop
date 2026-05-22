@@ -22,6 +22,7 @@
 
 ARG NODE_VERSION=24.14.1
 ARG BLAMEJS_TAG=latest
+ARG BUILD_ID=2026-05-22-admin-landing-page
 
 # ---- base -----------------------------------------------------------------
 FROM node:${NODE_VERSION}-alpine AS base

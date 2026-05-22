@@ -198,7 +198,13 @@ export class InventoryLock {
 // authenticates that call.
 export class ShopContainer extends Container {
   defaultPort = 8080;
-  sleepAfter  = "30s";
+  // Idle window before the container is allowed to sleep. The
+  // Node + blamejs cold-start budget is ~15-25s on CF Containers,
+  // so a short sleepAfter (e.g. 30s) makes nearly every visitor
+  // eat the boot cost. 15m keeps the working set warm across
+  // normal browsing patterns while still releasing the slot when
+  // the shop is genuinely idle.
+  sleepAfter  = "15m";
 
   constructor(ctx, env) {
     super(ctx, env);
@@ -370,8 +376,11 @@ async function _forwardToContainer(request, env) {
   // as 500 "Failed to start container" / 503 "no Container instance"
   // because the SDK's default port-wait is ~8s and a fresh Node +
   // blamejs boot under provisioning load can exceed that. We retry
-  // up to 3 times with exponential backoff (2s, 4s, 8s — total ~14s
-  // patience for the cold-start window). POST bodies buffer once
+  // up to 4 times with exponential backoff (2s, 4s, 8s, 16s —
+  // total ~30s patience for the cold-start window). If those
+  // retries still fail and the request is a navigation, the
+  // visitor gets a designed "warming up" page that auto-refreshes
+  // instead of the raw SDK error string. POST bodies buffer once
   // and re-serve on each retry; GET / HEAD have no body and clone
   // cheaply.
   const container = getContainer(env.SHOP, "singleton");
@@ -388,17 +397,71 @@ async function _forwardToContainer(request, env) {
   }
   function _isColdStartFailure(bodyPreview) {
     return bodyPreview.startsWith("Failed to start container") ||
-           bodyPreview.indexOf("There is no Container instance") !== -1;
+           bodyPreview.indexOf("There is no Container instance") !== -1 ||
+           bodyPreview.indexOf("The container is not running") !== -1;
   }
-  const backoffMs = [0, 2000, 4000, 8000];   // first attempt is immediate
+  // First attempt is immediate; remaining slots double until we
+  // cover a realistic Node + blamejs cold-start window (~60s).
+  // CF firecracker provisioning + image pull + Node + blamejs init
+  // can exceed 30s under load. The doubled budget eats one extra
+  // worker invocation but keeps the warming-up fallback rare.
+  const backoffMs = [0, 2000, 4000, 8000, 16000, 30000];
   let res = null;
+  let lastWasColdStart = false;
   for (let i = 0; i < backoffMs.length; i += 1) {
     if (backoffMs[i] > 0) await new Promise((r) => setTimeout(r, backoffMs[i]));
     res = await container.fetch(_attemptRequest());
     if (res.status !== 500 && res.status !== 503) return res;
     const peek = res.clone();
-    const bodyPreview = (await peek.text()).slice(0, 96);
-    if (!_isColdStartFailure(bodyPreview)) return res;   // legitimate 5xx
+    const bodyPreview = (await peek.text()).slice(0, 128);
+    lastWasColdStart = _isColdStartFailure(bodyPreview);
+    if (!lastWasColdStart) return res;   // legitimate 5xx
   }
-  return res;   // exhausted retries — surface the last 5xx
+  // Retries exhausted on a cold-start failure — give the visitor a
+  // designed "warming up" page that auto-refreshes instead of the
+  // raw SDK error string.
+  if (lastWasColdStart && (method === "GET" || method === "HEAD")) {
+    return new Response(_warmingHtml(), {
+      status:  503,
+      headers: {
+        "content-type":  "text/html; charset=utf-8",
+        "retry-after":   "8",
+        "cache-control": "no-store",
+      },
+    });
+  }
+  return res;
+}
+
+function _warmingHtml() {
+  return "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
+    + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+    + "<title>Warming up — blamejs.shop</title>"
+    + "<link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/logo.png\">"
+    + "<meta http-equiv=\"refresh\" content=\"8\">"
+    + "<style>"
+    + ":root{--ink:#191919;--mute:#5e5e5e;--accent:#fa4f09;--bg:#fafafa;--paper:#fff;--hair:#e6e6e6;}"
+    + "*{box-sizing:border-box}html,body{margin:0;padding:0}"
+    + "body{font:16px/1.6 'Inter',system-ui,sans-serif;color:var(--ink);background:var(--bg);"
+    + "min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem}"
+    + ".card{max-width:32rem;background:var(--paper);border:1px solid var(--hair);"
+    + "border-radius:14px;padding:2.5rem;text-align:center;box-shadow:0 24px 48px -20px rgba(25,25,25,.18)}"
+    + ".brand{display:flex;align-items:center;justify-content:center;gap:.6rem;margin-bottom:1.25rem}"
+    + ".brand img{width:36px;height:36px;border-radius:8px}"
+    + ".brand span{font:600 1.125rem 'Montserrat',system-ui,sans-serif;letter-spacing:-0.01em}"
+    + "h1{font:700 1.5rem 'Montserrat',system-ui,sans-serif;margin:0 0 .75rem;letter-spacing:-0.01em}"
+    + ".accent{color:var(--accent)}"
+    + "p{margin:0 0 1.25rem;color:var(--mute)}"
+    + ".dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);"
+    + "margin-right:.5rem;animation:pulse 1.2s ease-in-out infinite}"
+    + "@keyframes pulse{0%,100%{opacity:.35;transform:scale(.9)}50%{opacity:1;transform:scale(1.1)}}"
+    + ".meta{font-size:.8125rem;color:var(--mute);margin-top:1.5rem;padding-top:1.25rem;"
+    + "border-top:1px solid var(--hair)}"
+    + "</style></head><body>"
+    + "<main class=\"card\">"
+    + "<div class=\"brand\"><img src=\"/assets/brand/logo.png\" alt=\"\"><span>blamejs.shop</span></div>"
+    + "<h1>Warming up the <span class=\"accent\">shop</span>&hellip;</h1>"
+    + "<p><span class=\"dot\"></span>This page will refresh automatically once the server is ready.</p>"
+    + "<div class=\"meta\">First request after an idle period. Subsequent requests will be fast.</div>"
+    + "</main></body></html>";
 }
