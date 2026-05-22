@@ -1,0 +1,26 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.46",
+  "date": "2026-05-22",
+  "headline": "Order confirmation page — line items render thumbnails + product titles (same pattern as the cart)",
+  "summary": "The post-checkout `/orders/:order_id` page used the read-only `CART_LINE` template that emitted just SKU + qty + unit + total. The order confirmation now reuses the same product-cell treatment v0.0.45 shipped on the live cart — small thumbnail (from `catalog.media.listForProduct`) + product title + SKU chip in a slug-linked anchor — so the page a customer lands on after a successful purchase shows what they bought visually, not just a column of opaque SKU codes.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "`CART_LINE` (read-only, used by the order page) — same product cell as the editable cart line",
+          "body": "Markup mirrors `CART_LINE_EDITABLE` minus the qty / update / remove forms. First cell is `<a class=\"cart-line__product-link\" href=\"/products/<slug>\">` wrapping the thumbnail + title + SKU chip; remaining cells (qty / unit / total) are unchanged. Reuses the existing `.cart-line__thumb` + `.cart-line__product-*` CSS — no new theme rules."
+        },
+        {
+          "title": "`storefront.renderOrder({ ..., product_lookup })` accepts the variant→product map",
+          "body": "Mirrors `renderCart`'s contract. The route handler bundles a `{ variant_id: { product, hero_media } }` cache built per-unique-variant; lines whose variant is missing fall through to SKU-as-title + the placeholder tile. The order page table header is now 'Product' instead of 'SKU'."
+        },
+        {
+          "title": "`GET /orders/:order_id` walks the order's frozen lines once",
+          "body": "After loading the order, the route walks `o.lines` and for each unique `variant_id` pulls `catalog.variants.get` → `catalog.products.get` + `catalog.media.listForProduct`. The cache prevents a multi-quantity-same-variant order from hitting the catalog more than once per variant. The lookup is passed to `renderOrder` so the line rendering matches the cart's pattern byte-for-byte."
+        }
+      ]
+    }
+  ]
+}
