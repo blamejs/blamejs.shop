@@ -387,20 +387,20 @@ export default {
           });
           return new Response(xml, {
             status:  200,
-            headers: {
+            headers: _withSecurityHeaders({
               "content-type":  "application/xml; charset=utf-8",
               "cache-control": "public, max-age=600, s-maxage=3600",
-            },
+            }),
           });
         } catch (e) {
           console.error("sitemap.xml render failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
           return new Response("Sitemap temporarily unavailable", {
             status:  503,
-            headers: {
+            headers: _withSecurityHeaders({
               "content-type":  "text/plain; charset=utf-8",
               "cache-control": "no-store",
               "retry-after":   "60",
-            },
+            }),
           });
         }
       }
@@ -424,10 +424,10 @@ export default {
           });
           return new Response(xml, {
             status:  200,
-            headers: {
+            headers: _withSecurityHeaders({
               "content-type":  "application/rss+xml; charset=utf-8",
               "cache-control": "public, max-age=600, s-maxage=3600",
-            },
+            }),
           });
         } catch (e) {
           console.error("feed.xml render failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
@@ -438,11 +438,11 @@ export default {
           // pass-through).
           return new Response("Feed temporarily unavailable", {
             status:  503,
-            headers: {
+            headers: _withSecurityHeaders({
               "content-type":  "text/plain; charset=utf-8",
               "cache-control": "no-store",
               "retry-after":   "60",
-            },
+            }),
           });
         }
       }
@@ -744,10 +744,10 @@ function _edgeError(route, e, request, env, version, shopName) {
   });
   return new Response(request.method === "HEAD" ? null : html, {
     status:  500,
-    headers: {
+    headers: _withSecurityHeaders({
       "content-type":  "text/html; charset=utf-8",
       "cache-control": "no-store",
-    },
+    }),
   });
 }
 
@@ -820,15 +820,15 @@ async function _edgeNewsletter(request, env) {
     });
     return new Response(html, {
       status:  200,
-      headers: {
+      headers: _withSecurityHeaders({
         "content-type":  "text/html; charset=utf-8",
         "cache-control": "no-store",
-      },
+      }),
     });
   } catch (e) {
     console.error("edge POST /newsletter failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
     const html = renderInternalError({ shopName: shopName, version: version });
-    return new Response(html, { status: 500, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+    return new Response(html, { status: 500, headers: _withSecurityHeaders({ "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }) });
   }
 }
 
@@ -857,10 +857,10 @@ async function _edgeBlogArticle(request, env, _url, version, shopName, slug) {
       });
       return new Response(html, {
         status:  404,
-        headers: {
+        headers: _withSecurityHeaders({
           "content-type":  "text/html; charset=utf-8",
           "cache-control": "public, max-age=60, s-maxage=300, must-revalidate",
-        },
+        }),
       });
     }
     const html = renderBlogArticle({
@@ -926,10 +926,10 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
       });
       return new Response(html, {
         status:  404,
-        headers: {
+        headers: _withSecurityHeaders({
           "content-type":  "text/html; charset=utf-8",
           "cache-control": "public, max-age=60, s-maxage=300, must-revalidate",
-        },
+        }),
       });
     }
     const [variantsWithPrices, media] = await Promise.all([
@@ -976,11 +976,66 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
   }
 }
 
+// Canonical security headers the container's middleware adds via
+// the framework's `b.middleware.securityHeaders` pipeline. Edge
+// responses must carry the same set so the security posture is
+// uniform across paths regardless of which substrate serves them.
+// CSP / Permissions-Policy / Referrer-Policy / X-Frame-Options /
+// X-Content-Type-Options / Cross-Origin-*-Policy headers ship on
+// every HTML response from the Worker, matching the framework's
+// posture documented at `lib/vendor/blamejs/lib/middleware/
+// security-headers.js#DEFAULT_*`.
+var _SECURITY_HEADERS = {
+  "content-security-policy":
+    "default-src 'self'; " +
+    "script-src 'self'; " +
+    "style-src 'self'; " +
+    "img-src 'self' data:; " +
+    "font-src 'self'; " +
+    "connect-src 'self'; " +
+    "frame-ancestors 'none'; " +
+    "fenced-frame-src 'none'; " +
+    "base-uri 'self'; " +
+    "form-action 'self'; " +
+    "object-src 'none'; " +
+    "require-trusted-types-for 'script'; " +
+    "trusted-types 'allow-duplicates' default;",
+  "cross-origin-opener-policy":   "same-origin",
+  "cross-origin-resource-policy": "same-origin",
+  "origin-agent-cluster":          "?1",
+  "permissions-policy":
+    "accelerometer=(), ambient-light-sensor=(), autoplay=(), camera=(), " +
+    "display-capture=(), encrypted-media=(), fullscreen=(), geolocation=(), " +
+    "gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), " +
+    "picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), " +
+    "sync-xhr=(), usb=(), web-share=(), xr-spatial-tracking=(), " +
+    "interest-cohort=(), attribution-reporting=(), bluetooth=(), hid=(), " +
+    "serial=(), idle-detection=(), local-fonts=(), compute-pressure=(), " +
+    "window-management=(), private-state-token-issuance=(), " +
+    "private-state-token-redemption=(), storage-access=(), browsing-topics=(), " +
+    "private-aggregation=(), controlled-frame=(), captured-surface-control=(), " +
+    "identity-credentials-get=()",
+  "referrer-policy":          "no-referrer",
+  "x-content-type-options":   "nosniff",
+  "x-dns-prefetch-control":   "off",
+  "x-frame-options":          "DENY",
+  "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+};
+
+function _withSecurityHeaders(base) {
+  var out = Object.assign({}, _SECURITY_HEADERS);
+  if (base) {
+    var keys = Object.keys(base);
+    for (var i = 0; i < keys.length; i += 1) out[keys[i]] = base[keys[i]];
+  }
+  return out;
+}
+
 function _html(body, method) {
-  const headers = {
+  const headers = _withSecurityHeaders({
     "content-type":  "text/html; charset=utf-8",
     "cache-control": "no-store",
-  };
+  });
   if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
   return new Response(_minify(body), { status: 200, headers: headers });
 }
@@ -994,10 +1049,10 @@ function _staticHtml(body, method) {
   // for 24h. Splitting `max-age` from `s-maxage` lets the edge
   // amortize the render across the whole zone while keeping each
   // visitor's browser honest about checking for changes.
-  const headers = {
+  const headers = _withSecurityHeaders({
     "content-type":  "text/html; charset=utf-8",
     "cache-control": "public, max-age=3600, s-maxage=86400, must-revalidate",
-  };
+  });
   if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
   return new Response(_minify(body), { status: 200, headers: headers });
 }
@@ -1073,11 +1128,11 @@ async function _forwardToContainer(request, env) {
     const refreshSeconds = isNavigate ? 5 : 8;
     return new Response(_warmingHtml(request.url, refreshSeconds), {
       status:  503,
-      headers: {
+      headers: _withSecurityHeaders({
         "content-type":  "text/html; charset=utf-8",
         "retry-after":   String(refreshSeconds),
         "cache-control": "no-store",
-      },
+      }),
     });
   }
   return res;
