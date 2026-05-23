@@ -1,0 +1,70 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.60",
+  "date": "2026-05-22",
+  "headline": "Fourteen new primitives: tax rates, storefront pages, webhook subscriptions, tenants, API keys, barcodes, customer portal, subscription billing, translations, coupon stacking, A/B experiments, print receipts, inventory snapshots, product import",
+  "summary": "Fourteen primitives land together. `taxRates` is the operator-managed per-jurisdiction rate table with scheduled effective dates. `storefrontPages` is the markdown-driven CMS for legal / about / shipping copy. `webhookSubscriptions` separates subscription management from delivery. `tenants` runs N branded shops from one deployment with per-tenant domain + currency + theme. `apiKeys` issues hashed-at-rest tokens with scope allowlists + per-key rate limits. `barcodes` maps SKUs to UPC-A / EAN-13 / Code-128 / GTIN-14 values with checksum validation + inline-SVG rendering. `customerPortal` mints single-use scoped portal sessions. `subscriptionBilling` is the invoice + payment-attempt + dunning ledger. `translations` is the per-resource multi-locale lookup with locale-fallback chains. `couponStacking` is the rules engine for which discount codes may be combined. `experiments` is the deterministic-assignment A/B test framework with Wilson confidence intervals. `printReceipts` renders ESC/POS thermal + HTML/PDF + plain-text email receipts. `inventorySnapshots` captures point-in-time stock counts with SHA3-512 tamper-evidence + delta reports. `productImport` is the bulk loader for flat-CSV / Shopify-JSON / blamejs-native catalog data.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`taxRates` primitive — per-jurisdiction rate table with scheduled effective dates",
+          "body": "`bShop.taxRates.create({ query? })` returns `{ defineRate, rateFor, listForJurisdiction, updateRate, archiveRate, bulkImport, scheduledChanges }`. Jurisdiction shape is `XX` or `XX-YYY` per ISO 3166. `defineRate` refuses overlapping windows within the same (jurisdiction, category). `rateFor({ jurisdiction, category?, on_date })` resolves category-specific first, then NULL-category fallback. `effective_from` inclusive, `effective_until` exclusive. `scheduledChanges({ from, to })` lists rate transitions in the window for the operator scheduler. Migration `0058_tax_rates.sql` (CHECK enum source: manual / vies / state_dept / avalara)."
+        },
+        {
+          "title": "`storefrontPages` primitive — markdown CMS for About / Shipping / Privacy / Terms",
+          "body": "`bShop.storefrontPages.create({ query? })` returns `{ defineDraft, publish, unpublish, archive, restore, update, get, getPublished, listPublished, listDrafts, listArchived, renderHtml }`. FSM `draft → published → archived` with `restore` lifting archived → draft. Built-in markdown subset: headings, paragraphs, ul/ol, blockquote, hr, inline code, bold, italic, links. Every text run through `b.template.escapeHtml`; every inline link URL through `b.safeUrl.parse` (https-only + /-rooted internal paths). Unsafe URLs drop the `<a>` entirely so anchor text falls back to inert escaped text. Migration `0059_storefront_pages.sql` (layout enum: default / wide / landing / legal)."
+        },
+        {
+          "title": "`webhookSubscriptions` primitive — subscription management with 24h secret rotation grace",
+          "body": "`bShop.webhookSubscriptions.create({ query?, now? })` returns `{ subscribe, get, listForOwner, subscriptionsForEvent, pauseSubscription, resumeSubscription, update, unsubscribe, rotateSecret, expireRotationGrace }`. Plaintext signing secret returned ONCE on `subscribe` + `rotate`; at rest only the SHA3-512 namespace hash + a previous-hash for a 24h rotation grace window. `subscriptionsForEvent(event_type)` returns active subscriptions matching the event type for delivery fan-out. `endpoint_url` gated via `b.safeUrl` (https-only). Migration `0060_webhook_subscriptions.sql` (owner_type enum: operator / app / customer)."
+        },
+        {
+          "title": "`tenants` primitive — multi-store deployment with per-tenant domains + currency + theme",
+          "body": "`bShop.tenants.create({ query? })` returns `{ defineTenant, addDomain, removeDomain, setPrimaryDomain, pauseTenant, resumeTenant, archiveTenant, get, getById, resolveByHost, listTenants, update, stats }`. Slug regex `[a-z0-9]([a-z0-9_-]*[a-z0-9])?` ≤ 64. Domain regex `[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}` ≤ 255. `resolveByHost(host)` strips port + lowercases + nearest-match against the registered domain set; paused tenants resolve, archived do not. FSM: `active ↔ paused`, both → `archived` (terminal). Migration `0063_tenants.sql` (`tenants` + `tenant_domains` tables with FK CASCADE)."
+        },
+        {
+          "title": "`apiKeys` primitive — hashed-at-rest tokens with scope + rate limit + 24h rotation grace",
+          "body": "`bShop.apiKeys.create({ query? })` returns `{ issueKey, verifyToken, revoke, rotate, listForOwner, getKey, update, recordUse, usageForKey, cleanupExpired }`. Plaintext is 32 bytes via `b.crypto.generateBytes` rendered as 43-char URL-safe base64; storage holds only the `namespaceHash('api-key-token', plaintext)` digest. `verifyToken` routes hex compare through `b.crypto.timingSafeEqual`. `rotate` slides the old hash into `token_hash_previous` with a 24h grace + issues a new row. Owner type enum: operator / app / affiliate / tenant. Migration `0064_api_keys.sql` (`api_keys` + append-only `api_key_usage` log)."
+        },
+        {
+          "title": "`barcodes` primitive — SKU → UPC-A / EAN-13 / Code-128 / GTIN-14 with checksum validation + SVG render",
+          "body": "`bShop.barcodes.create({ query?, catalog })` returns `{ assign, lookup, bySkuList, lookupByValue, unassign, assignAuto, defineRange, listRanges, renderSvg, validateValue }`. Checksum gate per kind (GS1 mod-10 reused for UPC-A / EAN-13 / GTIN-14; Code-128 mod-103 at render). `assignAuto` uses CAS on `next_value` to make concurrent mints race-safe (lost race surfaces as `BARCODE_RANGE_RACE` so the caller can retry). `renderSvg` ships its own EAN/UPC L/G/R tables + ITF-14 widths + Code-128 Set B inline — no external barcode library, no `<script>` / `<foreignObject>` in the output. `validateValue` is a pure-function exported on the module so callers can validate without instantiating the factory. Migration `0068_barcodes.sql`."
+        },
+        {
+          "title": "`customerPortal` primitive — single-use scoped customer self-serve sessions",
+          "body": "`bShop.customerPortal.create({ query? })` returns `{ createSession, verifyToken, revokeSession, listForCustomer, expireOlderThan }`. Token plaintext returned once on `createSession`; storage holds only `namespaceHash('customer-portal-token', plaintext)`. Scopes: `full / billing_only / address_only / subscriptions_only / order_history_only`. `verifyToken` flips the row to `consumed` (single-use); constant-time hit/miss equalisation via `b.crypto.timingSafeEqual` on the miss path. Single-use enforced by an `UPDATE … WHERE status='issued'` SQL guard so racing verifies don't both succeed. Default TTL 15 min. Migration `0072_customer_portal_sessions.sql`."
+        },
+        {
+          "title": "`subscriptionBilling` primitive — invoice + payment-attempt + dunning ledger",
+          "body": "`bShop.subscriptionBilling.create({ query?, subscriptions, payment? })` returns `{ recordInvoice, recordPaymentAttempt, markPaid, markFailed, enterDunning, exitDunning, invoicesForSubscription, failedInvoices, dunningRoster, arpu }`. Webhook-replay idempotency on `processor_invoice_id` + `(invoice_id, attempt_number)`. Invoice FSM: pending → paid / failed / voided. Dunning states: active / dunning / recovered / cancelled / written_off. `arpu({ from, to })` returns average revenue per user bucketed by currency. `invoice_url` gated via `b.safeUrl`. Migration `0066_subscription_billing.sql` (3 tables with FK CASCADE)."
+        },
+        {
+          "title": "`translations` primitive — per-resource multi-locale lookup with locale-fallback chain",
+          "body": "`bShop.translations.create({ query? })` returns `{ setTranslation, getTranslation, getForResource, removeTranslation, localesForResource, bulkSet, missingTranslations }`. Locale normalised to BCP-47 canonical form; fallback chain walks right-to-left stripping subtags + appends `en` baseline. `bulkSet` validates every row before writing any (pre-flight-then-write for D1 portability). Values pass through `b.template.escapeHtml` at write so HTML metacharacters land inert while operator-intent newlines survive. `missingTranslations({ resource_kind, locale, sample_size })` reports resources lacking translations in that locale's fallback chain. Migration `0070_translations.sql` (UNIQUE(resource_kind, resource_id, locale, field) backing the upsert)."
+        },
+        {
+          "title": "`couponStacking` primitive — rules engine for which discount codes may be combined",
+          "body": "`bShop.couponStacking.create({ query?, customerSegments? })` returns `{ definePolicy, getPolicy, listPolicies, updatePolicy, archivePolicy, evaluate, activePoliciesForCart }`. Governing policy = highest-priority active policy whose `order_min_minor` + `customer_segment_in` preconditions match the cart. Conservative default when no policy governs: \"first code allowed, rest refused with `no_policy_allows_stacking`\". `exclusive_codes` short-circuits + additionally refuses the quantity-discount stack regardless of `with_quantity_discounts`. Refusal reasons: `no_policy_allows_stacking` / `other_codes_not_allowed_to_stack` / `max_codes_per_order_exceeded` / `exclusive_code_present` / `quantity_discount_stack_refused`. Migration `0067_coupon_stacking.sql`."
+        },
+        {
+          "title": "`experiments` primitive — A/B testing with deterministic assignment + Wilson confidence intervals",
+          "body": "`bShop.experiments.create({ query? })` returns `{ defineExperiment, getVariant, recordConversion, metricsForExperiment, listExperiments, pauseExperiment, resumeExperiment, archiveExperiment, update }`. Variant assignment is deterministic per session: `namespaceHash('experiments-assign', slug + ':' + sessionHash)` → first 64 bits mod cumulative weight (computed in two 32-bit halves to stay inside JS's 53-bit safe-integer territory). Sessions assigned 100x return the same variant 100x. `variants_json` is read-only after `defineExperiment` — changing variants would corrupt prior assignments. `recordConversion` is drop-silent on unknown experiment / variant / archived / bad-shape (hot-path). `metricsForExperiment` returns per-variant counts + Wilson 95% CI when `assigned_sessions` is supplied. Migration `0071_experiments.sql` (FSM: draft / running / paused / archived terminal)."
+        },
+        {
+          "title": "`printReceipts` primitive — ESC/POS thermal + HTML/PDF + plain-text receipt rendering",
+          "body": "`bShop.printReceipts.create({ query?, order })` returns `{ thermal, htmlPdf, plainText, previewBuffer, recordPrint, printsForOrder }`. `thermal({ paper_width_mm? })` defaults to 80mm cols; 58mm option supported. `htmlPdf` returns an HTML string suitable for headless-Chrome PDF conversion. `plainText` scrubs C0 control bytes + DEL on output. Every operator-input ship-to field passes through `b.template.escapeHtml` for HTML output. Each print writes a `receipt_prints` audit row with byte size + SHA3-512 hash so an operator can prove what came off the printer. `previewBuffer` returns the rendered string WITHOUT writing the audit row (operator preview path). Migration `0062_print_receipts.sql`."
+        },
+        {
+          "title": "`inventorySnapshots` primitive — point-in-time stock captures with SHA3-512 tamper-evidence + delta reports",
+          "body": "`bShop.inventorySnapshots.create({ query?, catalog, inventoryLocations? })` returns `{ takeSnapshot, getSnapshot, listSnapshots, deltaBetween, summary, purgeOlderThan }`. Single-bucket capture reads from `inventory` (location_code NULL); multi-location capture reads from `inventory_stock` when `inventoryLocations` is wired. `deltaBetween({ from_snapshot_id, to_snapshot_id, sku? })` returns per-(sku, location) deltas tagged `added / removed / changed / unchanged`. `summary(snapshot_id)` returns counts + total units + flagged stockout outliers + tamper-evidence check (recomputes the SHA3-512 hash + flags mismatch). `purgeOlderThan(days)` walks expired snapshots — FK CASCADE removes the detail rows. Migration `0065_inventory_snapshots.sql`."
+        },
+        {
+          "title": "`productImport` primitive — bulk loader for flat-CSV / Shopify-JSON / blamejs-native catalogs",
+          "body": "`bShop.productImport.create({ query?, catalog })` returns `{ dryRun, importRows, importFromCsv, importFromJson, lastReport, cancelInflight, listImports, errorsForImport }`. Formats: `flat_csv / shopify_json / blamejs_native`. on_conflict modes: `update / skip / error`. Within-import SKU dedupe surfaces as `duplicate_sku_in_import` row-error. Shopify JSON shape converts decimal prices to minor units. RFC-4180 CSV with quoted-comma + quote-doubling. Per-row errors persist to `product_import_errors` for operator triage. Migration `0069_product_imports.sql`."
+        }
+      ]
+    }
+  ]
+}
