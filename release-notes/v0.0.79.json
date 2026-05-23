@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.79",
+  "date": "2026-05-23",
+  "headline": "Container Dockerfile uses the committed vendored tree instead of re-fetching from GitHub at build time",
+  "summary": "The container image's `vendor` stage previously ran `bash scripts/vendor-update.sh blamejs latest` to re-fetch the vendored blamejs at image-build time. That stage fails in build environments without outbound `api.github.com` access (rate-limited anonymous requests, sandboxed CI runners, etc.) — most visibly on Cloudflare Workers Builds. The committed `lib/vendor/blamejs/` tree is already the source of truth, and the smoke gate's `vendor-update.sh --check` already enforces it matches the latest upstream release tag, so the in-build re-fetch is redundant. The vendor stage now just `COPY`s the committed tree.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "`Dockerfile` vendor stage no longer requires `api.github.com` access at image-build time", "body": "Removed the `RUN bash scripts/vendor-update.sh blamejs \"${BLAMEJS_TAG}\"` step and the `BLAMEJS_TAG` build arg. The vendor stage now copies `lib/vendor/` from the build context directly. Image builds in network-restricted environments (Cloudflare Workers Builds, air-gapped CI runners) now succeed where they previously errored on `could not resolve latest blamejs release tag`. The committed vendor stays the source of truth; freshness is enforced by the smoke gate's `vendor-update.sh --check`, not the image build." }
+      ]
+    }
+  ]
+}
