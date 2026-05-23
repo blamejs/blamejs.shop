@@ -639,7 +639,13 @@ var TRACKING_PARAMS_RE = /^(?:utm_|fbclid$|gclid$|gbraid$|wbraid$|msclkid$|mc_ei
 function _hasSessionCookie(request) {
   const cookieHeader = request.headers.get("cookie") || "";
   if (cookieHeader.length === 0) return false;
-  return /\b(shop_sid|shop_auth)=/.test(cookieHeader);
+  // `b.cookies.parseSafe` handles the framework's parse rules
+  // (token-grammar, length cap, duplicate-key resolution) without
+  // throwing on bad input. The presence check inspects the
+  // returned `jar` for either session cookie.
+  const parsed = b.cookies.parseSafe(cookieHeader);
+  return Object.prototype.hasOwnProperty.call(parsed.jar, "shop_sid") ||
+         Object.prototype.hasOwnProperty.call(parsed.jar, "shop_auth");
 }
 
 // Build a cache-key URL by removing tracking parameters from the
