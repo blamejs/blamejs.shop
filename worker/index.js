@@ -14,6 +14,7 @@ import {
 import { renderFeed } from "./render/feed.js";
 import { renderSitemap } from "./render/sitemap.js";
 import { renderBlogList, renderBlogArticle } from "./render/blog.js";
+import { renderCart } from "./render/cart.js";
 import { minifyHtml as _minify } from "./render/_lib.js";
 import {
   listActiveProducts,
@@ -718,6 +719,15 @@ async function _edgeRender(request, env, url) {
     const slug = decodeURIComponent(path.slice("/products/".length));
     return await _edgeProduct(request, env, url, version, shopName, slug);
   }
+  if (path === "/cart") {
+    // Guests (no session cookie) see the empty-cart render straight
+    // from the edge — no container hop, no sealed-session decrypt.
+    // Visitors with a `shop_sid` / `shop_auth` cookie fall through
+    // to the container path which has the framework's vault keychain
+    // and can decrypt the session to look up the real cart row.
+    if (_hasSessionCookie(request)) return null;
+    return await _edgeCartEmpty(request, env, version, shopName);
+  }
   if (path === "/blog") {
     return await _edgeBlogList(request, env, url, version, shopName);
   }
@@ -829,6 +839,22 @@ async function _edgeNewsletter(request, env) {
     console.error("edge POST /newsletter failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
     const html = renderInternalError({ shopName: shopName, version: version });
     return new Response(html, { status: 500, headers: _withSecurityHeaders({ "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }) });
+  }
+}
+
+async function _edgeCartEmpty(request, env, version, shopName) {
+  try {
+    const html = renderCart({
+      lines:         [],
+      totals:        { subtotal_minor: 0, grand_total_minor: 0, currency: "USD" },
+      productLookup: {},
+      shopName:      shopName,
+      cartCount:     0,
+      version:       version,
+    });
+    return _html(html, request.method);
+  } catch (e) {
+    return _edgeError("/cart", e, request, env, version, shopName);
   }
 }
 
