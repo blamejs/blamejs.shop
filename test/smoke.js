@@ -134,6 +134,22 @@ async function _runLayer(layerNum, layerName) {
   console.log("  " + _padRight("changelog-in-sync", 40) + " (ok)");
   _shellGate("vendor-drift", "bash scripts/vendor-update.sh --check");
   console.log("  " + _padRight("vendor-drift", 40) + " (ok)");
+  // Esbuild parse on the Worker bundle. Node's parser tolerates some
+  // shapes (unterminated trailing function declarations, etc.) that
+  // wrangler's esbuild refuses with `Unexpected end of file`. v0.0.95
+  // and v0.0.97 deploys both failed on that mismatch; running esbuild
+  // on the Worker entrypoint catches the class before commit.
+  // `--external` flags cover the imports esbuild can't resolve locally
+  // (npm peer + nodejs_compat-polyfilled modules) — we only care about
+  // parse success here, not bundle resolution.
+  _shellGate(
+    "worker-esbuild-parse",
+    "npx esbuild worker/index.js --bundle --format=esm --platform=neutral " +
+      "--external:@cloudflare/containers " +
+      "--external:node:* " +
+      "--log-level=error > /dev/null"
+  );
+  console.log("  " + _padRight("worker-esbuild-parse", 40) + " (ok)");
 
   await _runLayer(0, "Layer 0");
   await _runLayer(1, "Layer 1");
