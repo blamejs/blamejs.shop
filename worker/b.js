@@ -29,13 +29,14 @@
 // `worker-direct-vendor-import` enforces it.
 
 import { createHmac } from "node:crypto";
-import bCrypto   from "../lib/vendor/blamejs/lib/crypto.js";
-import bTemplate from "../lib/vendor/blamejs/lib/template.js";
-import bMoney    from "../lib/vendor/blamejs/lib/money.js";
-import bUuid     from "../lib/vendor/blamejs/lib/uuid.js";
-import bSafeUrl  from "../lib/vendor/blamejs/lib/safe-url.js";
-import bSafeSql  from "../lib/vendor/blamejs/lib/safe-sql.js";
-import bFsm      from "../lib/vendor/blamejs/lib/fsm.js";
+import bCrypto     from "../lib/vendor/blamejs/lib/crypto.js";
+import bTemplate   from "../lib/vendor/blamejs/lib/template.js";
+import bMoney      from "../lib/vendor/blamejs/lib/money.js";
+import bUuid       from "../lib/vendor/blamejs/lib/uuid.js";
+import bSafeUrl    from "../lib/vendor/blamejs/lib/safe-url.js";
+import bSafeSql    from "../lib/vendor/blamejs/lib/safe-sql.js";
+import bFsm        from "../lib/vendor/blamejs/lib/fsm.js";
+import bGuardEmail from "../lib/vendor/blamejs/lib/guard-email.js";
 
 // `b.crypto.hmacSha256` extension. Composes node:crypto's
 // `createHmac` — the same primitive `b.crypto.hmac` (private)
@@ -53,13 +54,14 @@ var bCryptoAugmented = Object.assign({}, bCrypto, {
 });
 
 var b = {
-  crypto:   bCryptoAugmented,
-  template: bTemplate,
-  money:    bMoney,
-  uuid:     bUuid,
-  safeUrl:  bSafeUrl,
-  safeSql:  bSafeSql,
-  fsm:      bFsm,
+  crypto:     bCryptoAugmented,
+  template:   bTemplate,
+  money:      bMoney,
+  uuid:       bUuid,
+  safeUrl:    bSafeUrl,
+  safeSql:    bSafeSql,
+  fsm:        bFsm,
+  guardEmail: bGuardEmail,
 };
 
 export default b;
