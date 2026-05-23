@@ -146,6 +146,36 @@ export async function listVariantsWithPrices(DB, productId, currency) {
   return { rows: rows };
 }
 
+// Every active product slug + its last-modified epoch (for sitemap
+// `<lastmod>` derivation). Streamed straight off the products table;
+// no JOIN. The sitemap protocol caps a single sitemap at 50,000 URLs
+// — the LIMIT mirrors that ceiling so a runaway catalog still
+// produces a valid response.
+export async function listActiveProductSlugs(DB) {
+  var res = await DB
+    .prepare("SELECT slug, updated_at FROM products WHERE status = 'active' ORDER BY updated_at DESC LIMIT 50000")
+    .bind()
+    .all();
+  var rows = (res && res.results) ? res.results : [];
+  return { rows: rows };
+}
+
+// Every published blog article slug + its last-modified epoch.
+// Same 50k cap as products (independent budget — sitemap protocol's
+// limit is per-file, not per-source).
+export async function listPublishedBlogSlugs(DB) {
+  var res = await DB
+    .prepare(
+      "SELECT slug, COALESCE(updated_at, published_at) AS updated_at " +
+      "FROM blog_articles WHERE status = 'published' AND published_at IS NOT NULL " +
+      "ORDER BY updated_at DESC LIMIT 50000"
+    )
+    .bind()
+    .all();
+  var rows = (res && res.results) ? res.results : [];
+  return { rows: rows };
+}
+
 // Recent published blog articles, newest first. Used by the edge
 // /feed.xml renderer. `limit` defaults to 20 (RSS-reader convention).
 export async function recentBlogArticles(DB, opts) {
