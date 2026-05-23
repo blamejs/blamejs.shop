@@ -1,19 +1,15 @@
-var HTML_ESCAPE_MAP = {
-  "&":  "&amp;",
-  "<":  "&lt;",
-  ">":  "&gt;",
-  "\"": "&quot;",
-  "'":  "&#39;",
-};
+// Worker render helpers compose blamejs primitives through the
+// `worker/b.js` adapter. Single import surface; the adapter is the
+// validated bridge between the Worker substrate and the framework's
+// leaf modules.
+import b from "../b.js";
 
 export function escapeHtml(s) {
-  if (s == null) return "";
-  return String(s).replace(/[&<>"']/g, function (c) { return HTML_ESCAPE_MAP[c]; });
+  return b.template.escapeHtml(s);
 }
 
 export function escapeAttr(s) {
-  if (s == null) return "";
-  return String(s).replace(/[&<>"']/g, function (c) { return HTML_ESCAPE_MAP[c]; });
+  return b.template.escapeHtml(s);
 }
 
 var PLACEHOLDER_RE = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
@@ -24,6 +20,11 @@ function _isPlainObject(o) {
   return proto === null || proto === Object.prototype;
 }
 
+// Strict `{{name}}` substitution with HTML-escape per substitution
+// and refusal of unknown / unused placeholders. The framework's
+// `b.template.render` interpreter takes a path + viewsDir (file-
+// backed) so doesn't apply to inline-string templates; we use its
+// `escapeHtml` per-value escape for byte-identical output.
 export function renderTemplate(tpl, vars) {
   if (typeof tpl !== "string") {
     throw new TypeError("renderTemplate: tpl must be a string, got " + (tpl === null ? "null" : typeof tpl));
@@ -39,7 +40,7 @@ export function renderTemplate(tpl, vars) {
     seen.add(key);
     var v = vars[key];
     if (v == null) return "";
-    return escapeHtml(String(v));
+    return b.template.escapeHtml(String(v));
   });
   var keys = Object.keys(vars);
   for (var i = 0; i < keys.length; i += 1) {
@@ -50,17 +51,6 @@ export function renderTemplate(tpl, vars) {
   return out;
 }
 
-var ZERO_DECIMAL_CURRENCIES = new Set([
-  "BIF", "CLP", "DJF", "GNF", "JPY", "KMF", "KRW", "MGA", "PYG",
-  "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF",
-]);
-
-var THREE_DECIMAL_CURRENCIES = new Set([
-  "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND",
-]);
-
-var CURRENCY_RE = /^[A-Z]{3}$/;
-
 export function formatPrice(minorUnits, currency) {
   if (!Number.isInteger(minorUnits)) {
     throw new TypeError("formatPrice: minorUnits must be an integer, got " + JSON.stringify(minorUnits));
@@ -68,23 +58,5 @@ export function formatPrice(minorUnits, currency) {
   if (typeof currency !== "string") {
     throw new TypeError("formatPrice: currency must be a string, got " + (currency === null ? "null" : typeof currency));
   }
-  if (!CURRENCY_RE.test(currency)) {
-    throw new TypeError("formatPrice: currency must be a 3-letter ISO 4217 code, got " + JSON.stringify(currency));
-  }
-  var exponent;
-  if (ZERO_DECIMAL_CURRENCIES.has(currency)) {
-    exponent = 0;
-  } else if (THREE_DECIMAL_CURRENCIES.has(currency)) {
-    exponent = 3;
-  } else {
-    exponent = 2;
-  }
-  var amount = minorUnits / Math.pow(10, exponent);
-  var fmt = new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency,
-    minimumFractionDigits: exponent,
-    maximumFractionDigits: exponent,
-  });
-  return fmt.format(amount);
+  return b.money.of(BigInt(minorUnits), currency).format("en-US");
 }
