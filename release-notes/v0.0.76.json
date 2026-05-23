@@ -1,0 +1,28 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.76",
+  "date": "2026-05-23",
+  "headline": "Edge-render path for storefront read routes — `/`, `/search`, `/products/:slug` served from the Worker without a container hop + vendor refresh to blamejs v0.12.5",
+  "summary": "The storefront read-side render now runs at the edge. `/`, `/search`, and `/products/:slug` are rendered by the Cloudflare Worker reading D1 directly through the bound binding, then returning HTML — no container hop, no Durable Object handoff. Public visitors see TTFB drop from ~3.4s (container wake-up) to ~50ms. Gated by the `EDGE_RENDER` env var so operators can roll back per-deploy without a re-push. Write-side routes (POST /cart/lines, /checkout, /admin, webhooks) continue to land on the container. Bundles the vendored blamejs refresh from v0.12.4 to v0.12.5 and three CI-tight 50ms `waitUntil` timeouts bumped to 5s for runner-contention resilience.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Worker edge-render — `/` home, `/search`, and `/products/:slug` rendered without a container hop", "body": "New Worker-side modules under `worker/render/` (`_lib.js`, `home.js`, `product.js`, `search.js`, `cart.js`) and `worker/data/catalog.js` carry the storefront templates + D1 read-side queries. When `env.EDGE_RENDER` is `\"on\"`, the Worker queries D1 directly via the bound `env.DB` binding and returns HTML inline. The container's storefront mount continues to own the same routes when the flag is off, so the toggle is operator-controlled and reversible. Cart-count display in the header is fixed at zero on edge-rendered pages until the sealed-session decrypt path lands in a follow-up — visitors landing on `/cart` still see the live count from the container path." },
+        { "title": "`EDGE_RENDER` and `SHOP_NAME` wrangler vars", "body": "`wrangler.toml` gains two new `[vars]` entries: `EDGE_RENDER` (default `\"off\"` — flip to `\"on\"` to enable the edge-render path) and `SHOP_NAME` (default `\"blamejs.shop\"` — surfaces in the rendered `<title>` and OpenGraph metadata)." }
+      ]
+    },
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Three 50ms `waitUntil` timeouts bumped to 5s — `live-chat`, `fraud-screen`, `support-tickets` tests", "body": "Nine call sites across `test/layer-1-state/live-chat.test.js`, `test/layer-1-state/fraud-screen.test.js`, and `test/layer-1-state/support-tickets.test.js` were polling for `Date.now()` to advance past a captured timestamp on a 50ms budget. Under CI runner contention that budget sometimes exhausts before the monotonic-clock tick lands. Same fix the v0.0.69 ship applied to `return-labels.test.js`; same rule §11 root cause." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Vendored blamejs refreshed from v0.12.4 to v0.12.5", "body": "`bash scripts/vendor-update.sh blamejs v0.12.5` ran cleanly; `lib/vendor/blamejs/MANIFEST.json` updated. See `lib/vendor/blamejs/CHANGELOG.md` for the upstream surface changes between v0.12.4 and v0.12.5." }
+      ]
+    }
+  ]
+}

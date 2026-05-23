@@ -209,7 +209,7 @@ async function _recordMessageRoundTrip() {
   check("operator msg bumps last_activity_at",       afterOpHi.last_activity_at >= s.last_activity_at);
 
   var beforeCust = afterOpHi.last_activity_at;
-  await helpers.waitUntil(function () { return Date.now() > beforeCust; }, { timeoutMs: 50, intervalMs: 2 });
+  await helpers.waitUntil(function () { return Date.now() > beforeCust; }, { timeoutMs: 5000, intervalMs: 2 });
   var afterCust = await ctx.chat.recordMessage({
     session_id: s.id, author: "customer", body: "I can't apply my coupon.",
   });
@@ -290,7 +290,7 @@ async function _waitingQueueOrdering() {
     // millisecond-prefixed; sorting by id alone is enough — but we
     // also bump time to make opened_at strictly monotonic so the
     // ORDER BY opened_at ASC primary key actually sees movement.
-    await helpers.waitUntil(function () { return Date.now() > beforeTs; }, { timeoutMs: 50, intervalMs: 2 });
+    await helpers.waitUntil(function () { return Date.now() > beforeTs; }, { timeoutMs: 5000, intervalMs: 2 });
   }
   var q = await ctx.chat.waitingQueue({ limit: 10 });
   check("waitingQueue returns all 5 queued",        q.length === 5);

@@ -3,8 +3,8 @@
   "_about": "blamejs.shop vendors a single framework — blamejs — which itself bundles every server-side crypto/identity dependency. The transitive packages blamejs ships are surfaced in its own MANIFEST.json at lib/vendor/blamejs/lib/vendor/MANIFEST.json — Trivy / Grype rely on that nested data for CVE attribution.",
   "packages": {
     "blamejs": {
-      "version": "0.12.4",
-      "tag": "v0.12.4",
+      "version": "0.12.5",
+      "tag": "v0.12.5",
       "license": "Apache-2.0",
       "author": "blamejs contributors",
       "source": "https://github.com/blamejs/blamejs",
