@@ -54,6 +54,7 @@ var fs   = require("node:fs");
 var path = require("node:path");
 
 var LIB_ROOT       = path.resolve(__dirname, "..", "..", "lib");
+var WORKER_ROOT    = path.resolve(__dirname, "..", "..", "worker");
 var TEST_ROOT      = path.resolve(__dirname, "..", "..", "test");
 var WORKFLOWS_ROOT = path.resolve(__dirname, "..", "..", ".github", "workflows");
 
@@ -72,7 +73,9 @@ function _walk(dir, files) {
   return files;
 }
 
-function _libFiles()  { return _walk(LIB_ROOT);  }
+function _libFiles()    { return _walk(LIB_ROOT);    }
+function _workerFiles() { return _walk(WORKER_ROOT); }
+function _shopFiles()   { return _walk(LIB_ROOT).concat(_walk(WORKER_ROOT)); }
 function _testFiles() { return _walk(TEST_ROOT).filter(function (f) {
   return /\.test\.js$/.test(f) || /\/helpers\/[^_].*\.js$/.test(f.replace(/\\/g, "/"));
 }); }
@@ -102,6 +105,8 @@ function _relPath(absPath) {
 function _scan(regex, scope) {
   var files = scope === "test"      ? _testFiles()
             : scope === "workflows" ? _workflowFiles()
+            : scope === "worker"    ? _workerFiles()
+            : scope === "shop"      ? _shopFiles()
             :                         _libFiles();
   var matches = [];
   for (var i = 0; i < files.length; i += 1) {
@@ -278,6 +283,46 @@ var KNOWN_ANTIPATTERNS = [
       "|per\\s+rule\\s+\\u00a7\\d" +
       ")"
     ),
+    allowlist:   [],
+  },
+
+  // ---- blamejs primitive reinvention catchers ----------------------------
+  //
+  // The Worker substrate can't load the vendored blamejs entry (its
+  // `node:tls.DEFAULT_MIN_VERSION` write at module init has no Worker
+  // analogue). Worker code that needs framework behavior must EITHER
+  // import the relevant leaf module from `lib/vendor/blamejs/lib/`
+  // (and accept the bundler-pulled transitive requires), OR carry a
+  // byte-identical inline copy with an `allow:` marker citing the
+  // canonical primitive. These detectors flag the second case so a
+  // future author who reinvents from scratch — without realising the
+  // framework already covers it — gets pointed at the right primitive.
+  {
+    id:          "worker-render-reinvented-primitive",
+    scanScope:   "shop",
+    description: "Reinvented blamejs primitive — compose `b.template.escapeHtml`, `b.money.of(...).format()`, `b.crypto.timingSafeEqual`, `b.crypto.hmacSha256`, or the relevant b.* primitive instead. If the substrate (Worker isolate, etc.) can't import the framework module, mark with `// allow:worker-render-reinvented-primitive — byte-identical to b.<primitive>` and document the reason.",
+    regex:       /\.replace\s*\(\s*\/&\/g\s*,\s*["']&amp;["']\s*\)/,
+    allowlist:   [],
+  },
+  {
+    id:          "intl-numberformat-currency-reinvented",
+    scanScope:   "shop",
+    description: "`new Intl.NumberFormat(..., { style: \"currency\", ... })` reinvents `b.money.of(amount, currency).format(locale)`. Either import `lib/vendor/blamejs/lib/money.js` directly (Worker substrate), or compose via the framework's `b.money` if running in a normal Node process. Mark with `// allow:intl-numberformat-currency-reinvented — <reason>` only when an Intl shape b.money doesn't expose is required.",
+    regex:       /new\s+Intl\s*\.\s*NumberFormat\s*\([^)]*style\s*:\s*["']currency["']/,
+    allowlist:   [],
+  },
+  {
+    id:          "manual-timing-safe-equal",
+    scanScope:   "shop",
+    description: "Hand-rolled timing-safe comparison loop — use `b.crypto.timingSafeEqual(a, b)` (CJS Node code) or `import { timingSafeEqual } from \"node:crypto\"` (Worker with nodejs_compat). The framework's wrapper handles the per-runtime call shape and the length-mismatch defense in one call.",
+    regex:       /diff\s*\|\s*=\s*[\w$]+\s*\.\s*charCodeAt\s*\([\w$]+\)\s*\^\s*[\w$]+\s*\.\s*charCodeAt/,
+    allowlist:   [],
+  },
+  {
+    id:          "inline-hmac-subtle-crypto",
+    scanScope:   "shop",
+    description: "Inline `crypto.subtle.sign(\"HMAC\", ...)` for webhook signature verification reinvents `b.crypto.hmacSha256(message, secret)` (or `b.webhook.stripe.verify` for the full Stripe-shape handshake). Compose the framework primitive so the constant-time digest compare + replay-window enforcement come for free.",
+    regex:       /crypto\s*\.\s*subtle\s*\.\s*sign\s*\(\s*["']HMAC["']/,
     allowlist:   [],
   },
 ];

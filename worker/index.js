@@ -1,4 +1,5 @@
 import { Container, getContainer } from "@cloudflare/containers";
+import b from "./b.js";
 import { renderHome }    from "./render/home.js";
 import { renderProduct } from "./render/product.js";
 import { renderSearch }  from "./render/search.js";
@@ -98,12 +99,12 @@ function _redact(s) {
   return out;
 }
 
-function _timingSafeEqual(a, b) {
-  if (typeof a !== "string" || typeof b !== "string") return false;
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+function _timingSafeEqual(x, y) {
+  try {
+    return b.crypto.timingSafeEqual(x, y);
+  } catch (_e) {
+    return false;
+  }
 }
 
 // Stripe webhook signature: `t=<unix>,v1=<hex-hmac-sha256(timestamp + "." + body)>`
@@ -128,21 +129,7 @@ async function _verifyStripeSignature(rawBody, header, secret, toleranceSeconds)
   if (Math.abs(now - ts) > (toleranceSeconds || 300)) return { ok: false, reason: "timestamp-outside-tolerance" };
   if (sigs.length === 0) return { ok: false, reason: "no-v1-signature" };
 
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signed = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(ts + "." + rawBody),
-  );
-  const expected = Array.from(new Uint8Array(signed))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  const expected = await b.crypto.hmacSha256(secret, ts + "." + rawBody);
   for (const got of sigs) {
     if (_timingSafeEqual(got, expected)) return { ok: true };
   }
@@ -728,12 +715,7 @@ function _warmingHtml(canonicalUrl, refreshSeconds) {
   // HTML-escape the canonical URL — the inbound URL is attacker-
   // controlled (any path the visitor types), so injecting it raw
   // into an href would be an XSS vector.
-  const safeCanonical = String(canonicalUrl || "https://blamejs.shop/")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+  const safeCanonical = b.template.escapeHtml(canonicalUrl || "https://blamejs.shop/");
   return "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
     + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
     + "<title>Warming up — blamejs.shop</title>"
