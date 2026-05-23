@@ -163,71 +163,101 @@ export async function listActiveProductSlugs(DB) {
 // Every published blog article slug + its last-modified epoch.
 // Same 50k cap as products (independent budget — sitemap protocol's
 // limit is per-file, not per-source).
+//
+// Resilient to a missing `blog_articles` table — operators that
+// haven't applied migration `0189` yet (the table ships with the
+// blogArticles primitive added in v0.0.75) get an empty result
+// set instead of a D1 error propagating to the caller. The
+// dependent routes (/feed.xml, /sitemap.xml) then render with the
+// product surface only.
 export async function listPublishedBlogSlugs(DB) {
-  var res = await DB
-    .prepare(
-      "SELECT slug, COALESCE(updated_at, published_at) AS updated_at " +
-      "FROM blog_articles WHERE status = 'published' AND published_at IS NOT NULL " +
-      "ORDER BY updated_at DESC LIMIT 50000"
-    )
-    .bind()
-    .all();
-  var rows = (res && res.results) ? res.results : [];
-  return { rows: rows };
+  try {
+    var res = await DB
+      .prepare(
+        "SELECT slug, COALESCE(updated_at, published_at) AS updated_at " +
+        "FROM blog_articles WHERE status = 'published' AND published_at IS NOT NULL " +
+        "ORDER BY updated_at DESC LIMIT 50000"
+      )
+      .bind()
+      .all();
+    var rows = (res && res.results) ? res.results : [];
+    return { rows: rows };
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return { rows: [] };
+    throw e;
+  }
 }
 
 // Published blog articles for the /blog list page. `limit` defaults
 // to 12, `offset` for paging. Newest first. Returns the columns the
 // list-page renderer needs (no body — list cards show meta only).
+// Missing-table-resilient (see `listPublishedBlogSlugs`).
 export async function listBlogArticles(DB, opts) {
   opts = opts || {};
   var limit  = _clampLimit(opts.limit);
   var offset = _clampOffset(opts.offset);
-  var res = await DB
-    .prepare(
-      "SELECT slug, title, author_id, hero_image_url, meta_description, " +
-      "       published_at, updated_at " +
-      "FROM blog_articles " +
-      "WHERE status = 'published' AND published_at IS NOT NULL " +
-      "ORDER BY published_at DESC LIMIT ?1 OFFSET ?2"
-    )
-    .bind(limit, offset)
-    .all();
-  var rows = (res && res.results) ? res.results : [];
-  return { rows: rows };
+  try {
+    var res = await DB
+      .prepare(
+        "SELECT slug, title, author_id, hero_image_url, meta_description, " +
+        "       published_at, updated_at " +
+        "FROM blog_articles " +
+        "WHERE status = 'published' AND published_at IS NOT NULL " +
+        "ORDER BY published_at DESC LIMIT ?1 OFFSET ?2"
+      )
+      .bind(limit, offset)
+      .all();
+    var rows = (res && res.results) ? res.results : [];
+    return { rows: rows };
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return { rows: [] };
+    throw e;
+  }
 }
 
 // Single published blog article by slug. Returns the full row
 // (including body + tags JSON) for the article-detail render.
+// Missing-table-resilient (see `listPublishedBlogSlugs`).
 export async function getBlogArticleBySlug(DB, slug) {
   if (typeof slug !== "string" || slug.length === 0) return null;
-  var row = await DB
-    .prepare(
-      "SELECT * FROM blog_articles " +
-      "WHERE slug = ?1 AND status = 'published' AND published_at IS NOT NULL"
-    )
-    .bind(slug)
-    .first();
+  var row = null;
+  try {
+    row = await DB
+      .prepare(
+        "SELECT * FROM blog_articles " +
+        "WHERE slug = ?1 AND status = 'published' AND published_at IS NOT NULL"
+      )
+      .bind(slug)
+      .first();
+  } catch (e) {
+    if (!(e && /no such table/i.test(e.message || ""))) throw e;
+  }
   return row || null;
 }
 
 // Recent published blog articles, newest first. Used by the edge
 // /feed.xml renderer. `limit` defaults to 20 (RSS-reader convention).
+// Missing-table-resilient (see `listPublishedBlogSlugs`).
 export async function recentBlogArticles(DB, opts) {
   opts = opts || {};
   var limit = _clampLimit(opts.limit);
-  var res = await DB
-    .prepare(
-      "SELECT slug, title, body, author_id, hero_image_url, meta_description, " +
-      "       published_at, updated_at " +
-      "FROM blog_articles " +
-      "WHERE status = 'published' AND published_at IS NOT NULL " +
-      "ORDER BY published_at DESC LIMIT ?1"
-    )
-    .bind(limit)
-    .all();
-  var rows = (res && res.results) ? res.results : [];
-  return { rows: rows };
+  try {
+    var res = await DB
+      .prepare(
+        "SELECT slug, title, body, author_id, hero_image_url, meta_description, " +
+        "       published_at, updated_at " +
+        "FROM blog_articles " +
+        "WHERE status = 'published' AND published_at IS NOT NULL " +
+        "ORDER BY published_at DESC LIMIT ?1"
+      )
+      .bind(limit)
+      .all();
+    var rows = (res && res.results) ? res.results : [];
+    return { rows: rows };
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return { rows: [] };
+    throw e;
+  }
 }
 
 export async function listMediaForProduct(DB, productId) {
