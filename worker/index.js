@@ -114,7 +114,13 @@ function _redact(s) {
   // Long hex / base64-ish run — webhook secrets, HMAC sigs, opaque tokens
   out = out.replace(/\b[a-f0-9]{32,}\b/gi, "<redacted-hex>");
   out = out.replace(/\b[A-Za-z0-9_-]{40,}\b/g, "<redacted-token>");
-  return out;
+  // Compose `b.redact.redact` on top so the framework's catalog of
+  // sensitive value shapes (PEM blocks, AWS access keys, credit-card
+  // numbers, SSNs, connection strings, etc.) runs after the shop-
+  // specific patterns. The shop layer catches header / cookie /
+  // bridge-secret shapes b.redact doesn't ship; b.redact covers the
+  // generic credential shapes the shop layer doesn't enumerate.
+  return b.redact.redact(out);
 }
 
 function _timingSafeEqual(x, y) {

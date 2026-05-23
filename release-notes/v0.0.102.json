@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.102",
+  "date": "2026-05-23",
+  "headline": "`_redact` composes `b.redact.redact` after the shop-specific patterns — defense-in-depth on log emission",
+  "summary": "The Worker's `_redact` helper carried a hand-rolled chain of regex replacements covering shop-specific log shapes (Authorization Bearer / Stripe-Signature / shop_sid / x-d1-bridge-secret / hex digests / opaque tokens). The framework's `b.redact.redact` covers a different set — PEM blocks, AWS access keys, credit-card numbers, SSNs, connection strings, well-known credential field-names — that the shop chain doesn't enumerate. This patch keeps the shop chain (it catches header / cookie shapes b.redact misses) and composes `b.redact.redact` on top so the framework's catalog of sensitive value shapes also runs over the output. Log emissions through `_redact(...)` are now covered by both layers.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "`_redact` chains `b.redact.redact` after the shop-specific patterns", "body": "Order: (1) shop chain — Bearer / Stripe-Signature / JWT-tri-segment / shop_sid+shop_auth cookies / d1_bridge_secret + admin_api_key + stripe_*_key headers / 32-char hex / 40-char opaque token; (2) `b.redact.redact` on the result — picks up PEM `-----BEGIN`, AWS `AKIA*`, credit-card Luhn, SSN, JWT (stricter shape), connection strings, and the framework's sensitive-field-name catalog. Both run on every Worker `console.error` / observability emission that flows through `_redact`. `b.redact` joins the Worker-side primitive surface via `worker/b.js` alongside the v0.0.100 `b.cookies` addition." }
+      ]
+    }
+  ]
+}
