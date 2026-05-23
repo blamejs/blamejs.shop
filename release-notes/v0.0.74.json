@@ -1,0 +1,21 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.74",
+  "date": "2026-05-22",
+  "headline": "`emailEngagementScore` primitive + republish 0.0.73",
+  "summary": "0.0.73 source landed on `main` but the npm publish workflow stopped on a smoke check — the email-engagement-score test was committed without its lib counterpart. 0.0.74 adds the missing `emailEngagementScore` primitive and republishes the full v0.0.73 surface so `npm install @blamejs/blamejs-shop@0.0.74` pulls every primitive cleanly.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "`emailEngagementScore` primitive — per-customer 0-100 email engagement grade", "body": "`bShop.emailEngagementScore.create({ query?, emailCampaigns?, emailSuppressions? })` returns `{ recordEngagementEvent, getScore, recompute, recomputeAll, unengagedCustomers, metricsForBand, historyForCustomer }`. Six event types with calibrated weights (opened +5, clicked +15, unsubscribed -50, spam_reported -75, bounced -10, not_opened_in_window -3). Score starts at 50 baseline, clamped to [0, 100]. Four bands: unengaged (0-19) / lapsed (20-49) / engaged (50-74) / highly_engaged (75-100). Click implies open in the open_rate denominator (compensates for image-blocking clients). Monotonic per-customer `_resolveOccurredAt` to break same-millisecond ties. Migration `0187_email_engagement_score.sql`." }
+      ]
+    },
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Republish to npm — 0.0.73 source on `main` reached operators via `git clone` but not via `npm install`", "body": "`npm install @blamejs/blamejs-shop@0.0.73` resolves to a missing version because the publish workflow exited early when the CI smoke gate couldn't find `lib/email-engagement-score.js` (its test file was committed alongside v0.0.73 but the lib file itself was untracked at commit time). 0.0.74 ships the full surface so operators upgrading by version number get every primitive." }
+      ]
+    }
+  ]
+}
