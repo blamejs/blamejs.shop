@@ -101,6 +101,13 @@ bucket_name = "blamejs-shop-assets"
 binding = "SESSIONS"
 id      = "4ab407a276104993bf07f04938ac2630"
 
+# --- Cron triggers --------------------------------------------------
+# Once-a-minute warm of the storefront read routes. Keeps the edge
+# cache populated at every PoP that's seen at least one real visitor
+# so the cache TTL (60s) doesn't lapse between organic hits.
+[triggers]
+crons = ["* * * * *"]
+
 # --- Observability --------------------------------------------------
 [observability.logs]
 enabled = true
