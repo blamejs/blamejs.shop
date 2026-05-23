@@ -465,6 +465,22 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "Non-canonical outcome strings (`ok`, `fail`, `warn`, `duplicate`, `skipped`, `error`) get normalized by `safeEmit` to one of the canonical triple as a safety net, but the strict `audit.record()` validator refuses them. Code reviewers reading a primitive should see exactly what outcome will land on the chain — use the canonical strings directly. Ported from blamejs's catalog.",
   },
   {
+    id:        "raw-sql-identifier-interpolation",
+    primitive: "b.safeSql.quoteIdentifier(name, dialect?) — runs validateIdentifier + emits the dialect-correct quoted form (`\"name\"` for SQLite / Postgres, `` `name` `` for MySQL)",
+    regex:     /\b(?:FROM|INTO|UPDATE|TABLE|INDEX|TRIGGER|VIEW|JOIN)\s+["']\s*\+\s*(?![qQ][A-Za-z0-9_]|quoted)\w+\s*\+/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "SQL identifier (table / column / index name) interpolated via string concat without a quote-and-validate pass is an identifier-injection sink — bound parameters can't carry identifiers, only values. `b.safeSql.quoteIdentifier(name, dialect)` runs the framework's `validateIdentifier` (length 1–63, charset `[A-Za-z_][A-Za-z0-9_]*`, reserved-word + sqlite_ prefix refusal) then emits the dialect-correct quoted form. Detector skips variables prefixed with `q` / `Q` / `quoted` (project convention for already-validated identifiers). Ported from blamejs's catalog.",
+  },
+  {
+    id:        "timing-safe-equal-utf8-without-shape-guard",
+    primitive: "validate byte shape (ASCII / hex / base64url) before composing `b.crypto.timingSafeEqual` on UTF-8 encoded strings — the underlying nodeCrypto.timingSafeEqual throws `ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH` when UTF-8 byte lengths diverge even though `.length` matches",
+    regex:     /\bnodeCrypto\s*\.\s*timingSafeEqual\s*\(\s*Buffer\s*\.\s*from\s*\([^,]+,\s*["']utf8["']\s*\)\s*,\s*Buffer\s*\.\s*from\s*\([^,]+,\s*["']utf8["']\s*\)\s*\)/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "`nodeCrypto.timingSafeEqual(Buffer.from(a, \"utf8\"), Buffer.from(b, \"utf8\"))` throws on byte-length mismatch — for non-ASCII strings, character-count parity doesn't guarantee byte-count parity (a 2-character emoji is 8 bytes in UTF-8, 2 in UTF-16). Either restrict the input domain to ASCII (token / hash / base64url shapes), or compare byte lengths explicitly before the timingSafeEqual call. `b.crypto.timingSafeEqual` wraps this with the entry-tier validation. Ported from blamejs's catalog.",
+  },
+  {
     id:        "wildcard-suffix-match-without-single-label-check",
     primitive: "matching a `*.example.com` wildcard against a host MUST refuse single-label matches (the `*` is one label, not zero+; `example.com` itself is not covered by the wildcard)",
     regex:     /\bendsWith\s*\(\s*["']\.\w+/,
