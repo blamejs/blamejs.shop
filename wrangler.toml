@@ -25,6 +25,13 @@ main = "worker/index.js"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
+# SmartPlacement runs the Worker close to D1 instead of close to the
+# user, eliminating the cross-region D1 round-trip for storefront
+# reads. The Cloudflare edge still serves the response to the user
+# via the standard PoP routing; only the Worker compute is relocated.
+[placement]
+mode = "smart"
+
 [vars]
 # Tunables exposed to the Worker. Secrets live in `wrangler secret`,
 # not here. `D1_BRIDGE_PATH` is the internal Worker route the

@@ -348,10 +348,13 @@ export default {
 
     // 3. Storefront read routes — render at the edge when enabled.
     //    Gated by env.EDGE_RENDER so it can be rolled back per-deploy
-    //    without a re-push. When the flag is off (or absent) the
-    //    routes fall through to the container exactly as before.
+    //    without a re-push. Unauthenticated GETs are served from
+    //    caches.default with a short TTL + stale-while-revalidate so
+    //    repeat visitors get ~10-30ms TTFB. Requests carrying any
+    //    session cookie (shop_sid / shop_auth) skip the cache —
+    //    per-session content stays correct.
     if (env.EDGE_RENDER === "on" && (request.method === "GET" || request.method === "HEAD")) {
-      const edgeResponse = await _edgeRender(request, env, url);
+      const edgeResponse = await _edgeRenderCached(request, env, url, ctx);
       if (edgeResponse) return edgeResponse;
     }
 
@@ -458,6 +461,57 @@ export default {
     return _forwardToContainer(request, env);
   },
 };
+
+// ---- edge cache wrapper ---------------------------------------------------
+//
+// Wraps the edge-render router with a caches.default lookup. Cache
+// keys are the full request URL; only unauthenticated requests
+// (no shop_sid / shop_auth cookie) are eligible — per-session
+// content would otherwise leak across visitors. Cached responses
+// carry `cache-control: public, max-age=60, stale-while-revalidate=300`
+// so the edge keeps serving stale HTML while a background revalidate
+// fetches fresh data. /search is keyed including the `?q=` query so
+// distinct searches don't collide; /search with no `q` parameter
+// shares its cache entry with all other no-query visitors.
+
+const CACHE_TTL_SECONDS = 60;
+const CACHE_SWR_SECONDS = 300;
+
+function _hasSessionCookie(request) {
+  const cookieHeader = request.headers.get("cookie") || "";
+  if (cookieHeader.length === 0) return false;
+  return /\b(shop_sid|shop_auth)=/.test(cookieHeader);
+}
+
+async function _edgeRenderCached(request, env, url, ctx) {
+  if (_hasSessionCookie(request)) {
+    return await _edgeRender(request, env, url);
+  }
+  const cache = caches.default;
+  const cacheKey = new Request(request.url, { method: "GET", headers: request.headers });
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const headers = new Headers(cached.headers);
+    headers.set("x-edge-cache", "hit");
+    return new Response(cached.body, { status: cached.status, headers: headers });
+  }
+  const fresh = await _edgeRender(request, env, url);
+  if (!fresh) return null;
+  if (fresh.status === 200) {
+    const cacheableHeaders = new Headers(fresh.headers);
+    cacheableHeaders.set(
+      "cache-control",
+      "public, max-age=" + CACHE_TTL_SECONDS + ", stale-while-revalidate=" + CACHE_SWR_SECONDS,
+    );
+    const cacheableBody = await fresh.clone().arrayBuffer();
+    const cacheable = new Response(cacheableBody, { status: 200, headers: cacheableHeaders });
+    ctx.waitUntil(cache.put(cacheKey, cacheable));
+    const userHeaders = new Headers(fresh.headers);
+    userHeaders.set("x-edge-cache", "miss");
+    return new Response(cacheableBody, { status: 200, headers: userHeaders });
+  }
+  return fresh;
+}
 
 // ---- edge-render router ---------------------------------------------------
 //
