@@ -345,9 +345,9 @@ async function _listQueries() {
   // when an operator re-issues after exception).
   var lab1 = await labels.issueLabel(_labelInput(seed.rma.id));
   // ensure issued_at strictly advances so ASC ordering is stable
-  await helpers.waitUntil(function () { return Date.now() > lab1.issued_at; }, { timeoutMs: 50, label: "tick1" });
+  await helpers.waitUntil(function () { return Date.now() > lab1.issued_at; }, { timeoutMs: 5000, label: "tick1" });
   var lab2 = await labels.issueLabel(_labelInput(seed.rma.id));
-  await helpers.waitUntil(function () { return Date.now() > lab2.issued_at; }, { timeoutMs: 50, label: "tick2" });
+  await helpers.waitUntil(function () { return Date.now() > lab2.issued_at; }, { timeoutMs: 5000, label: "tick2" });
   var lab3 = await labels.issueLabel(_labelInput(seed.rma.id));
 
   // All three start in `issued` → pendingPickup returns all three.
