@@ -127,6 +127,16 @@ case "${1:-}" in
     vendored="$(_vendored_ver blamejs)"
     latest="$(_latest_tag)"
     latest_ver="${latest#v}"
+    # When the build environment can't reach api.github.com (sandboxed
+    # CI runners, rate-limited anonymous requests, air-gapped images),
+    # `_latest_tag` returns empty. Skip with a warning instead of
+    # reporting a phantom drift — the committed vendor IS the source of
+    # truth at this point; freshness can be re-verified by the next
+    # operator-run check that has network access.
+    if [ -z "$latest" ]; then
+      echo "[vendor-check] SKIPPED — could not resolve upstream tag (offline / rate-limited); committed v$vendored is the source of truth" >&2
+      exit 0
+    fi
     if [ "$vendored" = "$latest_ver" ]; then
       echo "[vendor-check] OK — blamejs v$vendored is at latest"
       exit 0
