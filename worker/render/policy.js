@@ -2,6 +2,7 @@
 // layout that doesn't carry the storefront hero / marquee / catalog
 // chrome — these are read-once legal docs, not a commerce surface.
 import { renderTemplate } from "./_lib.js";
+import b from "../b.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
@@ -133,6 +134,54 @@ export function renderInternalError(opts) {
     eyebrow:     "500",
     lede:        "An unexpected error occurred rendering this page.",
     description: "An error rendering this page — blamejs.shop",
+    updated:     "—",
+    shopName:    opts.shopName,
+    themeCss:    opts.themeCss,
+    version:     opts.version,
+  }, body);
+}
+
+// Newsletter signup result — `result === "new"` means the address
+// landed; `result === "existing"` means the idempotent insert hit a
+// conflict (already enrolled). Both are success cases; the message
+// differs slightly so a returning visitor sees the right tone.
+export function renderNewsletterThanks(opts) {
+  opts = opts || {};
+  var existing = opts.result === "existing";
+  var body =
+    "<section><h2>" + (existing ? "You're already on the list." : "Thanks — you're on the list.") + "</h2>" +
+    "<p>" + (existing
+      ? "We already had your address. You'll get the next release note when it ships."
+      : "We added your address. You'll get the next release note when it ships, and nothing else.") +
+    "</p><p><a class=\"btn-primary\" href=\"/\">Back to the shop</a></p></section>";
+  return _wrap({
+    title:       existing ? "Already subscribed" : "Subscribed",
+    eyebrow:     "Newsletter",
+    lede:        existing
+      ? "Your address was already on the list."
+      : "Your address has been added to the release-notes list.",
+    description: "Newsletter signup confirmation — blamejs.shop",
+    updated:     "—",
+    shopName:    opts.shopName,
+    themeCss:    opts.themeCss,
+    version:     opts.version,
+  }, body);
+}
+
+// Newsletter signup refused — invalid email shape. `message` is the
+// operator-facing reason; never leak the internal validator error.
+export function renderNewsletterError(opts) {
+  opts = opts || {};
+  var msg = opts.message || "That doesn't look like a valid email address. Check the format and try again.";
+  var body =
+    "<section><h2>We couldn't add that address.</h2>" +
+    "<p>" + b.template.escapeHtml(msg) + "</p>" +
+    "<p><a class=\"btn-primary\" href=\"/\">Back to the shop</a></p></section>";
+  return _wrap({
+    title:       "Signup refused",
+    eyebrow:     "Newsletter",
+    lede:        "The address you submitted didn't validate.",
+    description: "Newsletter signup refused — blamejs.shop",
     updated:     "—",
     shopName:    opts.shopName,
     themeCss:    opts.themeCss,

@@ -1,0 +1,17 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.92",
+  "date": "2026-05-23",
+  "headline": "POST `/newsletter` on the edge — every page's footer submit no longer hits the container",
+  "summary": "The footer newsletter form lives on every storefront page. The POST submit used to hop through the container's storefront mount; this patch wires it directly into the Worker. Email goes through `b.guardEmail.validateAddress` (RFC 5322 single-address validator with header-injection defense). The normalized address hashes via `b.crypto.namespaceHash(\"newsletter-signup\", ...)` so the raw email never lands on disk. Insert is idempotent via D1's `ON CONFLICT(email_hash) DO NOTHING`; the result thank-you renders `new` vs `existing` based on the row-count delta. Sec-Fetch-Site gates cross-site POSTs (CSRF defense); content-type allowlist is `application/x-www-form-urlencoded` only.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Edge `POST /newsletter` handler composed off `b.guardEmail` + `b.crypto.namespaceHash` + `b.uuid.v7`", "body": "`worker/index.js` gains a `_edgeNewsletter(request, env)` handler routed when `pathname === \"/newsletter\" && method === \"POST\"` and `env.EDGE_RENDER === \"on\"`. The handler: (1) refuses Sec-Fetch-Site `cross-site` POSTs; (2) refuses non-`application/x-www-form-urlencoded` content; (3) parses the form body via `URLSearchParams`; (4) validates the email through `b.guardEmail.validateAddress` (refused-shape errors render the operator-facing error page without leaking the validator's internal code); (5) lower-cases the address and hashes it via `b.crypto.namespaceHash(\"newsletter-signup\", normalized)`; (6) generates a row id via `b.uuid.v7`; (7) issues an idempotent insert against `newsletter_signups` with `ON CONFLICT(email_hash) DO NOTHING`; (8) renders `renderNewsletterThanks` differentiating `new` from `existing` based on `r.meta.changes > 0`. All `b.*` primitives compose through the validated `worker/b.js` adapter — no inline reinvention." },
+        { "title": "`worker/b.js` exposes `b.guardEmail`", "body": "The framework's email-shape gate ships as `lib/vendor/blamejs/lib/guard-email.js`; this patch adds it to the Worker-side adapter's surface so edge POST handlers compose it the same way server-side code does. The leaf module's transitive requires (`codepoint-class`, `lazy-require`, `gate-contract`, `constants`, `numeric-bounds`, `framework-error`) bundle cleanly under wrangler + nodejs_compat." },
+        { "title": "`renderNewsletterThanks` + `renderNewsletterError` rendered through the minimal policy layout", "body": "Both compose `renderTemplate` from `worker/render/_lib.js`. The `existing` path differentiates the copy so a returning subscriber sees \"You're already on the list\" instead of a generic thanks. The error path runs `b.template.escapeHtml` on the operator-facing message via the b.js adapter." }
+      ]
+    }
+  ]
+}
