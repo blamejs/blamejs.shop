@@ -440,6 +440,39 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "JWT `iss` claim comparison via `!==` / `===` is timing-side-channel-leaky on string compare. An attacker can byte-probe the expected issuer by measuring response time. Use `b.crypto.timingSafeEqual(actual, expected)` for any auth-sensitive identifier compare. Ported from blamejs's catalog.",
   },
   {
+    id:        "gunzip-without-output-size-cap",
+    primitive: "zlib.gunzipSync(buf, { maxOutputLength: <byte-constant> }) — bound decompression at config time",
+    regex:     /\bzlib\s*\.\s*(?:gunzipSync|createGunzip|brotliDecompressSync|createBrotliDecompress)\s*\(/,
+    requires:  /\bmaxOutputLength\b/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "Unbounded `zlib.gunzipSync(buf)` on operator-supplied bytes is a zip-bomb amplification sink (CVE-2025-0725 / classic decompression-bomb class). Pass `{ maxOutputLength: <byte-constant> }` so the cap is visible at the call site; oversized inputs throw a typed error before the bomb reaches memory. Ported from blamejs's catalog. `requires` check exempts files that name `maxOutputLength` somewhere — sites with a separate budget helper.",
+  },
+  {
+    id:        "audit-action-with-hyphen",
+    primitive: "audit action segments use underscores per the validator regex `[a-z][a-z0-9_]*` — emit `audit.event_kind` not `audit.event-kind`",
+    regex:     /\baction\s*:\s*["'][a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+-/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "Audit action segments with hyphens (e.g. `system.pubsub.publish-failed`) fail the validator regex enforced by `audit.record()`. `safeEmit` catches the throw and silently drops the event. The convention is dot-separated identifiers with underscores. Detector regex requires at least one `.<segment>` before the hyphen to avoid false-positives on operator-vocabulary enum keys. Ported from blamejs's catalog.",
+  },
+  {
+    id:        "non-canonical-audit-outcome",
+    primitive: "outcome ∈ {\"success\", \"failure\", \"denied\"} — the three canonical strings the audit validator accepts at call time",
+    regex:     /\boutcome\s*:\s*["'](?:ok|okay|fail|failed|err|error|warn|warning|duplicate|skip|skipped|pass|passed|succeeded|refused|deny)["']/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "Non-canonical outcome strings (`ok`, `fail`, `warn`, `duplicate`, `skipped`, `error`) get normalized by `safeEmit` to one of the canonical triple as a safety net, but the strict `audit.record()` validator refuses them. Code reviewers reading a primitive should see exactly what outcome will land on the chain — use the canonical strings directly. Ported from blamejs's catalog.",
+  },
+  {
+    id:        "wildcard-suffix-match-without-single-label-check",
+    primitive: "matching a `*.example.com` wildcard against a host MUST refuse single-label matches (the `*` is one label, not zero+; `example.com` itself is not covered by the wildcard)",
+    regex:     /\bendsWith\s*\(\s*["']\.\w+/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "Using `host.endsWith(\".example.com\")` to match a `*.example.com` wildcard accepts both `foo.example.com` (intended) AND the bare `.example.com` / unexpected forms (DNS rebinding / phishing). The wildcard `*` covers exactly one DNS label; the matcher must additionally refuse the single-label and zero-label cases. Ported from blamejs's catalog — RFC 6125 §6.4.3 + CABF Baseline Requirements §3.2.2.6.",
+  },
+  {
     id:        "fs-path-from-operator-identifier-without-traversal-refusal",
     primitive: "validate name against a strict character class + explicit `..` / `\\0` / `/` refusal before passing to path.join / fs.* calls",
     regex:     /\bpath\s*\.\s*join\s*\([^)]*\b\w+\s*\.\s*(?:name|id|slug|filename)\b[^)]*\)/,
@@ -497,7 +530,26 @@ function _check(antipattern) {
   var raw = _scan(antipattern.regex, antipattern.scanScope || "lib", { multiline: !!antipattern.multiline });
   var afterMarkers = _filterMarkers(raw, antipattern.id);
   var allowSet = (antipattern.allowlist || []).reduce(function (acc, p) { acc[p] = true; return acc; }, {});
-  return afterMarkers.filter(function (m) { return !allowSet[m.file]; });
+  var afterAllow = afterMarkers.filter(function (m) { return !allowSet[m.file]; });
+  // Optional `requires` — a whole-file regex that, if matched anywhere
+  // in the same file as the primary hit, exonerates the hit. Used
+  // when the call shape is correct only when paired with a bounding
+  // opt elsewhere (e.g. `zlib.gunzipSync(...)` paired with
+  // `maxOutputLength: <const>` somewhere in the same module).
+  if (antipattern.requires) {
+    var fileContents = {};
+    return afterAllow.filter(function (m) {
+      if (fileContents[m.file] === undefined) {
+        try {
+          fileContents[m.file] = fs.readFileSync(
+            path.resolve(path.resolve(__dirname, "..", ".."), m.file), "utf8"
+          );
+        } catch (_e) { fileContents[m.file] = ""; }
+      }
+      return !antipattern.requires.test(fileContents[m.file]);
+    });
+  }
+  return afterAllow;
 }
 
 function run() {
