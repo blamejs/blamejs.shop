@@ -291,6 +291,20 @@ export function renderProduct(opts) {
     });
   }
 
+  // BreadcrumbList JSON-LD — Google's product-rich-result panel
+  // shows the trail (Shop → Product) above the title. Two-position
+  // breadcrumb matches the on-page `<nav class="breadcrumb">` markup
+  // already in the PDP template.
+  var breadcrumbJsonLd = jsonLdScript({
+    "@context":        "https://schema.org",
+    "@type":           "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Shop", "item": "/" },
+      { "@type": "ListItem", "position": 2, "name": product.title, "item": "/products/" + product.slug },
+    ],
+  });
+  jsonLd = (jsonLd || "") + breadcrumbJsonLd;
+
   return _wrap({
     title:         product.title,
     shopName:      shopName,

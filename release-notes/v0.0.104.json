@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.104",
+  "date": "2026-05-23",
+  "headline": "Organization + WebSite + BreadcrumbList Schema.org JSON-LD — three more rich-result types covered",
+  "summary": "Home page now emits Organization (Google knowledge-panel + logo + social link) and WebSite (sitelinks search box pointing at `/search?q=`) JSON-LD blocks. Product detail page gains a BreadcrumbList block matching the on-page `<nav class=\"breadcrumb\">` markup. All three compose through the existing `jsonLdScript` helper from `worker/render/_lib.js`. Combined with the Product + Article blocks from v0.0.94, the storefront now ships five distinct Schema.org graph types — Product / Article / Organization / WebSite / BreadcrumbList — across the routes Google's rich-result tester maps.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Organization + WebSite JSON-LD on `/`", "body": "`worker/render/home.js#renderHome` appends two `<script type=\"application/ld+json\">` blocks to the body. Organization: `name` + `url` + `logo` + `sameAs` (GitHub mirror) — surfaces in Google's knowledge-panel result. WebSite: `potentialAction` with a `SearchAction` template at `/search?q={search_term_string}` so Google's sitelinks search box hands queries directly to the storefront's search route." },
+        { "title": "BreadcrumbList JSON-LD on `/products/:slug`", "body": "`worker/render/product.js#renderProduct` appends a BreadcrumbList block alongside the existing Product block. Two positions: `Shop` (`/`) → `<product title>` (`/products/<slug>`) — matches the on-page breadcrumb nav. Google's product-rich-result panel renders this above the title." }
+      ]
+    }
+  ]
+}
