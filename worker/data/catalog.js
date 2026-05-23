@@ -146,6 +146,25 @@ export async function listVariantsWithPrices(DB, productId, currency) {
   return { rows: rows };
 }
 
+// Recent published blog articles, newest first. Used by the edge
+// /feed.xml renderer. `limit` defaults to 20 (RSS-reader convention).
+export async function recentBlogArticles(DB, opts) {
+  opts = opts || {};
+  var limit = _clampLimit(opts.limit);
+  var res = await DB
+    .prepare(
+      "SELECT slug, title, body, author_id, hero_image_url, meta_description, " +
+      "       published_at, updated_at " +
+      "FROM blog_articles " +
+      "WHERE status = 'published' AND published_at IS NOT NULL " +
+      "ORDER BY published_at DESC LIMIT ?1"
+    )
+    .bind(limit)
+    .all();
+  var rows = (res && res.results) ? res.results : [];
+  return { rows: rows };
+}
+
 export async function listMediaForProduct(DB, productId) {
   if (typeof productId !== "string" || productId.length === 0) return { rows: [] };
   var res = await DB

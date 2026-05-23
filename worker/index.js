@@ -3,13 +3,15 @@ import b from "./b.js";
 import { renderHome }    from "./render/home.js";
 import { renderProduct } from "./render/product.js";
 import { renderSearch }  from "./render/search.js";
-import { renderPrivacy, renderTerms } from "./render/policy.js";
+import { renderPrivacy, renderTerms, renderNotFound, renderInternalError } from "./render/policy.js";
+import { renderFeed } from "./render/feed.js";
 import {
   listActiveProducts,
   getProductBySlug,
   searchProducts,
   listVariantsWithPrices,
   listMediaForProduct,
+  recentBlogArticles,
 } from "./data/catalog.js";
 
 // Cloudflare Worker — edge router for blamejs.shop.
@@ -357,6 +359,48 @@ export default {
       if (pathname === "/CHANGELOG.md") {
         return Response.redirect("https://github.com/blamejs/blamejs.shop/blob/main/CHANGELOG.md", 302);
       }
+      if (pathname === "/feed.xml") {
+        try {
+          const page = await recentBlogArticles(env.DB, { limit: 20 });
+          // Origin comes from the operator-configured bound env var so
+          // an attacker-controlled `Host:` header can't surface in the
+          // feed's `<link>` / `<guid>` elements (which downstream
+          // readers fetch unattended). `b.safeUrl.parse` validates the
+          // shape + scheme-allowlist (refuses javascript: / file: /
+          // data:) and returns the normalized URL string; strip any
+          // trailing slash so the origin concatenates cleanly with
+          // per-article paths.
+          const normalized = b.safeUrl.parse(env.D1_BRIDGE_URL || "https://blamejs.shop");
+          const origin = normalized.replace(/\/$/, "");
+          const xml = renderFeed({
+            shopName: env.SHOP_NAME || "blamejs.shop",
+            origin:   origin,
+            articles: page.rows,
+          });
+          return new Response(xml, {
+            status:  200,
+            headers: {
+              "content-type":  "application/rss+xml; charset=utf-8",
+              "cache-control": "public, max-age=600, s-maxage=3600",
+            },
+          });
+        } catch (e) {
+          console.error("feed.xml render failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+          // RSS readers consuming /feed.xml expect XML on success and
+          // tolerate plain-text on failure (most retry with backoff).
+          // The HTML 500 page would be misleading for a feed consumer,
+          // so this stays text — but stays explicit (no container
+          // pass-through).
+          return new Response("Feed temporarily unavailable", {
+            status:  503,
+            headers: {
+              "content-type":  "text/plain; charset=utf-8",
+              "cache-control": "no-store",
+              "retry-after":   "60",
+            },
+          });
+        }
+      }
     }
 
     // 3. Storefront read routes — render at the edge when enabled.
@@ -496,7 +540,12 @@ export default {
       "sec-fetch-user":            "?1",
       "upgrade-insecure-requests": "1",
     };
-    var origin = env.D1_BRIDGE_URL || "https://blamejs.shop";
+    // `b.safeUrl.parse` validates the operator-configured origin
+    // against the HTTPS-only allowlist (refuses javascript: / file: /
+    // data:) before the cron fires its warm requests. The normalized
+    // return carries a trailing slash; strip it so the per-route
+    // path concatenates cleanly.
+    var origin = b.safeUrl.parse(env.D1_BRIDGE_URL || "https://blamejs.shop").replace(/\/$/, "");
     for (var i = 0; i < routes.length; i += 1) {
       ctx.waitUntil(
         fetch(origin + routes[i], { method: "GET", headers: headers })
@@ -614,6 +663,29 @@ async function _edgeRender(request, env, url) {
   return null;
 }
 
+// Edge 5xx renderer. The edge handler's responsibility is to either
+// serve the rendered content or report failure cleanly — never
+// silently escalate to the container, because (a) the container
+// runs the same primitive surface and won't fix a render-side bug,
+// (b) the visitor experience of "fallback to a different backend
+// after the edge fell over" is worse than a clean error page, and
+// (c) the escalation hides the bug from observability. Logging
+// stays explicit so Cloudflare tail / Logpush still sees the cause.
+function _edgeError(route, e, request, env, version, shopName) {
+  console.error("edge render " + route + " failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+  const html = renderInternalError({
+    shopName: shopName,
+    version:  version,
+  });
+  return new Response(request.method === "HEAD" ? null : html, {
+    status:  500,
+    headers: {
+      "content-type":  "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
 async function _edgeHome(request, env, _url, version, shopName) {
   try {
     const page = await listActiveProducts(env.DB, { limit: 24, currency: "USD" });
@@ -625,8 +697,7 @@ async function _edgeHome(request, env, _url, version, shopName) {
     });
     return _html(html, request.method);
   } catch (e) {
-    console.error("edge render / failed:", _redact(e && e.stack || e));        // allow:console-direct — Worker substrate; console.* IS the observability sink
-    return null;
+    return _edgeError("/", e, request, env, version, shopName);
   }
 }
 
@@ -648,15 +719,31 @@ async function _edgeSearch(request, env, url, version, shopName) {
     });
     return _html(html, request.method);
   } catch (e) {
-    console.error("edge render /search failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
-    return null;
+    return _edgeError("/search", e, request, env, version, shopName);
   }
 }
 
 async function _edgeProduct(request, env, _url, version, shopName, slug) {
   try {
     const product = await getProductBySlug(env.DB, slug);
-    if (!product) return null;
+    if (!product) {
+      // Render the edge 404 inline — no container hop. Cached briefly
+      // so a crawler hitting many stale slugs doesn't re-render each
+      // one, but with `must-revalidate` so the answer flips back to
+      // a real page the moment the product is reinstated.
+      const html = renderNotFound({
+        what:     "product",
+        shopName: shopName,
+        version:  version,
+      });
+      return new Response(html, {
+        status:  404,
+        headers: {
+          "content-type":  "text/html; charset=utf-8",
+          "cache-control": "public, max-age=60, s-maxage=300, must-revalidate",
+        },
+      });
+    }
     const [variantsWithPrices, media] = await Promise.all([
       listVariantsWithPrices(env.DB, product.id, "USD"),
       listMediaForProduct(env.DB, product.id),
@@ -697,8 +784,7 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
     });
     return _html(html, request.method);
   } catch (e) {
-    console.error("edge render /products/:slug failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
-    return null;
+    return _edgeError("/products/:slug", e, request, env, version, shopName);
   }
 }
 
@@ -716,9 +802,13 @@ function _html(body, method) {
 // ensures the cache re-checks once expiry hits instead of serving
 // indefinitely-stale content.
 function _staticHtml(body, method) {
+  // Browsers revalidate after an hour; Cloudflare's zone cache holds
+  // for 24h. Splitting `max-age` from `s-maxage` lets the edge
+  // amortize the render across the whole zone while keeping each
+  // visitor's browser honest about checking for changes.
   const headers = {
     "content-type":  "text/html; charset=utf-8",
-    "cache-control": "public, max-age=86400, must-revalidate",
+    "cache-control": "public, max-age=3600, s-maxage=86400, must-revalidate",
   };
   if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
   return new Response(body, { status: 200, headers: headers });
@@ -846,4 +936,4 @@ function _warmingHtml(canonicalUrl, refreshSeconds) {
     + "</p>"
     + "<div class=\"meta\">First request after an idle period. Subsequent requests will be fast.</div>"
     + "</main></body></html>";
-}
+function _testCatchReturnNull() {

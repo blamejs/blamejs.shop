@@ -388,6 +388,83 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason:    "FSM names that contain uppercase letters or hyphens (e.g. `emailCampaign`, `dropship-forwarding`) compose into audit actions the audit validator refuses with `audit action must be 'namespace.verb[.qualifier...]' (lowercase, dot-separated)`. The audit module then drops the event silently with an error log, which masks the bug until it surfaces in a smoke run. Use snake_case identifiers (`email_campaign`) or single lowercase words (`order`) so the action validates cleanly at emit time.",
   },
+  // ---- Ports from the vendored framework's catalog -----------------------
+  //
+  // The framework's `codebase-patterns.test.js` ships ~97 detectors;
+  // most are framework-internal (helper-composition checks for code
+  // that only exists inside blamejs itself). The block below ports the
+  // ones that apply generically to any downstream consumer — primitive-
+  // composition + security-discipline rules every blamejs.shop file
+  // inherits. Each carries the same `id` / `primitive` / `regex` /
+  // `reason` shape the upstream catalog uses so a future operator
+  // diffing against blamejs sees the lineage.
+  {
+    id:        "number-coerce-or-zero-on-json-source",
+    primitive: "validate finite non-negative integer explicitly; never silently coerce JSON-source untrusted numerics with `Number(x) || 0`",
+    regex:     /Number\s*\(\s*\w+\s*\[\s*["'][^"']*["']\s*\]\s*\)\s*\|\|\s*0\b/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "`Number(json['x']) || 0` silently accepts `Infinity` / `NaN` / negative on untrusted JSON-source numeric fields. Use an explicit shape gate (`Number.isFinite(n) && n >= 0`) and throw a typed `TypeError` on bad input — never default to zero. Ported from blamejs's catalog as a downstream inheritance.",
+  },
+  {
+    id:        "slice1-optional-parseint-silent-default",
+    primitive: "after `var X = Y.slice(1)`, refuse empty-digit segment with an explicit throw BEFORE parseInt; never silently default to the no-suffix mask",
+    regex:     /\.slice\s*\(\s*1\s*\)\s*;[\s\S]{0,80}?if\s*\(\s*\w+\.length\s*>\s*0\s*\)\s*\{[\s\S]{0,160}?\bparseInt\s*\(/,
+    scanScope: "shop",
+    multiline: true,
+    allowlist: [],
+    reason:    "`parseInt(X.slice(1))` returns `NaN` on an empty `X` (e.g. `\"/\"` after slicing the leading slash). Combined with a permissive default mask, this silently accepts inputs that the strict grammar refuses. Refuse the empty-digit case with an explicit throw before parseInt. Ported from blamejs's catalog (CIDR / prefix-length parsing context, but the pattern generalises to any sliced-then-parsed numeric).",
+  },
+  {
+    id:        "utf16-length-as-byte-cap",
+    primitive: "Buffer.byteLength(name, \"utf8\") > capInBytes — `.length` counts UTF-16 code units, not bytes; a multi-byte char (e.g. emoji surrogate pair) counts as 2 by length but spans 4+ bytes on the wire",
+    regex:     /\b(?:name|input|s|str)\s*\.\s*length\s*>\s*\w*(?:maxBytes|MaxBytes|ByteCap|byteCap|maxScriptNameBytes|maxValueBytes|maxLineBytes|maxHeaderBytes)\b/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "Using `s.length` as a byte cap conflates UTF-16 code units with bytes. A 2-byte UTF-16 surrogate pair (representing one 4-byte UTF-8 character) reads as `.length === 2`. Caps meant in bytes must use `Buffer.byteLength(s, \"utf8\")` (Node) or `new TextEncoder().encode(s).length` (Worker). Ported from blamejs's catalog.",
+  },
+  {
+    id:        "raw-audit-emit-without-drop-silent-wrap",
+    primitive: "b.audit.safeEmit(...) OR try { b.audit.emit(...) } catch (_e) { /* drop-silent */ }",
+    regex:     /\baudit\.emit\s*\(/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "`audit.emit(...)` validates strictly and can throw on bad action shape, missing namespace registration, or downstream sink failure. Calling it without a drop-silent wrapper means the audit attempt can crash the request path. The framework ships `audit.safeEmit` as the drop-silent variant; raw `audit.emit` must be inside `try / catch (_e) { /* drop-silent */ }`. Documented `try/catch`-wrapped call sites get per-file or per-line allow markers (see `lib/admin.js` for the canonical wrapped shape). Ported from blamejs's catalog.",
+  },
+  {
+    id:        "non-ct-iss-compare",
+    primitive: "b.crypto.timingSafeEqual(actualIssuer, expectedIssuer) — constant-time string comparison",
+    regex:     /(?:payload|claims|token)\.iss\s*[!=]==\s*(?:opts\.issuer|vopts\.issuer|expectedIssuer|configuredIssuer|this\.issuer|preset\.issuer)\b/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "JWT `iss` claim comparison via `!==` / `===` is timing-side-channel-leaky on string compare. An attacker can byte-probe the expected issuer by measuring response time. Use `b.crypto.timingSafeEqual(actual, expected)` for any auth-sensitive identifier compare. Ported from blamejs's catalog.",
+  },
+  {
+    id:        "fs-path-from-operator-identifier-without-traversal-refusal",
+    primitive: "validate name against a strict character class + explicit `..` / `\\0` / `/` refusal before passing to path.join / fs.* calls",
+    regex:     /\bpath\s*\.\s*join\s*\([^)]*\b\w+\s*\.\s*(?:name|id|slug|filename)\b[^)]*\)/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "`path.join(rootDir, x.name)` where `x.name` came from operator / user input is a path-traversal sink — `x.name = \"../../../etc/passwd\"` escapes the root. The composed name must be validated against a strict character class AND an explicit `..` refusal before reaching `path.join` / `fs.*`. Ported from blamejs's catalog.",
+  },
+
+  {
+    id:        "edge-handler-catch-returns-null",
+    primitive: "Each edge handler's catch must return an explicit error Response (e.g. `_edgeError(...)` rendering a 5xx page) — never `return null`, which signals \"this path isn't edge-routed\" to the dispatcher and silently escalates the exception to the container. The container can't fix a render-side bug; the visitor experience of fallback-to-different-backend is worse than a clean error page; the escalation hides the bug from observability.",
+    regex:     /catch\s*\(\s*[\w$]+\s*\)\s*\{[\s\S]{0,400}?return\s+null\s*;/,
+    scanScope: "worker",
+    multiline: true,
+    allowlist: [],
+    reason:    "`catch (e) { ... return null; }` in a Worker handler routes the exception back to the dispatcher which falls through to `_forwardToContainer`. That's a pass-through: the edge \"detected\" a failure and silently escalated it to a backend that can't help. The legitimate `return null` shape is in routing dispatch (`if (path === \"/\") return ...; return null;`), where null means \"this path isn't edge-routed, fall through\" — NOT \"my render threw, you handle it.\" Edge handlers must serve their own 5xx via `renderInternalError` and log to observability.",
+  },
+  {
+    id:        "unvalidated-env-url-as-origin",
+    primitive: "b.safeUrl.parse(env.<NAME>_URL || \"<default>\") — runs the configured URL through the framework's scheme allowlist (default HTTPS-only; refuses javascript: / file: / data:) and length cap before any callsite uses it as a fetch origin or feed `<link>` href",
+    regex:     /\bfetch\s*\(\s*[\w$.]*\bD1_BRIDGE_URL\b|\bfetch\s*\(\s*env\s*\.\s*[A-Z][A-Z0-9_]*_URL\b|\borigin\s*[:=]\s*env\s*\.\s*[A-Z][A-Z0-9_]*_URL\b|\borigin\s*[:=]\s*["']https?:\/\/[^"']*["']\s*\+\s*env/,
+    scanScope: "worker",
+    allowlist: [],
+    reason:    "Using an env-bound URL as a fetch origin or RSS `<link>` href without first running it through `b.safeUrl.parse` skips the framework's scheme allowlist (refuses javascript: / file: / data:) and length cap. The detector flags the unsafe SHAPES — `fetch(env.X_URL)`, `origin: env.X_URL`, or `origin: \"https://...\" + env.X` — without trying to negative-match the safe wrapper around them. Wrap the env access in `b.safeUrl.parse(env.X_URL || \"https://default\")` and assign the normalized return to the origin variable before the call site.",
+  },
   {
     id:        "worker-direct-vendor-import",
     primitive: "import b from \"./b.js\" — go through the worker/b.js adapter so the Worker has one validated surface for framework primitives",
