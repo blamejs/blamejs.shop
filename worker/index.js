@@ -264,9 +264,9 @@ export class ShopContainer extends Container {
     };
   }
 
-  onStart()  { console.log("ShopContainer started"); }
-  onStop()   { console.log("ShopContainer stopped"); }
-  onError(e) { console.error("ShopContainer error:", _redact(e && e.stack || e)); }
+  onStart()  { console.log("ShopContainer started"); }                            // allow:console-direct — Workers have no framework observability sink; console.* auto-routes to wrangler tail / Logpush
+  onStop()   { console.log("ShopContainer stopped"); }                            // allow:console-direct — Workers have no framework observability sink; console.* auto-routes to wrangler tail / Logpush
+  onError(e) { console.error("ShopContainer error:", _redact(e && e.stack || e)); } // allow:console-direct — Workers have no framework observability sink; console.* auto-routes to wrangler tail / Logpush
 }
 
 // ---- Worker entrypoint ----------------------------------------------------
@@ -544,7 +544,7 @@ async function _edgeHome(request, env, _url, version, shopName) {
     });
     return _html(html, request.method);
   } catch (e) {
-    console.error("edge render / failed:", _redact(e && e.stack || e));
+    console.error("edge render / failed:", _redact(e && e.stack || e));        // allow:console-direct — Worker substrate; console.* IS the observability sink
     return null;
   }
 }
@@ -567,7 +567,7 @@ async function _edgeSearch(request, env, url, version, shopName) {
     });
     return _html(html, request.method);
   } catch (e) {
-    console.error("edge render /search failed:", _redact(e && e.stack || e));
+    console.error("edge render /search failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
     return null;
   }
 }
@@ -616,7 +616,7 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
     });
     return _html(html, request.method);
   } catch (e) {
-    console.error("edge render /products/:slug failed:", _redact(e && e.stack || e));
+    console.error("edge render /products/:slug failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
     return null;
   }
 }

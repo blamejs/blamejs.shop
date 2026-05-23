@@ -286,46 +286,108 @@ var KNOWN_ANTIPATTERNS = [
     allowlist:   [],
   },
 
-  // ---- blamejs primitive reinvention catchers ----------------------------
+  // ---- blamejs primitive composition catchers ----------------------------
   //
-  // The Worker substrate can't load the vendored blamejs entry (its
-  // `node:tls.DEFAULT_MIN_VERSION` write at module init has no Worker
-  // analogue). Worker code that needs framework behavior must EITHER
-  // import the relevant leaf module from `lib/vendor/blamejs/lib/`
-  // (and accept the bundler-pulled transitive requires), OR carry a
-  // byte-identical inline copy with an `allow:` marker citing the
-  // canonical primitive. These detectors flag the second case so a
-  // future author who reinvents from scratch — without realising the
-  // framework already covers it — gets pointed at the right primitive.
+  // Detector shape mirrors the vendored framework's own catalog at
+  // `lib/vendor/blamejs/test/layer-0-primitives/codebase-patterns.test.js`
+  // — `id` / `primitive` (canonical replacement) / `regex` / `allowlist` /
+  // `reason`. Worker code that needs framework behavior composes
+  // through `worker/b.js`; lib/ code composes through `_b()` (the
+  // documented circular-load lazy loader the framework convention
+  // already uses). Inline reinvention trips the detector.
   {
-    id:          "worker-render-reinvented-primitive",
-    scanScope:   "shop",
-    description: "Reinvented blamejs primitive — compose `b.template.escapeHtml`, `b.money.of(...).format()`, `b.crypto.timingSafeEqual`, `b.crypto.hmacSha256`, or the relevant b.* primitive instead. If the substrate (Worker isolate, etc.) can't import the framework module, mark with `// allow:worker-render-reinvented-primitive — byte-identical to b.<primitive>` and document the reason.",
-    regex:       /\.replace\s*\(\s*\/&\/g\s*,\s*["']&amp;["']\s*\)/,
-    allowlist:   [],
+    id:        "worker-render-reinvented-primitive",
+    primitive: "b.template.escapeHtml(value) — five-character HTML-entity escape (`&`, `<`, `>`, `\"`, `'` → `&#x27;`)",
+    regex:     /\.replace\s*\(\s*\/&\/g\s*,\s*["']&amp;["']\s*\)/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "Hand-rolled per-character escape misses an attack-relevant character about half the time (the four-char variants skip the apostrophe → single-quoted attribute injection) and drifts away from the canonical surface over time. `b.template.escapeHtml` is the one-call composition; the codebase-patterns sweep keeps any future copy from getting committed without an `allow:` marker citing the substrate constraint.",
   },
   {
-    id:          "intl-numberformat-currency-reinvented",
-    scanScope:   "shop",
-    description: "`new Intl.NumberFormat(..., { style: \"currency\", ... })` reinvents `b.money.of(amount, currency).format(locale)`. Either import `lib/vendor/blamejs/lib/money.js` directly (Worker substrate), or compose via the framework's `b.money` if running in a normal Node process. Mark with `// allow:intl-numberformat-currency-reinvented — <reason>` only when an Intl shape b.money doesn't expose is required.",
-    regex:       /new\s+Intl\s*\.\s*NumberFormat\s*\([^)]*style\s*:\s*["']currency["']/,
-    allowlist:   [],
+    id:        "intl-numberformat-currency-reinvented",
+    primitive: "b.money.of(amount, currency).format(locale) — decimal-safe currency rendering composed off Intl.NumberFormat with currency-exponent normalization (zero / two / three-decimal currencies handled identically)",
+    regex:     /new\s+Intl\s*\.\s*NumberFormat\s*\([^)]*style\s*:\s*["']currency["']/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "`Intl.NumberFormat({style:\"currency\"})` callers reinvent the exponent normalization the framework's money primitive already handles (JPY=0, USD/EUR=2, BHD=3) and risk passing a Number where the framework's API would refuse one at the boundary (IEEE 754 binary-fraction drift). `b.money.of(BigInt(minor), currency).format(\"en-US\")` is the canonical call.",
   },
   {
-    id:          "manual-timing-safe-equal",
-    scanScope:   "shop",
-    description: "Hand-rolled timing-safe comparison loop — use `b.crypto.timingSafeEqual(a, b)` (CJS Node code) or `import { timingSafeEqual } from \"node:crypto\"` (Worker with nodejs_compat). The framework's wrapper handles the per-runtime call shape and the length-mismatch defense in one call.",
-    regex:       /diff\s*\|\s*=\s*[\w$]+\s*\.\s*charCodeAt\s*\([\w$]+\)\s*\^\s*[\w$]+\s*\.\s*charCodeAt/,
-    allowlist:   [],
+    id:        "manual-timing-safe-equal",
+    primitive: "b.crypto.timingSafeEqual(a, b) — refuses non-string non-Buffer input at the boundary (defends against prototype-pollution-influenced coercion) then routes to nodeCrypto.timingSafeEqual",
+    regex:     /diff\s*\|\s*=\s*[\w$]+\s*\.\s*charCodeAt\s*\([\w$]+\)\s*\^\s*[\w$]+\s*\.\s*charCodeAt/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "Hand-rolled `diff |= a.charCodeAt(i) ^ b.charCodeAt(i)` loops are correct when both inputs are equal-length ASCII strings, but bypass the framework's input-validation gate that refuses non-string non-Buffer values. A prototype-polluted toString() can redirect the compare; composing `b.crypto.timingSafeEqual` keeps that defense in scope.",
   },
   {
-    id:          "inline-hmac-subtle-crypto",
-    scanScope:   "shop",
-    description: "Inline `crypto.subtle.sign(\"HMAC\", ...)` for webhook signature verification reinvents `b.crypto.hmacSha256(message, secret)` (or `b.webhook.stripe.verify` for the full Stripe-shape handshake). Compose the framework primitive so the constant-time digest compare + replay-window enforcement come for free.",
-    regex:       /crypto\s*\.\s*subtle\s*\.\s*sign\s*\(\s*["']HMAC["']/,
-    allowlist:   [],
+    id:        "inline-hmac-subtle-crypto",
+    primitive: "b.crypto.hmacSha256(secret, message) — Worker-side HMAC-SHA256 extension composing node:crypto.createHmac (the same primitive the framework's internal hmac() helper uses); the framework also exposes b.crypto.hmacSha3 publicly as the PQC-first default",
+    regex:     /crypto\s*\.\s*subtle\s*\.\s*sign\s*\(\s*["']HMAC["']/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "Inline `crypto.subtle.sign(\"HMAC\", ...)` blocks for webhook signature verification reinvent two surfaces at once — the HMAC composition and the hex-encoding of the digest. The framework wrapper produces the same lowercase-hex output via a single call.",
+  },
+  {
+    id:        "manual-random-uuid",
+    primitive: "b.uuid.v7() — time-sortable UUIDv7 (sorts lexicographically by creation time, the framework default), or b.uuid.v4() when a v4-shape ID is explicitly required",
+    regex:     /\bcrypto\s*\.\s*randomUUID\s*\(/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "`crypto.randomUUID()` returns a v4 (random) UUID. The framework default is v7 — same 128 bits, but the timestamp prefix means rows sort by creation time without a separate `created_at` index. Composing `b.uuid.v7()` keeps any future migration to time-sortable IDs from drifting back to v4.",
+  },
+  {
+    id:        "manual-random-bytes",
+    primitive: "b.crypto.generateBytes(n) — CSPRNG-backed random bytes with the framework's entry-tier byte-count validation",
+    regex:     /\bcrypto\s*\.\s*randomBytes\s*\(|^[^/]*\brandomBytes\s*\(\s*\d/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "`crypto.randomBytes(n)` (or the `node:crypto` named import) reinvents the framework's randomness primitive. Composing `b.crypto.generateBytes(n)` keeps every CSPRNG draw auditable from one call site and applies the validation the framework already runs.",
+  },
+  {
+    id:        "weak-hash-sha2",
+    primitive: "b.crypto.sha3Hash(data) — SHA3-512 (PQC-first); for protocol-mandated SHA-2 (Stripe webhook digest, JWS, SRI, etc.) keep the inline call and mark with `allow:weak-hash-sha2 — <protocol> requires <algo>`",
+    regex:     /createHash\s*\(\s*["'](?:sha256|sha384|sha512)["']/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "SHA-2 family hashes fall outside the framework's PQC-first crypto policy. Most application uses (content fingerprints, integrity checks, derived-column inputs, Merkle leaves) compose cleanly to SHA3-512 via `b.crypto.sha3Hash`. Genuine external-protocol exceptions (Stripe signature digest is SHA-256 by spec) live with an `allow:` marker citing the protocol.",
+  },
+  {
+    id:        "manual-createhmac",
+    primitive: "b.crypto.hmacSha3(key, data) — HMAC-SHA3-512 (PQC-first default), or b.crypto.hmacSha256 (Worker-side extension at worker/b.js) for protocol-mandated SHA-256 cases",
+    regex:     /\bcreateHmac\s*\(/,
+    scanScope: "shop",
+    allowlist: [
+      "worker/b.js",                              // the hmacSha256 Worker-side extension composes node:crypto.createHmac — this IS the documented composition site
+    ],
+    reason:    "`createHmac(...)` reinvents the framework's HMAC primitive. The PQC-first default is `b.crypto.hmacSha3`; protocol-mandated SHA-256 (Stripe webhooks) composes through `b.crypto.hmacSha256` wired into the Worker adapter. Direct `createHmac` calls outside `worker/b.js` get flagged.",
+  },
+  {
+    id:        "worker-direct-vendor-import",
+    primitive: "import b from \"./b.js\" — go through the worker/b.js adapter so the Worker has one validated surface for framework primitives",
+    regex:     /from\s+["'][^"']*lib\/vendor\/blamejs\/lib\//,
+    scanScope: "worker",
+    allowlist: [
+      "worker/b.js",                              // the adapter itself imports leaf modules — that's its job
+    ],
+    reason:    "Direct leaf-module imports (`import bMoney from \"../lib/vendor/blamejs/lib/money.js\"` etc.) bypass the Worker adapter's single point of validation. The adapter is the place where leaf-module Worker-compatibility lives; broadening primitive access through ad-hoc imports drops that gate. Add a new namespace to `worker/b.js` instead.",
   },
 ];
+
+// ---- expand existing detector scopes to include worker/ ----------------
+//
+// The four detectors below were originally `lib`-scoped because the
+// Worker substrate didn't exist yet. Now that `worker/` ships
+// operator-facing code, the same hygiene rules apply.
+KNOWN_ANTIPATTERNS.forEach(function (ap) {
+  if (ap.scanScope === "lib" && (
+        ap.id === "console-direct" ||
+        ap.id === "math-random" ||
+        ap.id === "todo-fixme-hack-xxx" ||
+        ap.id === "empty-catch-swallow"
+      )) {
+    ap.scanScope = "shop";
+  }
+});
 
 function _check(antipattern) {
   var raw = _scan(antipattern.regex, antipattern.scanScope || "lib");
@@ -354,7 +416,9 @@ function run() {
   for (var f = 0; f < failures.length; f += 1) {
     var fail = failures[f];
     console.error("");
-    console.error("[" + fail.ap.id + "] " + fail.ap.description);
+    var headline = fail.ap.primitive || fail.ap.description || "";
+    console.error("[" + fail.ap.id + "] " + headline);
+    if (fail.ap.reason) console.error("  " + fail.ap.reason);
     for (var h = 0; h < Math.min(fail.hits.length, 8); h += 1) {
       console.error("  " + fail.hits[h].file + ":" + fail.hits[h].line + ":  " + fail.hits[h].content);
     }
