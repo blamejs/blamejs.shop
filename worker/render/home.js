@@ -1,4 +1,4 @@
-import { renderTemplate, escapeHtml, formatPrice } from "./_lib.js";
+import { renderTemplate, escapeHtml, formatPrice, jsonLdScript } from "./_lib.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
@@ -439,7 +439,32 @@ export function renderHome(opts) {
 
   var hero = renderTemplate(_buildHomeHero(version), { product_count: heroProductCount })
     .replace("RAW_FEATURED_CALLOUT", featuredHtml);
-  var body = hero + catalog;
+
+  // Schema.org Organization + WebSite JSON-LD. The Organization
+  // block surfaces in Google's knowledge-panel results (logo +
+  // social links); the WebSite block carries the sitelinks search
+  // box that pin-points the storefront's `/search?q=` URL pattern.
+  var jsonLd =
+    jsonLdScript({
+      "@context": "https://schema.org",
+      "@type":    "Organization",
+      "name":     shopName,
+      "url":      "https://" + shopName.replace(/^https?:\/\//, ""),
+      "logo":     "https://" + shopName.replace(/^https?:\/\//, "") + "/assets/brand/logo.png",
+      "sameAs":   ["https://github.com/blamejs/blamejs.shop"],
+    }) +
+    jsonLdScript({
+      "@context": "https://schema.org",
+      "@type":    "WebSite",
+      "name":     shopName,
+      "url":      "https://" + shopName.replace(/^https?:\/\//, ""),
+      "potentialAction": {
+        "@type":       "SearchAction",
+        "target":      "https://" + shopName.replace(/^https?:\/\//, "") + "/search?q={search_term_string}",
+        "query-input": "required name=search_term_string",
+      },
+    });
+  var body = hero + catalog + jsonLd;
 
   return _wrap({
     title:      title,
