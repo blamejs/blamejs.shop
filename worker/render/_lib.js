@@ -83,6 +83,20 @@ export function minifyHtml(html) {
   });
 }
 
+// Schema.org JSON-LD `<script type="application/ld+json">` block.
+// `JSON.stringify` covers the standard escapes (`"` / `\`); the
+// `</` → `<\/` rewrite neutralises any literal `</script>` that
+// could appear in a value (Schema.org doesn't ship strings with
+// HTML in the supported field set, but the rewrite is the canonical
+// XSS defense for inline JSON-in-HTML and costs one regex pass).
+export function jsonLdScript(data) {
+  if (data == null || typeof data !== "object") {
+    throw new TypeError("jsonLdScript: data must be a non-null object");
+  }
+  var serialised = JSON.stringify(data).replace(/<\/(?=script>)/gi, "<\\/");
+  return "<script type=\"application/ld+json\">" + serialised + "</script>";
+}
+
 export function formatPrice(minorUnits, currency) {
   if (!Number.isInteger(minorUnits)) {
     throw new TypeError("formatPrice: minorUnits must be an integer, got " + JSON.stringify(minorUnits));

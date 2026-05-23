@@ -5,7 +5,7 @@
 // but it's file-backed; inline-string body needs a separate path).
 // Operators who want markdown formatting compose `b.template`
 // elsewhere and pass the rendered HTML in.
-import { renderTemplate } from "./_lib.js";
+import { renderTemplate, jsonLdScript } from "./_lib.js";
 import b from "../b.js";
 
 var LAYOUT =
@@ -161,6 +161,22 @@ export function renderBlogArticle(opts) {
     author: article.author_id,
     date:   _isoDate(article.published_at),
   }).replace("RAW_BODY_HTML_PLACEHOLDER", bodyHtml);
+
+  // Schema.org Article JSON-LD. Google's article-rich-result panel
+  // reads `headline`, `datePublished`, `dateModified`, `image`,
+  // `author`. The dates pass through as ISO 8601 (toISOString); the
+  // image falls back to the brand logo when no hero is set.
+  var jsonLd = jsonLdScript({
+    "@context":      "https://schema.org",
+    "@type":         "Article",
+    "headline":      article.title,
+    "image":         article.hero_image_url ? [article.hero_image_url] : ["/assets/brand/logo.png"],
+    "datePublished": Number.isInteger(article.published_at) ? new Date(article.published_at).toISOString() : undefined,
+    "dateModified":  Number.isInteger(article.updated_at)   ? new Date(article.updated_at).toISOString()   : undefined,
+    "author":        { "@type": "Person", "name": article.author_id },
+    "description":   article.meta_description || String(article.body || "").slice(0, 240),
+  });
+
   return _wrap({
     title:       article.title,
     description: article.meta_description || (String(article.body || "").slice(0, 240)),
@@ -169,5 +185,5 @@ export function renderBlogArticle(opts) {
     shopName:    shopName,
     themeCss:    opts.themeCss,
     version:     opts.version,
-  }, articleHtml);
+  }, articleHtml + jsonLd);
 }
