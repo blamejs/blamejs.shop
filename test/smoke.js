@@ -134,6 +134,15 @@ async function _runLayer(layerNum, layerName) {
   console.log("  " + _padRight("changelog-in-sync", 40) + " (ok)");
   _shellGate("vendor-drift", "bash scripts/vendor-update.sh --check");
   console.log("  " + _padRight("vendor-drift", 40) + " (ok)");
+  // Worker-syntax check — walks every reachable file under worker/
+  // tracking string / template / comment / regex state and asserts
+  // braces / parens / brackets balance at EOF. Catches the
+  // node-tolerates / esbuild-refuses class that broke v0.0.95 +
+  // v0.0.97 deploys (missing trailing `}`). Self-contained Node
+  // script — no npm-registry dependency, runs inside the container
+  // build stage without network access.
+  _gate("worker-syntax", "check-worker-syntax.js", []);
+  console.log("  " + _padRight("worker-syntax", 40) + " (ok)");
 
   await _runLayer(0, "Layer 0");
   await _runLayer(1, "Layer 1");
