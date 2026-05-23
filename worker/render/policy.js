@@ -117,6 +117,29 @@ export function renderTerms(opts) {
   }, TERMS_BODY);
 }
 
+// Edge-served 500 — no container hop, no D1 read. Renders when an
+// edge handler hits an unexpected exception (render error, D1 read
+// failure that exhausted retries). The page apologises without
+// revealing internals and points the visitor at the home page so a
+// crawler doesn't get stuck on a permanent 5xx URL.
+export function renderInternalError(opts) {
+  opts = opts || {};
+  var body =
+    "<section><h2>Something went wrong on our end.</h2>" +
+    "<p>The storefront couldn't render this page right now. The error has been logged to our observability sink and we'll investigate. The rest of the site is still up — head back to <a href=\"/\">the shop</a> and try again in a moment.</p>" +
+    "<p><a class=\"btn-primary\" href=\"/\">Back to the shop</a></p></section>";
+  return _wrap({
+    title:       "Server error",
+    eyebrow:     "500",
+    lede:        "An unexpected error occurred rendering this page.",
+    description: "An error rendering this page — blamejs.shop",
+    updated:     "—",
+    shopName:    opts.shopName,
+    themeCss:    opts.themeCss,
+    version:     opts.version,
+  }, body);
+}
+
 // Edge-served 404 — no container hop, no D1 read. Renders when an
 // edge route resolves to a missing resource (an `/products/:slug`
 // that returned null, a `/blog/:slug` that's draft / archived /

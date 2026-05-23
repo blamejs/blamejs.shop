@@ -3,7 +3,7 @@ import b from "./b.js";
 import { renderHome }    from "./render/home.js";
 import { renderProduct } from "./render/product.js";
 import { renderSearch }  from "./render/search.js";
-import { renderPrivacy, renderTerms, renderNotFound } from "./render/policy.js";
+import { renderPrivacy, renderTerms, renderNotFound, renderInternalError } from "./render/policy.js";
 import { renderFeed } from "./render/feed.js";
 import {
   listActiveProducts,
@@ -386,7 +386,19 @@ export default {
           });
         } catch (e) {
           console.error("feed.xml render failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
-          return _text("Feed temporarily unavailable", 503);
+          // RSS readers consuming /feed.xml expect XML on success and
+          // tolerate plain-text on failure (most retry with backoff).
+          // The HTML 500 page would be misleading for a feed consumer,
+          // so this stays text — but stays explicit (no container
+          // pass-through).
+          return new Response("Feed temporarily unavailable", {
+            status:  503,
+            headers: {
+              "content-type":  "text/plain; charset=utf-8",
+              "cache-control": "no-store",
+              "retry-after":   "60",
+            },
+          });
         }
       }
     }
@@ -651,6 +663,29 @@ async function _edgeRender(request, env, url) {
   return null;
 }
 
+// Edge 5xx renderer. The edge handler's responsibility is to either
+// serve the rendered content or report failure cleanly — never
+// silently escalate to the container, because (a) the container
+// runs the same primitive surface and won't fix a render-side bug,
+// (b) the visitor experience of "fallback to a different backend
+// after the edge fell over" is worse than a clean error page, and
+// (c) the escalation hides the bug from observability. Logging
+// stays explicit so Cloudflare tail / Logpush still sees the cause.
+function _edgeError(route, e, request, env, version, shopName) {
+  console.error("edge render " + route + " failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+  const html = renderInternalError({
+    shopName: shopName,
+    version:  version,
+  });
+  return new Response(request.method === "HEAD" ? null : html, {
+    status:  500,
+    headers: {
+      "content-type":  "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
 async function _edgeHome(request, env, _url, version, shopName) {
   try {
     const page = await listActiveProducts(env.DB, { limit: 24, currency: "USD" });
@@ -662,8 +697,7 @@ async function _edgeHome(request, env, _url, version, shopName) {
     });
     return _html(html, request.method);
   } catch (e) {
-    console.error("edge render / failed:", _redact(e && e.stack || e));        // allow:console-direct — Worker substrate; console.* IS the observability sink
-    return null;
+    return _edgeError("/", e, request, env, version, shopName);
   }
 }
 
@@ -685,8 +719,7 @@ async function _edgeSearch(request, env, url, version, shopName) {
     });
     return _html(html, request.method);
   } catch (e) {
-    console.error("edge render /search failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
-    return null;
+    return _edgeError("/search", e, request, env, version, shopName);
   }
 }
 
@@ -751,8 +784,7 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
     });
     return _html(html, request.method);
   } catch (e) {
-    console.error("edge render /products/:slug failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
-    return null;
+    return _edgeError("/products/:slug", e, request, env, version, shopName);
   }
 }
 
@@ -904,3 +936,4 @@ function _warmingHtml(canonicalUrl, refreshSeconds) {
     + "</p>"
     + "<div class=\"meta\">First request after an idle period. Subsequent requests will be fast.</div>"
     + "</main></body></html>";
+function _testCatchReturnNull() {
