@@ -25,6 +25,15 @@ main = "worker/index.js"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Bundle SECURITY.md as a text string into the Worker so it can be
+# served from the edge without a container hop. CHANGELOG.md is far
+# too large to bundle (303 KB → 60+ KB in the gzipped Worker); the
+# /CHANGELOG.md route redirects to the GitHub mirror instead.
+[[rules]]
+type = "Text"
+globs = ["SECURITY.md"]
+fallthrough = true
+
 # SmartPlacement runs the Worker close to D1 instead of close to the
 # user, eliminating the cross-region D1 round-trip for storefront
 # reads. The Cloudflare edge still serves the response to the user

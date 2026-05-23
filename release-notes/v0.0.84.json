@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.84",
+  "date": "2026-05-23",
+  "headline": "`/privacy`, `/terms`, `/SECURITY.md`, `/CHANGELOG.md` served from the edge — footer links no longer 404",
+  "summary": "The storefront footer has always linked to `/privacy`, `/terms`, `/SECURITY.md`, and `/CHANGELOG.md`, but the container never owned those routes — every footer click landed on a 403 / 404. This patch wires each route into the Worker: `/privacy` and `/terms` render minimal policy pages composed off a stripped-down layout; `/SECURITY.md` serves the in-tree file as `text/markdown` (bundled via a new wrangler `[[rules]]` Text rule); `/CHANGELOG.md` redirects (302) to the GitHub mirror since the file at 303 KB would inflate the gzipped Worker by ~60 KB. All four pages cache 24h `must-revalidate` so the browser + Cloudflare's zone cache hold them across visits.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Edge handlers for `/privacy`, `/terms`, `/SECURITY.md`, `/CHANGELOG.md`", "body": "`worker/render/policy.js` carries `renderPrivacy(opts)` and `renderTerms(opts)` — minimal layout (no marquee / hero / catalog chrome) with the policy text inlined. Both compose `renderTemplate` from `worker/render/_lib.js` so the substitution + HTML escape semantics match the rest of the Worker. `worker/index.js` routes `/privacy` and `/terms` to those renderers, `/SECURITY.md` to the wrangler-text-bundled in-tree SECURITY.md, and `/CHANGELOG.md` to a 302 redirect at `https://github.com/blamejs/blamejs.shop/blob/main/CHANGELOG.md`. All four respond with `cache-control: public, max-age=86400, must-revalidate` so the browser and Cloudflare's zone cache hold them between visits." },
+        { "title": "`wrangler.toml` text-rule for `SECURITY.md` bundling", "body": "`[[rules]] type = \"Text\" globs = [\"SECURITY.md\"] fallthrough = true` — wrangler's esbuild loader now treats `SECURITY.md` as a text-imported string. `import SECURITY_MD from \"../SECURITY.md\"` in `worker/index.js` resolves to the file's content. `CHANGELOG.md` is excluded by glob (303 KB → 60+ KB gzipped Worker bloat); that route uses an HTTP redirect to the GitHub mirror instead." }
+      ]
+    }
+  ]
+}
