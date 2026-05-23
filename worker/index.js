@@ -366,13 +366,13 @@ export default {
         return _staticHtml(renderPrivacy({
           shopName: env.SHOP_NAME    || "blamejs.shop",
           version:  env.WORKER_VERSION || "0.0.0",
-        }), request.method, env);
+        }), request.method, env, request);
       }
       if (pathname === "/terms") {
         return _staticHtml(renderTerms({
           shopName: env.SHOP_NAME    || "blamejs.shop",
           version:  env.WORKER_VERSION || "0.0.0",
-        }), request.method, env);
+        }), request.method, env, request);
       }
       if (pathname === "/SECURITY.md") {
         return Response.redirect("https://github.com/blamejs/blamejs.shop/blob/main/SECURITY.md", 302);
@@ -1148,18 +1148,37 @@ function _html(body, method, env, preloads) {
 // + Cloudflare zone cache can hold them for 24h. `must-revalidate`
 // ensures the cache re-checks once expiry hits instead of serving
 // indefinitely-stale content.
-function _staticHtml(body, method, env) {
+function _staticHtml(body, method, env, request) {
   // Browsers revalidate after an hour; Cloudflare's zone cache holds
   // for 24h. Splitting `max-age` from `s-maxage` lets the edge
   // amortize the render across the whole zone while keeping each
-  // visitor's browser honest about checking for changes.
+  // visitor's browser honest about checking for changes. The ETag
+  // turns the hourly revalidate into a 304 Not Modified when the
+  // rendered bytes haven't changed — saves the body bytes on every
+  // repeat visit.
+  const minified = _minify(body);
+  // FNV-1a over the minified bytes — fast, no allocations, good
+  // enough as a content-stable ETag (collision irrelevant since the
+  // attacker-controlled input space at this surface is empty —
+  // operators control policy text, not visitors).
+  let hash = 2166136261;
+  for (let i = 0; i < minified.length; i += 1) {
+    hash ^= minified.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const etag = "\"" + (hash >>> 0).toString(16) + "\"";
+  const ifNone = request && request.headers.get("if-none-match");
+  if (ifNone && ifNone === etag) {
+    return new Response(null, { status: 304, headers: _withSecurityHeaders({ "etag": etag }) });
+  }
   const headers = _withSecurityHeaders({
     "content-type":  "text/html; charset=utf-8",
     "cache-control": "public, max-age=3600, s-maxage=86400, must-revalidate",
     "link":          _earlyHintsLink(env || {}),
+    "etag":          etag,
   });
   if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
-  return new Response(_minify(body), { status: 200, headers: headers });
+  return new Response(minified, { status: 200, headers: headers });
 }
 
 
