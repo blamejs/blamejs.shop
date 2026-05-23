@@ -4,7 +4,7 @@
 # Usage:
 #   ./scripts/vendor-update.sh blamejs <tag>     # vendor a specific release tag
 #   ./scripts/vendor-update.sh blamejs latest    # vendor the latest GitHub release tag
-#   ./scripts/vendor-update.sh --check           # show vendored vs latest, exit non-zero on drift
+#   ./scripts/vendor-update.sh --check           # show vendored vs latest; warns on drift, always exits 0
 #   ./scripts/vendor-update.sh --diff            # show changelog between vendored and latest
 #
 # What it does:
@@ -145,9 +145,14 @@ case "${1:-}" in
       echo "[vendor-check] OK — blamejs v$vendored is at latest"
       exit 0
     fi
-    echo "[vendor-check] DRIFT — vendored v$vendored, latest $latest"
-    echo "Run: ./scripts/vendor-update.sh blamejs $latest"
-    exit 1
+    # Drift is a WARNING, not a failure. The vendored tree is the
+    # committed source of truth — operators don't have to refresh
+    # on every blamejs release before they can ship an unrelated
+    # patch. Surface the drift on stderr so it stays visible in CI
+    # logs and the operator's terminal; exit 0 so smoke continues.
+    echo "[vendor-check] WARNING — vendored v$vendored, latest $latest" >&2
+    echo "Run: ./scripts/vendor-update.sh blamejs $latest" >&2
+    exit 0
     ;;
   --diff)
     _show_diff

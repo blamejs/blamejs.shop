@@ -136,6 +136,17 @@ function _findReachableWorkerFiles(entry) {
 }
 
 var entry = process.argv[2] || "worker/index.js";
+// The Cloudflare container build excludes `worker/` from the image
+// context (it ships only the long-running backend; the worker is
+// deployed separately by `wrangler deploy`). Inside that build the
+// entry file is absent — the gate has nothing to check and exits
+// 0 with a documented no-op. Outside the container (host smoke,
+// CI runner, npm-publish workflow) the entry is always present and
+// the strict scan runs.
+if (!fs.existsSync(path.resolve(ROOT_DIR, entry))) {
+  console.error("[worker-syntax] SKIPPED — " + entry + " not present in this build context (no worker tree to scan)");
+  process.exit(0);
+}
 var files = _findReachableWorkerFiles(entry);
 var failed = 0;
 for (var i = 0; i < files.length; i++) {
