@@ -885,7 +885,20 @@ async function _edgeCartEmpty(request, env, version, shopName) {
       cartCount:     0,
       version:       version,
     });
-    return _html(html, request.method, env);
+    // /cart is a session-bound surface even when the guest cart is
+    // empty — crawlers indexing it dilute search results with
+    // empty-state pages and produce stale "Your cart is empty"
+    // snippets in SERPs. The robots-tag header tells well-behaved
+    // crawlers to skip indexing; robots.txt also Disallows the
+    // route as belt-and-suspenders.
+    const headers = _withSecurityHeaders({
+      "content-type":  "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "x-robots-tag":  "noindex, nofollow",
+      "link":          _earlyHintsLink(env || {}),
+    });
+    if (request.method === "HEAD") return new Response(null, { status: 200, headers: headers });
+    return new Response(_minify(html), { status: 200, headers: headers });
   } catch (e) {
     return _edgeError("/cart", e, request, env, version, shopName);
   }
