@@ -176,6 +176,41 @@ export async function listPublishedBlogSlugs(DB) {
   return { rows: rows };
 }
 
+// Published blog articles for the /blog list page. `limit` defaults
+// to 12, `offset` for paging. Newest first. Returns the columns the
+// list-page renderer needs (no body — list cards show meta only).
+export async function listBlogArticles(DB, opts) {
+  opts = opts || {};
+  var limit  = _clampLimit(opts.limit);
+  var offset = _clampOffset(opts.offset);
+  var res = await DB
+    .prepare(
+      "SELECT slug, title, author_id, hero_image_url, meta_description, " +
+      "       published_at, updated_at " +
+      "FROM blog_articles " +
+      "WHERE status = 'published' AND published_at IS NOT NULL " +
+      "ORDER BY published_at DESC LIMIT ?1 OFFSET ?2"
+    )
+    .bind(limit, offset)
+    .all();
+  var rows = (res && res.results) ? res.results : [];
+  return { rows: rows };
+}
+
+// Single published blog article by slug. Returns the full row
+// (including body + tags JSON) for the article-detail render.
+export async function getBlogArticleBySlug(DB, slug) {
+  if (typeof slug !== "string" || slug.length === 0) return null;
+  var row = await DB
+    .prepare(
+      "SELECT * FROM blog_articles " +
+      "WHERE slug = ?1 AND status = 'published' AND published_at IS NOT NULL"
+    )
+    .bind(slug)
+    .first();
+  return row || null;
+}
+
 // Recent published blog articles, newest first. Used by the edge
 // /feed.xml renderer. `limit` defaults to 20 (RSS-reader convention).
 export async function recentBlogArticles(DB, opts) {

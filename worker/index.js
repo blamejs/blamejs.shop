@@ -6,6 +6,7 @@ import { renderSearch }  from "./render/search.js";
 import { renderPrivacy, renderTerms, renderNotFound, renderInternalError } from "./render/policy.js";
 import { renderFeed } from "./render/feed.js";
 import { renderSitemap } from "./render/sitemap.js";
+import { renderBlogList, renderBlogArticle } from "./render/blog.js";
 import {
   listActiveProducts,
   getProductBySlug,
@@ -15,6 +16,8 @@ import {
   recentBlogArticles,
   listActiveProductSlugs,
   listPublishedBlogSlugs,
+  listBlogArticles,
+  getBlogArticleBySlug,
 } from "./data/catalog.js";
 
 // Cloudflare Worker — edge router for blamejs.shop.
@@ -694,6 +697,13 @@ async function _edgeRender(request, env, url) {
     const slug = decodeURIComponent(path.slice("/products/".length));
     return await _edgeProduct(request, env, url, version, shopName, slug);
   }
+  if (path === "/blog") {
+    return await _edgeBlogList(request, env, url, version, shopName);
+  }
+  if (path.startsWith("/blog/") && path.length > "/blog/".length) {
+    const slug = decodeURIComponent(path.slice("/blog/".length));
+    return await _edgeBlogArticle(request, env, url, version, shopName, slug);
+  }
   return null;
 }
 
@@ -718,6 +728,48 @@ function _edgeError(route, e, request, env, version, shopName) {
       "cache-control": "no-store",
     },
   });
+}
+
+async function _edgeBlogList(request, env, _url, version, shopName) {
+  try {
+    const page = await listBlogArticles(env.DB, { limit: 12 });
+    const html = renderBlogList({
+      articles: page.rows,
+      shopName: shopName,
+      version:  version,
+    });
+    return _html(html, request.method);
+  } catch (e) {
+    return _edgeError("/blog", e, request, env, version, shopName);
+  }
+}
+
+async function _edgeBlogArticle(request, env, _url, version, shopName, slug) {
+  try {
+    const article = await getBlogArticleBySlug(env.DB, slug);
+    if (!article) {
+      const html = renderNotFound({
+        what:     "blog post",
+        shopName: shopName,
+        version:  version,
+      });
+      return new Response(html, {
+        status:  404,
+        headers: {
+          "content-type":  "text/html; charset=utf-8",
+          "cache-control": "public, max-age=60, s-maxage=300, must-revalidate",
+        },
+      });
+    }
+    const html = renderBlogArticle({
+      article:  article,
+      shopName: shopName,
+      version:  version,
+    });
+    return _html(html, request.method);
+  } catch (e) {
+    return _edgeError("/blog/:slug", e, request, env, version, shopName);
+  }
 }
 
 async function _edgeHome(request, env, _url, version, shopName) {
