@@ -223,7 +223,7 @@ async function _replyFlipsStatus() {
 
   // Operator reply flips status to in_progress, stamps first_response_at.
   var operatorId = _validUUID();
-  await helpers.waitUntil(function () { return Date.now() > t.opened_at; }, { timeoutMs: 50, intervalMs: 2 });
+  await helpers.waitUntil(function () { return Date.now() > t.opened_at; }, { timeoutMs: 5000, intervalMs: 2 });
   var afterOp = await ctx.tickets.reply({
     ticket_id: t.id,
     author:    "operator",
@@ -236,7 +236,7 @@ async function _replyFlipsStatus() {
 
   // Second operator reply doesn't overwrite first_response_at.
   var firstResp = afterOp.first_response_at;
-  await helpers.waitUntil(function () { return Date.now() > afterOp.last_action_at; }, { timeoutMs: 50, intervalMs: 2 });
+  await helpers.waitUntil(function () { return Date.now() > afterOp.last_action_at; }, { timeoutMs: 5000, intervalMs: 2 });
   var afterOp2 = await ctx.tickets.reply({
     ticket_id: t.id, author: "operator", body: "Update — escalating.",
   });
@@ -362,12 +362,12 @@ async function _assignUnassign() {
     customer_email: "alice@example.com", subject: "Q", body: "B", category: "other",
   });
   var operatorId = _validUUID();
-  await helpers.waitUntil(function () { return Date.now() > t.opened_at; }, { timeoutMs: 50, intervalMs: 2 });
+  await helpers.waitUntil(function () { return Date.now() > t.opened_at; }, { timeoutMs: 5000, intervalMs: 2 });
   var assigned = await ctx.tickets.assign({ ticket_id: t.id, operator_id: operatorId });
   check("assign sets assigned_operator_id",     assigned.assigned_operator_id === operatorId);
   check("assign bumps last_action_at",          assigned.last_action_at > t.last_action_at);
 
-  await helpers.waitUntil(function () { return Date.now() > assigned.last_action_at; }, { timeoutMs: 50, intervalMs: 2 });
+  await helpers.waitUntil(function () { return Date.now() > assigned.last_action_at; }, { timeoutMs: 5000, intervalMs: 2 });
   var unassigned = await ctx.tickets.unassign(t.id);
   check("unassign clears assigned_operator_id", unassigned.assigned_operator_id == null);
   check("unassign bumps last_action_at",        unassigned.last_action_at > assigned.last_action_at);
@@ -601,7 +601,7 @@ async function _metricsAggregation() {
   await ctx.tickets.open({
     customer_email: "d@example.com", subject: "Q", body: "B", category: "pre_sale",
   });
-  await helpers.waitUntil(function () { return Date.now() > t1.opened_at; }, { timeoutMs: 50, intervalMs: 2 });
+  await helpers.waitUntil(function () { return Date.now() > t1.opened_at; }, { timeoutMs: 5000, intervalMs: 2 });
 
   // Two tickets get an operator first-response.
   await ctx.tickets.reply({ ticket_id: t1.id, author: "operator", body: "On it." });

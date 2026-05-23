@@ -1,4 +1,15 @@
 import { Container, getContainer } from "@cloudflare/containers";
+import { renderHome }    from "./render/home.js";
+import { renderProduct } from "./render/product.js";
+import { renderSearch }  from "./render/search.js";
+import {
+  listActiveProducts,
+  getProductBySlug,
+  searchProducts,
+  listVariantsForProduct,
+  currentPrice,
+  listMediaForProduct,
+} from "./data/catalog.js";
 
 // Cloudflare Worker — edge router for blamejs.shop.
 //
@@ -7,12 +18,17 @@ import { Container, getContainer } from "@cloudflare/containers";
 //   1. /_/health                  — inline 200 (no container hop).
 //   2. <ASSET_PREFIX>*            — pass-through to the R2 bucket
 //                                   with long-cache headers.
-//   3. <STRIPE_WEBHOOK_PATH>      — verify the Stripe-shape HMAC
+//   3. Storefront read routes     — /, /search, /products/:slug render
+//      (when EDGE_RENDER=on)        at the edge: D1 query via the bound
+//                                   binding + pure-JS HTML render. No
+//                                   container hop. Gated by env so
+//                                   operators can roll back.
+//   4. <STRIPE_WEBHOOK_PATH>      — verify the Stripe-shape HMAC
 //                                   signature at the edge before
 //                                   forwarding to the container; an
 //                                   unsigned or replayed delivery
 //                                   never reaches origin.
-//   4. <D1_BRIDGE_PATH>           — SQL bridge consumed by the
+//   5. <D1_BRIDGE_PATH>           — SQL bridge consumed by the
 //                                   container's externalDb D1
 //                                   adapter. Authenticates the
 //                                   caller with the
@@ -22,7 +38,7 @@ import { Container, getContainer } from "@cloudflare/containers";
 //                                   compatibility_flag or
 //                                   misconfiguration shouldn't leak
 //                                   raw SQL execution).
-//   5. <R2_BRIDGE_PATH>           — media upload bridge consumed by
+//   6. <R2_BRIDGE_PATH>           — media upload bridge consumed by
 //                                   the container's r2Bridge adapter.
 //                                   Same shared-secret header as the
 //                                   D1 bridge; the body is binary, the
@@ -30,11 +46,13 @@ import { Container, getContainer } from "@cloudflare/containers";
 //                                   request headers. The Worker writes
 //                                   to the R2 binding so the container
 //                                   never holds an R2 API token.
-//   6. everything else            — forward to the container via the
+//   7. everything else            — forward to the container via the
 //                                   SHOP service binding.
 //
-// No commerce / business logic lives here. The Worker is a thin
-// routing + edge-policy layer; the container holds the framework.
+// Commerce business logic still lives in the container for routes
+// that mutate state (cart writes, checkout, admin, webhooks). The
+// edge handles the read-only storefront render so visitors get HTML
+// in ~50ms instead of waiting for the container to wake up.
 
 const ASSET_CACHE_CONTROL_IMMUTABLE = "public, max-age=31536000, immutable";
 const ASSET_CACHE_CONTROL_DEFAULT   = "public, max-age=300";
@@ -329,7 +347,16 @@ export default {
       );
     }
 
-    // 3. Stripe webhook — verify at the edge before forwarding. The
+    // 3. Storefront read routes — render at the edge when enabled.
+    //    Gated by env.EDGE_RENDER so it can be rolled back per-deploy
+    //    without a re-push. When the flag is off (or absent) the
+    //    routes fall through to the container exactly as before.
+    if (env.EDGE_RENDER === "on" && (request.method === "GET" || request.method === "HEAD")) {
+      const edgeResponse = await _edgeRender(request, env, url);
+      if (edgeResponse) return edgeResponse;
+    }
+
+    // 4. Stripe webhook — verify at the edge before forwarding. The
     //    container also verifies (defense in depth), but the edge
     //    pre-check rejects unsigned + replayed deliveries before any
     //    container resource is touched.
@@ -349,7 +376,7 @@ export default {
       return _forwardToContainer(forwarded, env);
     }
 
-    // 4. D1 bridge — the container's externalDb D1 adapter calls this
+    // 5. D1 bridge — the container's externalDb D1 adapter calls this
     //    to execute SQL. The bridge enforces a shared-secret header
     //    so a misconfigured route never accepts SQL from anywhere
     //    other than the bound container.
@@ -378,7 +405,7 @@ export default {
       }
     }
 
-    // 5. R2 upload bridge — the container's r2Bridge adapter calls
+    // 6. R2 upload bridge — the container's r2Bridge adapter calls
     //    this to stream media bytes to the bound R2 bucket. Same
     //    shared-secret gate as the D1 bridge; the key + content-type
     //    ride in request headers so the body stays a clean binary
@@ -414,7 +441,7 @@ export default {
       }
     }
 
-    // 6. Low-stock alert callback — invoked by the InventoryLock DO
+    // 7. Low-stock alert callback — invoked by the InventoryLock DO
     //    after a decrement that crosses the configured threshold.
     //    Gated by the same shared secret as the D1 bridge so a
     //    publicly-reachable URL can't fabricate an alert. The
@@ -428,10 +455,149 @@ export default {
       return _forwardToContainer(request, env);
     }
 
-    // 6. Everything else — forward to the container.
+    // 8. Everything else — forward to the container.
     return _forwardToContainer(request, env);
   },
 };
+
+// ---- edge-render router ---------------------------------------------------
+//
+// Storefront read-side render at the edge. The Worker holds a direct
+// D1 binding (`env.DB`) and bundles pure-JS renderers under
+// worker/render/, so it can serve a complete HTML document without
+// ever touching the container. The container retains the write-side
+// surface (POST /cart/lines, /checkout, /admin) and any route that
+// needs the sealed-session crypto stack.
+//
+// Returns a Response when the request matched a storefront route;
+// returns null when the path is not an edge-served route, in which
+// case the caller falls through to the container forward. The cart
+// count display is intentionally fixed at zero for now — surfacing
+// the real count requires reading the sealed `shop_sid` cookie, which
+// depends on the vault primitive landing in the Worker bundle.
+async function _edgeRender(request, env, url) {
+  const version  = env.WORKER_VERSION || "0.0.0";
+  const shopName = env.SHOP_NAME      || "blamejs.shop";
+  const path     = url.pathname;
+
+  if (path === "/") {
+    return await _edgeHome(request, env, url, version, shopName);
+  }
+  if (path === "/search") {
+    return await _edgeSearch(request, env, url, version, shopName);
+  }
+  if (path.startsWith("/products/") && path.length > "/products/".length) {
+    const slug = decodeURIComponent(path.slice("/products/".length));
+    return await _edgeProduct(request, env, url, version, shopName, slug);
+  }
+  return null;
+}
+
+async function _edgeHome(request, env, _url, version, shopName) {
+  try {
+    const page = await listActiveProducts(env.DB, { limit: 24 });
+    const products = [];
+    for (let i = 0; i < page.rows.length; i += 1) {
+      const p = page.rows[i];
+      const variants = await listVariantsForProduct(env.DB, p.id);
+      let startingPrice = null;
+      if (variants.rows.length) {
+        startingPrice = await currentPrice(env.DB, variants.rows[0].id, "USD");
+      }
+      const media     = await listMediaForProduct(env.DB, p.id);
+      const heroMedia = media.rows.length ? media.rows[0] : null;
+      products.push(Object.assign({}, p, {
+        starting_price_minor:    startingPrice ? startingPrice.amount_minor : null,
+        starting_price_currency: startingPrice ? startingPrice.currency      : "USD",
+        hero_media:              heroMedia,
+      }));
+    }
+    const html = renderHome({
+      products:  products,
+      shopName:  shopName,
+      cartCount: 0,
+      version:   version,
+    });
+    return _html(html, request.method);
+  } catch (e) {
+    console.error("edge render / failed:", _redact(e && e.stack || e));
+    return null;
+  }
+}
+
+async function _edgeSearch(request, env, url, version, shopName) {
+  try {
+    const qRaw = url.searchParams.get("q") || "";
+    const q    = qRaw.length > 200 ? qRaw.slice(0, 200) : qRaw;
+    let products = [];
+    if (q.trim().length > 0) {
+      const page = await searchProducts(env.DB, { q: q, limit: 24 });
+      for (let i = 0; i < page.rows.length; i += 1) {
+        const p = page.rows[i];
+        const variants = await listVariantsForProduct(env.DB, p.id);
+        let startingPrice = null;
+        if (variants.rows.length) {
+          startingPrice = await currentPrice(env.DB, variants.rows[0].id, "USD");
+        }
+        const media     = await listMediaForProduct(env.DB, p.id);
+        const heroMedia = media.rows.length ? media.rows[0] : null;
+        products.push(Object.assign({}, p, {
+          starting_price_minor:    startingPrice ? startingPrice.amount_minor : null,
+          starting_price_currency: startingPrice ? startingPrice.currency      : "USD",
+          hero_media:              heroMedia,
+        }));
+      }
+    }
+    const html = renderSearch({
+      q:         q,
+      products:  products,
+      shopName:  shopName,
+      cartCount: 0,
+      version:   version,
+    });
+    return _html(html, request.method);
+  } catch (e) {
+    console.error("edge render /search failed:", _redact(e && e.stack || e));
+    return null;
+  }
+}
+
+async function _edgeProduct(request, env, _url, version, shopName, slug) {
+  try {
+    const product = await getProductBySlug(env.DB, slug);
+    if (!product) return null;
+    const variants = await listVariantsForProduct(env.DB, product.id);
+    const prices = {};
+    for (let i = 0; i < variants.rows.length; i += 1) {
+      const v = variants.rows[i];
+      const p = await currentPrice(env.DB, v.id, "USD");
+      if (p) prices[v.id] = p;
+    }
+    const media = await listMediaForProduct(env.DB, product.id);
+    const html = renderProduct({
+      product:   product,
+      variants:  variants.rows,
+      prices:    prices,
+      media:     media.rows,
+      shopName:  shopName,
+      cartCount: 0,
+      version:   version,
+    });
+    return _html(html, request.method);
+  } catch (e) {
+    console.error("edge render /products/:slug failed:", _redact(e && e.stack || e));
+    return null;
+  }
+}
+
+function _html(body, method) {
+  const headers = {
+    "content-type":  "text/html; charset=utf-8",
+    "cache-control": "no-store",
+  };
+  if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
+  return new Response(body, { status: 200, headers: headers });
+}
 
 async function _forwardToContainer(request, env) {
   // Single logical container instance for now ("singleton"). The

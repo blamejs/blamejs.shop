@@ -438,7 +438,7 @@ async function _customerRiskHistoryAndRecentScreenings() {
   // Spin the clock a millisecond so the ORDER BY tiebreak is
   // deterministic even on platforms where Date.now() doesn't
   // advance between the three inserts.
-  await helpers.waitUntil(function () { return Date.now() > 0; }, { timeoutMs: 50, label: "tick" });
+  await helpers.waitUntil(function () { return Date.now() > 0; }, { timeoutMs: 5000, label: "tick" });
 
   var hist = await fs.customerRiskHistory(customerId);
   check("customerRiskHistory — returns 3 rows",  hist.length === 3);

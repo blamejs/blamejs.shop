@@ -39,6 +39,13 @@ D1_BRIDGE_PATH      = "/_/db/query"
 STRIPE_WEBHOOK_PATH = "/api/webhooks/stripe"
 ASSET_PREFIX        = "/assets/"
 HEALTH_PATH         = "/_/health"
+# Edge-render toggle. When "on", the Worker renders /, /search, and
+# /products/:slug at the edge by reading D1 directly. When "off" (the
+# default), those paths forward to the container exactly as before.
+# Flip to "on" via `wrangler secret put EDGE_RENDER on` once the
+# deploy is verified.
+EDGE_RENDER         = "off"
+SHOP_NAME           = "blamejs.shop"
 
 # --- Container ------------------------------------------------------
 # Cloudflare Containers boots from the Dockerfile in the repo root.
