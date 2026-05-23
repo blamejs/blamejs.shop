@@ -597,6 +597,21 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "`catch (e) { ... return null; }` in a Worker handler routes the exception back to the dispatcher which falls through to `_forwardToContainer`. That's a pass-through: the edge \"detected\" a failure and silently escalated it to a backend that can't help. The legitimate `return null` shape is in routing dispatch (`if (path === \"/\") return ...; return null;`), where null means \"this path isn't edge-routed, fall through\" — NOT \"my render threw, you handle it.\" Edge handlers must serve their own 5xx via `renderInternalError` and log to observability.",
   },
   {
+    id:        "safeurl-parse-string-method",
+    primitive: "`b.safeUrl.parse(s)` returns a WHATWG `URL` instance, not a string. Strip the trailing slash / concatenate the origin off `.href` / `.toString()` / `String(parsed)` — never call a string method (`.replace` / `.startsWith` / `.endsWith` / `.split` / `.includes` / `.slice` / `.indexOf` / `.toLowerCase` / `.toUpperCase`) directly on the return value or the worker throws TypeError at request time and the edge handler 503s.",
+    // Matches `b.safeUrl.parse(...).<strMethod>(`. The `\b.\s*` chain
+    // tolerates whitespace; the closing `(` requires a method call
+    // (so a bare `.href` property access doesn't trip — that one's
+    // the correct shape). The string-method set is the high-traffic
+    // sample — adding `.match` / `.search` / `.repeat` is fine but
+    // these eight cover every callsite shape that's tripped in the
+    // worker so far.
+    regex:     /\bsafeUrl\s*\.\s*parse\s*\([^)]*\)\s*\.\s*(?:replace|startsWith|endsWith|split|includes|slice|indexOf|toLowerCase|toUpperCase)\s*\(/,
+    scanScope: "worker",
+    allowlist: [],
+    reason:    "Shipping `b.safeUrl.parse(env.X || \"...\").replace(/\\/$/, \"\")` silently throws TypeError in production: `URL.prototype.replace` doesn't exist. The edge handler's catch swallows the throw and returns the canonical 503 — the route looks 'temporarily unavailable' but is actually permanently broken on that callsite. Detected because three handlers (sitemap / feed / cache-warmer) shipped with this shape and went undetected while the upstream production deploy was frozen at an older worker. Fix: chain `.href.replace(/\\/$/, \"\")` so the string method operates on the URL's `href` string. Equivalent expressions: `String(parsed).replace(...)`, `parsed.toString().replace(...)`.",
+  },
+  {
     id:        "unvalidated-env-url-as-origin",
     primitive: "b.safeUrl.parse(env.<NAME>_URL || \"<default>\") — runs the configured URL through the framework's scheme allowlist (default HTTPS-only; refuses javascript: / file: / data:) and length cap before any callsite uses it as a fetch origin or feed `<link>` href",
     regex:     /\bfetch\s*\(\s*[\w$.]*\bD1_BRIDGE_URL\b|\bfetch\s*\(\s*env\s*\.\s*[A-Z][A-Z0-9_]*_URL\b|\borigin\s*[:=]\s*env\s*\.\s*[A-Z][A-Z0-9_]*_URL\b|\borigin\s*[:=]\s*["']https?:\/\/[^"']*["']\s*\+\s*env/,

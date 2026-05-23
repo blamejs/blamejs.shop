@@ -386,7 +386,7 @@ export default {
             listActiveProductSlugs(env.DB),
             listPublishedBlogSlugs(env.DB),
           ]);
-          const origin = b.safeUrl.parse(env.D1_BRIDGE_URL || "https://blamejs.shop").replace(/\/$/, "");
+          const origin = b.safeUrl.parse(env.D1_BRIDGE_URL || "https://blamejs.shop").href.replace(/\/$/, "");
           const xml = renderSitemap({
             origin:    origin,
             products:  products.rows,
@@ -444,7 +444,7 @@ export default {
           // trailing slash so the origin concatenates cleanly with
           // per-article paths.
           const normalized = b.safeUrl.parse(env.D1_BRIDGE_URL || "https://blamejs.shop");
-          const origin = normalized.replace(/\/$/, "");
+          const origin = normalized.href.replace(/\/$/, "");
           const xml = renderFeed({
             shopName: env.SHOP_NAME || "blamejs.shop",
             origin:   origin,
@@ -631,7 +631,7 @@ export default {
     // data:) before the cron fires its warm requests. The normalized
     // return carries a trailing slash; strip it so the per-route
     // path concatenates cleanly.
-    var origin = b.safeUrl.parse(env.D1_BRIDGE_URL || "https://blamejs.shop").replace(/\/$/, "");
+    var origin = b.safeUrl.parse(env.D1_BRIDGE_URL || "https://blamejs.shop").href.replace(/\/$/, "");
     for (var i = 0; i < routes.length; i += 1) {
       ctx.waitUntil(
         fetch(origin + routes[i], { method: "GET", headers: headers })
