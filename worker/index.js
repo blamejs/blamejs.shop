@@ -6,8 +6,7 @@ import {
   listActiveProducts,
   getProductBySlug,
   searchProducts,
-  listVariantsForProduct,
-  currentPrice,
+  listVariantsWithPrices,
   listMediaForProduct,
 } from "./data/catalog.js";
 
@@ -495,25 +494,9 @@ async function _edgeRender(request, env, url) {
 
 async function _edgeHome(request, env, _url, version, shopName) {
   try {
-    const page = await listActiveProducts(env.DB, { limit: 24 });
-    const products = [];
-    for (let i = 0; i < page.rows.length; i += 1) {
-      const p = page.rows[i];
-      const variants = await listVariantsForProduct(env.DB, p.id);
-      let startingPrice = null;
-      if (variants.rows.length) {
-        startingPrice = await currentPrice(env.DB, variants.rows[0].id, "USD");
-      }
-      const media     = await listMediaForProduct(env.DB, p.id);
-      const heroMedia = media.rows.length ? media.rows[0] : null;
-      products.push(Object.assign({}, p, {
-        starting_price_minor:    startingPrice ? startingPrice.amount_minor : null,
-        starting_price_currency: startingPrice ? startingPrice.currency      : "USD",
-        hero_media:              heroMedia,
-      }));
-    }
+    const page = await listActiveProducts(env.DB, { limit: 24, currency: "USD" });
     const html = renderHome({
-      products:  products,
+      products:  page.rows,
       shopName:  shopName,
       cartCount: 0,
       version:   version,
@@ -531,22 +514,8 @@ async function _edgeSearch(request, env, url, version, shopName) {
     const q    = qRaw.length > 200 ? qRaw.slice(0, 200) : qRaw;
     let products = [];
     if (q.trim().length > 0) {
-      const page = await searchProducts(env.DB, { q: q, limit: 24 });
-      for (let i = 0; i < page.rows.length; i += 1) {
-        const p = page.rows[i];
-        const variants = await listVariantsForProduct(env.DB, p.id);
-        let startingPrice = null;
-        if (variants.rows.length) {
-          startingPrice = await currentPrice(env.DB, variants.rows[0].id, "USD");
-        }
-        const media     = await listMediaForProduct(env.DB, p.id);
-        const heroMedia = media.rows.length ? media.rows[0] : null;
-        products.push(Object.assign({}, p, {
-          starting_price_minor:    startingPrice ? startingPrice.amount_minor : null,
-          starting_price_currency: startingPrice ? startingPrice.currency      : "USD",
-          hero_media:              heroMedia,
-        }));
-      }
+      const page = await searchProducts(env.DB, { q: q, limit: 24, currency: "USD" });
+      products = page.rows;
     }
     const html = renderSearch({
       q:         q,
@@ -566,17 +535,38 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
   try {
     const product = await getProductBySlug(env.DB, slug);
     if (!product) return null;
-    const variants = await listVariantsForProduct(env.DB, product.id);
+    const [variantsWithPrices, media] = await Promise.all([
+      listVariantsWithPrices(env.DB, product.id, "USD"),
+      listMediaForProduct(env.DB, product.id),
+    ]);
+    const variants = [];
     const prices = {};
-    for (let i = 0; i < variants.rows.length; i += 1) {
-      const v = variants.rows[i];
-      const p = await currentPrice(env.DB, v.id, "USD");
-      if (p) prices[v.id] = p;
+    for (let i = 0; i < variantsWithPrices.rows.length; i += 1) {
+      const r = variantsWithPrices.rows[i];
+      variants.push({
+        id:                r.id,
+        product_id:        r.product_id,
+        sku:               r.sku,
+        title:             r.title,
+        options_json:      r.options_json,
+        weight_grams:      r.weight_grams,
+        requires_shipping: r.requires_shipping,
+        position:          r.position,
+        created_at:        r.created_at,
+        updated_at:        r.updated_at,
+      });
+      if (r.price_amount_minor != null) {
+        prices[r.id] = {
+          id:           r.price_id,
+          variant_id:   r.id,
+          amount_minor: r.price_amount_minor,
+          currency:     r.price_currency,
+        };
+      }
     }
-    const media = await listMediaForProduct(env.DB, product.id);
     const html = renderProduct({
       product:   product,
-      variants:  variants.rows,
+      variants:  variants,
       prices:    prices,
       media:     media.rows,
       shopName:  shopName,

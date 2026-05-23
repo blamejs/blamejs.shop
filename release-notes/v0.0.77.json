@@ -1,0 +1,23 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.77",
+  "date": "2026-05-23",
+  "headline": "Edge-render catalog queries collapsed to JOINs — home / search / PDP render in ~160ms TTFB",
+  "summary": "Home + search now serve from a single window-functioned JOIN that returns every active product with its first variant's price and first media row pre-joined. PDP serves from two parallel queries — one variants × prices LEFT JOIN, one media list. Worker compute time dropped from 2.8s (serial N+1) to 81ms (single JOIN). End-to-end TTFB on the live storefront is now ~160ms, down from the original ~3.4s container cold-start. EDGE_RENDER default flips to \"on\" so the perf win is the new baseline. Also fixes split-shipments ORDER BY id (UUIDv7 within-ms collision) and refreshes vendored blamejs to v0.12.6.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Edge catalog reads collapsed to JOINs — single round trip for home / search", "body": "`worker/data/catalog.js` now exposes `listActiveProducts(DB, {limit, offset, currency})` and `searchProducts(DB, {q, limit, currency})` returning pre-decorated rows: each product carries `starting_price_minor` + `starting_price_currency` + `hero_media` joined inline. Two `ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY position ASC, created_at ASC)` window subqueries pick the first variant + first media per product; `LEFT JOIN prices` off the hero variant carries the active price for the requested currency. PDP now uses `listVariantsWithPrices(DB, productId, currency)` — one `variants LEFT JOIN prices` query returns every variant with its current price column. The previous N+1 helpers (`listVariantsForProduct`, `currentPrice`) are removed from the catalog module." },
+        { "title": "`EDGE_RENDER` default flipped from `\"off\"` to `\"on\"` in `wrangler.toml`", "body": "After the JOIN refactor put live-storefront TTFB at ~160ms, the edge-render path is the new baseline. Operators who want the legacy container-render path for the storefront read routes can set `EDGE_RENDER = \"off\"` in their `wrangler.toml` override." },
+        { "title": "Vendored blamejs refreshed from v0.12.5 to v0.12.6", "body": "`bash scripts/vendor-update.sh blamejs v0.12.6` ran cleanly; `lib/vendor/blamejs/MANIFEST.json` updated. See `lib/vendor/blamejs/CHANGELOG.md` for the upstream surface changes between v0.12.5 and v0.12.6." }
+      ]
+    },
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "`split-shipments` — `splitsForOrder` was ordering by `id DESC` (UUIDv7) instead of `proposed_at DESC`", "body": "Two plans created in the same wall-clock millisecond shared a UUIDv7 timestamp prefix; the suffix is random, so `ORDER BY id DESC` returned them in undefined order. The v0.0.71 ship added a monotonic `_now()` to the `proposed_at` column, but the query still sorted on `id`. Changed to `ORDER BY proposed_at DESC, id DESC` so the monotonic timestamp is the primary sort key and the random ID suffix only breaks ties when timestamps truly match." }
+      ]
+    }
+  ]
+}
