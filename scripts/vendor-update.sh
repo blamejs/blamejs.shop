@@ -36,16 +36,20 @@ _vendored_ver() {
 }
 
 _latest_tag() {
-  curl -sL "$RELEASES_URL" | node -e "
+  # The `|| true` on each pipe member keeps `set -euo pipefail` from
+  # aborting the parent script when the upstream is unreachable or the
+  # response isn't JSON. Empty stdout is the canonical "unresolved"
+  # signal; the `--check` caller branches on that.
+  { curl -sL --max-time 8 "$RELEASES_URL" 2>/dev/null || true; } | node -e "
     var data = '';
     process.stdin.on('data', function (c) { data += c; });
     process.stdin.on('end', function () {
       try {
         var j = JSON.parse(data);
         process.stdout.write(j.tag_name || '');
-      } catch (_e) { process.exit(1); }
+      } catch (_e) { /* unresolved → empty stdout, exit 0 */ }
     });
-  "
+  " || true
 }
 
 _show_diff() {
