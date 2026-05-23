@@ -1205,4 +1205,4 @@ function _warmingHtml(canonicalUrl, refreshSeconds) {
     + "</p>"
     + "<div class=\"meta\">First request after an idle period. Subsequent requests will be fast.</div>"
     + "</main></body></html>";
-function _testCatchReturnNull() {
+}
