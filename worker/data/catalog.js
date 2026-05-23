@@ -14,21 +14,72 @@ function _clampOffset(n) {
   return n;
 }
 
+// Decoration columns the home + search renderers need on each
+// product row: first variant id (ordered by position then created_at),
+// the current price for that variant in `currency`, and the first
+// media row attached to the product. Window functions pick the first
+// variant + first media per product in one round trip; the price is
+// joined directly off the hero variant.
+var DECORATED_SELECT =
+  "SELECT p.*, " +
+  "       v.id        AS hero_variant_id, " +
+  "       pr.amount_minor AS starting_price_minor, " +
+  "       pr.currency     AS starting_price_currency, " +
+  "       m.r2_key    AS hero_r2_key, " +
+  "       m.alt_text  AS hero_alt_text " +
+  "FROM products p " +
+  "LEFT JOIN ( " +
+  "  SELECT iv.*, " +
+  "         ROW_NUMBER() OVER (PARTITION BY iv.product_id ORDER BY iv.position ASC, iv.created_at ASC) AS rn " +
+  "  FROM variants iv " +
+  ") v ON v.product_id = p.id AND v.rn = 1 " +
+  "LEFT JOIN prices pr ON pr.variant_id = v.id AND pr.currency = ?1 AND pr.effective_until IS NULL " +
+  "LEFT JOIN ( " +
+  "  SELECT im.*, " +
+  "         ROW_NUMBER() OVER (PARTITION BY im.product_id ORDER BY im.position ASC, im.created_at ASC) AS rn " +
+  "  FROM media im " +
+  "  WHERE im.product_id IS NOT NULL " +
+  ") m ON m.product_id = p.id AND m.rn = 1 ";
+
+function _shapeDecoratedRow(r) {
+  var hero = (r.hero_r2_key != null)
+    ? { r2_key: r.hero_r2_key, alt_text: r.hero_alt_text || "" }
+    : null;
+  return {
+    id:                      r.id,
+    slug:                    r.slug,
+    title:                   r.title,
+    description:             r.description,
+    status:                  r.status,
+    created_at:              r.created_at,
+    updated_at:              r.updated_at,
+    starting_price_minor:    r.starting_price_minor != null ? r.starting_price_minor : null,
+    starting_price_currency: r.starting_price_currency || "USD",
+    hero_media:              hero,
+  };
+}
+
+// One round trip returns every active product with its first
+// variant's price and first media row pre-joined. Replaces the
+// previous N+1 (1 + 24 × 3 = 73 queries) fan-out with a single
+// query. Window functions partition by product so the first
+// variant / first media surface without an application-side group.
 export async function listActiveProducts(DB, opts) {
   opts = opts || {};
-  var limit  = _clampLimit(opts.limit);
-  var offset = _clampOffset(opts.offset);
+  var limit    = _clampLimit(opts.limit);
+  var offset   = _clampOffset(opts.offset);
+  var currency = (typeof opts.currency === "string" && opts.currency.length === 3) ? opts.currency : "USD";
   var listRes = await DB
-    .prepare("SELECT * FROM products WHERE status = ?1 ORDER BY updated_at DESC, id DESC LIMIT ?2 OFFSET ?3")
-    .bind("active", limit, offset)
+    .prepare(
+      DECORATED_SELECT +
+      "WHERE p.status = 'active' " +
+      "ORDER BY p.updated_at DESC, p.id DESC " +
+      "LIMIT ?2 OFFSET ?3"
+    )
+    .bind(currency, limit, offset)
     .all();
-  var countRes = await DB
-    .prepare("SELECT COUNT(*) AS n FROM products WHERE status = ?1")
-    .bind("active")
-    .first();
-  var rows  = (listRes && listRes.results) ? listRes.results : [];
-  var total = countRes && countRes.n != null ? Number(countRes.n) : 0;
-  return { rows: rows, total: total };
+  var rows = (listRes && listRes.results) ? listRes.results.map(_shapeDecoratedRow) : [];
+  return { rows: rows };
 }
 
 export async function getProductBySlug(DB, slug) {
@@ -40,12 +91,15 @@ export async function getProductBySlug(DB, slug) {
   return row || null;
 }
 
+// Search returns the same decorated row shape — one round trip,
+// LIKE-escaped against title/description.
 export async function searchProducts(DB, opts) {
   opts = opts || {};
   if (typeof opts.q !== "string") return { rows: [] };
   var qTrim = opts.q.trim();
   if (qTrim.length === 0) return { rows: [] };
-  var limit = _clampLimit(opts.limit);
+  var limit    = _clampLimit(opts.limit);
+  var currency = (typeof opts.currency === "string" && opts.currency.length === 3) ? opts.currency : "USD";
   var qLower = qTrim.toLowerCase();
   // The `\\` substitution must run first — otherwise the `\` we
   // insert in front of `%` / `_` would be re-escaped on the next
@@ -57,34 +111,39 @@ export async function searchProducts(DB, opts) {
   var pattern = "%" + qEscaped + "%";
   var res = await DB
     .prepare(
-      "SELECT * FROM products WHERE status = ?1 AND " +
-      "(lower(title) LIKE ?2 ESCAPE '\\' OR lower(description) LIKE ?2 ESCAPE '\\') " +
-      "ORDER BY updated_at DESC, id DESC LIMIT ?3"
+      DECORATED_SELECT +
+      "WHERE p.status = 'active' AND " +
+      "(lower(p.title) LIKE ?2 ESCAPE '\\' OR lower(p.description) LIKE ?2 ESCAPE '\\') " +
+      "ORDER BY p.updated_at DESC, p.id DESC LIMIT ?3"
     )
-    .bind("active", pattern, limit)
+    .bind(currency, pattern, limit)
     .all();
-  var rows = (res && res.results) ? res.results : [];
+  var rows = (res && res.results) ? res.results.map(_shapeDecoratedRow) : [];
   return { rows: rows };
 }
 
-export async function listVariantsForProduct(DB, productId) {
+// PDP read-side: variants × current price in one query. Each row
+// carries the variant columns plus `price_amount_minor` /
+// `price_currency` for the active price (NULL when no price is
+// configured for the requested currency).
+export async function listVariantsWithPrices(DB, productId, currency) {
   if (typeof productId !== "string" || productId.length === 0) return { rows: [] };
+  var cur = (typeof currency === "string" && currency.length === 3) ? currency : "USD";
   var res = await DB
-    .prepare("SELECT * FROM variants WHERE product_id = ?1 ORDER BY position ASC, created_at ASC")
-    .bind(productId)
+    .prepare(
+      "SELECT v.*, " +
+      "       pr.id           AS price_id, " +
+      "       pr.amount_minor AS price_amount_minor, " +
+      "       pr.currency     AS price_currency " +
+      "FROM variants v " +
+      "LEFT JOIN prices pr ON pr.variant_id = v.id AND pr.currency = ?1 AND pr.effective_until IS NULL " +
+      "WHERE v.product_id = ?2 " +
+      "ORDER BY v.position ASC, v.created_at ASC"
+    )
+    .bind(cur, productId)
     .all();
   var rows = (res && res.results) ? res.results : [];
   return { rows: rows };
-}
-
-export async function currentPrice(DB, variantId, currency) {
-  if (typeof variantId !== "string" || variantId.length === 0) return null;
-  if (typeof currency !== "string" || currency.length !== 3) return null;
-  var row = await DB
-    .prepare("SELECT * FROM prices WHERE variant_id = ?1 AND currency = ?2 AND effective_until IS NULL LIMIT 1")
-    .bind(variantId, currency)
-    .first();
-  return row || null;
 }
 
 export async function listMediaForProduct(DB, productId) {

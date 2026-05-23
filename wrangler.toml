@@ -44,7 +44,7 @@ HEALTH_PATH         = "/_/health"
 # default), those paths forward to the container exactly as before.
 # Flip to "on" via `wrangler secret put EDGE_RENDER on` once the
 # deploy is verified.
-EDGE_RENDER         = "off"
+EDGE_RENDER         = "on"
 SHOP_NAME           = "blamejs.shop"
 
 # --- Container ------------------------------------------------------
