@@ -1,0 +1,38 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.73",
+  "date": "2026-05-22",
+  "headline": "Twenty new primitives across operator ops, commerce, storefront, and compliance",
+  "summary": "Twenty primitives ship together. Operator surfaces: marketingBudget, operatorSessions, operatorInbox, operatorActivityFeed, disputeResolution, shrinkageReport, demandForecast, fulfillmentSLA, salesTaxFilings, binLocations. Commerce: orderExchanges, searchRanking, shippingInsurance, cartRecovery, emailABTests, bannerABTests, referralLeaderboard. Storefront: pwaManifest, sidebarWidgets, announcementBar, stockReceipts, suggestionBox. Subscriptions: subscriptionAnalytics. Compliance: consentLedger.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "`marketingBudget` primitive — per-channel spend + ROAS", "body": "Eleven channel kinds with per-channel currency lock. Integer-bps ROAS. UTC month budget reconciliation. Migration `0172`." },
+        { "title": "`orderExchanges` primitive — different-item exchange FSM", "body": "Six-state FSM with two-arm convergence. closeExchange requires both delivered_at and returned_at non-null. approveExchange opens an inventory hold pre-commit. Migration `0164`." },
+        { "title": "`disputeResolution` primitive — chargeback lifecycle", "body": "Four dispute kinds, seven evidence kinds, four outcomes. FSM open / submitted / lost / written_off. Migration `0173`." },
+        { "title": "`operatorSessions` primitive — staff login with MFA + lockout", "body": "32-byte base64url bearer, hashed via namespaceHash. 8-hour TTL. Per-IP binding. Lockout after 5 failures in 15 minutes. Migration `0165`." },
+        { "title": "`shippingInsurance` primitive — per-shipment insurance + claims", "body": "Basis-point premium math. Insurance FSM active / cancelled / expired. Claim FSM filed / approved / denied. Four claim types. Migration `0166`." },
+        { "title": "`pwaManifest` primitive — PWA manifest + service-worker config", "body": "Display + orientation enums. Byte-stable JSON output via sorted-key serialise. URLs gated via b.safeUrl. Migration `0168`." },
+        { "title": "`searchRanking` primitive — operator-tunable search reranker", "body": "Boost/demote weights + manual pins per query. CTR + conversion math. Session ids hashed via namespaceHash. Migration `0167`." },
+        { "title": "`emailABTests` primitive — subject + body A/B with Wilson CI", "body": "Deterministic SHA3-512 assignment with 100k-bucket weight mapping. Sticky via the existing sent ledger row. Migration `0169`." },
+        { "title": "`operatorInbox` primitive — in-admin notification feed", "body": "Severity enum info / warning / urgent / critical. Exactly-one-of operator_id / role addressing. HMAC cursor pagination. Migration `0175`." },
+        { "title": "`demandForecast` primitive — per-SKU demand prediction", "body": "Four model kinds (SMA / WMA / exponential_smoothing / linear_regression). Band-coherence CHECKs. Migration `0179`." },
+        { "title": "`stockReceipts` primitive — customer QR-scan delivery confirmation", "body": "32-byte token hashed at rest. Receipt FSM issued / scanned / completed / expired. Line FSM pending / received / damaged / partial. Migration `0177`." },
+        { "title": "`bannerABTests` primitive — promo banner A/B with Wilson CI", "body": "Deterministic per-session assignment. FSM running / paused / concluded / archived. Migration `0174`." },
+        { "title": "`cartRecovery` primitive — abandon-cart email sequences", "body": "Operator-defined step schedule. Composes cartAbandonment + email + emailSuppressions. markRecovered halts further steps. Migration `0171`." },
+        { "title": "`sidebarWidgets` primitive — placement-targeted storefront blocks", "body": "Nine widget kinds. Audience filter with optional customerSegments handle. Schedule-window gating + drop-silent counters. Migration `0176`." },
+        { "title": "`consentLedger` primitive — append-only GDPR consent audit trail", "body": "Nine consent kinds across cookies / marketing / data-sharing / data-processing. Two states (granted / withdrawn). Six sources. CSV / JSON audit export. Migration `0185`." },
+        { "title": "`announcementBar` primitive — top-strip storefront message", "body": "Four themes ranked urgency / promo / info / success. Schedule window + audience filter. Session-based dismissal dedup via UNIQUE(slug, session_id_hash). Migration `0180`." },
+        { "title": "`shrinkageReport` primitive — loss-prevention dashboard", "body": "Aggregates inventoryWriteoffs by reason / period / location / sku. Sample-stddev anomaly detection. Mixed-currency aggregation refusal. Migration `0170`." },
+        { "title": "`subscriptionAnalytics` primitive — MRR / churn / cohort retention", "body": "MRR cadence normalization across plan frequencies. Churn rate voluntary / involuntary / total. Cohort retention by month-zero. Migration `0178`." },
+        { "title": "`operatorActivityFeed` primitive — staff-side timeline", "body": "Aggregates operatorAuditLog + supportTickets + operatorInbox + operatorSessions. Cross-operator teamFeed. currentlyOnline 5-minute gate. Migration `0188`." },
+        { "title": "`referralLeaderboard` primitive — top-referrer rankings + tier bonuses", "body": "Reads from referrals primitive for ranking. Composes loyalty.earn for tier bonus payouts. UNIQUE(customer_id, period_label, tier) is the re-award gate. Migration `0182`." },
+        { "title": "`fulfillmentSLA` primitive — order ship + deliver SLA tracking", "body": "Per-priority policies (standard / expedited / overnight / same_day) with cutoff_local_time + timezone via Intl.DateTimeFormat. Severity bands minor / major / critical. Migration `0183`." },
+        { "title": "`binLocations` primitive — warehouse bin / aisle / shelf assignments", "body": "Auto-primary policy + pickPathSort by (aisle, shelf, level). Audit log with variance computation. Bin condition states clean / needs_audit / damaged / unusable. Migration `0186`." },
+        { "title": "`salesTaxFilings` primitive — quarterly / monthly filings prep", "body": "Aggregates orders + tax + taxRates + taxExempt into per-jurisdiction filings. FSM draft / computed / submitted / paid / amended. Banker's-rounded integer math on re-derive. Migration `0184`." },
+        { "title": "`suggestionBox` primitive — customer feature-request box with up/downvote", "body": "Categories: product_idea / feature_request / improvement / complaint / general. Status FSM open / under_consideration / planned / shipped / declined / duplicate. Vote dedup via UNIQUE(suggestion_id, session_id_hash). Migration `0181`." }
+      ]
+    }
+  ]
+}
