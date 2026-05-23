@@ -5,8 +5,12 @@
 #
 # Multi-stage layout:
 #   1. base    — pinned Node LTS, security updates applied
-#   2. vendor  — fresh vendor refresh (CI sets BLAMEJS_TAG to pin the
-#                exact tag; default is "latest" off github releases)
+#   2. vendor  — copies the committed vendored tree from the repo.
+#                The smoke gate's `vendor-update.sh --check` already
+#                enforces the committed tree matches the latest
+#                upstream release tag, so re-fetching at image-build
+#                time is redundant — and breaks in build environments
+#                without outbound GitHub API access.
 #   3. test    — runs the smoke gate against the vendored tree so a
 #                broken vendor refresh never produces a shippable
 #                image
@@ -15,13 +19,12 @@
 #                Node started directly (no shell)
 #
 # Build:
-#   docker build --build-arg BLAMEJS_TAG=v0.11.17 -t blamejs-shop:local .
+#   docker build -t blamejs-shop:local .
 #
 # Run locally:
 #   docker run --rm -p 8080:8080 -e PORT=8080 blamejs-shop:local
 
 ARG NODE_VERSION=24.14.1
-ARG BLAMEJS_TAG=latest
 ARG BUILD_ID=2026-05-22-admin-landing-page
 
 # ---- base -----------------------------------------------------------------
@@ -34,17 +37,11 @@ WORKDIR /app
 FROM base AS vendor
 COPY package.json ./
 COPY scripts/ ./scripts/
-COPY lib/vendor/MANIFEST.json ./lib/vendor/MANIFEST.json
-ARG BLAMEJS_TAG
-RUN bash scripts/vendor-update.sh blamejs "${BLAMEJS_TAG}"
+COPY lib/vendor/ ./lib/vendor/
 
 # ---- test -----------------------------------------------------------------
 FROM vendor AS test
 COPY . .
-# Re-overlay the freshly-vendored tree on top of the working copy so
-# the smoke run validates against the build-time vendor refresh, not
-# whatever was committed.
-COPY --from=vendor /app/lib/vendor/ ./lib/vendor/
 RUN node test/smoke.js
 
 # ---- runtime --------------------------------------------------------------
