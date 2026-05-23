@@ -1008,7 +1008,17 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
       cartCount: 0,
       version:   version,
     });
-    return _html(html, request.method, env);
+    // Hero-image preload — the PDP's LCP element is almost always the
+    // first media row's image. Preloading it via Link rel=preload
+    // tells Cloudflare's Early Hints to include the asset URL in the
+    // HTTP/103 frame, so the browser starts the image fetch before
+    // the HTML body finishes streaming. Skips when the product has
+    // no media (the placeholder letter-mark fallback renders without
+    // a network fetch).
+    const heroPreload = media.rows.length > 0
+      ? [{ href: "/assets/" + media.rows[0].r2_key, as: "image" }]
+      : [];
+    return _html(html, request.method, env, heroPreload);
   } catch (e) {
     return _edgeError("/products/:slug", e, request, env, version, shopName);
   }
@@ -1076,16 +1086,25 @@ function _withSecurityHeaders(base) {
 // Paint and Largest Contentful Paint. The single preload covers the
 // theme bundle every page references; per-route preloads (hero
 // images, etc.) compose by appending to the same header.
-function _earlyHintsLink(env) {
-  var version  = env.WORKER_VERSION || "0.0.0";
-  return "</assets/themes/default/css/main.css?v=" + version + ">; rel=preload; as=style; crossorigin";
+function _earlyHintsLink(env, extras) {
+  var version = env.WORKER_VERSION || "0.0.0";
+  var base    = "</assets/themes/default/css/main.css?v=" + version + ">; rel=preload; as=style; crossorigin";
+  if (!Array.isArray(extras) || extras.length === 0) return base;
+  // Per-route preload merge — every extra entry is `{ href, as }`.
+  // Cloudflare auto-promotes the comma-separated Link header to
+  // multiple HTTP/103 Early Hints entries.
+  var addl = extras.map(function (e) {
+    if (!e || typeof e.href !== "string" || typeof e.as !== "string") return "";
+    return "<" + e.href + ">; rel=preload; as=" + e.as;
+  }).filter(Boolean).join(", ");
+  return addl.length ? base + ", " + addl : base;
 }
 
-function _html(body, method, env) {
+function _html(body, method, env, preloads) {
   const headers = _withSecurityHeaders({
     "content-type":  "text/html; charset=utf-8",
     "cache-control": "no-store",
-    "link":          _earlyHintsLink(env || {}),
+    "link":          _earlyHintsLink(env || {}, preloads),
   });
   if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
   return new Response(_minify(body), { status: 200, headers: headers });

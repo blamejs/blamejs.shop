@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.105",
+  "date": "2026-05-23",
+  "headline": "Per-route Link preloads — PDP carries its hero image in the HTTP/103 Early Hints frame",
+  "summary": "`_html(body, method, env, preloads)` now accepts an extra `preloads` array of `{ href, as }` entries — Worker render handlers can append per-route preload hints alongside the always-present theme-stylesheet preload introduced in v0.0.103. `_edgeProduct` uses the new shape to pass the first media row's image URL as `rel=preload; as=image`, so Cloudflare's HTTP/103 Early Hints frame on a PDP carries both the stylesheet AND the hero image. The browser starts both fetches before the HTML body finishes streaming — cuts product-page LCP by another ~100-200ms on a typical render with a large hero.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "`_html` accepts per-route preloads via a 4th `preloads` array argument", "body": "`_earlyHintsLink(env, extras)` merges the always-on theme-stylesheet preload with any caller-supplied `{ href, as }` entries into a single comma-separated Link header. Cloudflare's edge promotes the full header to multiple HTTP/103 Early Hints frame entries. Per-route preloads cost zero render time (already part of the response headers); the browser-side fetch starts during the round-trip the HTML body is using." },
+        { "title": "`_edgeProduct` preloads the first media row's hero image", "body": "The PDP's LCP element is almost always the hero image. The handler now appends `{ href: \"/assets/<r2_key>\", as: \"image\" }` to the `_html` preloads when the product has media; products without media render the placeholder letter-mark without a network fetch (no preload needed). Combined with the v0.0.103 theme-stylesheet preload, the HTTP/103 frame on a PDP carries both critical-path assets." }
+      ]
+    }
+  ]
+}
