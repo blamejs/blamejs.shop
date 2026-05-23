@@ -584,7 +584,13 @@ var KNOWN_ANTIPATTERNS = [
   {
     id:        "edge-handler-catch-returns-null",
     primitive: "Each edge handler's catch must return an explicit error Response (e.g. `_edgeError(...)` rendering a 5xx page) — never `return null`, which signals \"this path isn't edge-routed\" to the dispatcher and silently escalates the exception to the container. The container can't fix a render-side bug; the visitor experience of fallback-to-different-backend is worse than a clean error page; the escalation hides the bug from observability.",
-    regex:     /catch\s*\(\s*[\w$]+\s*\)\s*\{[\s\S]{0,400}?return\s+null\s*;/,
+    // `[^}]` keeps the match inside the catch body so the detector
+    // doesn't span past the closing brace into the next function's
+    // guard-clause `return null;`. Catches the shape
+    // `catch (e) { ... return null; }` without nested braces — the
+    // edge-handler convention is one guard / one return inside the
+    // catch, so the no-nested-brace constraint is fine in practice.
+    regex:     /catch\s*\(\s*[\w$]+\s*\)\s*\{[^}]{0,400}return\s+null\s*;/,
     scanScope: "worker",
     multiline: true,
     allowlist: [],
