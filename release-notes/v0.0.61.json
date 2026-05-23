@@ -1,0 +1,67 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.61",
+  "date": "2026-05-22",
+  "headline": "Eleven new primitives: customer import, code minter, storefront forms, cart bulk ops, carrier rates, operator audit log, CMS blocks, gift-card ledger, discount analytics, search facets, dunning",
+  "summary": "Eleven primitives in one release. `customerImport` bulk-loads customers from CSV / NDJSON with dedupe by email hash + on_conflict mode. `codeMinter` generates single-use discount codes in bulk over a confusion-resistant alphabet with collision retry. `storefrontForms` is the operator-defined contact / lead-capture / wholesale-application form layer with per-session throttle. `cartBulkOps` is B2B-style cart operations (bulk add, replace, price-list apply, reorder, split). `carrierRates` caches shipping rate quotes per (carrier, service, origin, dest, weight) with TTL. `operatorAuditLog` is the cryptographically-chained tamper-evident audit log for operator-side mutations. `cmsBlocks` is the slot-content CMS for headers, hero copy, footer columns, etc. with markdown render + BCP-47 locale fallback. `giftCardLedger` is the append-only credit/debit/expire ledger on top of `giftcards` with denormalized balance-after column for O(1) balance queries. `discountAnalytics` rolls up coupon impressions + redemptions for operator dashboards. `searchFacets` is the operator-registered facet engine (categorical / numeric_range / boolean) for storefront filter sidebars. `dunning` is the payment-recovery workflow for failed subscription charges.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "`customerImport` primitive — bulk customer loader with email-hash dedup",
+          "body": "`bShop.customerImport.create({ query?, customers })` returns `{ dryRun, importRows, importFromCsv, importFromNdjson, lastReport, cancelInflight }`. Dedup is by the same `namespaceHash('customer-email', canonical)` digest the `customers` primitive computes — two emails differing only in domain casing collide on a single hash (local-part stays RFC-5321-sensitive). on_conflict modes: `update / skip / error`. CSV-injection refusal happens before the run row opens, so a rejected upload leaves zero rows in both `customers` and `customer_imports`. `cancelInflight` flips status → cancelled and the row-processing loop checks the flag between rows; partial writes persist so the operator re-uploads to fill the gap. Migration `0061_customer_imports.sql`."
+        },
+        {
+          "title": "`codeMinter` primitive — bulk single-use discount-code generator",
+          "body": "`bShop.codeMinter.create({ query?, coupons })` returns `{ mintBatch, getBatch, listBatches, codesForBatch, voidBatch, exportBatchCsv, DEFAULT_ALPHABET, STATUSES }`. Default alphabet `23456789ABCDEFGHJKLMNPQRSTUVWXYZ` (32 glyphs skipping confusion-resistant 0 / 1 / I / O). Custom alphabets use rejection sampling against `Math.floor(256/len)*len` to keep the draw uniform. Per-code collision retry budget of 16; bust raises `CODE_MINTER_COLLISION_BUDGET_EXHAUSTED`. The `code_batch_members.coupon_code UNIQUE` constraint is the authoritative cross-batch gate. `voidBatch` archives every member's coupon via `coupons.archive` and flips status → voided. `exportBatchCsv` yields header `coupon_code,minted_at\\r\\n` then one CRLF row per code, paginated 500 at a time, ordered for byte-stable re-exports. Migration `0075_code_batches.sql`."
+        },
+        {
+          "title": "`storefrontForms` primitive — operator-defined contact / lead-capture forms",
+          "body": "`bShop.storefrontForms.create({ query?, notifications?, webhooks? })` returns `{ defineForm, getForm, listForms, updateForm, archiveForm, submit, submissionsForForm, throttleCheck, hashSession }`. Field kinds: `text / email / phone / textarea / select / checkbox / number`. submit_to kinds: `email / webhook`. Per-session throttle bucketed on the SHA3-512 namespace hash of the session id; `throttle=0` bypasses. Persist-then-dispatch flow with `dispatched_at` / `dispatch_error` stamped on the row. Email-field validation routes through `b.guardEmail`. Migration `0076_storefront_forms.sql`."
+        },
+        {
+          "title": "`cartBulkOps` primitive — B2B-style bulk cart operations",
+          "body": "`bShop.cartBulkOps.create({ query?, cart, catalog, customers?, lineGrouper? })` returns `{ addLines, replaceLines, clearLines, priceListApply, reorder, splitCart, quoteForCart, priceLists }`. Atomicity via pre-flight validation: every SKU resolves + price-snapshots before any write; bad row throws `lines[N].sku — …` with zero side effects. `priceListApply` resolves slug from explicit input OR `price_list_assignments[customer_id]`; refuses currency mismatch / archived list / unknown slug. `reorder` skip categories surface as `{ sku, qty, reason }` so the storefront renders \"couldn't add N items\" affordances. `splitCart` requires an operator-supplied `lineGrouper(line, splitBy)` (no built-in vendor/category guesswork); source cart marked `abandoned` on split. Sub-module `priceLists` exposes `{ create, setMember, assign, listMembers }`. Migration `0078_price_lists.sql`."
+        },
+        {
+          "title": "`carrierRates` primitive — at-checkout shipping rate cache",
+          "body": "`bShop.carrierRates.create({ query?, cursorSecret? })` returns `{ registerCarrier, recordRateQuote, ratesForShipment, cleanupExpiredQuotes, recentQuotes, metricsForCarrier }`. Carrier enum: `ups / fedex / usps / dhl / flat_rate`. `recordRateQuote` dedup-upserts on `UNIQUE(carrier_slug, service_code, origin_postal, dest_postal, weight_grams)`. `ratesForShipment` returns sorted-by-cost rates from the cache + a synthetic flat-rate fallback when no live rates apply; expired rows + paused carriers excluded. `rate_endpoint` gated via `b.safeUrl` (https-only). `metricsForCarrier({ slug, from, to })` aggregates by (service_code, currency). Migration `0080_carrier_rates.sql`."
+        },
+        {
+          "title": "`operatorAuditLog` primitive — cryptographically-chained tamper-evident operator audit log",
+          "body": "`bShop.operatorAuditLog.create({ query? })` returns `{ record, listByActor, listByResource, searchAction, chainHead, verifyChain }`. Each row carries `row_hash = SHA3-512(prev_hash || canonical-json(row-without-hashes))` so the chain is replay-verifiable. `verifyChain()` recomputes hashes left-to-right and flags any tampered row. `occurred_at` is clamped to be strictly monotonic against the chain head so same-millisecond appends still chain deterministically. Actor enum: `operator / system / app`. UA-class enum: `browser / mobile_app / api_client / cli / bot / unknown`. Opaque base64url `(occurred_at, id)` keyset cursor for the list surfaces. Migration `0074_operator_audit_log.sql`."
+        },
+        {
+          "title": "`cmsBlocks` primitive — slot-content CMS with BCP-47 locale fallback",
+          "body": "`bShop.cmsBlocks.create({ query?, translations? })` returns `{ defineBlock, setLocalized, getRendered, listBlocks, archiveBlock, update, versionsForBlock }`. Two-table layout (`cms_blocks` PK + `cms_block_localizations` FK CASCADE) so version history per (key, locale) is queryable and `defineBlock` is idempotent without disturbing localizations. `getRendered` resolution order: archived → short-circuit empty; otherwise walk BCP-47 fallback chain (right-to-left subtag strip), pick highest-version row whose publish window covers `now`; finally fall back to `default_body`. Markdown render composes `b.template.escapeHtml` + `b.safeUrl.parse` (https-only allowlist plus /-rooted absolute paths). Migration `0079_cms_blocks.sql`."
+        },
+        {
+          "title": "`giftCardLedger` primitive — append-only credit/debit/expire ledger with O(1) balance",
+          "body": "`bShop.giftCardLedger.create({ query?, giftcards? })` returns `{ credit, debit, expire, balance, history, transactionsForOrder, bulkBalance, expiringBalance }`. `balance_after_minor` denormalized per row so current balance is O(1) (ORDER BY occurred_at DESC LIMIT 1). Replay-derivability preserved — SUM(credit) - SUM(debit) - SUM(expire) reconstructs balance and is asserted in the test. Per-card `occurred_at` made strictly monotonic via internal `_resolveOccurredAt` (bumps to `prior + 1` on tie or out-of-order operator-supplied timestamp). `expire` caps at current balance (returns `noop: true` when already drained) so scheduled sweeps degrade gracefully against interim debits. `bulkBalance` returns one row per requested id with `balance_minor: 0` for cards with no ledger rows. `expiringBalance` JOINs against `giftcards.expires_at` (canonical expiry source). Migration `0081_gift_card_ledger.sql`."
+        },
+        {
+          "title": "`discountAnalytics` primitive — per-coupon + per-tier-set redemption + revenue-impact aggregates",
+          "body": "`bShop.discountAnalytics.create({ query?, coupons?, quantityDiscounts? })` returns `{ recordImpression, recordRedemption, topCoupons, couponPerformance, tierPerformance, revenueImpact, redemptionFunnel }`. Sessions hashed via `namespaceHash('discount-analytics-session', session_id)` at the boundary. Tier-set redemptions tagged with the `coupon_code = 'tier:<tier_set_id>'` convention so the same table backs both surfaces. Process-local monotonic `_nowMs` so back-to-back impressions in the same wall-clock millisecond chain deterministically. Migration `0073_discount_analytics.sql`."
+        },
+        {
+          "title": "`searchFacets` primitive — operator-registered facets for storefront filter sidebars",
+          "body": "`bShop.searchFacets.create({ query?, catalog })` returns `{ defineFacet, getFacets, previewQuery, recordFacetUse, listFacets, updateFacet, archiveFacet }`. Kinds: `categorical / numeric_range / boolean`. `getFacets` computes per-facet `{ key, label, kind, options: [{ value, label, count, selected }] }` using the standard \"leave focal facet unconstrained\" rule so a selected vendor still shows the other vendors' counts. `previewQuery({ filters, sample? })` returns `{ total, sample }` of products matching the candidate filter set. Refuses bad key shape, bad kind, missing/illegal buckets, display_limit on non-categorical, duplicate bucket labels, inverted bucket bounds, key collisions. Session id namespace-hashed before write on `recordFacetUse`. Migration `0082_search_facets.sql`."
+        },
+        {
+          "title": "`dunning` primitive — payment recovery workflow for failed subscription charges",
+          "body": "`bShop.dunning.create({ query, subscriptionBilling, email, notifications })` returns `{ defineDunningPolicy, enrollInvoice, tickDunning, statusForInvoice, historyForInvoice, unsetEnrollment, metricsForPolicy }`. Actions: `retry_charge / send_reminder / pause_subscription / cancel_subscription`. Enrollment FSM: `active / recovered / cancelled / abandoned`. `tickDunning({ now })` advances state with composition into email / notifications / billing dependencies — handle methods are surface-optional so a partial wiring still ticks. `metricsForPolicy` aggregates recovery rate + cancellation rate per policy. Migration `0077_dunning.sql`."
+        }
+      ]
+    },
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "`discountAnalytics` — monotonic `occurred_at` so impressions in the same millisecond sort deterministically",
+          "body": "`Date.now()` on Windows resolves at ~15ms; three impressions inserted in the same tick shared an `occurred_at` and UUID v7's intra-ms randomness scrambled the secondary `id` ordering. The primitive now stamps `occurred_at` with a process-local monotonic clock that increments by 1ms when `Date.now()` returns a stale value."
+        }
+      ]
+    }
+  ]
+}
