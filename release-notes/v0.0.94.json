@@ -1,0 +1,17 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.94",
+  "date": "2026-05-23",
+  "headline": "Schema.org JSON-LD on product + blog-article pages — rich-result eligibility for Google / Bing",
+  "summary": "Every edge-rendered `/products/:slug` now carries a `<script type=\"application/ld+json\">` block with the Schema.org Product graph: `name`, `description`, `image`, `sku`, and an `AggregateOffer` collapsing the per-variant price range into `lowPrice` / `highPrice` / `offerCount` with the correct currency. Every `/blog/:slug` carries an Article graph: `headline`, `image`, `datePublished` / `dateModified` (ISO 8601), `author`, `description`. Embedded JSON survives the inline-in-HTML XSS surface via the `</` → `<\\/` rewrite the new `jsonLdScript` helper applies; standard `JSON.stringify` covers the `\"` / `\\` escapes. Composes through `worker/render/_lib.js#jsonLdScript`.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "`jsonLdScript(data)` helper in `worker/render/_lib.js`", "body": "Serialises a JS object as a `<script type=\"application/ld+json\">` block. `JSON.stringify` handles `\"` and `\\` escapes; an additional `</` → `<\\/` rewrite neutralises any literal `</script>` substring inside a value (defense-in-depth — Schema.org fields don't ship HTML in the supported vocabulary, but the rewrite is the canonical XSS escape for inline JSON-in-HTML). Throws `TypeError` on null / non-object input." },
+        { "title": "Schema.org `Product` JSON-LD on `/products/:slug`", "body": "Surfaces in Google's product-rich-result panel (price + availability), Bing Shopping, etc. The aggregate-offer block collapses every variant's price into `lowPrice` / `highPrice` / `offerCount` with the correct currency. Decimal precision adjusts for zero-decimal currencies (JPY / KRW divide by 1, format as integer; everything else divides by 100, two decimals). `image` array carries the hero media's full URL when present." },
+        { "title": "Schema.org `Article` JSON-LD on `/blog/:slug`", "body": "Surfaces in Google's article-rich-result panel. Fields: `headline`, `image` array (falls back to brand logo when no hero), `datePublished` + `dateModified` as ISO 8601 strings (composed from the article row's `published_at` + `updated_at` epoch-ms columns), `author` as a `Person` graph, `description` from `meta_description` or the first 240 chars of the body." }
+      ]
+    }
+  ]
+}

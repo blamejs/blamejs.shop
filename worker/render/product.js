@@ -1,4 +1,4 @@
-import { renderTemplate, escapeAttr, formatPrice } from "./_lib.js";
+import { renderTemplate, escapeAttr, formatPrice, jsonLdScript } from "./_lib.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
@@ -259,6 +259,38 @@ export function renderProduct(opts) {
   var heroMedia = media[0] || null;
   var ogImage   = heroMedia ? (assetPrefix + heroMedia.r2_key) : "/assets/brand/logo.png";
 
+  // Schema.org Product JSON-LD. Surfaces in Google's product-result
+  // panel (price + availability), Bing Shopping, etc. The aggregate
+  // offer collapses every variant into one price band; price math
+  // formats the lowest minor-unit price as a decimal string per
+  // schema.org/Offer's `price` expectation.
+  var priceList = variants
+    .map(function (v) { return prices && prices[v.id] ? prices[v.id].amount_minor : null; })
+    .filter(function (n) { return Number.isInteger(n); });
+  var jsonLd = null;
+  if (priceList.length > 0) {
+    var lowMinor = Math.min.apply(null, priceList);
+    var hiMinor  = Math.max.apply(null, priceList);
+    var currency = (prices[variants[0].id] && prices[variants[0].id].currency) || "USD";
+    var divisor  = currency === "JPY" || currency === "KRW" ? 1 : 100;
+    jsonLd = jsonLdScript({
+      "@context":    "https://schema.org",
+      "@type":       "Product",
+      "name":        product.title,
+      "description": description || ("Browse " + product.title + " on " + shopName + "."),
+      "image":       heroMedia ? [ogImage] : undefined,
+      "sku":         variants[0] && variants[0].sku,
+      "offers":      {
+        "@type":         "AggregateOffer",
+        "priceCurrency": currency,
+        "lowPrice":      (lowMinor / divisor).toFixed(divisor === 1 ? 0 : 2),
+        "highPrice":     (hiMinor  / divisor).toFixed(divisor === 1 ? 0 : 2),
+        "offerCount":    variants.length,
+        "availability":  "https://schema.org/InStock",
+      },
+    });
+  }
+
   return _wrap({
     title:         product.title,
     shopName:      shopName,
@@ -270,6 +302,6 @@ export function renderProduct(opts) {
     ogDescription: description || ("Browse " + product.title + " on " + shopName + "."),
     ogImage:       ogImage,
     ogUrl:         "",
-    body:          body,
+    body:          body + (jsonLd || ""),
   });
 }
