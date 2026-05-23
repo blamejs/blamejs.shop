@@ -1,0 +1,21 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.103",
+  "date": "2026-05-23",
+  "headline": "HTTP/103 Early Hints `Link: rel=preload` on every HTML response + vendor v0.12.10",
+  "summary": "Every edge-rendered HTML response now carries `Link: </assets/themes/default/css/main.css?v=<version>>; rel=preload; as=style; crossorigin` in the headers. Cloudflare auto-promotes Link headers on 200 responses to HTTP/103 Early Hints frames — repeat visitors see the stylesheet fetch start before the HTML body arrives, accelerating First Contentful Paint and Largest Contentful Paint. The single preload covers the theme bundle every page references; per-route preloads (hero images, etc.) compose by appending to the same header. Bundles vendor refresh from blamejs v0.12.9 to v0.12.10.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "`Link: rel=preload; as=style` on every HTML response — HTTP/103 Early Hints eligibility", "body": "`worker/index.js` exposes `_earlyHintsLink(env)` returning the canonical preload header for the theme stylesheet (`/assets/themes/default/css/main.css?v=<WORKER_VERSION>`). `_html(body, method, env)` and `_staticHtml(body, method, env)` both inject the header into every 200 / static HTML response. Cloudflare's edge auto-promotes Link headers on 200 responses to HTTP/103 frames — repeat visitors and clients with HTTP/3 see the stylesheet preload start before the HTML body finishes streaming, cutting LCP by ~50-150ms on a typical render. Per-route preloads (e.g. hero image on a product page) compose by appending an additional Link entry." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Vendored blamejs refreshed from v0.12.9 to v0.12.10", "body": "`bash scripts/vendor-update.sh blamejs v0.12.10` ran cleanly; `lib/vendor/blamejs/MANIFEST.json` updated. See `lib/vendor/blamejs/CHANGELOG.md` for the upstream surface changes between v0.12.9 and v0.12.10." }
+      ]
+    }
+  ]
+}
