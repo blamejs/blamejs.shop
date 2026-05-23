@@ -51,6 +51,38 @@ export function renderTemplate(tpl, vars) {
   return out;
 }
 
+// HTML minifier — collapses inter-tag whitespace runs the templates
+// carry for source readability. Preserves text content untouched
+// (text never carries `>\s+<` boundaries), and explicitly skips
+// `<pre>`, `<script>`, `<style>`, `<textarea>`, `<code>` blocks
+// where whitespace IS semantically meaningful.
+var WHITESPACE_PRESERVE_TAGS = ["pre", "script", "style", "textarea", "code"];
+var PRESERVE_RE = new RegExp(
+  "<(" + WHITESPACE_PRESERVE_TAGS.join("|") + ")\\b[^>]*>[\\s\\S]*?</\\1>",
+  "gi"
+);
+
+export function minifyHtml(html) {
+  if (typeof html !== "string") return html;
+  // Stash preserve-tag blocks behind sentinel tokens so the collapse
+  // pass doesn't touch them. The sentinel uses control-character
+  // ranges that can't appear in operator-rendered HTML.
+  var stashed = [];
+  var stashedSrc = html.replace(PRESERVE_RE, function (m) {
+    var idx = stashed.length;
+    stashed.push(m);
+    return "PRESERVE_" + idx + "";
+  });
+  // Collapse `> ... <` runs (whitespace between tags) to a single
+  // space when the run contains a newline. Single-line indentation
+  // shifts (e.g. `<a>...</a>  <b>` inline) stays intact.
+  var collapsed = stashedSrc.replace(/>\s*\n\s*</g, "><");
+  // Reinstate the preserved blocks.
+  return collapsed.replace(/PRESERVE_(\d+)/g, function (_m, i) {
+    return stashed[Number(i)];
+  });
+}
+
 export function formatPrice(minorUnits, currency) {
   if (!Number.isInteger(minorUnits)) {
     throw new TypeError("formatPrice: minorUnits must be an integer, got " + JSON.stringify(minorUnits));

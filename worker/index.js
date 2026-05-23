@@ -14,6 +14,7 @@ import {
 import { renderFeed } from "./render/feed.js";
 import { renderSitemap } from "./render/sitemap.js";
 import { renderBlogList, renderBlogArticle } from "./render/blog.js";
+import { minifyHtml as _minify } from "./render/_lib.js";
 import {
   listActiveProducts,
   getProductBySlug,
@@ -981,7 +982,7 @@ function _html(body, method) {
     "cache-control": "no-store",
   };
   if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
-  return new Response(body, { status: 200, headers: headers });
+  return new Response(_minify(body), { status: 200, headers: headers });
 }
 
 // Static pages — content changes only on code push, so the browser
@@ -998,7 +999,7 @@ function _staticHtml(body, method) {
     "cache-control": "public, max-age=3600, s-maxage=86400, must-revalidate",
   };
   if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
-  return new Response(body, { status: 200, headers: headers });
+  return new Response(_minify(body), { status: 200, headers: headers });
 }
 
 
