@@ -366,13 +366,13 @@ export default {
         return _staticHtml(renderPrivacy({
           shopName: env.SHOP_NAME    || "blamejs.shop",
           version:  env.WORKER_VERSION || "0.0.0",
-        }), request.method);
+        }), request.method, env);
       }
       if (pathname === "/terms") {
         return _staticHtml(renderTerms({
           shopName: env.SHOP_NAME    || "blamejs.shop",
           version:  env.WORKER_VERSION || "0.0.0",
-        }), request.method);
+        }), request.method, env);
       }
       if (pathname === "/SECURITY.md") {
         return Response.redirect("https://github.com/blamejs/blamejs.shop/blob/main/SECURITY.md", 302);
@@ -864,7 +864,7 @@ async function _edgeCartEmpty(request, env, version, shopName) {
       cartCount:     0,
       version:       version,
     });
-    return _html(html, request.method);
+    return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/cart", e, request, env, version, shopName);
   }
@@ -878,7 +878,7 @@ async function _edgeBlogList(request, env, _url, version, shopName) {
       shopName: shopName,
       version:  version,
     });
-    return _html(html, request.method);
+    return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/blog", e, request, env, version, shopName);
   }
@@ -906,7 +906,7 @@ async function _edgeBlogArticle(request, env, _url, version, shopName, slug) {
       shopName: shopName,
       version:  version,
     });
-    return _html(html, request.method);
+    return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/blog/:slug", e, request, env, version, shopName);
   }
@@ -921,7 +921,7 @@ async function _edgeHome(request, env, _url, version, shopName) {
       cartCount: 0,
       version:   version,
     });
-    return _html(html, request.method);
+    return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/", e, request, env, version, shopName);
   }
@@ -943,7 +943,7 @@ async function _edgeSearch(request, env, url, version, shopName) {
       cartCount: 0,
       version:   version,
     });
-    return _html(html, request.method);
+    return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/search", e, request, env, version, shopName);
   }
@@ -1008,7 +1008,7 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
       cartCount: 0,
       version:   version,
     });
-    return _html(html, request.method);
+    return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/products/:slug", e, request, env, version, shopName);
   }
@@ -1069,10 +1069,23 @@ function _withSecurityHeaders(base) {
   return out;
 }
 
-function _html(body, method) {
+// Link `rel=preload` for the critical theme stylesheet. Cloudflare
+// promotes Link headers on 200 responses to HTTP/103 Early Hints
+// frames automatically — repeat visitors see the stylesheet fetch
+// start before the HTML body arrives, accelerating First Contentful
+// Paint and Largest Contentful Paint. The single preload covers the
+// theme bundle every page references; per-route preloads (hero
+// images, etc.) compose by appending to the same header.
+function _earlyHintsLink(env) {
+  var version  = env.WORKER_VERSION || "0.0.0";
+  return "</assets/themes/default/css/main.css?v=" + version + ">; rel=preload; as=style; crossorigin";
+}
+
+function _html(body, method, env) {
   const headers = _withSecurityHeaders({
     "content-type":  "text/html; charset=utf-8",
     "cache-control": "no-store",
+    "link":          _earlyHintsLink(env || {}),
   });
   if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
   return new Response(_minify(body), { status: 200, headers: headers });
@@ -1082,7 +1095,7 @@ function _html(body, method) {
 // + Cloudflare zone cache can hold them for 24h. `must-revalidate`
 // ensures the cache re-checks once expiry hits instead of serving
 // indefinitely-stale content.
-function _staticHtml(body, method) {
+function _staticHtml(body, method, env) {
   // Browsers revalidate after an hour; Cloudflare's zone cache holds
   // for 24h. Splitting `max-age` from `s-maxage` lets the edge
   // amortize the render across the whole zone while keeping each
@@ -1090,6 +1103,7 @@ function _staticHtml(body, method) {
   const headers = _withSecurityHeaders({
     "content-type":  "text/html; charset=utf-8",
     "cache-control": "public, max-age=3600, s-maxage=86400, must-revalidate",
+    "link":          _earlyHintsLink(env || {}),
   });
   if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
   return new Response(_minify(body), { status: 200, headers: headers });
