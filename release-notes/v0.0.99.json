@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.99",
+  "date": "2026-05-23",
+  "headline": "`worker-esbuild-parse` smoke gate — catches the node-tolerates / esbuild-refuses syntax mismatch that broke v0.0.95 + v0.0.97 deploys",
+  "summary": "v0.0.95 and v0.0.97 shipped `worker/index.js` with a missing closing brace on `_warmingHtml`. Node's parser tolerated the unterminated declaration; `node --check` returned OK, smoke passed, the commits merged. Wrangler's esbuild refused with `Unexpected end of file` and blocked the Cloudflare Workers Builds deploy on both versions. v0.0.98 restored the brace. This patch adds a `worker-esbuild-parse` gate to `test/smoke.js` that runs `npx esbuild worker/index.js --bundle --format=esm --platform=neutral` (with the `@cloudflare/containers` + `node:*` imports externalised so the local run doesn't need the polyfills wrangler ships at deploy time) — parse-success-only check that catches the regression class before the commit lands.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "`worker-esbuild-parse` static gate in `test/smoke.js`", "body": "Runs `npx esbuild worker/index.js --bundle --format=esm --platform=neutral --external:@cloudflare/containers --external:node:* --log-level=error` against the Worker entrypoint. esbuild's parser is stricter than Node's at EOF — it catches unterminated function declarations, unclosed braces / parens / template literals, and similar shapes that node tolerates. The gate runs alongside the existing release-notes-rollup / changelog-in-sync / vendor-drift checks; verified by injection that an appended `function _badInject() {` trips it. The actual bundle resolution (Cloudflare Workers Builds runs `wrangler deploy` which composes the same esbuild + the nodejs_compat polyfills) stays the source of truth for runtime — this gate is parse-only, fast, and runs on every local + CI smoke." }
+      ]
+    }
+  ]
+}
