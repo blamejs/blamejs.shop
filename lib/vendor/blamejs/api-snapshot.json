@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "frameworkVersion": "0.12.6",
-  "createdAt": "2026-05-23T01:41:26.382Z",
+  "frameworkVersion": "0.12.8",
+  "createdAt": "2026-05-23T15:51:43.409Z",
   "exports": {
     "a2a": {
       "type": "object",
@@ -1705,6 +1705,110 @@
         "ArchiveError": {
           "type": "function",
           "arity": 4
+        },
+        "TarError": {
+          "type": "function",
+          "arity": 4
+        },
+        "adapters": {
+          "type": "object",
+          "members": {
+            "buffer": {
+              "type": "function",
+              "arity": 2
+            },
+            "fs": {
+              "type": "function",
+              "arity": 2
+            },
+            "http": {
+              "type": "function",
+              "arity": 2
+            },
+            "isRandomAccessAdapter": {
+              "type": "function",
+              "arity": 1
+            },
+            "isTrustedStreamAdapter": {
+              "type": "function",
+              "arity": 1
+            },
+            "objectStore": {
+              "type": "function",
+              "arity": 3
+            },
+            "trustedStream": {
+              "type": "function",
+              "arity": 2
+            }
+          }
+        },
+        "read": {
+          "type": "object",
+          "members": {
+            "ArchiveReadError": {
+              "type": "function",
+              "arity": 4
+            },
+            "DEFAULT_BOMB_POLICY": {
+              "type": "object",
+              "members": {
+                "maxEntries": {
+                  "type": "primitive",
+                  "valueType": "number"
+                },
+                "maxEntryDecompressedBytes": {
+                  "type": "primitive",
+                  "valueType": "number"
+                },
+                "maxExpansionRatio": {
+                  "type": "primitive",
+                  "valueType": "number"
+                },
+                "maxTotalDecompressedBytes": {
+                  "type": "primitive",
+                  "valueType": "number"
+                }
+              }
+            },
+            "DEFAULT_ENTRY_TYPE_POLICY": {
+              "type": "object",
+              "members": {
+                "devices": {
+                  "type": "primitive",
+                  "valueType": "boolean"
+                },
+                "fifos": {
+                  "type": "primitive",
+                  "valueType": "boolean"
+                },
+                "hardlinks": {
+                  "type": "primitive",
+                  "valueType": "boolean"
+                },
+                "sockets": {
+                  "type": "primitive",
+                  "valueType": "boolean"
+                },
+                "symlinks": {
+                  "type": "primitive",
+                  "valueType": "boolean"
+                }
+              }
+            },
+            "tar": {
+              "type": "function",
+              "arity": 2
+            },
+            "zip": {
+              "type": "function",
+              "arity": 2
+            }
+          }
+        },
+        "tar": {
+          "type": "function",
+          "arity": 0
         },
         "zip": {
           "type": "function",
@@ -4349,11 +4453,19 @@
           "type": "function",
           "arity": 4
         },
+        "bundleAdapterStorage": {
+          "type": "function",
+          "arity": 1
+        },
         "create": {
           "type": "function",
           "arity": 1
         },
         "diskStorage": {
+          "type": "function",
+          "arity": 1
+        },
+        "migrate": {
           "type": "function",
           "arity": 1
         },
@@ -16323,9 +16435,17 @@
           "type": "function",
           "arity": 1
         },
+        "entryTypePolicy": {
+          "type": "function",
+          "arity": 1
+        },
         "gate": {
           "type": "function",
           "arity": 1
+        },
+        "inspect": {
+          "type": "function",
+          "arity": 2
         },
         "inspectMagic": {
           "type": "function",
@@ -16335,9 +16455,17 @@
           "type": "function",
           "arity": 1
         },
+        "tarEntryPolicy": {
+          "type": "function",
+          "arity": 1
+        },
         "validateEntries": {
           "type": "function",
           "arity": 2
+        },
+        "zipBombPolicy": {
+          "type": "function",
+          "arity": 1
         }
       }
     },
@@ -20426,6 +20554,10 @@
         "validate": {
           "type": "function",
           "arity": 2
+        },
+        "verifyExtractionPath": {
+          "type": "function",
+          "arity": 3
         }
       }
     },
@@ -44777,6 +44909,23 @@
           "arity": 1
         },
         "serveStatic": {
+          "type": "function",
+          "arity": 1
+        }
+      }
+    },
+    "safeArchive": {
+      "type": "object",
+      "members": {
+        "SafeArchiveError": {
+          "type": "function",
+          "arity": 4
+        },
+        "extract": {
+          "type": "function",
+          "arity": 1
+        },
+        "inspect": {
           "type": "function",
           "arity": 1
         }

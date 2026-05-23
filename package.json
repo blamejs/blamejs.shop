@@ -1,6 +1,6 @@
 {
   "name": "@blamejs/blamejs-shop",
-  "version": "0.0.84",
+  "version": "0.0.85",
   "description": "Open-source framework built on blamejs. Vendored stack, zero npm runtime deps, PQC-first crypto, security-on by default.",
   "main": "lib/index.js",
   "scripts": {
@@ -35,7 +35,7 @@
     "type": "git",
     "url": "git+https://github.com/blamejs/blamejs.shop.git"
   },
-  "homepage": "https://github.com/blamejs/blamejs.shop",
+  "homepage": "https://blamejs.shop",
   "devDependencies": {
     "@cloudflare/containers": "^0.3.4",
     "wrangler": "^4.93.0"

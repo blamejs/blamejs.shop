@@ -4,7 +4,6 @@ import { renderHome }    from "./render/home.js";
 import { renderProduct } from "./render/product.js";
 import { renderSearch }  from "./render/search.js";
 import { renderPrivacy, renderTerms } from "./render/policy.js";
-import SECURITY_MD       from "../SECURITY.md";
 import {
   listActiveProducts,
   getProductBySlug,
@@ -353,7 +352,7 @@ export default {
         }), request.method);
       }
       if (pathname === "/SECURITY.md") {
-        return _staticMarkdown(SECURITY_MD, request.method);
+        return Response.redirect("https://github.com/blamejs/blamejs.shop/blob/main/SECURITY.md", 302);
       }
       if (pathname === "/CHANGELOG.md") {
         return Response.redirect("https://github.com/blamejs/blamejs.shop/blob/main/CHANGELOG.md", 302);
@@ -725,14 +724,6 @@ function _staticHtml(body, method) {
   return new Response(body, { status: 200, headers: headers });
 }
 
-function _staticMarkdown(body, method) {
-  const headers = {
-    "content-type":  "text/markdown; charset=utf-8",
-    "cache-control": "public, max-age=86400, must-revalidate",
-  };
-  if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
-  return new Response(body, { status: 200, headers: headers });
-}
 
 async function _forwardToContainer(request, env) {
   // Single logical container instance for now ("singleton"). The
