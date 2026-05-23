@@ -102,7 +102,8 @@ function _relPath(absPath) {
   return path.relative(path.resolve(__dirname, "..", ".."), absPath).replace(/\\/g, "/");
 }
 
-function _scan(regex, scope) {
+function _scan(regex, scope, opts) {
+  opts = opts || {};
   var files = scope === "test"      ? _testFiles()
             : scope === "workflows" ? _workflowFiles()
             : scope === "worker"    ? _workerFiles()
@@ -113,6 +114,23 @@ function _scan(regex, scope) {
     var content;
     try { content = fs.readFileSync(files[i], "utf8"); }
     catch (_e) { continue; }
+    if (opts.multiline) {
+      // Whole-file scan: regex spans line boundaries. `matchAll` walks
+      // every non-overlapping match; line number is derived from the
+      // byte offset by counting newlines before it.
+      var multiFlags = regex.flags.indexOf("g") === -1 ? regex.flags + "g" : regex.flags;
+      var globalRe   = new RegExp(regex.source, multiFlags);
+      var allHits    = content.matchAll(globalRe);
+      for (var hit of allHits) {
+        var lineNum = content.slice(0, hit.index).split(/\r?\n/).length;
+        matches.push({
+          file:    _relPath(files[i]),
+          line:    lineNum,
+          content: hit[0].split(/\r?\n/)[0].trim(),
+        });
+      }
+      continue;
+    }
     var lines = content.split(/\r?\n/);
     for (var j = 0; j < lines.length; j += 1) {
       var line = lines[j];
@@ -362,6 +380,15 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "`createHmac(...)` reinvents the framework's HMAC primitive. The PQC-first default is `b.crypto.hmacSha3`; protocol-mandated SHA-256 (Stripe webhooks) composes through `b.crypto.hmacSha256` wired into the Worker adapter. Direct `createHmac` calls outside `worker/b.js` get flagged.",
   },
   {
+    id:        "fsm-name-not-audit-action-safe",
+    primitive: "fsm.define({ name: \"<lowercase>[_<lowercase>]*\" }) — the framework's audit action validator at lib/vendor/blamejs/lib/audit.js:401 enforces `^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$` on every action, so the FSM `name` (which composes into `fsm.<name>.transition`) must match the same per-segment shape (`[a-z][a-z0-9_]*`)",
+    regex:     /\bfsm\.define\s*\(\s*\{[\s\S]{0,200}?\bname\s*:\s*"(?![a-z][a-z0-9_]*"\s*,)[^"]*"/,
+    scanScope: "lib",
+    multiline: true,
+    allowlist: [],
+    reason:    "FSM names that contain uppercase letters or hyphens (e.g. `emailCampaign`, `dropship-forwarding`) compose into audit actions the audit validator refuses with `audit action must be 'namespace.verb[.qualifier...]' (lowercase, dot-separated)`. The audit module then drops the event silently with an error log, which masks the bug until it surfaces in a smoke run. Use snake_case identifiers (`email_campaign`) or single lowercase words (`order`) so the action validates cleanly at emit time.",
+  },
+  {
     id:        "worker-direct-vendor-import",
     primitive: "import b from \"./b.js\" — go through the worker/b.js adapter so the Worker has one validated surface for framework primitives",
     regex:     /from\s+["'][^"']*lib\/vendor\/blamejs\/lib\//,
@@ -390,7 +417,7 @@ KNOWN_ANTIPATTERNS.forEach(function (ap) {
 });
 
 function _check(antipattern) {
-  var raw = _scan(antipattern.regex, antipattern.scanScope || "lib");
+  var raw = _scan(antipattern.regex, antipattern.scanScope || "lib", { multiline: !!antipattern.multiline });
   var afterMarkers = _filterMarkers(raw, antipattern.id);
   var allowSet = (antipattern.allowlist || []).reduce(function (acc, p) { acc[p] = true; return acc; }, {});
   return afterMarkers.filter(function (m) { return !allowSet[m.file]; });

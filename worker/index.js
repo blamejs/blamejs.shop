@@ -3,6 +3,7 @@ import b from "./b.js";
 import { renderHome }    from "./render/home.js";
 import { renderProduct } from "./render/product.js";
 import { renderSearch }  from "./render/search.js";
+import { renderPrivacy, renderTerms } from "./render/policy.js";
 import {
   listActiveProducts,
   getProductBySlug,
@@ -331,6 +332,31 @@ export default {
           },
         },
       );
+    }
+
+    // 2c. Static policy + doc pages — served entirely from the edge,
+    //     no container hop and no D1 read. Cached aggressively at the
+    //     visitor's browser + Cloudflare's zone cache (24h) since the
+    //     content only changes on a code push.
+    if ((request.method === "GET" || request.method === "HEAD")) {
+      if (pathname === "/privacy") {
+        return _staticHtml(renderPrivacy({
+          shopName: env.SHOP_NAME    || "blamejs.shop",
+          version:  env.WORKER_VERSION || "0.0.0",
+        }), request.method);
+      }
+      if (pathname === "/terms") {
+        return _staticHtml(renderTerms({
+          shopName: env.SHOP_NAME    || "blamejs.shop",
+          version:  env.WORKER_VERSION || "0.0.0",
+        }), request.method);
+      }
+      if (pathname === "/SECURITY.md") {
+        return Response.redirect("https://github.com/blamejs/blamejs.shop/blob/main/SECURITY.md", 302);
+      }
+      if (pathname === "/CHANGELOG.md") {
+        return Response.redirect("https://github.com/blamejs/blamejs.shop/blob/main/CHANGELOG.md", 302);
+      }
     }
 
     // 3. Storefront read routes — render at the edge when enabled.
@@ -684,6 +710,20 @@ function _html(body, method) {
   if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
   return new Response(body, { status: 200, headers: headers });
 }
+
+// Static pages — content changes only on code push, so the browser
+// + Cloudflare zone cache can hold them for 24h. `must-revalidate`
+// ensures the cache re-checks once expiry hits instead of serving
+// indefinitely-stale content.
+function _staticHtml(body, method) {
+  const headers = {
+    "content-type":  "text/html; charset=utf-8",
+    "cache-control": "public, max-age=86400, must-revalidate",
+  };
+  if (method === "HEAD") return new Response(null, { status: 200, headers: headers });
+  return new Response(body, { status: 200, headers: headers });
+}
+
 
 async function _forwardToContainer(request, env) {
   // Single logical container instance for now ("singleton"). The
