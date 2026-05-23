@@ -5,6 +5,7 @@ import { renderProduct } from "./render/product.js";
 import { renderSearch }  from "./render/search.js";
 import { renderPrivacy, renderTerms, renderNotFound, renderInternalError } from "./render/policy.js";
 import { renderFeed } from "./render/feed.js";
+import { renderSitemap } from "./render/sitemap.js";
 import {
   listActiveProducts,
   getProductBySlug,
@@ -12,6 +13,8 @@ import {
   listVariantsWithPrices,
   listMediaForProduct,
   recentBlogArticles,
+  listActiveProductSlugs,
+  listPublishedBlogSlugs,
 } from "./data/catalog.js";
 
 // Cloudflare Worker — edge router for blamejs.shop.
@@ -358,6 +361,37 @@ export default {
       }
       if (pathname === "/CHANGELOG.md") {
         return Response.redirect("https://github.com/blamejs/blamejs.shop/blob/main/CHANGELOG.md", 302);
+      }
+      if (pathname === "/sitemap.xml") {
+        try {
+          const [products, blogPosts] = await Promise.all([
+            listActiveProductSlugs(env.DB),
+            listPublishedBlogSlugs(env.DB),
+          ]);
+          const origin = b.safeUrl.parse(env.D1_BRIDGE_URL || "https://blamejs.shop").replace(/\/$/, "");
+          const xml = renderSitemap({
+            origin:    origin,
+            products:  products.rows,
+            blogPosts: blogPosts.rows,
+          });
+          return new Response(xml, {
+            status:  200,
+            headers: {
+              "content-type":  "application/xml; charset=utf-8",
+              "cache-control": "public, max-age=600, s-maxage=3600",
+            },
+          });
+        } catch (e) {
+          console.error("sitemap.xml render failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+          return new Response("Sitemap temporarily unavailable", {
+            status:  503,
+            headers: {
+              "content-type":  "text/plain; charset=utf-8",
+              "cache-control": "no-store",
+              "retry-after":   "60",
+            },
+          });
+        }
       }
       if (pathname === "/feed.xml") {
         try {
