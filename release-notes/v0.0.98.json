@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.98",
+  "date": "2026-05-23",
+  "headline": "Restore the missing closing brace on `_warmingHtml` — wrangler bundle was failing at EOF",
+  "summary": "An earlier patch trimmed too many trailing lines from `worker/index.js` while removing a detector-injection leftover, accidentally taking the closing `}` of `_warmingHtml` along with it. `node --check` parsed the file fine (Node's parser is more forgiving at EOF) but wrangler's esbuild reported `Unexpected end of file` because the function declaration was unterminated. v0.0.95 / v0.0.97 builds both failed on Cloudflare Workers Builds because of this. The brace is back. The smoke + detector gates passed at every prior ship because Node's parser tolerated the missing brace; adding a brace-balance gate to smoke is the next-shipped follow-up.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "`_warmingHtml`'s closing brace restored", "body": "The function body's string-concat return statement ends on the same line as the closing brace in the source template, and an earlier `head -n -N` trim that was meant to undo a detector-injection took the brace along with the injection. Node's `node --check` accepted the unterminated declaration (its parser doesn't require the brace at EOF in the same way esbuild does) but wrangler / esbuild refused with `Unexpected end of file`. v0.0.95 and v0.0.97 Cloudflare Workers Builds deploys both failed on this — they're now unblocked." }
+      ]
+    }
+  ]
+}
