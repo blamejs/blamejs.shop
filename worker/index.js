@@ -447,6 +447,37 @@ export default {
     // 8. Everything else — forward to the container.
     return _forwardToContainer(request, env);
   },
+
+  // Cron-triggered cache warmer. The wrangler.toml `[triggers]`
+  // schedule fires this every minute; the handler GETs each
+  // storefront read route with a browser-shaped header set so the
+  // edge-render path runs and the result lands in caches.default at
+  // each PoP the warmer reaches. The cache TTL is 60s so a once-a-
+  // minute warm keeps every active PoP populated across the gap.
+  // Auth-cookie-bearing visitors still bypass the cache (per-session
+  // content stays correct) — only the unauthenticated default
+  // fetches get warmed.
+  async scheduled(_event, env, ctx) {
+    if (env.EDGE_RENDER !== "on") return;
+    var routes = ["/", "/search"];
+    var headers = {
+      "user-agent":                "blamejs-shop cache-warmer (cron)",
+      "accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "accept-language":           "en-US,en;q=0.9",
+      "sec-fetch-mode":            "navigate",
+      "sec-fetch-site":            "none",
+      "sec-fetch-dest":            "document",
+      "sec-fetch-user":            "?1",
+      "upgrade-insecure-requests": "1",
+    };
+    var origin = env.D1_BRIDGE_URL || "https://blamejs.shop";
+    for (var i = 0; i < routes.length; i += 1) {
+      ctx.waitUntil(
+        fetch(origin + routes[i], { method: "GET", headers: headers })
+          .catch(function (e) { console.error("cache-warmer " + routes[i] + " failed:", _redact(e && e.stack || e)); })  // allow:console-direct — Worker substrate; console.* IS the observability sink
+      );
+    }
+  },
 };
 
 // ---- edge cache wrapper ---------------------------------------------------
@@ -464,10 +495,34 @@ export default {
 const CACHE_TTL_SECONDS = 60;
 const CACHE_SWR_SECONDS = 300;
 
+// Tracking query parameters that don't affect rendered output but
+// would otherwise force distinct cache entries per referral source.
+// Stripped from the cache key only — the original request URL stays
+// intact so the rendered output (and any analytics that read the
+// query) still sees the unmodified value.
+var TRACKING_PARAMS_RE = /^(?:utm_|fbclid$|gclid$|gbraid$|wbraid$|msclkid$|mc_eid$|mc_cid$|_ga$|igshid$|ref$|fb_action_|trk_|yclid$)/i;
+
 function _hasSessionCookie(request) {
   const cookieHeader = request.headers.get("cookie") || "";
   if (cookieHeader.length === 0) return false;
   return /\b(shop_sid|shop_auth)=/.test(cookieHeader);
+}
+
+// Build a cache-key URL by removing tracking parameters from the
+// request URL's query string. Two visitors arriving at `/` with
+// different `utm_source` values now share the same cache entry.
+function _cacheKeyUrl(originalUrl) {
+  var u = new URL(originalUrl);
+  var stripped = false;
+  var keys = [];
+  u.searchParams.forEach(function (_v, k) { keys.push(k); });
+  for (var i = 0; i < keys.length; i += 1) {
+    if (TRACKING_PARAMS_RE.test(keys[i])) {
+      u.searchParams.delete(keys[i]);
+      stripped = true;
+    }
+  }
+  return stripped ? u.toString() : originalUrl;
 }
 
 async function _edgeRenderCached(request, env, url, ctx) {
@@ -475,7 +530,7 @@ async function _edgeRenderCached(request, env, url, ctx) {
     return await _edgeRender(request, env, url);
   }
   const cache = caches.default;
-  const cacheKey = new Request(request.url, { method: "GET", headers: request.headers });
+  const cacheKey = new Request(_cacheKeyUrl(request.url), { method: "GET", headers: request.headers });
   const cached = await cache.match(cacheKey);
   if (cached) {
     const headers = new Headers(cached.headers);
