@@ -389,6 +389,14 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "FSM names that contain uppercase letters or hyphens (e.g. `emailCampaign`, `dropship-forwarding`) compose into audit actions the audit validator refuses with `audit action must be 'namespace.verb[.qualifier...]' (lowercase, dot-separated)`. The audit module then drops the event silently with an error log, which masks the bug until it surfaces in a smoke run. Use snake_case identifiers (`email_campaign`) or single lowercase words (`order`) so the action validates cleanly at emit time.",
   },
   {
+    id:        "unvalidated-env-url-as-origin",
+    primitive: "b.safeUrl.parse(env.<NAME>_URL || \"<default>\") — runs the configured URL through the framework's scheme allowlist (default HTTPS-only; refuses javascript: / file: / data:) and length cap before any callsite uses it as a fetch origin or feed `<link>` href",
+    regex:     /(?<!safeUrl\s*\.\s*parse\s*\(\s*)\benv\s*\.\s*[A-Z][A-Z0-9_]*_URL\b\s*\|\|\s*["']https?:/,
+    scanScope: "worker",
+    allowlist: [],
+    reason:    "`env.<NAME>_URL || \"https://...\"` builds a fetch origin (or feed `<link>` URL) from an operator-bound env var without validating its shape. A misconfigured wrangler.toml or compromised admin who set `D1_BRIDGE_URL` to a non-HTTPS scheme would silently flow through to the call site. Wrapping in `b.safeUrl.parse` validates against the framework's HTTPS-only allowlist + maxUrlLength cap; the trailing-slash strip leaves a clean origin to concat against. The negative-lookbehind on `safeUrl.parse(` excludes the validated form from matching.",
+  },
+  {
     id:        "worker-direct-vendor-import",
     primitive: "import b from \"./b.js\" — go through the worker/b.js adapter so the Worker has one validated surface for framework primitives",
     regex:     /from\s+["'][^"']*lib\/vendor\/blamejs\/lib\//,

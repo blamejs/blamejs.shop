@@ -1,0 +1,23 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.86",
+  "date": "2026-05-23",
+  "headline": "Edge 404 for missing product slugs + `/feed.xml` RSS at the edge + cache-control hierarchy",
+  "summary": "Three edge-coverage wins, all composed off the existing `b.template.escapeHtml` + `b.safeUrl.parse` primitives through the `worker/b.js` adapter. `/products/:slug` for a missing slug now renders a designed 404 at the edge instead of falling through to the container's bot-guard 403. `/feed.xml` generates an RSS 2.0 channel from the `blog_articles` table — D1 read directly via the bound binding, XML rendered through `b.template.escapeHtml` (XML 1.0 §4.6 accepts the same `&#x27;` numeric reference the HTML primitive emits). Cache-control on the static policy pages and the new 404 splits `max-age` from `s-maxage` so the browser revalidates fresh (1h) while Cloudflare's zone cache holds for 24h. Origin URLs in both the `/feed.xml` handler and the cache-warmer cron now pass through `b.safeUrl.parse` so the operator-configured `D1_BRIDGE_URL` is validated against the HTTPS-only allowlist before either fires a fetch.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Edge 404 page for missing product slugs — no container hop", "body": "`worker/render/policy.js` gains a `renderNotFound({ what, shopName, version })` helper composed off the same minimal layout as `/privacy` and `/terms`. `_edgeProduct` now returns the rendered 404 with HTTP 404 + `cache-control: public, max-age=60, s-maxage=300, must-revalidate` when `getProductBySlug` resolves to null — previously the handler returned null and the request fell through to the container's bot-guard 403 (which crawlers and visitors landed on alike when a slug had been archived or never existed)." },
+        { "title": "`/feed.xml` RSS 2.0 feed served from the edge", "body": "`worker/render/feed.js` renders a complete `<rss version=\"2.0\">` channel from a `blog_articles` row set; `worker/data/catalog.js` exposes `recentBlogArticles(DB, { limit })` (default 20). Each article surfaces as an `<item>` with `<title>`, `<link>`, `<guid isPermaLink=\"true\">`, `<pubDate>` (RFC 822-formatted), `<description>`, and `<author>`. XML escape composes `b.template.escapeHtml` — XML 1.0 §4.6 accepts the same `&#x27;` numeric reference the HTML primitive emits, so the framework primitive covers both surfaces. The handler returns `cache-control: public, max-age=600, s-maxage=3600` so readers re-fetch every 10 minutes while the edge holds for an hour. The footer's RSS link is no longer dead." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Cache-control on static pages now splits `max-age` from `s-maxage`", "body": "`/privacy` and `/terms` previously carried `cache-control: public, max-age=86400, must-revalidate` — browsers held the page for 24h, which delayed any operator-shipped policy update. The new shape is `public, max-age=3600, s-maxage=86400, must-revalidate`: browsers revalidate every hour, Cloudflare's zone cache amortizes the render across the whole zone for 24h. Visitors get the same TTFB; operator-shipped updates propagate in under an hour to every browser." },
+        { "title": "Origin URLs in `/feed.xml` + the cache-warmer cron now pass through `b.safeUrl.parse`", "body": "Both call sites previously built the origin via string concat from `env.D1_BRIDGE_URL`. `b.safeUrl.parse` validates the value against the framework's HTTPS-only allowlist (`ALLOW_HTTP_TLS` — refuses `javascript:`, `file:`, `data:` schemes) and returns the normalized URL. The trailing-slash strip leaves a clean origin the per-route path concatenates against. An attacker who somehow set `D1_BRIDGE_URL` to a non-HTTPS scheme would now fail at validation instead of letting the cron warm a hostile origin." }
+      ]
+    }
+  ]
+}
