@@ -411,6 +411,27 @@ export default {
           });
         }
       }
+      if (pathname === "/.well-known/security.txt") {
+        // RFC 9116 §2.5 — every line ends with CRLF; the Expires
+        // field is a year out so crawlers don't repeatedly refetch.
+        // Contact email is the operator-configurable owner; the
+        // GitHub-issues fallback gives a public reporting path.
+        const expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+        const body =
+          "Contact: mailto:security@blamejs.shop\r\n" +
+          "Contact: https://github.com/blamejs/blamejs.shop/security/advisories/new\r\n" +
+          "Expires: " + expires + "\r\n" +
+          "Encryption: https://github.com/blamejs/blamejs.shop/blob/main/SECURITY.md\r\n" +
+          "Policy: https://github.com/blamejs/blamejs.shop/blob/main/SECURITY.md\r\n" +
+          "Preferred-Languages: en\r\n";
+        return new Response(body, {
+          status:  200,
+          headers: _withSecurityHeaders({
+            "content-type":  "text/plain; charset=utf-8",
+            "cache-control": "public, max-age=3600, s-maxage=86400",
+          }),
+        });
+      }
       if (pathname === "/feed.xml") {
         try {
           const page = await recentBlogArticles(env.DB, { limit: 20 });
