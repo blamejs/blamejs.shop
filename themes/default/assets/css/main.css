@@ -2212,3 +2212,41 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
   .wishlist-item { grid-template-columns: 3rem 1fr; }
   .wishlist-item__remove { grid-column: 2; justify-self: start; }
 }
+
+/* ---- save for later --------------------------------------------- */
+.btn-secondary--sm { padding: 0.35rem 0.7rem; font-size: var(--text-sm); }
+.cart-line__btn--save { display: block; margin-bottom: var(--space-1); }
+
+.account-saved { max-width: 48rem; margin-inline: auto; padding-block: var(--space-6); }
+.account-saved__title { font-family: var(--font-display); font-size: var(--text-2xl); margin: var(--space-3) 0 var(--space-5); }
+.saved-empty { color: var(--mute); }
+.saved-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.saved-item {
+  display: grid;
+  grid-template-columns: 4rem 1fr auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  background: var(--paper);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-md);
+}
+.saved-item__media {
+  display: flex; align-items: center; justify-content: center;
+  width: 4rem; height: 4rem; overflow: hidden;
+  border-radius: var(--radius-sm); background: var(--bg-2);
+}
+.saved-item__media img { width: 100%; height: 100%; object-fit: cover; }
+.saved-item__mark { font-family: var(--font-display); font-size: var(--text-xl); color: var(--mute-2); }
+.saved-item__body { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.saved-item__title { font-weight: 600; color: var(--ink); text-decoration: none; }
+.saved-item__title:hover { color: var(--accent); }
+.saved-item__meta { font-size: var(--text-sm); color: var(--mute); }
+.saved-item__snapshot { color: var(--mute-2); }
+.saved-item__actions { display: flex; flex-direction: column; gap: var(--space-2); }
+.saved-item--gone { color: var(--mute); grid-template-columns: 1fr auto; }
+
+@media (max-width: 30rem) {
+  .saved-item { grid-template-columns: 3rem 1fr; }
+  .saved-item__actions { grid-column: 1 / -1; flex-direction: row; }
+}
