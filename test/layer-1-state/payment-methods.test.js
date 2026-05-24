@@ -428,7 +428,10 @@ async function _listForCustomerFilters() {
 async function _byProcessorTokenAndGet() {
   var f = _pmFactory();
   var custId = _newCustomerId();
-  var token = "pm_lookup_" + bFramework.uuid.v7().replace(/-/g, "");
+  // Use the shared safe-token helper. A dash-stripped uuid.v7() can
+  // occasionally form a 13+ consecutive-digit run (its timestamp prefix
+  // is digit-heavy), which the PAN-shape guard rightly refuses — a flake.
+  var token = _safeToken();
   var saved = await f.pm.add(_validAdd({ customer_id: custId, processor_token: token }));
 
   var got = await f.pm.get(saved.id);

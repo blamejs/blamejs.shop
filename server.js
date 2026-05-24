@@ -113,6 +113,15 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.wishlist.create({ cursorSecret: wishlistCursorSecret })
         : null;
 
+      // Save for later — move cart lines into a per-customer holding
+      // list and back. Cursor HMAC key derived like the others.
+      var saveForLaterCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("save-for-later-cursor", process.env.D1_BRIDGE_SECRET)
+        : "save-for-later-cursor-secret-dev-only";
+      var saveForLater = (catalog && cart)
+        ? bShop.saveForLater.create({ cursorSecret: saveForLaterCursorSecret, catalog: catalog })
+        : null;
+
       // Tax + shipping default tables — kick in when the operator
       // hasn't seeded `tax.rules` / `shipping.services` in config.
       // Zero-rate tax + a single $0 standard shipping service keeps
@@ -203,6 +212,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // The checkout block below reuses this same handle.
         if (reviews) sfDeps.reviews = reviews;
         if (wishlist) sfDeps.wishlist = wishlist;
+        if (saveForLater) sfDeps.saveForLater = saveForLater;
         sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;
