@@ -20,6 +20,8 @@ import {
   searchProducts,
   listVariantsWithPrices,
   listMediaForProduct,
+  getReviewSummary,
+  listPublishedReviews,
   recentBlogArticles,
   listActiveProductSlugs,
   listPublishedBlogSlugs,
@@ -770,6 +772,11 @@ async function _edgeRender(request, env, url) {
   }
   if (path.startsWith("/products/") && path.length > "/products/".length) {
     const slug = decodeURIComponent(path.slice("/products/".length));
+    // A product slug is a single path segment. Sub-paths like
+    // /products/:slug/review are container routes (the verified-buyer
+    // review form + submit) — fall through to container forwarding
+    // rather than 404-ing them as a bogus slug at the edge.
+    if (slug.indexOf("/") !== -1) return null;
     return await _edgeProduct(request, env, url, version, shopName, slug);
   }
   if (path === "/cart") {
@@ -943,9 +950,11 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
         }),
       });
     }
-    const [variantsWithPrices, media] = await Promise.all([
+    const [variantsWithPrices, media, reviewSummary, reviewList] = await Promise.all([
       listVariantsWithPrices(env.DB, product.id, "USD"),
       listMediaForProduct(env.DB, product.id),
+      getReviewSummary(env.DB, product.id),
+      listPublishedReviews(env.DB, product.id, 10),
     ]);
     const variants = [];
     const prices = {};
@@ -972,14 +981,22 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
         };
       }
     }
+    // "Write a review" CTA → the container's auth-gated form route,
+    // which enforces login + the verified-purchase gate. encodeURIComponent
+    // keeps the slug safe inside the href attribute.
+    const reviewForm = '<a class="btn-secondary reviews__cta" href="/products/'
+      + encodeURIComponent(product.slug) + '/review">Write a review</a>';
     const html = renderProduct({
-      product:   product,
-      variants:  variants,
-      prices:    prices,
-      media:     media.rows,
-      shopName:  shopName,
-      cartCount: 0,
-      version:   version,
+      product:       product,
+      variants:      variants,
+      prices:        prices,
+      media:         media.rows,
+      reviewSummary: reviewSummary,
+      reviews:       reviewList.rows,
+      reviewForm:    reviewForm,
+      shopName:      shopName,
+      cartCount:     0,
+      version:       version,
     });
     // Hero-image preload — the PDP's LCP element is almost always the
     // first media row's image. Preloading it via Link rel=preload

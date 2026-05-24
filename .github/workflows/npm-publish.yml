@@ -72,7 +72,9 @@ jobs:
           set -euo pipefail
           PKG_VERSION=$(node -e "console.log(require('./package.json').version)")
           echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+          EVENT_NAME="${{ github.event_name }}"
+          GIT_REF="${{ github.ref }}"
+          if [ "$EVENT_NAME" = "push" ] && [[ "$GIT_REF" == refs/tags/v* ]]; then
             TAG_VERSION="${GITHUB_REF#refs/tags/v}"
             echo "is_tag=true" >> "$GITHUB_OUTPUT"
             if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
@@ -152,7 +154,8 @@ jobs:
         id: subjects
         run: |
           set -euo pipefail
-          TARBALL=$(basename "$(ls dist/*.tgz | head -1)")
+          tarballs=(dist/*.tgz)
+          TARBALL=$(basename "${tarballs[0]}")
           HASHES=$(
             (cd dist && sha256sum "$TARBALL") && \
             sha256sum sbom.cdx.json sbom.vendored.cdx.json
@@ -292,7 +295,8 @@ jobs:
       - name: Release-digest sidecars (SHA-256 + SHA3-512)
         run: |
           set -euo pipefail
-          TARBALL=$(ls dist/*.tgz | head -1)
+          tarballs=(dist/*.tgz)
+          TARBALL="${tarballs[0]}"
           node src/scripts/sha3-digest.js "$TARBALL"
 
       - name: PQC sidecar — ML-DSA-65 signature (graceful skip if not set up)
@@ -319,7 +323,8 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          TARBALL=$(ls dist/*.tgz | head -1)
+          tarballs=(dist/*.tgz)
+          TARBALL="${tarballs[0]}"
           ln -sfn src/keys keys
           node src/scripts/sign-release-artifact.js "$TARBALL"
           echo "available=true" >> "$GITHUB_OUTPUT"
@@ -349,7 +354,8 @@ jobs:
             echo "::error::Release $TAG already exists. The workflow is authoritative for release creation."
             exit 1
           fi
-          TARBALL=$(ls dist/*.tgz | head -1)
+          tarballs=(dist/*.tgz)
+          TARBALL="${tarballs[0]}"
           HEADLINE=$(node -e "console.log(require('./src/release-notes/v${VERSION}.json').headline)")
           if [ -n "$HEADLINE" ]; then
             TITLE="$TAG — $HEADLINE"
@@ -379,7 +385,8 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          TARBALL=$(ls *.tgz | head -1)
+          tarballs=(*.tgz)
+          TARBALL="${tarballs[0]}"
           npm publish "$TARBALL" --provenance --access public
 
       - name: Verify the version landed on the registry

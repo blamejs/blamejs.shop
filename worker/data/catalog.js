@@ -269,3 +269,69 @@ export async function listMediaForProduct(DB, productId) {
   var rows = (res && res.results) ? res.results : [];
   return { rows: rows };
 }
+
+// Published review aggregate for a product's PDP — count, mean rating,
+// and the per-star distribution in one grouped round trip. Mirrors
+// `lib/reviews.js#summaryForProduct` but reads D1 directly (the edge
+// can't require the container's primitives). Published-only by
+// construction so pending / rejected rows never reach the storefront.
+//
+// Missing-table-resilient: operators who haven't applied migration
+// `0011_reviews.sql` get a zeroed summary instead of a D1 error
+// propagating into the PDP render (see `listPublishedBlogSlugs`).
+export async function getReviewSummary(DB, productId) {
+  var empty = { count: 0, avg_rating: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
+  if (typeof productId !== "string" || productId.length === 0) return empty;
+  try {
+    var res = await DB
+      .prepare(
+        "SELECT rating, COUNT(*) AS n FROM reviews " +
+        "WHERE product_id = ?1 AND status = 'published' GROUP BY rating"
+      )
+      .bind(productId)
+      .all();
+    var rows = (res && res.results) ? res.results : [];
+    var distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    var count = 0;
+    var sum   = 0;
+    for (var i = 0; i < rows.length; i += 1) {
+      var rating = Number(rows[i].rating);
+      var n      = Number(rows[i].n);
+      if (rating >= 1 && rating <= 5) {
+        distribution[rating] = n;
+        count += n;
+        sum   += rating * n;
+      }
+    }
+    return { count: count, avg_rating: count === 0 ? 0 : sum / count, distribution: distribution };
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return empty;
+    throw e;
+  }
+}
+
+// Published reviews for a product's PDP, newest first. Returns only the
+// display columns — never the customer identity (the schema stores a
+// `customer_id_hash`, never raw email; the storefront shows
+// "Verified buyer" / "Customer" from `verified_purchase`, not a name).
+// `limit` defaults to 10 and is clamped to MAX_LIMIT. Missing-table-
+// resilient (see `getReviewSummary`).
+export async function listPublishedReviews(DB, productId, limit) {
+  if (typeof productId !== "string" || productId.length === 0) return { rows: [] };
+  var lim = _clampLimit(limit == null ? 10 : limit);
+  try {
+    var res = await DB
+      .prepare(
+        "SELECT rating, title, body, verified_purchase, created_at FROM reviews " +
+        "WHERE product_id = ?1 AND status = 'published' " +
+        "ORDER BY created_at DESC, id DESC LIMIT ?2"
+      )
+      .bind(productId, lim)
+      .all();
+    var rows = (res && res.results) ? res.results : [];
+    return { rows: rows };
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return { rows: [] };
+    throw e;
+  }
+}

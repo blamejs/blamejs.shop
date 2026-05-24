@@ -36,11 +36,22 @@ _vendored_ver() {
 }
 
 _latest_tag() {
-  # The `|| true` on each pipe member keeps `set -euo pipefail` from
-  # aborting the parent script when the upstream is unreachable or the
-  # response isn't JSON. Empty stdout is the canonical "unresolved"
-  # signal; the `--check` caller branches on that.
-  { curl -sL --max-time 8 "$RELEASES_URL" 2>/dev/null || true; } | node -e "
+  # Authenticate when a token is present (CI exports GITHUB_TOKEN / GH_TOKEN).
+  # The unauthenticated GitHub API caps at 60 requests/hour/IP, which the
+  # shared CI runner pools — macOS especially — routinely exhaust, returning
+  # a 403 that parses to no tag. A token raises the ceiling to 1000+/hour.
+  #
+  # The `|| true` keeps `set -euo pipefail` from aborting the parent script
+  # when the upstream is unreachable or the response isn't JSON. Empty stdout
+  # is the canonical "unresolved" signal; the `--check` caller branches on it.
+  local tok resp
+  tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  if [ -n "$tok" ]; then
+    resp="$(curl -sL --max-time 8 -H "Authorization: Bearer $tok" "$RELEASES_URL" 2>/dev/null || true)"
+  else
+    resp="$(curl -sL --max-time 8 "$RELEASES_URL" 2>/dev/null || true)"
+  fi
+  printf '%s' "$resp" | node -e "
     var data = '';
     process.stdin.on('data', function (c) { data += c; });
     process.stdin.on('end', function () {

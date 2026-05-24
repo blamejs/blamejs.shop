@@ -139,3 +139,12 @@ node -e "
   framework's at-rest key material. Operators MUST rotate the
   passphrase via `b.vault.rotate` after any container image rebuild
   that changed a vendored crypto dependency.
+- **Reviews are purchase-gated and operator-moderated.** A review can
+  only be submitted by a signed-in customer who has a completed order
+  for that product; the route confirms the purchase before accepting
+  and re-checks it on the POST, so a direct request can't plant a
+  review for a product the account never bought. Submissions land in a
+  `pending` state and never reach the storefront until an operator
+  publishes them through `/admin/reviews`. The author identity is
+  stored hash-only (`b.crypto.namespaceHash`) — the raw email is never
+  persisted.

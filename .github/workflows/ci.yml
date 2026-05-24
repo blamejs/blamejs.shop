@@ -48,9 +48,13 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.0
         with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Run gitleaks via its published container rather than the
+      # marketplace action — the repo's Actions allowlist permits only
+      # the vetted set, and a disallowed `uses:` fails the whole
+      # workflow at startup. Mirrors the operator-local scan in the
+      # release runbook + the docker pattern the actionlint job uses.
+      - name: Scan git history for secrets
+        run: docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:latest git --config=.gitleaks.toml --redact --exit-code=1
 
   actionlint:
     name: Actionlint (workflow files)
@@ -66,7 +70,9 @@ jobs:
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.0
-      - run: bash scripts/vendor-update.sh --check
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/vendor-update.sh --check
 
   smoke:
     name: Smoke (${{ matrix.os }})
@@ -84,7 +90,11 @@ jobs:
       - name: Vendor blamejs (latest tag)
         # Smoke can't run without a vendored copy; fetch it fresh on
         # every CI run so we exercise against the latest blamejs
-        # release rather than a stale shrink-wrap.
+        # release rather than a stale shrink-wrap. GITHUB_TOKEN raises
+        # the GitHub API rate limit so tag resolution doesn't 403 on
+        # shared runner IP pools (the unauthenticated 60/hr cap).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/vendor-update.sh blamejs latest
         shell: bash
       - name: Run smoke
