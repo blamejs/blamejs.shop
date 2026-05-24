@@ -2267,3 +2267,27 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
 .address-form { max-width: 32rem; }
 .address-form__check { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
 .form-field__req { color: var(--danger); }
+
+/* ---- returns ---------------------------------------------------- */
+.account-returns, .return-form-page { max-width: 44rem; margin-inline: auto; padding-block: var(--space-6); }
+.account-returns__title, .return-form-page__title { font-family: var(--font-display); font-size: var(--text-2xl); margin: var(--space-3) 0 var(--space-5); }
+.return-form-page__order { color: var(--mute); font-size: var(--text-sm); margin: 0 0 var(--space-4); }
+.return-empty { color: var(--mute); }
+.return-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.return-card { padding: var(--space-4); background: var(--paper); border: 1px solid var(--hair); border-radius: var(--radius-md); }
+.return-card__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.return-card__rma { font-weight: 700; }
+.return-card__meta { color: var(--mute); font-size: var(--text-sm); margin: var(--space-2) 0 0; }
+.return-card__reject { color: var(--danger); font-size: var(--text-sm); margin: var(--space-2) 0 0; }
+.return-status { font-size: var(--text-xs); font-weight: 600; text-transform: capitalize; padding: 0.1rem 0.5rem; border-radius: var(--radius-pill); background: var(--bg-2); color: var(--mute); }
+.return-status--approved, .return-status--received { background: var(--accent-l); color: var(--accent-d); }
+.return-status--refunded { background: #e6f4ea; color: var(--success); }
+.return-status--rejected { background: #fdecea; color: var(--danger); }
+.return-form__lines { border: 0; margin: 0; padding: 0; }
+.return-form__lines legend { font-weight: 600; margin-bottom: var(--space-2); }
+.return-line-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.return-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--hair-2); }
+.return-line__pick { display: flex; align-items: center; gap: var(--space-2); }
+.return-line__qty { font-size: var(--text-sm); color: var(--mute); }
+.return-line__qty input { width: 4rem; }
+.return-line__of { color: var(--mute-2); }
