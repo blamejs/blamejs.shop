@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.117",
+  "date": "2026-05-24",
+  "headline": "Fix Add to Cart — `container.fetch` was auto-following 303 redirects and dropping `Set-Cookie`",
+  "summary": "Add to Cart appeared to do nothing for visitors: the form POST returned 200 with the empty-cart page instead of the expected 303 + Set-Cookie + Location: /cart. Root cause: `_forwardToContainer` constructed the container-side Request with the Workers default `redirect: \"follow\"`, which auto-follows the storefront's 303 inside the Worker. The auto-followed GET /cart strips the `Set-Cookie: shop_sid=...` header from the intermediate 303 response — so the session cookie never reaches the visitor's browser, the subsequent (visible to the visitor) /cart GET arrives without the session, and the cart-line lookup keys on a fresh empty cart. End result for the visitor: the line WAS persisted to the container's session store, but every subsequent page load creates a new sessionless cart and shows it empty. Fix: `_attemptRequest` constructs the container-side Request with `redirect: \"manual\"` so the 303 + Set-Cookie chain passes through verbatim to the visitor's browser, which carries the cookie forward through the natural redirect navigation. Same bug affected `/cart/lines/<id>/update`, `/cart/lines/<id>/remove`, `/newsletter`, and any other server-side 303-with-cookie pattern routed through the container — all of those are fixed by the single line change.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Cart-mutation 303 redirects preserve their `Set-Cookie` end-to-end", "body": "`worker/index.js#_forwardToContainer` now constructs the container-side Request with `redirect: \"manual\"`. The storefront's POST handlers (`cart/lines`, `cart/lines/<id>/update`, `cart/lines/<id>/remove`, `newsletter`, future checkout submits) all reply with 303 + `Location` + `Set-Cookie: shop_sid=...` on the same response. Manual redirect handling passes that triple verbatim to the visitor's browser, which carries the cookie through the redirect navigation. Add to Cart now persists across the redirect; subsequent /cart loads show the line; the visitor sees what they expected to see when they clicked the button." }
+      ]
+    }
+  ]
+}

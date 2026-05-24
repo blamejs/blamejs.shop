@@ -1233,11 +1233,25 @@ async function _forwardToContainer(request, env) {
   const hasBody = method !== "GET" && method !== "HEAD";
   const buffered = hasBody ? await request.arrayBuffer() : null;
   function _attemptRequest() {
-    if (!hasBody) return new Request(request, {});
+    // `redirect: "manual"` is essential: the storefront's POST
+    // handlers (cart/lines, cart/lines/<id>/update, cart/lines/<id>/
+    // remove, newsletter, checkout-submit) all reply with 303 + a
+    // `Location: /cart` (or similar) AND a `Set-Cookie: shop_sid=...`
+    // on the same response. The default `redirect: "follow"` makes
+    // the Workers runtime fetch the redirect target internally,
+    // dropping the `Set-Cookie` header on the auto-followed GET —
+    // so the final response surfaces an empty cart (the session
+    // cookie never reached the visitor's browser). Manual handling
+    // returns the 303 verbatim; the browser's UA handles the
+    // redirect and carries the cookie forward.
+    if (!hasBody) {
+      return new Request(request, { redirect: "manual" });
+    }
     return new Request(request.url, {
-      method:  request.method,
-      headers: request.headers,
-      body:    buffered.slice(0),
+      method:   request.method,
+      headers:  request.headers,
+      body:     buffered.slice(0),
+      redirect: "manual",
     });
   }
   function _isColdStartFailure(bodyPreview) {
