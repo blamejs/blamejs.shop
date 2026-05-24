@@ -637,6 +637,979 @@ var KNOWN_ANTIPATTERNS = [
     ],
     reason:    "Direct leaf-module imports (`import bMoney from \"../lib/vendor/blamejs/lib/money.js\"` etc.) bypass the Worker adapter's single point of validation. The adapter is the place where leaf-module Worker-compatibility lives; broadening primitive access through ad-hoc imports drops that gate. Add a new namespace to `worker/b.js` instead.",
   },
+
+  // ---- Catalog mirror from vendored blamejs ----
+  // Ported from lib/vendor/blamejs/test/layer-0-primitives/codebase-patterns.test.js.
+  // Detectors scoped "shop" (lib + worker) so reinventions are caught
+  // anywhere in the application surface. Allowlist entries that
+  // reference vendor paths (e.g. `lib/crypto.js`) are kept verbatim;
+  // shop's `_walk` skips the vendor tree so they're harmless no-ops.
+    {
+    // Codex P1 on v0.12.7 PR #158 — archive-read.extract's rollback
+    // cleanup deleted PRE-EXISTING destination files when a later
+    // entry failed. The renameSync(tmpPath, resolvedPath) silently
+    // overwrote operator files at the destination, then on abort the
+    // catch-block rmSync wiped them out — permanent data loss
+    // disguised as atomic rollback. Fix: refuse to write when the
+    // destination path already exists; force operators to extract
+    // into a fresh / empty subtree.
+    //
+    // Detector scope: any lib/archive*.js or lib/safe-archive.js file
+    // that calls renameSync into a path it ALSO tracks for cleanup
+    // MUST refuse overwrite up-front. Codify as a file-scoped invariant:
+    // archive-read.js must contain "destination-exists" refusal code.
+    id: "archive-extract-overwrite-without-refusal",
+    primitive: "extract loops in lib/archive-read.js MUST refuse to write to a destination path that already exists — atomic rollback via tmp-rename + tracked-path cleanup is only safe when every tracked path was newly created. Pre-existing files at the destination + catch-block rmSync = data loss.",
+    // File-scoped: only fires on archive-read.js / safe-archive.js
+    // shape. The pattern is renameSync of a tmpPath onto resolvedPath
+    // (the canonical destination variable) — atomic-file.js's
+    // operator-file rename is a different shape (operator already
+    // owns the destination context); http-client.js's atomic-tmp
+    // rename writes operator-supplied paths under operator-supplied
+    // tmp dirs, also a different concern.
+    regex: /written\.push\s*\(\s*\{[^}]*path:\s*resolvedPath/,
+    scanScope: "shop",
+    requires: /destination-exists/,
+    skipCommentLines: true,
+    allowlist: [],
+    reason: "Codex P1 on v0.12.7 PR #158 — archive-read.extract used renameSync to atomically place each decompressed entry at its canonical destination + tracked written[].path for catch-block cleanup. When the destination directory was non-empty, the rename silently overwrote operator files; on extract abort, the cleanup deleted them. Fix: refuse upfront if destination path exists, force operators to use a fresh / empty subtree. Detector locks the shape: any extract code that tracks resolvedPath for catch-block cleanup MUST carry a `destination-exists` refusal in the same file.",
+  },
+    {
+    // v0.12.9 — Direct node:zlib gunzip calls in lib/ must compose
+    // b.safeDecompress (1 GiB output / 100× ratio default caps) so a
+    // hostile gzip stream can't OOM or expand-bomb the host. Mirrors
+    // the v0.11.5 must-compose pattern. lib/archive-gz.js IS the
+    // canonical gunzip site (it wires safeDecompress in directly);
+    // every other lib/ call to zlib.gunzipSync / zlib.createGunzip
+    // must either route through b.safeDecompress OR carry a marker
+    // explaining why it's safe to bypass (e.g. the caller already
+    // applied `maxOutputLength` AND the input is operator-controlled).
+    id: "archive-gz-without-safedecompress",
+    primitive: "every lib/ call to zlib.gunzipSync / zlib.createGunzip / gunzip MUST either go through lib/archive-gz.js (which composes b.safeDecompress) OR carry an `allow:archive-gz-without-safedecompress` marker with the reason the bomb gate is bypassed (typically: `maxOutputLength` is already enforced + the input is operator-trusted).",
+    regex: /zlib\.(?:gunzipSync|createGunzip)\b/,
+    scanScope: "shop",
+    requires: /safeDecompress|maxOutputLength|allow:archive-gz-without-safedecompress/,
+    skipCommentLines: true,
+    allowlist: [
+      // archive-gz.js is the canonical gunzip site — it directly
+      // imports safeDecompress and routes every call through it.
+      // Listed here so the detector doesn't false-positive against
+      // its own enforcement file.
+      "lib/archive-gz.js",
+    ],
+    reason: "v0.12.9 — b.archive.read.gz is the framework's gzip read primitive and composes b.safeDecompress for every gunzip. Direct lib/ zlib.gunzipSync / zlib.createGunzip calls must either route through b.archive.read.gz, compose b.safeDecompress inline, OR carry an explicit `maxOutputLength` cap with the bypass marker. The detector locks the contract so v0.13+ primitives that handle a gzip-wrapped payload can't quietly drop the bomb cap.",
+  },
+    {
+    // Codex P1 + P2 on v0.12.9 PR #160 — backup readBundle's
+    // tar.gz restore path inherited archive.read.gz defaults (1 GiB
+    // output / 100× ratio), which made the SAME primitive write
+    // bundles it couldn't read back. The detector enforces the
+    // write/read contract for self-authored gzip payloads: any
+    // lib/ call to `archive.read.gz(...)` from a context that has
+    // its own size budget (paired with a `maxBundleBytes` /
+    // `maxOutputBytes` / `maxPayloadBytes` opt) MUST propagate
+    // that budget to read.gz via `maxDecompressedBytes` AND
+    // disable the ratio cap (`maxExpansionRatio: 0`) — bombs in
+    // self-authored payloads are already prevented at write time.
+    id: "archive-read-gz-without-self-authored-budget",
+    primitive: "callers of archive.read.gz from a context that gates its own writes on a size cap (maxBundleBytes / similar) must pass maxDecompressedBytes + maxExpansionRatio:0 so the write/read contract is symmetric. Bomb defenses live at the upstream cap; the gz layer just decompresses.",
+    // File-scoped: only fires on backup/index.js shapes for now.
+    // archive.read.gz called with no opts is fine in operator code
+    // (adversarial-input case); the antipattern is when the caller
+    // also writes payloads under its own size cap.
+    regex: /archive(?:Lazy\(\))?\.read\.gz\s*\([^)]*\)\s*[^,{]/,
+    scanScope: "shop",
+    requires: /maxDecompressedBytes/,
+    skipCommentLines: true,
+    allowlist: [
+      // archive-gz.js IS the read.gz primitive itself.
+      "lib/archive-gz.js",
+    ],
+    reason: "Codex P1/P2 on v0.12.9 PR #160 — backup readBundle's tar.gz restore inherited the 100× ratio + 1 GiB output defaults, breaking restore for zero-filled DB dumps + ~1-8 GiB bundles that writeBundle accepts. Fix: every archive.read.gz call from a primitive with its own size budget propagates that budget. Detector locks the symmetry.",
+  },
+    {
+    // Codex P1 on v0.12.8 PR #159 — archive-tar-read.js's walker
+    // advanced `pos` by the declared padded block size without
+    // checking that those bytes existed in the buffer. A truncated
+    // archive (header says 11 bytes, buffer holds 8) silently
+    // produced an entry whose extract() sliced the 8-byte prefix
+    // and wrote it as if it were the complete file. Fix: refuse
+    // upfront with a `truncated-entry` typed error when
+    // `bodyStart + paddedSize > bytes.length`. Same shape applies
+    // to the pax-extended-header path (its `bodyEnd` advance was
+    // the same uncapped arithmetic).
+    id: "archive-tar-walker-without-truncation-check",
+    primitive: "tar walkers in lib/archive-tar-read.js MUST verify that the declared block size fits within the remaining buffer before advancing `pos` — a header that claims more bytes than the buffer holds is a truncated archive, not a valid entry. The refusal carries `truncated-entry` code so operators can distinguish wire-format-bad input from policy-bad input.",
+    // File-scoped: only fires on archive-tar-read.js. The walker
+    // advances pos by paddedSize (Math.ceil(hdr.size / BLOCK_SIZE)
+    // * BLOCK_SIZE) — any code that adds paddedSize to pos without
+    // a preceding bounds check is the smell.
+    regex: /pos\s*\+=\s*paddedSize/,
+    scanScope: "shop",
+    requires: /truncated-entry/,
+    skipCommentLines: true,
+    allowlist: [],
+    reason: "Codex P1 on v0.12.8 PR #159 — archive-tar-read.js's tar walker recorded each entry and advanced pos by paddedSize without verifying the declared bytes existed in the buffer. A truncated archive silently produced a partial-content entry on extract — exact reproducer in the Codex thread: declared 11-byte file backed by 8 bytes of buffer produced an 8-byte output. Fix: refuse upfront with `archive-tar/truncated-entry` typed error. Detector locks the shape: any code path that advances pos by paddedSize in archive-tar-read.js MUST carry a `truncated-entry` refusal in the same file.",
+  },
+    {
+    // v0.12.10 — when bundleAdapterStorage carries a posture that
+    // mandates encryption-at-rest (HIPAA / PCI-DSS / similar), the
+    // same call-site MUST propagate cryptoStrategy: "recipient"
+    // (or refuse upstream) — the storage adapter alone cannot
+    // satisfy the regulatory contract. The library-internal refusal
+    // at `backup/posture-requires-encryption` is the runtime gate;
+    // this detector locks the shape at the static-analysis layer
+    // so any future caller that drops cryptoStrategy from a
+    // posture-bearing call surfaces during codebase-patterns.
+    id: "backup-adapter-storage-without-posture-check",
+    primitive: "any bundleAdapterStorage({ ... posture: ... }) call site that names a posture from the HIPAA / PCI-DSS / etc. set MUST also pass cryptoStrategy. The library-side refusal exists; the detector exists so the contract can't drift silently when a primitive composes bundleAdapterStorage indirectly.",
+    regex: /bundleAdapterStorage\s*\([^)]*posture:/,
+    scanScope: "shop",
+    requires: /cryptoStrategy|allow:backup-adapter-storage-without-posture-check/,
+    skipCommentLines: true,
+    allowlist: [
+      // backup/index.js IS the primitive — the runtime refusal lives
+      // there. Self-allowed so the detector doesn't flag the
+      // refusal-emitting code itself.
+      "lib/backup/index.js",
+    ],
+    reason: "v0.12.10 — Flavor 1 recipient wrap lands as bundleAdapterStorage's cryptoStrategy: \"recipient\". HIPAA + PCI-DSS postures refuse cryptoStrategy: \"none\" at runtime; this detector adds the static-side gate so a primitive composing bundleAdapterStorage with a posture opt can't accidentally drop the cryptoStrategy propagation. Future Flavor 2 (per-entry, v0.12.11) extends the same contract.",
+  },
+    {
+    id: "dot-stuff-jsregex-bare-lf",
+    primitive: "b.safeSmtp.dotStuff(buf) — CRLF-aware byte-level dot-stuffing",
+    // `.replace(/^\./gm, "..")` on a JS string treats bare LF as a line boundary, so bodies
+    // containing bare-LF lines that start with '.' gain spurious stuffing the receiver's strict-CRLF
+    // parser won't undo. Route through safeSmtp.dotStuff which only treats canonical \r\n as a boundary.
+    regex: /\.replace\(\s*\/\^\\\.\/gm\s*,\s*["']\.\.["']\s*\)/,
+    scanScope: "shop",
+    allowlist: [],
+    reason: "POP3 RETR + SMTP DATA dot-stuffing. The JS regex `/^\\./gm` matches bare-LF line starts as well as CRLF starts, so the stuffing differs from RFC 1939 §3 / RFC 5321 §4.5.2 (canonical CRLF only). Use b.safeSmtp.dotStuff(buf) on the raw Buffer — it walks bytes and recognizes ONLY \\r\\n as a line boundary.",
+  },
+    {
+    // Codex P1 (v0.10.13 PR #102) — ASN.1 context-specific implicit
+    // tag bytes (0x80 | N for primitive, 0xa0 | N for constructed)
+    // hand-rolled at call sites instead of routed through the
+    // dedicated helpers. The bug class: an SKI wrap that should be
+    // [0] IMPLICIT OCTET STRING (primitive, 0x80) emitted as
+    // constructed (0xa0) because the developer wrote `0xa0 | 0`
+    // by hand and didn't think about the CHOICE alternative's
+    // primitive-vs-constructed distinction. cms-codec.js provides
+    // `_writeImplicitPrimitive` + `_writeImplicitConstructed`;
+    // callers pick by intent and the tag byte is built inside the
+    // helper, not at the call site.
+    id: "hand-rolled-context-specific-implicit-tag",
+    primitive: "_writeImplicitPrimitive(N, value)  OR  _writeImplicitConstructed(N, payload)",
+    regex: /\b(?:tagByte|tag)\s*=\s*0x(?:80|a0)\s*\|\s*\(?\s*\w+\s*&\s*0x1f\s*\)?/,
+    scanScope: "shop",
+    allowlist: [
+      // Helpers + asn1-der live here; their internal use of the bit
+      // pattern is the source-of-truth implementation.
+      "lib/cms-codec.js",
+      "lib/asn1-der.js",
+    ],
+    reason: "Codex flagged cms-codec.js _writeImplicit wrapping a SubjectKeyIdentifier in [0] CONSTRUCTED instead of [0] PRIMITIVE — strict CMS parsers reject the structure. New ASN.1 encoders MUST use the named helpers (_writeImplicitPrimitive / _writeImplicitConstructed) rather than hand-rolling the tag byte, so the primitive-vs-constructed distinction is forced by call-site naming.",
+  },
+    {
+    id: "inline-aggregate-issues",
+    primitive: "gateContract.aggregateIssues(issues)",
+    regex: /return\s*\{\s*ok:\s*!issues\.some\(function\s*\(i\)\s*\{\s*return\s+i\.severity\s*===\s*["']critical["']\s*\|\|\s*i\.severity\s*===\s*["']high["']/,
+    scanScope: "shop",
+    allowlist: ["lib/gate-contract.js"],
+    reason: "Extracted across guard-* validate paths that build the { ok, issues } result. The 5-line ok-aggregation tail (no critical/high → ok=true) was identical across guards; consolidated.",
+  },
+    {
+    id: "inline-assert-no-char-threats",
+    primitive: "codepointClass.assertNoCharThreats(text, opts, errorFactory, codePrefix)",
+    regex: /opts\.bidiPolicy\s*===\s*["']reject["'][\s\S]{0,150}?BIDI_RE\.test[\s\S]{0,200}?opts\.nullBytePolicy\s*===\s*["']reject["']/,
+    scanScope: "shop",
+    allowlist: ["lib/codepoint-class.js"],
+    reason: "Extracted across guard-html / guard-svg sanitize entry — every guard's reject-on-character-class threats opens with the same `if (opts.bidiPolicy === 'reject' && BIDI_RE.test(s)) throw; if (opts.nullBytePolicy === 'reject' && s.indexOf(NULL_BYTE) !== -1) throw; if (opts.controlPolicy === 'reject' && C0_CTRL_RE.test(s)) throw;` cascade. Centralized so the reject-policy contract is identical across the family. guard-csv keeps its own inline cell-level reject for opt-name vocabulary reasons (bidiCharPolicy etc.).",
+  },
+    {
+    id: "inline-audit-emit-wrapper",
+    primitive: "validateOpts.makeAuditEmitter(audit)",
+    // Detect the literal `audit.safeEmit(Object.assign({ action: action },
+    // info))` shape inside a try/catch — the boilerplate every primitive
+    // previously rolled to wrap the operator-supplied audit handle.
+    regex: /audit\.safeEmit\s*\(\s*Object\.assign\s*\(\s*\{\s*action\s*:\s*action\s*\}/,
+    scanScope: "shop",
+    allowlist: ["lib/validate-opts.js"],
+    reason: "Extracted to validateOpts.makeAuditEmitter — closure factory parallel to safeAsync.makeDropCallback. Replaces the per-file `function _emit(action, info) { if (!audit) return; try { ... } catch ... }` boilerplate.",
+  },
+    {
+    id: "inline-audit-shape-validation",
+    primitive: "validateOpts.auditShape(audit, label, ErrorClass)",
+    regex: /opts\.audit\s*!==\s*undefined\s*&&\s*opts\.audit\s*!==\s*null[\s\S]{0,200}?safeEmit\s*!==\s*["']function["']/,
+    scanScope: "shop",
+    allowlist: [],
+    reason: "Extracted across api-key / cache / notify / permissions / seeders / webhook (signer + verifier) / auth/lockout / middleware/db-role-for / external-db-migrate. The inline shape was identical 10x.",
+  },
+    {
+    id: "inline-bad-input-issue-result",
+    primitive: "gateContract.badInputResultIfNotStringOrBuffer(input)",
+    regex: /typeof\s+input\s*!==\s*["']string["']\s*&&\s*!Buffer\.isBuffer\(input\)\s*\)\s*\{\s*return\s*\{\s*ok:\s*false,\s*issues:\s*\[\s*\{\s*kind:\s*["']bad-input["']/,
+    scanScope: "shop",
+    allowlist: ["lib/gate-contract.js"],
+    reason: "Extracted across guard-svg / guard-filename validate paths that need raw-Buffer input pre-conversion (svg for SVGZ magic, filename for overlong-UTF-8 byte scan). The bad-input fallback `{ ok: false, issues: [{ kind: bad-input, ... }] }` return shape was identical. Sanitize throw paths (different control-flow) are distinct and stay inline.",
+  },
+    {
+    id: "inline-batch-positive-int-validation",
+    primitive: "numericBounds.requireAllPositiveFiniteIntIfPresent(opts, names, labelPrefix, ErrorClass, code)",
+    regex: /numericBounds\.requirePositiveFiniteIntIfPresent\([\s\S]{0,300}?numericBounds\.requirePositiveFiniteIntIfPresent\([\s\S]{0,300}?numericBounds\.requirePositiveFiniteIntIfPresent\(/,
+    scanScope: "shop",
+    allowlist: ["lib/numeric-bounds.js"],
+    reason: "Extracted across guard-csv / guard-html / guard-svg validate-entry numeric-opt cascades. Three or more consecutive `numericBounds.requirePositiveFiniteIntIfPresent(opts.X, ...)` calls in a row is exactly the shape this batch helper consolidates. Other primitives with 1-2 cap-opts can keep the single-call form; the batch helper kicks in at the 3+ threshold.",
+  },
+    {
+    id: "inline-buffer-byte-equality-loop",
+    primitive: "Buffer.compare(a, b) === 0 (for non-crypto byte equality)",
+    // Hand-rolled loop walking two buffers byte-by-byte and OR-ing into
+    // a diff accumulator. Crypto-equality belongs in timingSafeEqual;
+    // non-crypto equality belongs in Buffer.compare.
+    regex: /for\s*\([^)]*\)\s*\{[\s\S]{0,150}?\|=\s*\w+\[\w+\]\s*\^\s*\w+\[\w+\]/,
+    scanScope: "shop",
+    allowlist: [
+      // timingSafeEqual implementation legitimately walks both buffers.
+      "lib/safe-buffer.js",
+      "lib/crypto.js",
+    ],
+    reason: "Non-crypto byte equality is Buffer.compare(a, b) === 0. ssrf-guard / address-equality call sites migrated. New code must use Buffer.compare or timingSafeEqual; never hand-roll the loop.",
+  },
+    {
+    id: "inline-build-guard-gate-forwarder",
+    primitive: "gateContract.buildGuardGate(name, opts, check)",
+    regex: /forensicEvidenceStore:\s*opts\.forensicEvidenceStore[\s\S]{0,400}?onAudit:\s*opts\.onAudit/,
+    scanScope: "shop",
+    allowlist: ["lib/gate-contract.js"],
+    reason: "Extracted across guard-csv / guard-html / guard-svg gate(opts) factories. Every guard's gate() body forwarded the same ~16-key opts bag (mode / audit / observability / forensicEvidenceStore / cache / hooks / runtime cap / ...) to gateContract.defineGate; centralized so each guard's gate() body is just the check function plus a label.",
+  },
+    {
+    id: "inline-char-strip-policy-cascade",
+    primitive: "codepointClass.applyCharStripPolicies(text, opts)",
+    regex: /opts\.bidiPolicy\s*===\s*["']strip["'][\s\S]{0,200}?opts\.controlPolicy\s*===\s*["']strip["'][\s\S]{0,200}?opts\.nullBytePolicy/,
+    scanScope: "shop",
+    allowlist: ["lib/codepoint-class.js"],
+    reason: "Extracted across guard-html / guard-svg sanitize paths — the 4-line `if (opts.bidiPolicy === 'strip') s = s.replace(BIDI_RE_G, '')` cascade was identical. guard-csv uses different opt-name vocabulary (bidiCharPolicy / nullByteHandling) so it keeps its inline strip block; that's a single-vendor occurrence, below the duplicate-detector floor.",
+  },
+    {
+    id: "inline-codepoint-class-table",
+    primitive: "codepointClass.BIDI_RE / C0_CTRL_RE / ZERO_WIDTH_RE / NULL_RE_G / hex4 / charClass / fromCp",
+    regex: /var\s+BIDI_RANGES\s*=\s*\[\s*0x200E[\s\S]{0,500}?function\s+_charClass/,
+    scanScope: "shop",
+    allowlist: ["lib/codepoint-class.js"],
+    reason: "Extracted across guard-csv / guard-html / guard-svg. The BIDI_RANGES + C0_CTRL_RANGES + ZERO_WIDTH_RANGES literal tables plus the _hex4 / _charClass / _fromCp helpers plus the `new RegExp(\"[\" + _charClass(...) + \"]\")` regex compilations were identical across 3 guard primitives by design. Centralized so the codepoint catalog has a single source of truth and future guards (filename / archive / mime / ...) consume the shared module instead of re-defining the tables.",
+  },
+    {
+    id: "inline-compliance-posture-lookup",
+    primitive: "gateContract.lookupCompliancePosture(name, postures, errorFactory, codePrefix)",
+    regex: /if\s*\(!COMPLIANCE_POSTURES\[name\]\)[\s\S]{0,150}?bad-posture[\s\S]{0,200}?Object\.assign\(\{\}\s*,\s*COMPLIANCE_POSTURES\[name\]\)/,
+    scanScope: "shop",
+    allowlist: ["lib/gate-contract.js"],
+    reason: "Extracted across guard-csv / guard-html / guard-svg compliancePosture(name) entry points. Identical 5-line `if (!COMPLIANCE_POSTURES[name]) throw; return Object.assign({}, COMPLIANCE_POSTURES[name])` shape consolidated.",
+  },
+    {
+    id: "inline-crlf-string-test",
+    primitive: "safeBuffer.hasCrlf(s) / safeBuffer.CRLF_RE",
+    regex: /\/\[\\r\\n\]\/\s*\.\s*test\s*\(/,
+    scanScope: "shop",
+    allowlist: ["lib/safe-buffer.js"],
+    reason: "CRLF-injection guards now route through safeBuffer.hasCrlf / safeBuffer.CRLF_RE. The lib/safe-buffer.js definition retains the literal regex.",
+  },
+    {
+    id: "inline-default-resolution-cascade",
+    primitive: "validateOpts.applyDefaults(opts, DEFAULTS)",
+    // Detect the literal shape `(opts.X === undefined) ? DEFAULTS.X : opts.X`
+    // — the cascade every primitive's create() previously ran 5–10 times
+    // in a row to layer DEFAULTS over operator opts.
+    regex: /\(\s*opts\.\w+\s*===\s*undefined\s*\)\s*\?\s*DEFAULTS\.\w+\s*:\s*opts\.\w+/,
+    scanScope: "shop",
+    allowlist: [
+      "lib/validate-opts.js",
+      // testing.js's runMiddleware uses opts.timeoutMs but
+      // DEFAULTS.runMiddlewareTimeoutMs — different key names, single
+      // field. applyDefaults requires same-key on both sides; this site
+      // legitimately keeps the inline ternary.
+      "lib/testing.js",
+    ],
+    reason: "Extracted to validateOpts.applyDefaults — single helper that resolves opts against DEFAULTS in one call. Replaces 5–10 line cascades.",
+  },
+    {
+    id: "inline-detect-char-threats",
+    primitive: "codepointClass.detectCharThreats(text, opts, codePrefix)",
+    regex: /var\s+bidiMatch\s*=\s*\w+\.match\(BIDI_RE\)[\s\S]{0,200}?bidi-override[\s\S]{0,300}?nullBytePolicy[\s\S]{0,200}?null-byte/,
+    scanScope: "shop",
+    allowlist: ["lib/codepoint-class.js"],
+    reason: "Extracted across guard-html / guard-svg detection passes — the bidi/null-byte/control-char issue-emit cascade was identical at the head of every _detectIssues. guard-csv keeps its inline form because it uses different opt-name vocabulary (bidiCharPolicy / nullByteHandling) and additionally classifies homoglyphs as a CSV-specific threat.",
+  },
+    {
+    id: "inline-emit-event-wrapper",
+    primitive: "observability.safeEvent(name, value, labels) — already wraps event() in try/catch",
+    // Detect any function that wraps observability.event in try/catch
+    // instead of calling the framework helper. The shape is symmetric
+    // across every consumer module that needs hot-path emission with
+    // drop-silent semantics — extraction was complete, no allowlist.
+    regex: /try\s*\{[\s\S]{0,150}?observability\.event\s*\([^)]*\)\s*;?\s*\}\s*catch/,
+    scanScope: "shop",
+    allowlist: [],
+    reason: "Extracted to observability.safeEvent — drop-silent semantics for hot-path event emission. Any module wrapping observability.event in try/catch should call observability.safeEvent instead.",
+  },
+    {
+    id: "inline-extract-bytes-as-text",
+    primitive: "gateContract.extractBytesAsText(ctx)",
+    regex: /var\s+bytes\s*=\s*ctx\.bytes\s*;\s*if\s*\(!bytes\)\s*return\s*\{\s*ok:\s*true,\s*action:\s*["']serve["'][\s\S]{0,40}\s*var\s+text\s*=\s*Buffer\.isBuffer\(bytes\)/,
+    scanScope: "shop",
+    allowlist: ["lib/gate-contract.js"],
+    reason: "Extracted across guard-csv / guard-html check(ctx) entries. The ctx.bytes → Buffer-or-string → utf8 string normalization with empty-bytes-serve early-return was identical. guard-svg keeps the inline shape because it passes bytes (Buffer) directly to validate() for SVGZ magic-byte detection.",
+  },
+    {
+    id: "inline-flush-timer-scheduler",
+    primitive: "safeAsync.makeScheduledFlush(delayMs, flushFn)",
+    // The literal `var flushTimer = null;` followed by setTimeout idempotent-schedule shape
+    // every batched-write sink previously rolled by hand.
+    regex: /var\s+flushTimer\s*=\s*null\s*;[\s\S]{0,300}?if\s*\(\s*flushTimer/,
+    scanScope: "shop",
+    allowlist: ["lib/safe-async.js"],
+    reason: "Extracted to safeAsync.makeScheduledFlush — idempotent setTimeout coalesce-and-flush helper used by every log-stream sink.",
+  },
+    {
+    id: "inline-hex-string-validator",
+    primitive: "safeBuffer.isHex(s, expectedLength?) — returns boolean",
+    regex: /\/\^\[0-9a-fA-F\]\+\$\/\s*\.\s*test\s*\(/,
+    scanScope: "shop",
+    allowlist: ["lib/safe-buffer.js"],
+    reason: "Hex-string validation is now safeBuffer.isHex / safeBuffer.HEX_RE. The lib/safe-buffer.js definition retains the literal regex.",
+  },
+    {
+    id: "inline-iso8601-millisecond-strip",
+    primitive: "time.toIso8601NoMs(date)",
+    regex: /\.toISOString\s*\(\s*\)\s*\.\s*replace\s*\(\s*\/\\\.\\d\{3\}Z\$\//,
+    scanScope: "shop",
+    allowlist: ["lib/time.js"],
+    reason: "ISO-8601 millisecond stripping is now time.toIso8601NoMs(). The helper definition in lib/time.js keeps the inline form.",
+  },
+    {
+    id: "inline-issue-validator-entry",
+    primitive: "gateContract.runIssueValidator(input, opts, detector)",
+    regex: /typeof\s+input\s*===\s*["']string["'][\s\S]{0,80}?Buffer\.isBuffer\(input\)[\s\S]{0,200}?bad-input[\s\S]{0,300}?return\s*\{[\s\S]{0,80}?ok:\s*!issues\.some/,
+    scanScope: "shop",
+    allowlist: ["lib/gate-contract.js"],
+    reason: "Extracted across guard-csv / guard-html validate() entry points. The string|Buffer normalization + bad-input fallback + issue-aggregation return shape was identical across guards; centralized into gate-contract. guard-svg keeps its inline form because SVGZ magic-byte detection needs the raw Buffer (utf8 conversion would lose the gzip header).",
+  },
+    {
+    id: "inline-log-via-or-fallback",
+    primitive: "log.makeViaOrFallback(operatorLog, fallbackLog)",
+    // Detect the literal `if (log && typeof log[level] === "function")
+    // { try { log[level](message, fields); } catch ... } return; ...
+    // fallback;` shape every log-routing primitive previously rolled
+    // by hand. Tokenized: `if ( _ID && typeof _ID [ _ID ] === _STR ) {
+    // try { _ID [ _ID ] ( _ID , _ID ) ; } catch`.
+    regex: /if\s*\(\s*\w+\s*&&\s*typeof\s+\w+\s*\[\s*\w+\s*\]\s*===\s*["']function["']\s*\)\s*\{\s*try\s*\{\s*\w+\s*\[\s*\w+\s*\]\s*\(/,
+    scanScope: "shop",
+    allowlist: [
+      "lib/log.js",   // definition site of makeViaOrFallback
+      // dev.js + pqc-gate.js — module-level _logVia(log, level, ...)
+      // helpers that take log per-call. Refactoring would either
+      // allocate a fresh closure per invocation (wasteful) or require
+      // restructuring the file to thread log through closures.
+      // Cluster broken (2 files < n=3 threshold); keep until a
+      // refactor that consolidates them is justified.
+      "lib/dev.js",
+      "lib/pqc-gate.js",
+    ],
+    reason: "Extracted to log.makeViaOrFallback. Replaces the per-file `_logVia` boilerplate that bundler / error-page rolled by hand around an operator-supplied logger with a per-module fallback.",
+  },
+    {
+    id: "inline-migration-filename-regex",
+    primitive: "migrationFiles.MIGRATION_FILE_RE / migrationFiles.isMigrationFileName(name)",
+    regex: /\/\^\\\?\(\\d\+\)-\(\[A-Za-z0-9_-\]\+\)\\\.js\$\//,
+    scanScope: "shop",
+    allowlist: ["lib/migration-files.js"],
+    reason: "Migration filename pattern is now migrationFiles.MIGRATION_FILE_RE. The migration-files module owns the literal.",
+  },
+    {
+    id: "inline-numeric-bounds-cascade",
+    primitive: "numericBounds.requirePositiveFiniteIntIfPresent / requireNonNegativeFiniteIntIfPresent",
+    // Detect the literal `if (opts.X !== undefined) { if (!nb.isYFiniteInt(opts.X)) throw new XError(code, ... + nb.shape(opts.X)); }`
+    // shape that every primitive's create() rolled by hand. Tokenized:
+    // `! _ID . _ID ( _ID . _ID ) ) { throw new _ID ( _STR , _STR + _ID . _ID ( _ID . _ID )`
+    // — the distinctive `+ nb.shape(opts.X)` tail fingerprints it.
+    regex: /!\s*\w+\.is\w*FiniteInt\s*\(\s*\w+\.\w+\s*\)[\s\S]{0,200}?\w+\.shape\s*\(\s*\w+\.\w+\s*\)/,
+    scanScope: "shop",
+    allowlist: [
+      "lib/numeric-bounds.js",   // definition site
+      // The helper signature is `new errorClass(code, message)`. Sites
+      // below use one of: factory call `_err(code, msg)`, raw
+      // `new Error(...)`, 3rd-arg `permanent: true`, or a reversed
+      // `(message, code)` constructor signature. Refactoring would
+      // either drop semantics or flip a public error constructor.
+      // Tracked as follow-ups in the agent's report.
+      "lib/http-client-cookie-jar.js",
+      "lib/mail-bounce.js",
+      "lib/migrations.js",
+      "lib/object-store/gcs.js",
+      "lib/object-store/sigv4.js",
+      "lib/parsers/safe-env.js",
+      "lib/parsers/safe-toml.js",
+      "lib/parsers/safe-yaml.js",
+      "lib/pqc-gate.js",
+      "lib/queue-local.js",
+      "lib/safe-buffer.js",
+      "lib/safe-url.js",
+    ],
+    reason: "Extracted to numericBounds.requirePositiveFiniteIntIfPresent / requireNonNegativeFiniteIntIfPresent. Replaces the per-file `if (opts.X !== undefined) { if (!nb.isYFiniteInt(opts.X)) throw }` cascade with a single call.",
+  },
+    {
+    id: "inline-object-store-http-request",
+    primitive: "require('./http-request') (lib/object-store/http-request.js)",
+    // Detect the literal `httpClient.request({ method, url, headers, body,
+    // idleTimeoutMs, errorClass: ObjectStoreError, allowedProtocols })`
+    // shape every protocol backend previously rolled by hand.
+    regex: /errorClass\s*:\s*ObjectStoreError\s*,\s*allowedProtocols\s*:/,
+    scanScope: "shop",
+    allowlist: ["lib/object-store/http-request.js"],
+    reason: "Extracted across azure-blob / gcs / sigv4 / http-put. The shared helper threads the same five opts (idleTimeoutMs / maxResponseBytes / errorClass / allowedProtocols / allowInternal) through httpClient.request.",
+  },
+    {
+    id: "inline-observability-shape-validation",
+    primitive: "validateOpts.observabilityShape(observability, label, ErrorClass)",
+    regex: /opts\.observability\s*!==\s*undefined\s*&&\s*opts\.observability\s*!==\s*null[\s\S]{0,200}?event\s*!==\s*["']function["']/,
+    scanScope: "shop",
+    allowlist: [],
+    reason: "Extracted parallel to auditShape — opts.observability shape validation across i18n / cache / auth.lockout.",
+  },
+    {
+    id: "inline-optional-boolean-validation",
+    primitive: "validateOpts.optionalBoolean(value, label, ErrorClass, code?)",
+    regex: /opts\.\w+\s*!==\s*undefined\s*&&\s*typeof\s+opts\.\w+\s*!==\s*["']boolean["']/,
+    scanScope: "shop",
+    allowlist: [
+      "lib/validate-opts.js",
+      // http-client.js's configurePool throws raw Error, not a
+      // framework-error class. Surfaced earlier in the session as a
+      // harmonization candidate. Allowlist until a framework-error
+      // class is wired into http-client.
+      "lib/http-client.js",
+    ],
+    reason: "Extracted across api-key / cache / notify / permissions / seeders / webhook / db-role-for. Centralized boolean type-check.",
+  },
+    {
+    id: "inline-optional-finite-non-negative-validation",
+    primitive: "validateOpts.optionalFiniteNonNegative(value, label, ErrorClass, code?)",
+    // Match either `!_isFiniteNonNegative(opts.X)` or the full inline form
+    // `typeof opts.X !== "number" || !isFinite(opts.X) || opts.X < 0`.
+    regex: /opts\.\w+\s*!==\s*undefined\s*&&\s*\(\s*typeof\s+opts\.\w+\s*!==\s*["']number["']\s*\|\|\s*!isFinite\s*\(\s*opts\.\w+\s*\)\s*\|\|\s*opts\.\w+\s*<\s*0\s*\)/,
+    scanScope: "shop",
+    allowlist: ["lib/validate-opts.js"],
+    reason: "Extracted across primitives. Centralizes the non-negative-finite numeric check.",
+  },
+    {
+    id: "inline-optional-function-validation",
+    primitive: "validateOpts.optionalFunction(value, label, ErrorClass, code?)",
+    regex: /opts\.\w+\s*!==\s*undefined\s*&&\s*typeof\s+opts\.\w+\s*!==\s*["']function["']/,
+    scanScope: "shop",
+    allowlist: [
+      "lib/validate-opts.js",
+      // http-client.js uses bare `throw new Error(...)` for several opts —
+      // doesn't fit the framework-error class signature optionalFunction
+      // requires. Tracked in the cross-module follow-ups list.
+      "lib/http-client.js",
+      // i18n.js's onMissingKey / notify.js's redact include extra
+      // signature context in the message ("(key, locale)" /
+      // "returning a redacted message") — not a clean shape match.
+      "lib/i18n.js",
+      "lib/notify.js",
+      // retry.js uses raw TypeError, not framework-error.
+      "lib/retry.js",
+    ],
+    reason: "Extracted across api-key / cache / seeders / webhook / db-role-for / permissions / auth/lockout. Centralized function type-check.",
+  },
+    {
+    id: "inline-optional-non-empty-string-array-validation",
+    primitive: "validateOpts.optionalNonEmptyStringArray(value, label, ErrorClass, code?)",
+    // Match the four-line cascade `if (opts.X !== undefined) { if
+    // (!Array.isArray(opts.X)) throw ... ; for (i...) if (typeof opts.X[i]
+    // !== "string" || opts.X[i].length === 0) throw }` — recurring across
+    // api-key (scopes), file-upload (allowedFileTypes), seeders (dependsOn),
+    // i18n (rtlLanguages / eagerLocales), and others.
+    regex: /!\s*Array\.isArray\s*\(\s*\w+\.\w+\s*\)[\s\S]{0,400}?typeof\s+\w+\.\w+\s*\[\s*\w+\s*\]\s*!==\s*["']string["']\s*\|\|\s*\w+\.\w+\s*\[\s*\w+\s*\]\.length\s*===\s*0/,
+    scanScope: "shop",
+    allowlist: ["lib/validate-opts.js"],
+    reason: "Extracted to validateOpts.optionalNonEmptyStringArray. Replaces the per-file `if (X !== undefined) { if (!Array.isArray) throw; for (i) if (typeof !== string || === '') throw }` cascade with one call.",
+  },
+    {
+    id: "inline-optional-non-empty-string-validation",
+    primitive: "validateOpts.optionalNonEmptyString(value, label, ErrorClass, code?)",
+    // Match the OPTIONAL shape only — `X !== undefined && (typeof X !==
+    // "string" || X.length === 0)`. The required form (no undefined
+    // guard) is a separate primitive (requireNonEmptyString) below.
+    regex: /opts\.\w+\s*!==\s*undefined\s*&&\s*\(?\s*typeof\s+opts\.\w+\s*!==\s*["']string["']\s*\|\|\s*opts\.\w+\.length\s*===\s*0/,
+    scanScope: "shop",
+    allowlist: ["lib/validate-opts.js"],
+    reason: "Centralizes the optional non-empty-string gate for fields that may be omitted but must be a non-empty string when present.",
+  },
+    {
+    id: "inline-optional-object-with-method-validation",
+    primitive: "validateOpts.optionalObjectWithMethod(value, method, label, ErrorClass, code?, description?)",
+    // Match the literal duck-typed-handle shape: `if (opts.X !== undefined
+    // && opts.X !== null) { if (typeof opts.X !== "object" || typeof
+    // opts.X.method !== "function") throw }` — recurring across file-upload
+    // (permissions.check), notify (queue.enqueue), seeders (db.prepare),
+    // webhook (nonceStore.checkAndInsert).
+    regex: /\w+\.\w+\s*!==\s*undefined\s*&&\s*\w+\.\w+\s*!==\s*null[\s\S]{0,200}?typeof\s+\w+\.\w+\s*!==\s*["']object["']\s*\|\|\s*typeof\s+\w+\.\w+\.\w+\s*!==\s*["']function["']/,
+    scanScope: "shop",
+    allowlist: [
+      "lib/validate-opts.js",
+      // http-client.jar checks TWO methods (cookieHeaderFor + setFromResponse)
+      // — the helper validates a single method, so refactoring would
+      // silently drop one of the two checks.
+      "lib/http-client.js",
+      // mail.dkimSigner uses MailError(code, msg, permanent) — the
+      // 3-arg constructor signature drops the permanent flag if routed
+      // through validateOpts._throw which calls new errorClass(code, msg).
+      "lib/mail.js",
+    ],
+    reason: "Extracted to validateOpts.optionalObjectWithMethod. Replaces the recurring `if (X !== undefined && X !== null) { if (typeof X !== 'object' || typeof X.method !== 'function') throw }` shape used to validate optional duck-typed handles. Allowlisted sites either check multiple methods or use a 3-arg error constructor that the helper would drop.",
+  },
+    {
+    id: "inline-optional-plain-object-validation",
+    primitive: "validateOpts.optionalPlainObject(value, label, ErrorClass, code?, description?)",
+    // Match the literal three-line cascade `if (X !== undefined && X !==
+    // null) { if (typeof X !== "object" || Array.isArray(X)) throw ... }`
+    // — the recurring "optional plain object (not array)" validator
+    // shape shared by api-key (metadata), db-declare-view (hashColumns),
+    // db-declare-row-policy, static.js (contentSafety).
+    regex: /\w+\.\w+\s*!==\s*undefined\s*&&\s*\w+\.\w+\s*!==\s*null[\s\S]{0,200}?typeof\s+\w+\.\w+\s*!==\s*["']object["']\s*\|\|\s*Array\.isArray/,
+    scanScope: "shop",
+    allowlist: [
+      "lib/validate-opts.js",
+      // external-db throws ExternalDbError with a 3rd `permanent: true`
+      // arg that the validateOpts._throw factory signature doesn't carry
+      // through. Routing through the helper would silently drop the
+      // permanence flag (which controls retry classification).
+      "lib/external-db.js",
+      // protocol-dispatcher constructs the error inline with multi-line
+      // formatted message details that don't fit the helper's
+      // (label + description) shape.
+      "lib/protocol-dispatcher.js",
+    ],
+    reason: "Extracted to validateOpts.optionalPlainObject. Replaces the recurring `if (X !== undefined && X !== null) { if (typeof X !== 'object' || Array.isArray(X)) throw }` shape used to validate optional plain-object opts. Two sites allowlisted: external-db needs the permanent-flag 3rd arg the helper drops; protocol-dispatcher uses multi-line formatted error messages that don't fit the helper's description slot.",
+  },
+    {
+    id: "inline-optional-positive-finite-validation",
+    primitive: "validateOpts.optionalPositiveFinite(value, label, ErrorClass, code?)",
+    // Match the literal shape `if (X !== undefined && (typeof X !== "number"
+    // || !isFinite(X) || X <= 0))` — the strict positive-finite gate that
+    // the optionalPositiveFinite helper bakes in.
+    regex: /opts\.\w+\s*!==\s*undefined\s*&&\s*\(\s*typeof\s+opts\.\w+\s*!==\s*["']number["']\s*\|\|\s*!isFinite\s*\(\s*opts\.\w+\s*\)\s*\|\|\s*opts\.\w+\s*<=\s*0\s*\)/,
+    scanScope: "shop",
+    allowlist: ["lib/validate-opts.js"],
+    reason: "Centralizes the > 0 finite-number check. Every primitive that gates on a positive finite numeric (e.g. mfaWindowMs, ttlMs minimums) routes through here.",
+  },
+    {
+    id: "inline-optional-positive-int-validation",
+    primitive: "validateOpts.optionalPositiveInt(value, label, ErrorClass, code?)",
+    regex: /opts\.\w+\s*!==\s*undefined\s*&&\s*!_isPositiveInt\s*\(\s*opts\.\w+\s*\)/,
+    scanScope: "shop",
+    allowlist: ["lib/validate-opts.js"],
+    reason: "Extracted across api-key / others. Routes through numericChecks.isPositiveInt; the helper bakes in the throw semantics.",
+  },
+    {
+    id: "inline-profile-builder-forwarder",
+    primitive: "gateContract.makeProfileBuilder(profiles)",
+    regex: /function\s+buildProfile\s*\(opts\)\s*\{\s*return\s+gateContract\.buildProfile\(Object\.assign\(\{\}\s*,\s*opts,\s*\{[\s\S]{0,150}?resolveProfile:\s*function\s*\(name\)\s*\{\s*return\s+PROFILES\[name\]/,
+    scanScope: "shop",
+    allowlist: ["lib/gate-contract.js"],
+    reason: "Extracted across guard-csv / guard-html / guard-svg buildProfile(opts) wrappers — every guard exposed a 4-line passthrough that injected the per-guard PROFILES into gateContract.buildProfile's resolveProfile callback. Centralized into a closure factory.",
+  },
+    {
+    id: "inline-redis-client-opts-forwarding",
+    primitive: "redisClient.pickClientOpts(cfg, prefix?)",
+    // Match the literal 9-key opts construction `{ url, password, username,
+    // tls, ca, servername, connectTimeoutMs, commandTimeoutMs,
+    // maxReconnectAttempts }` that cache-redis / pubsub-redis / queue-redis
+    // / etc. previously each rolled by hand to forward to redisClient.create.
+    // Detect via the distinctive triple `connectTimeoutMs ... commandTimeoutMs
+    // ... maxReconnectAttempts` appearing within a small window (those three
+    // keys uniquely identify a redis-client opts bag — no other framework
+    // primitive uses all three together).
+    regex: /connectTimeoutMs[\s\S]{0,300}?commandTimeoutMs[\s\S]{0,300}?maxReconnectAttempts/,
+    scanScope: "shop",
+    allowlist: ["lib/redis-client.js"],
+    reason: "Extracted to redisClient.pickClientOpts(cfg, prefix?) — single helper that returns the 9-key opts bag. cache-redis / pubsub-redis / queue-redis route through it. New redis-using primitives must call pickClientOpts; never hand-roll the 9-key forward.",
+  },
+    {
+    id: "inline-require-non-empty-string-validation",
+    primitive: "validateOpts.requireNonEmptyString(value, label, ErrorClass, code?)",
+    // Match the REQUIRED shape — `if (typeof X !== "string" ||
+    // X.length === 0) throw` at the top of a validation block. The
+    // regex also matches inner if-blocks nested inside outer `X !==
+    // undefined &&` guards (compound-optional shape) — those sites are
+    // allowlisted below because the helper doesn't compose with the
+    // adjacent _validateIdent / format check.
+    regex: /\bif\s*\(\s*typeof\s+opts\.\w+\s*!==\s*["']string["']\s*\|\|\s*opts\.\w+\.length\s*===\s*0\s*\)/,
+    scanScope: "shop",
+    allowlist: [
+      "lib/validate-opts.js",
+      // Compound validators — type-check + _validateIdent / format
+      // check / URL example combined. Splitting the type check out
+      // would scatter validation across two helpers and lose
+      // operator-readable error messages.
+      "lib/backup/bundle.js",                    // line 92 — operator-meaningful "(use vault.getKeysJson() ...)" hint
+      "lib/cache.js",                            // line 192 — backend === "redis" precondition + URL example
+      "lib/cli-helpers.js",                      // raw Error (no framework class)
+      "lib/db-declare-row-policy.js",            // optional + _validateIdent compound
+      "lib/db-declare-view.js",                  // optional + _validateIdent compound
+      "lib/middleware/csp-nonce.js",             // optional-with-default + operator hint
+      "lib/middleware/db-role-for.js",           // optional + _validateRoleIdentifier compound
+      "lib/middleware/nel.js",                   // operator-readable "collectorUrl is required" prose tested by /collectorUrl is required/ regex; validateOpts emits "validate-opts/missing-non-empty-string" instead
+      "lib/protocol-dispatcher.js",              // optional fallbackProtocol guard
+      "lib/pubsub-redis.js",                     // raw Error (no framework class)
+      "lib/restore-rollback.js",                 // compound: derives rollbackRoot from opts.dataDir
+      // permanent: true 3rd-arg sites — helper signature doesn't
+      // expose the permanent flag. Refactoring would silently drop it.
+      "lib/migrations.js",
+      "lib/queue-redis.js",
+      "lib/queue-sqs.js",
+    ],
+    reason: "Required non-empty-string fields. Most primitives' create() functions start with this shape for opts.namespace / opts.dir / opts.url / opts.region / etc. Centralizes the throw + message format. 13 sites allowlisted with documented per-site reasons (compound validators, raw Error, permanent-arg, operator-meaningful extra context).",
+  },
+    {
+    id: "inline-require-object-prelude",
+    primitive: "validateOpts.requireObject(opts, label, ErrorClass)",
+    regex: /if\s*\(\s*!opts\s*\|\|\s*typeof\s+opts\s*!==\s*["']object["']\s*\)\s*\{[\s\S]{0,200}?opts\s+must\s+be\s+an\s+object/,
+    scanScope: "shop",
+    allowlist: [
+      "lib/validate-opts.js",
+      // The three call sites below pass `permanent: true` as the 3rd
+      // arg to `_err(code, msg, permanent)`. validateOpts.requireObject
+      // doesn't expose that arg — refactoring would silently drop the
+      // permanence flag (which controls retry classification). Keep
+      // these inline until requireObject grows opts.permanent or these
+      // sites move to an alwaysPermanent error class.
+      "lib/external-db.js",
+      "lib/http-client.js",
+      "lib/object-store/sigv4-bucket-ops.js",
+    ],
+    reason: "Extracted across api-key / cache / i18n / notify / permissions / seeders / webhook. Files with custom error codes or divergent messages (break-glass / config / deprecate / etc.) keep their bespoke shape — those preludes use module-namespaced codes that don't fit the generic helper.",
+  },
+    {
+    id: "inline-resolve-profile-and-posture",
+    primitive: "gateContract.resolveProfileAndPosture(opts, { profiles, compliancePostures, defaults, errorClass, errCodePrefix })",
+    regex: /typeof\s+opts\.profile\s*===\s*["']string["'][\s\S]{0,300}?compliancePosture[\s\S]{0,300}?Object\.assign\(\{\}\s*,\s*[A-Z]+/,
+    scanScope: "shop",
+    allowlist: ["lib/gate-contract.js"],
+    reason: "Extracted across guard-csv / guard-html / guard-svg. Every guard primitive's _resolveOpts opens with the identical `if (opts.profile) overlay = PROFILES[opts.profile]; if (opts.compliancePosture) overlay = Object.assign(overlay, COMPLIANCE_POSTURES[...]); return Object.assign({}, DEFAULTS, overlay, opts);` cascade. Centralized in gateContract so future guards consume the shared resolver — keeps the family resolution shape identical across members.",
+  },
+    {
+    id: "inline-rule-pack-loader",
+    primitive: "gateContract.makeRulePackLoader(errorClass, codePrefix)",
+    regex: /var\s+_\w*[Rr]ulePacks?\s*=\s*\{\}[\s\S]{0,80}function\s+loadRulePack\s*\(\s*pack\s*\)\s*\{[\s\S]{0,200}?validateOpts\.requireObject[\s\S]{0,200}?validateOpts\.requireNonEmptyString[\s\S]{0,100}?_\w*[Rr]ulePacks?\[pack\.id\]\s*=\s*pack/,
+    scanScope: "shop",
+    allowlist: ["lib/gate-contract.js"],
+    reason: "Extracted across guard-csv / guard-html / guard-svg loadRulePack(pack) entry. Identical scaffolding (closed-over store + validateOpts cascade + pack.id keyed insert) consolidated into a closure factory.",
+  },
+    {
+    id: "inline-sql-identifier-regex",
+    primitive: "safeSql.DEFAULT_IDENTIFIER_RE / safeSql.MAX_IDENTIFIER_LENGTH",
+    regex: /\/\^\[A-Za-z_\]\[A-Za-z0-9_\]\*\$\//,
+    scanScope: "shop",
+    allowlist: ["lib/safe-sql.js"],
+    reason: "SQL identifier validation is now safeSql.DEFAULT_IDENTIFIER_RE. The lib/safe-sql.js definition keeps the literal.",
+  },
+    {
+    id: "inline-trailing-hspace-strip",
+    primitive: "safeBuffer.stripTrailingHspace(s) / safeBuffer.TRAILING_HSPACE_RE",
+    regex: /\.replace\s*\(\s*\/\[\s\\t\]\+\$\/\s*,/,
+    scanScope: "shop",
+    allowlist: ["lib/safe-buffer.js"],
+    reason: "Trailing horizontal-whitespace strip is now safeBuffer.stripTrailingHspace. The lib/safe-buffer.js definition keeps the literal regex.",
+  },
+    {
+    id: "mailstore-quota-wrong-field",
+    primitive: "b.mailStore.quota returns capBytes (not limitBytes)",
+    regex: /\bq\.limitBytes\b|\bquota\.limitBytes\b/,
+    scanScope: "shop",
+    allowlist: [],
+    reason: "mailStore.quota returns { usedBytes, usedCount, capBytes, capCount }. Reading q.limitBytes / quota.limitBytes is undefined and silently bypasses the over-quota check. Use q.capBytes.",
+  },
+    {
+    id: "mailstore-quota-wrong-signature",
+    primitive: "b.mailStore.quota(folderName) — single-string-arg + reads capBytes/usedBytes",
+    // mailStore.quota(folderName) returns
+    // { usedBytes, usedCount, capBytes, capCount }. Two-arg call shapes
+    // (e.g. mailStore.quota(actor, folderName)) pass the actor as the
+    // folder key and throw mail-store/no-folder. Reading q.limitBytes is
+    // wrong (the field is capBytes); the over-quota check never trips.
+    regex: /mailStore\.quota\s*\([^)]*,/,
+    scanScope: "shop",
+    allowlist: [],
+    reason: "mailStore.quota takes a single folderName argument; the return shape is { usedBytes, usedCount, capBytes, capCount }. A two-arg call (actor, folder) passes the actor object as the folder key and throws mail-store/no-folder, breaking IMAP APPEND for valid writes. Read q.capBytes (not q.limitBytes — undefined, so the over-quota gate would never fire).",
+  },
+    {
+    // v0.11.3 audit found: the existing `map-has-then-set-pre-node-26`
+    // detector catches the literal `if (!M.has(k))` shape but misses
+    // the semantically-identical `if (!M.get(k))` and `if (M.get(k)
+    // === undefined)` variants — same race window, same bug class,
+    // same Node-26 getOrInsertComputed migration target. This entry
+    // closes those variants.
+    id: "map-get-falsy-then-set-pre-node-26",
+    primitive: "Node 26 `Map.prototype.getOrInsertComputed(key, factory)` collapses falsy-check + insert into one atomic call",
+    regex: /if\s*\(\s*(?:!\s*\w+\.get\s*\([^)]+\)|\w+\.get\s*\([^)]+\)\s*===\s*(?:undefined|null))\s*\)\s*\{[\s\S]{0,300}?\.set\s*\(/,
+    scanScope: "shop",
+    skipCommentLines: true,
+    allowlist: [],
+    reason: "Companion to map-has-then-set-pre-node-26 — same Node 26 getOrInsertComputed migration target, captures the `!M.get(k)` / `M.get(k) === undefined|null` syntactic variants. v0.11.3 audit identified the original map-has-then-set detector as bypassable by switching `.has(k)` to `.get(k)` falsy-check; this entry closes that gap.",
+  },
+    {
+    // v0.11.6 — direct `/proc/self/mountinfo` reads in lib/ MUST route
+    // through `b.safeMountInfo` instead. The primitive centralizes the
+    // field-4 ("root within source FS") parse discipline that the
+    // existing `mountinfo-options-bind-check` detector exists to
+    // protect — without "must compose" enforcement a new caller can
+    // re-derive the parse inline and re-introduce the wrong-field bug.
+    id: "mountinfo-not-via-safemountinfo",
+    primitive: "b.safeMountInfo.read() / .bestMatch() / .isBindMount() — composes the canonical field-4 parser + bind-mount predicate; raw `nodeFs.readFileSync(\"/proc/self/mountinfo\", ...)` in lib/ bypasses the discipline",
+    regex: /\b(?:fs|nodeFs)\.readFile(?:Sync)?\s*\(\s*["']\/proc\/self\/mountinfo["']/,
+    scanScope: "shop",
+    skipCommentLines: true,
+    allowlist: [
+      // The primitive itself — canonical reader.
+      "lib/safe-mount-info.js",
+    ],
+    reason: "v0.11.6 — `b.safeMountInfo` centralizes the field-4 parse discipline. Bind-mount detection MUST consult field 4 ('root within source FS'); ad-hoc parsers that scan options for the word 'bind' miss the truth (kernel doesn't emit 'bind' as an option). Direct `/proc/self/mountinfo` reads in new lib/ code bypass the primitive and risk re-deriving the wrong-field parse.",
+  },
+    {
+    id: "mountinfo-options-bind-check",
+    primitive: "parse /proc/self/mountinfo field 4 (root within source FS) and check != \"/\" for bind detection",
+    regex: /mountinfo[\s\S]{0,800}?options[\s\S]{0,80}?indexOf\(["']bind["']\)/,
+    scanScope: "shop",
+    allowlist: [],
+    reason: "Per Documentation/filesystems/proc.rst §3.5, /proc/self/mountinfo field 6 (mount options) does NOT carry a 'bind' tag — the kernel exposes bind-mount provenance via field 4 ('root within source filesystem'), which is '/' for a regular mount and the bound source path for a bind mount. Checking the options field for 'bind' never fires for actual bind mounts and silently misses the failure mode it claims to defend. Detector catches the mis-parse shape at n=1.",
+  },
+    {
+    // Codex P1 on v0.12.6 PR #157 — `_anyValueToProto`'s negative-int
+    // path emitted `pb.embeddedMessage(N, pb._writeVarint(v >>> 0))`
+    // which (a) wraps a varint payload in wire-type 2 (length-delimited)
+    // instead of wire-type 0 (varint, which int64 mandates per the
+    // proto3 spec), AND (b) truncates negatives via `v >>> 0` losing
+    // both sign and magnitude beyond 32 bits. Collectors reject the
+    // whole batch when they decode a wire-type mismatch on a known
+    // scalar field, so a single negative AnyValue poisons the export.
+    //
+    // The right shape is `pb.int64(field, value)` (10-byte two's-
+    // complement varint for negatives via BigInt) or `pb.sint64` (ZigZag
+    // when small negatives dominate). The detector flags the
+    // `embeddedMessage(N, ..._writeVarint...)` shape that mixes
+    // wire types — wrapping a raw varint in a length-delimited message
+    // is almost always a bug. Operators legitimately wrapping
+    // `_writeVarint` bytes inside `embeddedMessage` for a packed-repeated
+    // field MUST allowlist with a written reason.
+    id: "protobuf-embeddedmessage-wrapping-varint",
+    primitive: "Use `pb.uint64` / `pb.int64` / `pb.sint64` / `pb.uint32` for scalar varint fields; `embeddedMessage` is for nested message bodies, not raw varints. Mixing wire types causes collectors to reject the whole payload.",
+    regex: /pb\.embeddedMessage\s*\([^)]*pb\._writeVarint/,
+    scanScope: "shop",
+    skipCommentLines: true,
+    allowlist: [],
+    reason: "Codex P1 on v0.12.6 PR #157 — `_anyValueToProto` negative-int path wrapped a varint payload in `embeddedMessage` (wire-type 2) instead of using `int64` (wire-type 0 varint). The wire-type mismatch poisons the whole OTLP batch; the `v >>> 0` truncation also dropped sign + high bits. Fixed by adding `pb.int64` + `pb.sint64` to the encoder + routing the negative-int branch through `pb.int64`. Detector locks the shape: `embeddedMessage(N, _writeVarint(...))` cannot recur.",
+  },
+    {
+    // Codex P1 on v0.11.23 PR #127 — `b.mailStore.create(...).hardExpunge`
+    // looped over the input objectids array per-element and ran a
+    // `stmtDecrementQuota` inside the loop, so `hardExpunge(folder, [id, id])`
+    // double-decremented the per-folder quota even though only one
+    // message physically existed. The fix dedupes the input array
+    // before the loop. The general bug class — accumulator update
+    // inside a loop over operator-supplied ids without dedup — is
+    // broader: any sum / count / quota / counter that decrements
+    // (or increments) once per loop iteration over an operator-
+    // supplied id array MUST dedupe first or the operator can drive
+    // the counter past zero / cause double-counting of work.
+    id: "quota-decrement-loop-over-ids-without-dedup",
+    primitive: "deduplicate operator-supplied id arrays before the per-id accumulator update — `var seen = Object.create(null); var unique = []; for (...) if (!seen[id]) { seen[id] = true; unique.push(id); }` OR `Array.from(new Set(ids))`",
+    // Match any file that calls a `stmtDecrement*` / `stmtBumpQuota`
+    // / `stmtDecrementBytes` shape inside a per-id loop. The
+    // companion check requires a dedup primitive (Object.create(null)
+    // + .push to a uniqueIds array, OR `new Set(`) in the same file.
+    regex: /stmt(?:Decrement|Bump)(?:Quota|Bytes|Count)/,
+    scanScope: "shop",
+    requires: /Object\.create\(\s*null\s*\)|new\s+Set\s*\(|uniqueIds|seenIds/,
+    skipCommentLines: true,
+    allowlist: [],
+    reason: "Codex P1 on v0.11.23 PR #127 — `hardExpunge` per-id loop ran a quota decrement against each iteration regardless of duplicates. Calling with `[id, id]` drove `usedBytes` / `usedCount` negative + duplicated the deleted-id list. Bug class: accumulator-update-inside-loop-over-operator-supplied-ids. Detector flags any file that touches `stmtDecrement(Quota|Bytes|Count)` or `stmtBump(Quota|Bytes|Count)` and requires a dedup primitive (`Object.create(null)` + `uniqueIds.push` OR `new Set(`) in the same file. Per-primitive behavioral regression tests (mail-agent.test.js's `[id, id, id]` triple-input case) are the per-call-site guard.",
+  },
+    {
+    id: "sbom-subcomponent-version-inherits-parent",
+    primitive: "Sub-component SBOM entries must use their own upstream version, not entry.version",
+    // For a meta-bundle whose parent version is a composite tag like
+    // `2.0.0+pkijs-3.4.0`, forcing every child component to inherit
+    // entry.version makes CVE matchers key off the meta tag instead
+    // of the real upstream version, producing false negatives on
+    // children. The accepted form is `entry.components[subName]` as
+    // either a `{ url, version }` object OR a bare string (legacy
+    // form; falls back to parent version). Direct assignment of
+    // `version: entry.version` inside the sub-component build
+    // without a sub-version lookup is the bug shape.
+    regex: /\bversion:\s*entry\.version,?\s*\n\s+license:\s*entry\.license/,
+    scanScope: "shop",
+    allowlist: [],
+    reason: "sub-component SBOM expansion must respect operator-supplied per-sub-component versions when present. The schema accepts `entry.components[subName]` as `{ url, version }` (preferred) or bare string (legacy; falls back to parent). A direct `version: entry.version` inside the sub-component build path skips the lookup and emits a parent-version-shadowed child that CVE matchers can't key off.",
+  },
+    {
+    id: "sbom-toplevel-ref-by-slash-heuristic",
+    primitive: "Derive top-level SBOM refs by exclusion from _childRefs, not by substring on '/' in the bom-ref",
+    // Scoped npm package names like `@peculiar/x509` contain a `/`
+    // in their bom-ref, so a heuristic that filters bom-refs on
+    // indexOf("/") === -1 (with or without an `^@` escape hatch)
+    // misclassifies the next scoped sub-component naming scheme to
+    // arrive. The correct derivation is exclusion from _childRefs
+    // (anything that doesn't appear as a child in _subDeps is a
+    // top-level ref).
+    regex: /\.filter\s*\(\s*function\s*\([^)]*\)\s*\{\s*return\s+c\["bom-ref"\]\.indexOf\("\/"\)/,
+    scanScope: "shop",
+    allowlist: [],
+    reason: "Top-level SBOM bom-refs should be derived by exclusion from _childRefs (any ref not appearing as a child in _subDeps is top-level). The substring heuristic on '/' breaks for scoped npm packages and any future namespacing scheme.",
+  },
+    {
+    id: "starttls-listener-remove-missing",
+    primitive: "Use b.mail.server.tls.upgradeSocket which calls removeAllListeners(\"data\") on the plain socket",
+    // CVE-2021-33515 / CVE-2021-38371. New listener files that import nodeTls AND construct a TLSSocket
+    // anywhere AND do not call mailServerTls (the helper composition) trip this at n=1. Simple regex —
+    // matches `new nodeTls.TLSSocket(` without requiring lookbehind.
+    regex: /new\s+nodeTls\.TLSSocket\s*\(\s*rawSocket\b/,
+    scanScope: "shop",
+    allowlist: [
+      // Submission listener's implicit-TLS path (port 465) wraps the FIRST byte on the wire — no
+      // plaintext predecessor, so listener removal is moot.
+      "lib/mail-server-submission.js",
+    ],
+    reason: "STARTTLS / STLS upgrade — only the upgradeSocket helper is allowed to wrap a TLSSocket around a previously-attached plain socket. The implicit-TLS variant on port 465 wraps the rawSocket BEFORE any plain bytes are read (no listener to remove), so it stays allowlisted.",
+  },
+    {
+    id: "starttls-tlssocket-construct-direct",
+    primitive: "b.mail.server.tls.upgradeSocket({ plainSocket, secureContext, onSecure, onData, onError })",
+    // CVE-2021-33515 / CVE-2021-38371 class: direct `new nodeTls.TLSSocket(<socket>` construction in a
+    // mail-server listener bypasses the shared upgrade helper. The helper strips the plain-socket "data"
+    // listener (smuggling defense), pauses, and wires the new TLSSocket. New mail-server-* listeners that
+    // construct TLSSocket directly trip this detector at n=1.
+    regex: /new\s+nodeTls\.TLSSocket\s*\(\s*socket\b/,
+    scanScope: "shop",
+    allowlist: [
+      // upgradeSocket helper itself constructs the TLSSocket; listener removal happens INSIDE it.
+      "lib/mail-server-tls.js",
+    ],
+    reason: "STARTTLS / STLS upgrade across MX / submission / IMAP / POP3 listeners. CVE-2021-33515 (Dovecot) + CVE-2021-38371 (Exim) — plaintext bytes pipelined ahead of the handshake reach the post-TLS dispatcher when the plain socket's 'data' listener is not stripped before TLSSocket wraps. Centralized in mail-server-tls.upgradeSocket which removes the listener + pauses the socket + wraps + re-arms idle timeout + wires onSecure / onData / onError. New listeners route through the helper.",
+  },
+    {
+    // N3 (v0.10.14) — tests creating a real DB handle without an
+    // isolation primitive. Any test file calling `b.db.create(` MUST
+    // also name one of: `setupTestDb` / `setupVaultOnly` (framework
+    // helpers) or `mkdtempSync` (ad-hoc per-test temp dataDir).
+    // Leaked per-test SQLite state corrupts subsequent tests under
+    // SMOKE_PARALLEL=64.
+    id: "test-creates-db-handle-without-isolation",
+    primitive: "helpers.setupTestDb / helpers.setupVaultOnly / mkdtempSync — every test that spins up a real DB handle MUST wire one of these isolation primitives so SQLite state stays per-test",
+    scanScope: "test",
+    regex: /\bb\.db\.create\s*\(/,
+    requires: /\b(?:setupTestDb|setupVaultOnly|mkdtempSync)\b/,
+    allowlist: [
+      "test/helpers/db.js",
+      "test/helpers/index.js",
+    ],
+    reason: "Tests spinning a real DB handle without a per-test isolation primitive leak SQLite state to a shared directory; subsequent tests see prior rows under SMOKE_PARALLEL=64. Static-API tests that reference b.db.applyPosture() / b.db.declareView() without spinning a real handle don't trip the detector. Use helpers.setupTestDb / helpers.setupVaultOnly, or mkdtempSync the dataDir.",
+  },
+    {
+    // v0.11.13 — `fs.watchFile` / `fs.watch` MUST NOT be called
+    // directly from tests. The framework exposes `b.watcher`
+    // (kernel-event based) and `b.vault.sealPemFile` (poll-based) as
+    // the operator-facing watchers; tests of those primitives compose
+    // `helpers.backdateFile` + `helpers.waitForWatcher` to absorb the
+    // first-poll race + the macOS FSEvents prime latency. Direct
+    // `fs.watch*` in tests re-discovers the same race class.
+    id: "test-fs-watch-direct-call",
+    primitive: "helpers.backdateFile(path) + helpers.waitForWatcher(predicate) — compose the framework's watcher primitives in tests instead of calling fs.watch / fs.watchFile directly",
+    scanScope: "test",
+    regex: /\bfs\s*\.\s*watch(?:File)?\s*\(/,
+    allowlist: [
+      "test/helpers/fs-watch.js",
+    ],
+    reason: "v0.11.13 — `helpers.backdateFile` + `helpers.waitForWatcher` centralize the discipline for fs.watch / fs.watchFile-driven tests (backdate the source pre-watcher so the first poll's baseline is older than any subsequent mutation; widen the wait budget to 15s for CI-runner cadence drift). Direct `fs.watch*` calls in tests re-discover the race class — multiple historical flakes (vault-seal-pem-file + watcher) were the same bug shape.",
+  },
+    {
+    // v0.11.13 — tests that set a future mtime via fs.utimesSync MUST
+    // also call helpers.backdateFile on the source. The future-mtime
+    // idiom assumes the watcher has already recorded an OLDER
+    // baseline mtime to compare against. Without backdating, the
+    // watcher's first poll can record the future-mtime as `prev` and
+    // miss the transition entirely.
+    id: "test-future-utimes-without-backdated-baseline",
+    primitive: "helpers.backdateFile(source) before writing future-mtime via fs.utimesSync(...) so the watcher's baseline is unambiguously older than the post-mutation mtime",
+    scanScope: "test",
+    regex: /\bfs\s*\.\s*utimesSync\s*\([^,]+,\s*new\s+Date\s*\(\s*Date\s*\.\s*now\s*\(\s*\)\s*\+/,
+    requires: /\bbackdateFile\s*\(/,
+    allowlist: [
+      "test/helpers/fs-watch.js",
+    ],
+    reason: "v0.11.13 — every recurring flake in the fs.watch test class (vault-seal-pem-file + watcher) shared the same root cause: the test wrote a file with a future mtime expecting the watcher's first poll to detect the change, but the first poll could land AFTER the mutation under runner contention. helpers.backdateFile establishes an unambiguously-older baseline; pairing it with future-mtime writes makes the watcher's transition detection deterministic.",
+  },
+    {
+    // N2 (v0.10.14) — hardcoded non-zero server bind ports race under
+    // SMOKE_PARALLEL=64 when two parallel tests pick the same value.
+    // Convention: `.listen(0)` then `server.address().port` to read
+    // the OS-assigned ephemeral port. Read-only protocol-constant
+    // references (autoconfig XML port: 993 / 587, mock-server config
+    // port: 1025) don't trip this detector — only `.listen()` with a
+    // literal non-zero port does.
+    id: "test-hardcoded-server-bind-port",
+    primitive: ".listen(0) + server.address().port  (let the OS assign an ephemeral port; read it after bind)",
+    scanScope: "test",
+    regex: /\.listen\s*\(\s*(?:\{[^}]*port\s*:\s*)?(?!0\b)\d{2,5}\b/,
+    allowlist: [],
+    reason: "Hardcoded bind ports race under SMOKE_PARALLEL=64 when two parallel tests pick the same value. Convention: .listen(0) + server.address().port. Read-only protocol-constant references (autoconfig XML port: 993 / 587, mock-server config port: 1025) don't trip this detector — only .listen() with a literal non-zero port does.",
+  },
+    {
+    // v0.10.13 PR #102 macOS hang — stream-throttle.test.js used
+    // `setTimeout`-based rate enforcement plus `node:stream.pipeline`
+    // and hung the macOS GitHub Actions runner for >2h on two
+    // separate commit SHAs of the same branch. Identical runs on the
+    // same SHA succeeded in 15 min. The hang's symptom is opaque on
+    // a remote runner (no partial logs surface until completion), so
+    // the only diagnostic is a per-test wall-clock ceiling.
+    id: "test-uses-stream-pipeline-without-withtesttimeout",
+    primitive: "wrap stream.pipeline-using test bodies with helpers.withTestTimeout(label, async function () { ... })",
+    scanScope: "test",
+    regex: /\b(?:stream\.pipeline|nodeStream\.pipeline|streamPipeline)\s*\(/,
+    requires: /\bwithTestTimeout\b/,
+    allowlist: [
+      "test/helpers/wait.js",
+    ],
+    reason: "Real-time-dependent tests using node:stream.pipeline without a per-test wall-clock ceiling can hang the smoke runner for the full GH Actions 6h timeout — see the v0.10.13 PR #102 macOS hang on stream-throttle's setTimeout-based rate test. New tests using stream.pipeline MUST import `withTestTimeout` from `test/helpers` and wrap each test body so a hang surfaces as `test timed out: <label>` in seconds instead of an opaque stuck job.",
+  },
+    {
+    // P2 Codex 2026-05-19 on PR #105 — verifyAll() in mail-crypto-smime
+    // looped a single-signer verify() helper per signer, but verify()
+    // always parsed sd.signerInfos[0]; the second signer's key got
+    // tested against the first signer's signature. The detector flags
+    // a `for (... signerInfos ...)` loop body that calls a sibling
+    // `verify({` (with object opts arg) — the helper that takes the
+    // SignerInfo as an explicit positional argument is allowed.
+    id: "verifyall-loop-calls-single-signer-verify-helper",
+    primitive: "A per-collection-item verify/process loop must call a helper that takes the item as a POSITIONAL argument (`_verifyOne(item, ...)`) — calling the top-level single-item entry point with an opts object inside the loop body re-parses the parent envelope and silently always processes index 0",
+    // Catches any `for (... of <collection>) { ... <name>({` shape
+    // where the call inside the loop body looks like a top-level
+    // entry point (function called with `({` opts-object first arg).
+    // The fix in mail-crypto-smime extracted `_verifySignerInfo(si, ...)`
+    // which takes the item positionally — that doesn't match the regex.
+    regex: /for\s*\(\s*var\s+\w+\s*=\s*0[^)]*\.(?:signerInfos|signers|recipients|items|entries)\.length[^)]*\)\s*\{[\s\S]{0,600}?\bverify\s*\(\s*\{/,
+    scanScope: "shop",
+    allowlist: [
+      // mail-crypto-smime.js verifyAll was fixed v0.11.0 to call
+      // _verifySignerInfo(si, ...) (positional `si`), not
+      // verify({ signature: ..., signerPublicKey: ... }) which
+      // re-parses the same SignedData and only checks signerInfos[0].
+    ],
+    reason: "CLASS DETECTOR. The bug shape is: a loop iterating a parent's child collection (signerInfos / signers / recipients / items / entries) where the loop body calls a top-level entry point with an opts-object argument, instead of a per-item helper that takes the loop variable. The top-level entry point typically re-parses the parent envelope from raw bytes and always processes index 0 — masking the second-and-onward items. Codex flagged this on smime.verifyAll v0.11.0 (P2). Per-item helpers must accept the loop variable as a positional argument.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
