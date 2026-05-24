@@ -612,6 +612,14 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "`catch (e) { ... return null; }` in a Worker handler routes the exception back to the dispatcher which falls through to `_forwardToContainer`. That's a pass-through: the edge \"detected\" a failure and silently escalated it to a backend that can't help. The legitimate `return null` shape is in routing dispatch (`if (path === \"/\") return ...; return null;`), where null means \"this path isn't edge-routed, fall through\" — NOT \"my render threw, you handle it.\" Edge handlers must serve their own 5xx via `renderInternalError` and log to observability.",
   },
   {
+    id:        "worker-uses-sha3-primitive",
+    primitive: "Cloudflare Workers' `nodejs_compat` runtime exposes `node:crypto` but the supported digest set is a subset of full Node — `createHash(\"sha3-512\")` / SHAKE256 are NOT in it (`Error: Digest method not supported`). Worker code that needs a stable hash either routes to the container (where the framework's SHA3-512 path runs server-side) or uses an algorithm in the Workers-supported subset (`b.crypto.hmacSha256` already augmented onto `worker/b.js`).",
+    regex:     /\bb\.crypto\.(?:sha3Hash|hmacSha3|namespaceHash|shake256|shake512|hkdfSha3)\s*\(/,
+    scanScope: "worker",
+    allowlist: [],
+    reason:    "v0.0.120 — `b.crypto.namespaceHash` shipped in `_edgeNewsletter` returned `Error: Digest method not supported` on every request; the Workers `nodejs_compat` surface doesn't include SHA3-family digests. Working around with a Web-Crypto SHA-256 fallback would silently diverge hash outputs from container-side SHA3-512 values, breaking cross-substrate lookups (e.g. unsubscribe-by-email_hash). When edge code needs to derive a stable identifier from operator-controlled bytes: route the request to the container, OR use `b.crypto.hmacSha256` IFF both sides will read with the same SHA-256 path — never have one substrate write SHA3 and another read SHA-256.",
+  },
+  {
     id:        "inline-base64url-three-replace",
     primitive: "b.crypto.toBase64Url(buf) — routes through Node's built-in 'base64url' encoding (linear-time, no regex backtracking surface)",
     regex:     /\.replace\(\s*\/=\+\$\/[gG]?\s*,/,
