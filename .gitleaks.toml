@@ -30,8 +30,14 @@ paths = [
 ]
 
 [[allowlists]]
-description = "Test fixtures + smoke logs may contain synthetic credential shapes for the purpose of exercising input-validation paths. The detectors that GUARD the fixture catalog live in scripts/ and tests/, not in gitleaks."
+description = "Test sources + smoke logs carry synthetic credential shapes inline (fake api_key / token / secret literals) to exercise input-validation and storage paths. These are fixtures whether they live in a fixtures/ subdir or directly in a *.test.js file, so the whole test tree is allowlisted. The detectors that GUARD the fixture catalog live in scripts/ and tests/, not in gitleaks."
 paths = [
-  '''^test/.*fixtures?/''',
+  '''^test/''',
   '''^\.test-output/''',
+]
+
+[[allowlists]]
+description = "D1 migration files are pure schema DDL (CREATE TABLE / INDEX). The project stores credentials hash-only and never seeds plaintext secrets in a migration, so a match here is a column name like idempotency_key / signing_secret_hash, not a credential."
+paths = [
+  '''^migrations-d1/.*\.sql$''',
 ]

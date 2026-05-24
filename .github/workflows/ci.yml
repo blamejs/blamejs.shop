@@ -48,9 +48,13 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.0
         with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Run gitleaks via its published container rather than the
+      # marketplace action — the repo's Actions allowlist permits only
+      # the vetted set, and a disallowed `uses:` fails the whole
+      # workflow at startup. Mirrors the operator-local scan in the
+      # release runbook + the docker pattern the actionlint job uses.
+      - name: Scan git history for secrets
+        run: docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:latest git --config=.gitleaks.toml --redact --exit-code=1
 
   actionlint:
     name: Actionlint (workflow files)
