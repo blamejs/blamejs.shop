@@ -772,6 +772,11 @@ async function _edgeRender(request, env, url) {
   }
   if (path.startsWith("/products/") && path.length > "/products/".length) {
     const slug = decodeURIComponent(path.slice("/products/".length));
+    // A product slug is a single path segment. Sub-paths like
+    // /products/:slug/review are container routes (the verified-buyer
+    // review form + submit) — fall through to container forwarding
+    // rather than 404-ing them as a bogus slug at the edge.
+    if (slug.indexOf("/") !== -1) return null;
     return await _edgeProduct(request, env, url, version, shopName, slug);
   }
   if (path === "/cart") {
