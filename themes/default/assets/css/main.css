@@ -2250,3 +2250,20 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
   .saved-item { grid-template-columns: 3rem 1fr; }
   .saved-item__actions { grid-column: 1 / -1; flex-direction: row; }
 }
+
+/* ---- account: address book -------------------------------------- */
+.account-addresses { max-width: 48rem; margin-inline: auto; padding-block: var(--space-6); }
+.account-addresses__title { font-family: var(--font-display); font-size: var(--text-2xl); margin: var(--space-3) 0 var(--space-5); }
+.account-addresses__form-title { font-family: var(--font-display); font-size: var(--text-xl); margin: var(--space-7) 0 var(--space-4); }
+.address-empty { color: var(--mute); }
+.address-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: var(--space-4); }
+.address-card { padding: var(--space-4); background: var(--paper); border: 1px solid var(--hair); border-radius: var(--radius-md); display: flex; flex-direction: column; gap: var(--space-2); }
+.address-card__label { font-weight: 700; margin: 0; }
+.address-card__badges { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; }
+.address-card__badge { font-size: var(--text-xs); font-weight: 600; color: var(--accent-d); background: var(--accent-l); border-radius: var(--radius-pill); padding: 0.1rem 0.5rem; }
+.address-card__body { font-style: normal; display: flex; flex-direction: column; gap: 0.1rem; color: var(--mute); font-size: var(--text-sm); }
+.address-card__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: auto; padding-top: var(--space-2); }
+.address-card__actions form { margin: 0; }
+.address-form { max-width: 32rem; }
+.address-form__check { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
+.form-field__req { color: var(--danger); }
