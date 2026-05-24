@@ -104,6 +104,15 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.reviews.create({ cursorSecret: reviewCursorSecret })
         : null;
 
+      // Wishlist — opts in the storefront save toggle + /account/wishlist
+      // page. Per-customer; cursor HMAC key derived like the others.
+      var wishlistCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("wishlist-cursor", process.env.D1_BRIDGE_SECRET)
+        : "wishlist-cursor-secret-dev-only";
+      var wishlist = (catalog && cart)
+        ? bShop.wishlist.create({ cursorSecret: wishlistCursorSecret })
+        : null;
+
       // Tax + shipping default tables — kick in when the operator
       // hasn't seeded `tax.rules` / `shipping.services` in config.
       // Zero-rate tax + a single $0 standard shipping service keeps
@@ -193,6 +202,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // regardless of Stripe (order reads don't touch the payment SDK).
         // The checkout block below reuses this same handle.
         if (reviews) sfDeps.reviews = reviews;
+        if (wishlist) sfDeps.wishlist = wishlist;
         sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;

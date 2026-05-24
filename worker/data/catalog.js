@@ -310,6 +310,26 @@ export async function getReviewSummary(DB, productId) {
   }
 }
 
+// How many distinct customers have wishlisted a product — the PDP's
+// "N saved" social-proof counter. Mirrors `lib/wishlist.js#countForProduct`
+// but reads D1 directly (the edge can't require the container's
+// primitives). Missing-table-resilient: operators who haven't applied
+// migration `0012_wishlist.sql` get 0 instead of a D1 error reaching
+// the PDP render (see `getReviewSummary`).
+export async function getWishlistCount(DB, productId) {
+  if (typeof productId !== "string" || productId.length === 0) return 0;
+  try {
+    var res = await DB
+      .prepare("SELECT COUNT(DISTINCT customer_id) AS n FROM wishlist_entries WHERE product_id = ?1")
+      .bind(productId)
+      .first();
+    return res && Number.isFinite(Number(res.n)) ? Number(res.n) : 0;
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return 0;
+    throw e;
+  }
+}
+
 // Published reviews for a product's PDP, newest first. Returns only the
 // display columns — never the customer identity (the schema stores a
 // `customer_id_hash`, never raw email; the storefront shows

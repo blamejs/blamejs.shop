@@ -22,6 +22,7 @@ import {
   listMediaForProduct,
   getReviewSummary,
   listPublishedReviews,
+  getWishlistCount,
   recentBlogArticles,
   listActiveProductSlugs,
   listPublishedBlogSlugs,
@@ -950,11 +951,12 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
         }),
       });
     }
-    const [variantsWithPrices, media, reviewSummary, reviewList] = await Promise.all([
+    const [variantsWithPrices, media, reviewSummary, reviewList, wishlistCount] = await Promise.all([
       listVariantsWithPrices(env.DB, product.id, "USD"),
       listMediaForProduct(env.DB, product.id),
       getReviewSummary(env.DB, product.id),
       listPublishedReviews(env.DB, product.id, 10),
+      getWishlistCount(env.DB, product.id),
     ]);
     const variants = [];
     const prices = {};
@@ -994,6 +996,7 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
       reviewSummary: reviewSummary,
       reviews:       reviewList.rows,
       reviewForm:    reviewForm,
+      wishlistCount: wishlistCount,
       shopName:      shopName,
       cartCount:     0,
       version:       version,

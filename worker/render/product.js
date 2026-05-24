@@ -162,10 +162,33 @@ var PRODUCT_PAGE =
   "          </table>\n" +
   "        </div>\n" +
   "      </div>\n" +
+  "      RAW_WISHLIST_PLACEHOLDER\n" +
   "    </div>\n" +
   "  </div>\n" +
   "  RAW_REVIEWS_PLACEHOLDER\n" +
   "</section>\n";
+
+// Product-level "Save to wishlist" control + social-proof count. The
+// toggle is a plain form POST to the container route (the edge can't
+// read the sealed session to know if THIS customer already saved it,
+// so the label is action-only; the account page is the source of truth
+// for saved items). The count is public and rendered at the edge.
+// Shared verbatim by the container renderer.
+function _buildWishlist(productId, count) {
+  var n = Number(count) || 0;
+  var countHtml = n > 0
+    ? "<span class=\"wishlist__count\">" + n + (n === 1 ? " shopper saved this" : " shoppers saved this") + "</span>"
+    : "";
+  return "<div class=\"wishlist\">" +
+           "<form class=\"wishlist__form\" method=\"post\" action=\"/wishlist/toggle\">" +
+             "<input type=\"hidden\" name=\"product_id\" value=\"" + escapeAttr(productId) + "\">" +
+             "<button type=\"submit\" class=\"btn-secondary wishlist__btn\">" +
+               "<span class=\"wishlist__heart\" aria-hidden=\"true\">♡</span> Save to wishlist" +
+             "</button>" +
+           "</form>" +
+           countHtml +
+         "</div>";
+}
 
 // Accessible star glyph row. `value` is the displayed rating (rounded
 // to the nearest whole star for the glyph fill); the precise figure
@@ -330,6 +353,7 @@ export function renderProduct(opts) {
   var reviewSummary = opts.reviewSummary || { count: 0, avg_rating: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
   var reviews       = opts.reviews || [];
   var reviewForm    = typeof opts.reviewForm === "string" ? opts.reviewForm : "";
+  var wishlistCount = opts.wishlistCount == null ? 0 : opts.wishlistCount;
   var shopName    = opts.shopName || "blamejs.shop";
   var cartCount   = opts.cartCount == null ? 0 : opts.cartCount;
   var searchQ     = opts.searchQ == null ? "" : opts.searchQ;
@@ -353,6 +377,7 @@ export function renderProduct(opts) {
 
   var galleryHtml = _buildPdpGallery(product, media, assetPrefix);
   var reviewsHtml = _buildReviews(reviewSummary, reviews, reviewForm);
+  var wishlistHtml = _buildWishlist(product.id, wishlistCount);
   var body = renderTemplate(PRODUCT_PAGE, {
     title:        product.title,
     description:  description,
@@ -360,6 +385,7 @@ export function renderProduct(opts) {
   })
     .replace("RAW_GALLERY_PLACEHOLDER", galleryHtml)
     .replace("RAW_ROWS_PLACEHOLDER", rows)
+    .replace("RAW_WISHLIST_PLACEHOLDER", wishlistHtml)
     .replace("RAW_REVIEWS_PLACEHOLDER", reviewsHtml);
 
   var heroMedia = media[0] || null;
