@@ -922,9 +922,24 @@ async function _edgeNewsletter(request, env) {
       }),
     });
   } catch (e) {
+    // Surface the failing step in a redacted response header so the
+    // operator can diagnose without wrangler tail access. The header
+    // names the error class + first 96 chars of the message — secrets
+    // are stripped via _redact, the body remains the canonical 500
+    // page. Removable once the live root cause is identified +
+    // permanently fixed.
+    var diagClass = (e && e.constructor && e.constructor.name) || "Error";
+    var diagMsg   = e && e.message ? String(e.message).slice(0, 96) : "";
     console.error("edge POST /newsletter failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
     const html = renderInternalError({ shopName: shopName, version: version });
-    return new Response(html, { status: 500, headers: _withSecurityHeaders({ "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }) });
+    return new Response(html, {
+      status:  500,
+      headers: _withSecurityHeaders({
+        "content-type":      "text/html; charset=utf-8",
+        "cache-control":     "no-store",
+        "x-newsletter-diag": _redact(diagClass + ": " + diagMsg),
+      }),
+    });
   }
 }
 
