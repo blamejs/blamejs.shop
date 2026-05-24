@@ -141,6 +141,10 @@ async function _run() {
     check("update then 303",                    upd.status === 303);
     check("update applied",                     (await addresses.get(addrId)).city === "Manchester");
 
+    // Malformed (non-UUID) id is a clean 404, not a 500.
+    var malformed = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/not-a-uuid/edit", headers: { cookie: cookieA } });
+    check("malformed id then 404",              malformed.status === 404);
+
     // Cross-customer ownership guard: B cannot edit/archive A's address.
     var idorEdit = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/" + addrId + "/edit", headers: { cookie: cookieB } });
     check("IDOR edit then 404",                 idorEdit.status === 404);
