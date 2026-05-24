@@ -110,6 +110,21 @@ function _scan(regex, scope, opts) {
             : scope === "shop"      ? _shopFiles()
             :                         _libFiles();
   var matches = [];
+  // `matchOn: "basename"` — apply the regex against each file's
+  // basename (the last `/`-separated component) rather than file
+  // contents. Used by detectors that police naming conventions
+  // (e.g. `release-named-test-file` refuses
+  // `v0-8-41-additions.test.js` / `slot-19-enhancements.test.js`
+  // shapes regardless of file body).
+  if (opts.matchOn === "basename") {
+    for (var bi = 0; bi < files.length; bi += 1) {
+      var bname = path.basename(files[bi]);
+      if (regex.test(bname)) {
+        matches.push({ file: _relPath(files[bi]), line: 1, content: bname });
+      }
+    }
+    return matches;
+  }
   for (var i = 0; i < files.length; i += 1) {
     var content;
     try { content = fs.readFileSync(files[i], "utf8"); }
@@ -1610,6 +1625,82 @@ var KNOWN_ANTIPATTERNS = [
     ],
     reason: "CLASS DETECTOR. The bug shape is: a loop iterating a parent's child collection (signerInfos / signers / recipients / items / entries) where the loop body calls a top-level entry point with an opts-object argument, instead of a per-item helper that takes the loop variable. The top-level entry point typically re-parses the parent envelope from raw bytes and always processes index 0 — masking the second-and-onward items. Codex flagged this on smime.verifyAll v0.11.0 (P2). Per-item helpers must accept the loop variable as a positional argument.",
   },
+
+  // ---- Catalog mirror — second pass ----
+  // Seven detectors held back from the v0.0.113 bulk port because
+  // the splice tool didn't roundtrip their regex literals or runner
+  // features (basename match, requires-companion). Hand-ported.
+
+  {
+    id:        "archive-wrap-recipient-missing-ec-half",
+    primitive: "static-key recipients for b.archive.wrap / bundleAdapterStorage `recipient:` opt MUST carry BOTH publicKey (ML-KEM-1024 PEM) AND ecPublicKey (P-384 ECDH PEM). Partial recipients trip b.crypto.encrypt's ML-KEM-only fallback which silently degrades the hybrid defense-in-depth contract this surface promises.",
+    scanScope: "shop",
+    regex:     /recipient:\s*\{\s*[^}]*publicKey:/,
+    requires:  /ecPublicKey|allow:archive-wrap-partial-recipient/,
+    allowlist: [],
+    reason:    "Codex P2 on v0.12.10 PR #161 — archive-wrap's recipient contract is hybrid PQC by design. Partial recipient objects degrade to KEM-only with only a one-shot audit. Locks the static-side gate so library code composing wrap/unwrap can't silently drop the ECDH leg. Ported from blamejs's catalog.",
+  },
+
+  {
+    id:        "inline-sql-transaction-wrapper",
+    primitive: "dbSchema.runInTransaction(db, fn, opts?) — the BEGIN / COMMIT / ROLLBACK try/catch boilerplate every SQL-touching primitive previously rolled by hand",
+    scanScope: "shop",
+    regex:     /"BEGIN"[\s\S]{0,400}?"COMMIT"[\s\S]{0,200}?\}\s*catch[\s\S]{0,300}?"ROLLBACK"/,
+    multiline: true,
+    allowlist: [],
+    reason:    "Extracted to dbSchema.runInTransaction. Replaces the inline BEGIN / COMMIT / ROLLBACK try/catch boilerplate in migrations / seeders / db-schema. Handles both raw better-sqlite3 and b.db framework wrapper handles via runSqlOnHandle. Ported from blamejs's catalog.",
+  },
+
+  {
+    id:        "map-get-or-insert-pre-node-26",
+    primitive: "Map.prototype.getOrInsertComputed(key, factory) (Node 26+); pre-floor-bump call sites are allowlisted with a documented migration target",
+    scanScope: "shop",
+    regex:     /var\s+\w+\s*=\s*\w+\.get\s*\([^;]+\)\s*;\s*\n\s*if\s*\(\s*!\s*\w+\s*\)\s*\{[\s\S]{0,300}?\.set\s*\(/,
+    multiline: true,
+    allowlist: [],
+    reason:    "Node 26 ships Map.prototype.getOrInsertComputed(key, factory) — a single-lookup get-or-insert that replaces the two-step `var v = m.get(k); if (!v) { v = factory(); m.set(k, v); }` pattern. Variant A (with `var X = M.get(k)` binding). The sweep is deferred to the Node 26 floor-bump (eligible Oct 2026); engines.node is `>=24` today. New code post-this-patch trips the detector. Ported from blamejs's catalog.",
+  },
+
+  {
+    id:        "map-has-then-set-pre-node-26",
+    primitive: "Map.prototype.getOrInsertComputed(key, factory) (Node 26+); pre-floor-bump call sites are allowlisted with a documented migration target",
+    scanScope: "shop",
+    regex:     /if\s*\(\s*!\s*\w+\.has\s*\([^)]+\)\s*\)\s*\{[\s\S]{0,300}?\.set\s*\(/,
+    multiline: true,
+    allowlist: [],
+    reason:    "Companion to map-get-or-insert-pre-node-26 — same Node 26 getOrInsertComputed migration target, captures the `if (!M.has(k)) { ... M.set(k, ...) ... }` syntactic variant. Ported from blamejs's catalog.",
+  },
+
+  {
+    id:        "pqc-algid-with-null-params",
+    primitive: "ABSENT_PARAM_OIDS.has(oid) ? writeNode(SEQUENCE, writeOid(oid)) : writeNode(SEQUENCE, [writeOid(oid), writeNull()])",
+    scanScope: "shop",
+    regex:     /writeOid\(\s*["']2\.16\.840\.1\.101\.3\.4\.(?:3\.(?:17|18|19|31)|4\.[23])["']\s*\)[\s\S]{0,160}?writeNull\s*\(\s*\)/,
+    multiline: true,
+    allowlist: [],
+    reason:    "Codex P1 on v0.10.13 PR #102 — PQC AlgorithmIdentifier with NULL parameters. ML-DSA (RFC 9909 §3), SLH-DSA (RFC 9881 §3), and ML-KEM (RFC 9936 §3) all specify that the AlgorithmIdentifier's parameters field is ABSENT. Appending `NULL` makes the CMS (or X.509) structure non-conformant — strict validators reject the signature/recipient. Ported from blamejs's catalog.",
+  },
+
+  {
+    id:        "release-named-test-file",
+    primitive: "split into per-domain test files (one primitive → one test file; share helpers under test/helpers/)",
+    scanScope: "test",
+    matchOn:   "basename",
+    regex:     /^(?:v\d+[-_.]\d+[-_.]\d+(?:[-_.]|$)|slot[-_]\d+|(?:[^/]*[-_])?batch[-_.])/i,
+    allowlist: [],
+    reason:    "v0.10.14 — release-named test files (v0-8-41-additions.test.js / slot-19-enhancements.test.js / batch-N.test.js) conflate scope across unrelated primitives, break per-file isolation under SMOKE_PARALLEL=64, and rot the moment the release ships. Tests must live in per-domain files. Ported from blamejs's catalog.",
+  },
+
+  {
+    id:        "safedecompress-omits-max-compressed-bytes",
+    primitive: "safeDecompress({ maxOutputBytes, maxCompressedBytes: <operator bound>, ... }) — align both caps with the caller's intent; never rely on the 4 MiB default when maxOutputBytes is operator-configurable",
+    scanScope: "shop",
+    regex:     /safeDecompress\s*\([\s\S]{0,300}?maxOutputBytes\s*:/,
+    multiline: true,
+    requires:  /\bmaxCompressedBytes\b/,
+    allowlist: [],
+    reason:    "Codex P1 on v0.11.5 PR #110 — websocket _inflateMessage routed through safeDecompress without maxCompressedBytes; operators with maxMessageBytes > 4 MiB saw legitimate large permessage-deflate traffic refused at the input cap before decompression. Detector requires every safeDecompress call to ALSO name maxCompressedBytes (companion-check) so future call sites inherit the alignment discipline. Ported from blamejs's catalog.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
@@ -1629,7 +1720,10 @@ KNOWN_ANTIPATTERNS.forEach(function (ap) {
 });
 
 function _check(antipattern) {
-  var raw = _scan(antipattern.regex, antipattern.scanScope || "lib", { multiline: !!antipattern.multiline });
+  var raw = _scan(antipattern.regex, antipattern.scanScope || "lib", {
+    multiline: !!antipattern.multiline,
+    matchOn:   antipattern.matchOn,
+  });
   var afterMarkers = _filterMarkers(raw, antipattern.id);
   var allowSet = (antipattern.allowlist || []).reduce(function (acc, p) { acc[p] = true; return acc; }, {});
   var afterAllow = afterMarkers.filter(function (m) { return !allowSet[m.file]; });

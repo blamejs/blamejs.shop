@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.114",
+  "date": "2026-05-23",
+  "headline": "Catalog mirror — close out the last 7 detectors + `matchOn: \"basename\"` runner support",
+  "summary": "Closes the codebase-patterns catalog gap against vendored blamejs. The seven detectors held back from the v0.0.113 bulk port — six because the splice tool couldn't roundtrip their regex literals (embedded double-quotes / complex character classes) and one (`release-named-test-file`) that needed `matchOn: \"basename\"` support in the runner — are now hand-ported. Shop's catalog grows from 114 to 121 detectors, with seven covering archive-wrap PQC hybrid contracts, SQL transaction-wrapper extraction, the two `Map.prototype.getOrInsertComputed` Node-26 migration variants, PQC AlgorithmIdentifier `NULL` parameters anti-pattern, release-named test-file refusal, and `safeDecompress` paired-cap discipline. One legitimate `map-has-then-set` site in `lib/analytics.js#byCurrency` surfaced through the port and is kept with an inline `allow:` marker documenting the Node-26 floor-bump migration target.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Seven new codebase-patterns detectors complete the catalog mirror", "body": "`archive-wrap-recipient-missing-ec-half` (hybrid PQC `recipient: { publicKey: ... }` must also carry `ecPublicKey:` — uses `requires:` companion-check to exempt files where the matching `ecPublicKey` lives elsewhere), `inline-sql-transaction-wrapper` (BEGIN/COMMIT/ROLLBACK try/catch boilerplate routes through `dbSchema.runInTransaction`), `map-get-or-insert-pre-node-26` + `map-has-then-set-pre-node-26` (both variants of the two-step Map insert-if-absent pattern that Node 26 collapses to `Map.prototype.getOrInsertComputed`), `pqc-algid-with-null-params` (RFC 9909/9881/9936 — PQC AlgorithmIdentifier parameters field is ABSENT, not `NULL`), `release-named-test-file` (refuses `v0-8-41-additions.test.js` / `slot-19-enhancements.test.js` / `batch-N.test.js` shapes — uses the new `matchOn: \"basename\"` runner feature), `safedecompress-omits-max-compressed-bytes` (every `safeDecompress({ maxOutputBytes })` call MUST also name `maxCompressedBytes` so the caps stay aligned with operator intent — uses `requires:` companion-check)." },
+        { "title": "`matchOn: \"basename\"` runner support", "body": "`_scan(regex, scope, { matchOn: \"basename\" })` matches the regex against each file's basename rather than file contents. Used by detectors that police naming conventions (e.g. release-named-test-file). The feature mirrors the runner contract in vendored blamejs's catalog so future basename-policing detectors can be ported verbatim." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "`lib/analytics.js#byCurrency` carries an inline `allow:map-has-then-set-pre-node-26` marker", "body": "The `if (!byCurrency.has(cur)) { ...byCurrency.set(cur, {...}); }` insert-if-absent in the per-currency aggregate loop migrates cleanly to `Map.prototype.getOrInsertComputed` when the framework's `engines.node` floor bumps to Node 26 (eligible Oct 2026 per the LTS calendar). The detector now exists so a fresh occurrence post-this-patch trips pre-merge; the existing site is allowed with a reason that includes the migration target." }
+      ]
+    }
+  ]
+}
