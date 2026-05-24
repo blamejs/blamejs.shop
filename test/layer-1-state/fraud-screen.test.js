@@ -462,7 +462,7 @@ async function _customerRiskHistoryAndRecentScreenings() {
   check("recentScreenings — covers all rows",    Object.keys(seen).length === 3);
 
   // Cursor tamper → refusal.
-  var tampered = page.next_cursor.slice(0, -2) + (page.next_cursor.endsWith("==") ? "AA" : "XX");
+  var tampered = (page.next_cursor.charAt(0) === "A" ? "B" : "A") + page.next_cursor.slice(1);
   await assert.rejects(
     fs.recentScreenings({ limit: 2, cursor: tampered }),
     /cursor/i,

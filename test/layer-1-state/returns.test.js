@@ -277,7 +277,7 @@ async function _listForOrderAndCustomer() {
   check("listForCustomer approved filter",        approvedPage.rows.length === 1 && approvedPage.rows[0].id === ids[0]);
 
   // Cursor tamper rejected
-  var tampered = pageA.next_cursor.slice(0, -2) + (pageA.next_cursor.endsWith("==") ? "AA" : "XX");
+  var tampered = (pageA.next_cursor.charAt(0) === "A" ? "B" : "A") + pageA.next_cursor.slice(1);
   await assert.rejects(
     ret.listForCustomer(customerId, { limit: 2, cursor: tampered }),
     /cursor/i,

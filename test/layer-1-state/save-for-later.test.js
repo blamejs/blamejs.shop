@@ -477,7 +477,7 @@ async function _listAndPagination() {
   check("listForCustomer: every row exactly once", Object.keys(seen).length === 5);
 
   // Tampered cursor refused.
-  var tampered = pageA.nextCursor.slice(0, -2) + (pageA.nextCursor.endsWith("==") ? "AA" : "XX");
+  var tampered = (pageA.nextCursor.charAt(0) === "A" ? "B" : "A") + pageA.nextCursor.slice(1);
   await assert.rejects(
     s.sfl.listForCustomer({ customer_id: customer, limit: 2, cursor: tampered }),
     /cursor/i,

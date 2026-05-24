@@ -438,7 +438,7 @@ async function _cursorPagination() {
   check("paginated combined = 5 unique",   combined.length === 5 && combined.filter(function (v, idx) { return combined.indexOf(v) === idx; }).length === 5);
 
   // Cross-secret tamper → refused.
-  var tampered = p1.next_cursor.slice(0, -2) + (p1.next_cursor.endsWith("AA") ? "BB" : "AA");
+  var tampered = (p1.next_cursor.charAt(0) === "A" ? "B" : "A") + p1.next_cursor.slice(1);
   await assert.rejects(
     aud.resolve({ slug: "page-test", limit: 2, cursor: tampered }),
     /cursor/i

@@ -8,6 +8,7 @@
 // codebase-patterns:allow-file regex-from-argv — catalog references the literal `new RegExp(... process.argv` shape it detects
 // codebase-patterns:allow-file internal-rulebook-vocabulary-in-source — runtime regex construction inevitably includes the patterns being detected
 // codebase-patterns:allow-file non-shop-require — catalog file describes the require shape it detects
+// codebase-patterns:allow-file cursor-tamper-trailing-replace — catalog references the `next_cursor.slice(0, -N)` shape it detects
 
 // Re-exec under a 6 GiB old-space ceiling when the parent process did
 // not already raise the heap cap. Future detectors that cross-product
@@ -215,6 +216,13 @@ var KNOWN_ANTIPATTERNS = [
       // The polling step inside waitUntil itself is allowed via the
       // per-line `// allow:test-promise-settimeout-sleep` marker.
     ],
+  },
+  {
+    id:          "cursor-tamper-trailing-replace",
+    scanScope:   "test",
+    description: "`<x>.next_cursor.slice(0, -N) + \"<literal>\"` rebuilds a tampered pagination cursor by replacing trailing chars — but it's a no-op when the cursor already ends in that literal, leaving the cursor valid and the expected HMAC-rejection missing (a flake that only surfaces on some cursor values). Flip a leading data char so the tamper always changes the cursor: `(c.charAt(0) === \"A\" ? \"B\" : \"A\") + c.slice(1)`",
+    regex:       /\.next_?[Cc]ursor\.slice\(\s*0\s*,\s*-\d+\s*\)/,
+    allowlist:   [],
   },
   {
     id:          "console-direct",
