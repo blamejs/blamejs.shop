@@ -32,6 +32,15 @@ var REVIEW_MIGS = ["0001_catalog.sql", "0011_reviews.sql"].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
 
+var RETURN_MIGS = [
+  "0001_catalog.sql",
+  "0002_cart.sql",
+  "0003_order.sql",
+  "0023_returns.sql",
+].map(function (f) {
+  return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
+});
+
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
   return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
@@ -337,6 +346,189 @@ async function _reviewsAbsent() {
   check("reviews-absent: calling the route throws (unregistered)", threw);
 }
 
+// Seed one order so the return_authorizations.order_id FK has a
+// target. Mirrors the seed in returns.test.js.
+async function _seedReturnOrder(query) {
+  var catalog = bShop.catalog.create({ query: query });
+  var cart    = bShop.cart.create({ query: query, catalog: catalog });
+  var order   = bShop.order.create({ query: query });
+  var p = await catalog.products.create({ slug: "rma-test", title: "RmaTest", status: "active" });
+  var v = await catalog.variants.create(p.id, { sku: "RMA-1" });
+  await catalog.prices.set(v.id, { currency: "USD", amount_minor: 4999 });
+  var sid = bShop.framework.uuid.v7();
+  var c = await cart.create(sid, { currency: "USD" });
+  await cart.addLine(c.id, { variant_id: v.id, qty: 2 });
+  var o = await order.createFromCart({
+    cart_id:           c.id,
+    session_id:        sid,
+    currency:          "USD",
+    subtotal_minor:    9998,
+    discount_minor:    0,
+    tax_minor:         0,
+    shipping_minor:    0,
+    grand_total_minor: 9998,
+    ship_to:           { country: "US" },
+    lines: [{
+      variant_id:        v.id,
+      sku:               v.sku,
+      qty:               2,
+      unit_amount_minor: 4999,
+      unit_currency:     "USD",
+    }],
+  });
+  return { order: o, variant: v };
+}
+
+function _rmaInput(seed) {
+  return {
+    order_id: seed.order.id,
+    reason:   "defective",
+    lines:    [{ sku: seed.variant.sku, qty: 1 }],
+  };
+}
+
+async function _returnModeration() {
+  var query   = _makeQuery(RETURN_MIGS);
+  var catalog = bShop.catalog.create({ query: query });
+  var order   = bShop.order.create({ query: query });
+  var returns = bShop.returns.create({ query: query });
+  var router  = _fakeRouter();
+  bShop.admin.mount(router, { token: TOKEN, catalog: catalog, order: order, returns: returns });
+
+  var auth = { authorization: "Bearer " + TOKEN };
+  var seed = await _seedReturnOrder(query);
+
+  // Three pending RMAs; one is approved so the pending queue must
+  // exclude it.
+  var r1 = await returns.request(_rmaInput(seed));
+  var r2 = await returns.request(_rmaInput(seed));
+  var r3 = await returns.request(_rmaInput(seed));
+  await returns.approve(r3.id, { refund_amount_minor: 4999, refund_currency: "USD" });
+
+  // Queue defaults to pending, spans all orders, excludes approved.
+  var rList = await router._call("GET", "/admin/returns", { headers: auth });
+  check("returns list returns 200", rList.status === 200);
+  var page = JSON.parse(rList.body);
+  var listedIds = page.rows.map(function (r) { return r.id; });
+  check("pending queue includes pending RMAs", listedIds.indexOf(r1.id) !== -1 && listedIds.indexOf(r2.id) !== -1);
+  check("pending queue omits approved",        listedIds.indexOf(r3.id) === -1);
+  check("pending queue is pending-only",       page.rows.every(function (r) { return r.status === "pending"; }));
+
+  // Explicit status filter narrows to approved.
+  var rApproved = await router._call("GET", "/admin/returns", { headers: auth, url: "/admin/returns?status=approved" });
+  check("approved filter returns 200", rApproved.status === 200);
+  var apprPage = JSON.parse(rApproved.body);
+  check("approved filter returns only approved", apprPage.rows.length === 1 && apprPage.rows[0].id === r3.id);
+
+  // Invalid status query → 400 (status validator throws TypeError).
+  var rBadStatus = await router._call("GET", "/admin/returns", { headers: auth, url: "/admin/returns?status=bogus" });
+  check("invalid status → 400", rBadStatus.status === 400);
+
+  // GET single RMA.
+  var rGet = await router._call("GET", "/admin/returns/" + r1.id, { headers: auth, params: { id: r1.id } });
+  check("returns get returns 200", rGet.status === 200);
+  check("returns get returns the row", JSON.parse(rGet.body).id === r1.id);
+  check("returns get hydrates lines", Array.isArray(JSON.parse(rGet.body).lines));
+
+  // GET missing RMA → 404.
+  var missingId = bShop.framework.uuid.v7();
+  var rGetMiss = await router._call("GET", "/admin/returns/" + missingId, { headers: auth, params: { id: missingId } });
+  check("returns get missing → 404", rGetMiss.status === 404);
+
+  // GET non-UUID id → 4xx, never 500 (defensive request-shape reader).
+  var rGetBad = await router._call("GET", "/admin/returns/not-a-uuid", { headers: auth, params: { id: "not-a-uuid" } });
+  check("returns get bad-id → 4xx not 500", rGetBad.status >= 400 && rGetBad.status < 500);
+
+  // approve → received → refund happy path through the endpoints.
+  var rApprove = await router._call("POST", "/admin/returns/" + r1.id + "/approve", {
+    headers: auth, params: { id: r1.id },
+    body:    { refund_amount_minor: 4999, refund_currency: "USD", operator_notes: "QA confirms" },
+  });
+  check("approve returns 200", rApprove.status === 200);
+  check("approve flips status", JSON.parse(rApprove.body).status === "approved");
+  check("approve sets refund amount", JSON.parse(rApprove.body).refund_amount_minor === 4999);
+
+  var rReceived = await router._call("POST", "/admin/returns/" + r1.id + "/received", {
+    headers: auth, params: { id: r1.id }, body: { operator_notes: "package back" },
+  });
+  check("received returns 200", rReceived.status === 200);
+  check("received flips status", JSON.parse(rReceived.body).status === "received");
+
+  var rRefund = await router._call("POST", "/admin/returns/" + r1.id + "/refund", {
+    headers: auth, params: { id: r1.id }, body: { operator_notes: "refunded via stripe" },
+  });
+  check("refund returns 200", rRefund.status === 200);
+  check("refund flips status", JSON.parse(rRefund.body).status === "refunded");
+
+  // reject the second RMA (pending → rejected).
+  var rReject = await router._call("POST", "/admin/returns/" + r2.id + "/reject", {
+    headers: auth, params: { id: r2.id }, body: { rejected_reason: "outside 30-day window" },
+  });
+  check("reject returns 200", rReject.status === 200);
+  check("reject flips status", JSON.parse(rReject.body).status === "rejected");
+
+  // Invalid transition: refund-from-pending → 4xx, never 500. Seed a
+  // fresh pending RMA so the transition is genuinely illegal.
+  var r4 = await returns.request(_rmaInput(seed));
+  var rBadTrans = await router._call("POST", "/admin/returns/" + r4.id + "/refund", {
+    headers: auth, params: { id: r4.id }, body: {},
+  });
+  check("illegal transition → 4xx not 500", rBadTrans.status >= 400 && rBadTrans.status < 500);
+
+  // approve missing required field: refund_amount_minor absent → 400.
+  var rApproveBad = await router._call("POST", "/admin/returns/" + r4.id + "/approve", {
+    headers: auth, params: { id: r4.id }, body: {},
+  });
+  check("approve missing refund_amount_minor → 400", rApproveBad.status === 400);
+
+  // reject without rejected_reason → 400 (missing required field).
+  var rRejectBad = await router._call("POST", "/admin/returns/" + r4.id + "/reject", {
+    headers: auth, params: { id: r4.id }, body: {},
+  });
+  check("reject without rejected_reason → 400", rRejectBad.status === 400);
+
+  // Transition against a missing RMA → 404.
+  var rApproveMiss = await router._call("POST", "/admin/returns/" + missingId + "/approve", {
+    headers: auth, params: { id: missingId }, body: { refund_amount_minor: 100 },
+  });
+  check("approve missing RMA → 404", rApproveMiss.status === 404);
+
+  // Non-UUID id on a transition → 4xx, never 500.
+  var rApproveBadId = await router._call("POST", "/admin/returns/not-a-uuid/approve", {
+    headers: auth, params: { id: "not-a-uuid" }, body: { refund_amount_minor: 100 },
+  });
+  check("approve bad-id → 4xx not 500", rApproveBadId.status >= 400 && rApproveBadId.status < 500);
+
+  // Auth gates every new route.
+  var rNoAuth = await router._call("GET", "/admin/returns", {});
+  check("returns list requires auth", rNoAuth.status === 401);
+  var rNoAuthApprove = await router._call("POST", "/admin/returns/" + r1.id + "/approve", { params: { id: r1.id }, body: {} });
+  check("returns approve requires auth", rNoAuthApprove.status === 401);
+}
+
+async function _returnsAbsent() {
+  var query   = _makeQuery(RETURN_MIGS);
+  var catalog = bShop.catalog.create({ query: query });
+  var order   = bShop.order.create({ query: query });
+  var router  = _fakeRouter();
+  // No returns dep → routes must not mount.
+  bShop.admin.mount(router, { token: TOKEN, catalog: catalog, order: order });
+
+  check("returns-absent: list route not mounted",     !router._routes["GET /admin/returns"]);
+  check("returns-absent: get route not mounted",       !router._routes["GET /admin/returns/:id"]);
+  check("returns-absent: approve route not mounted",   !router._routes["POST /admin/returns/:id/approve"]);
+  check("returns-absent: received route not mounted",  !router._routes["POST /admin/returns/:id/received"]);
+  check("returns-absent: refund route not mounted",    !router._routes["POST /admin/returns/:id/refund"]);
+  check("returns-absent: reject route not mounted",    !router._routes["POST /admin/returns/:id/reject"]);
+
+  var auth = { authorization: "Bearer " + TOKEN };
+  var threw = false;
+  try {
+    await router._call("GET", "/admin/returns", { headers: auth });
+  } catch (_e) { threw = true; }
+  check("returns-absent: calling the route throws (unregistered)", threw);
+}
+
 async function _factoryValidation() {
   var query = _makeQuery();
   var catalog = bShop.catalog.create({ query: query });
@@ -353,6 +545,8 @@ async function run() {
   await _orderTransition();
   await _reviewModeration();
   await _reviewsAbsent();
+  await _returnModeration();
+  await _returnsAbsent();
   await _factoryValidation();
 }
 

@@ -125,6 +125,16 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // Address book — per-customer saved addresses on /account/addresses.
       var addresses = (catalog && cart) ? bShop.addresses.create({}) : null;
 
+      // Returns — customer self-serve RMA requests (/account/returns) +
+      // operator moderation (/admin/returns). Cursor HMAC key like the
+      // others. Single instance shared by both surfaces.
+      var returnsCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("returns-cursor", process.env.D1_BRIDGE_SECRET)
+        : "returns-cursor-secret-dev-only";
+      var returns = (catalog && cart)
+        ? bShop.returns.create({ cursorSecret: returnsCursorSecret })
+        : null;
+
       // Tax + shipping default tables — kick in when the operator
       // hasn't seeded `tax.rules` / `shipping.services` in config.
       // Zero-rate tax + a single $0 standard shipping service keeps
@@ -173,6 +183,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           r2_bridge:     r2_bridge,
           catalogImport: catalogImport,
           reviews:       reviews,
+          returns:       returns,
         });
       }
 
@@ -217,6 +228,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (wishlist) sfDeps.wishlist = wishlist;
         if (saveForLater) sfDeps.saveForLater = saveForLater;
         if (addresses) sfDeps.addresses = addresses;
+        if (returns) sfDeps.returns = returns;
         sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;
