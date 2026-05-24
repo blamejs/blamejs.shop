@@ -122,6 +122,9 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.saveForLater.create({ cursorSecret: saveForLaterCursorSecret, catalog: catalog })
         : null;
 
+      // Address book — per-customer saved addresses on /account/addresses.
+      var addresses = (catalog && cart) ? bShop.addresses.create({}) : null;
+
       // Tax + shipping default tables — kick in when the operator
       // hasn't seeded `tax.rules` / `shipping.services` in config.
       // Zero-rate tax + a single $0 standard shipping service keeps
@@ -213,6 +216,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (reviews) sfDeps.reviews = reviews;
         if (wishlist) sfDeps.wishlist = wishlist;
         if (saveForLater) sfDeps.saveForLater = saveForLater;
+        if (addresses) sfDeps.addresses = addresses;
         sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;
