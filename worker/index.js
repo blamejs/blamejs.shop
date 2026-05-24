@@ -1122,7 +1122,14 @@ function _withSecurityHeaders(base) {
 // images, etc.) compose by appending to the same header.
 function _earlyHintsLink(env, extras) {
   var version = env.WORKER_VERSION || "0.0.0";
-  var base    = "</assets/themes/default/css/main.css?v=" + version + ">; rel=preload; as=style; crossorigin";
+  // No `crossorigin` — the preload target is same-origin and the
+  // matching `<link rel="stylesheet">` tag has no `crossorigin`
+  // either. Adding `crossorigin` to the preload makes the browser
+  // treat it as a CORS request; the stylesheet load (without the
+  // attribute) doesn't match credentials mode, the preload sits
+  // unused, and devtools warns "request credentials mode does not
+  // match. Consider taking a look at crossorigin attribute".
+  var base    = "</assets/themes/default/css/main.css?v=" + version + ">; rel=preload; as=style";
   if (!Array.isArray(extras) || extras.length === 0) return base;
   // Per-route preload merge — every extra entry is `{ href, as }`.
   // Cloudflare auto-promotes the comma-separated Link header to

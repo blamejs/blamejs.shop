@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.115",
+  "date": "2026-05-23",
+  "headline": "Drop `crossorigin` from the CSS preload Link header — fixes browser preload-credentials-mismatch warning",
+  "summary": "Browsers were warning `A preload for '/assets/themes/default/css/main.css?v=0.0.0' is found, but is not used because the request credentials mode does not match. Consider taking a look at crossorigin attribute.` Root cause: the Early Hints / `Link: rel=preload` header carried `crossorigin`, but the matching `<link rel=\"stylesheet\">` tag in the rendered HTML did not. The browser treats the preload as a CORS request, the stylesheet as a same-origin request, and the two don't share a connection — the preloaded byte stream is discarded and the stylesheet is re-fetched from scratch. The asset is genuinely same-origin (`/assets/...`), so `crossorigin` was always wrong on the preload side; removing it lets the preload and stylesheet share the request credentials mode and the browser reuses the preloaded bytes.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "`_earlyHintsLink` emits the CSS preload without `crossorigin`", "body": "`worker/index.js#_earlyHintsLink` now emits `</assets/themes/default/css/main.css?v=...>; rel=preload; as=style` — no `crossorigin` token. The asset is same-origin, the stylesheet `<link>` tag carries no `crossorigin` attribute, and the browser's preload-credentials-match check passes. Devtools no longer warns `request credentials mode does not match`. Operators with per-route extras (hero image preload on PDP, etc.) inherit the same shape — extras already shipped without `crossorigin`." }
+      ]
+    }
+  ]
+}
