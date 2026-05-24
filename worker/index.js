@@ -295,8 +295,32 @@ export class ShopContainer extends Container {
 
 // ---- Worker entrypoint ----------------------------------------------------
 
+// Top-level Worker exception catcher. An uncaught exception in the
+// fetch handler propagates to Cloudflare's runtime, which serves the
+// generic 1101 "Worker threw exception" page — visitors see a
+// cf-branded error referencing wrangler tail. The wrap converts
+// every escape into a clean 500 served with the framework's security
+// headers + a sane Retry-After. Logs to `console.error` so wrangler
+// tail / Logpush still capture the underlying cause.
+async function _withTopLevelCatch(request, env, ctx, inner) {
+  try {
+    return await inner(request, env, ctx);
+  } catch (e) {
+    console.error("worker top-level exception:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+    return new Response(_warmingHtml(request.url, 8), {
+      status:  503,
+      headers: _withSecurityHeaders({
+        "content-type":  "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "retry-after":   "10",
+      }),
+    });
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
+    return _withTopLevelCatch(request, env, ctx, async function (request, env, ctx) {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
@@ -602,6 +626,7 @@ export default {
 
     // 8. Everything else — forward to the container.
     return _forwardToContainer(request, env);
+    });
   },
 
   // Cron-triggered cache warmer. The wrangler.toml `[triggers]`
