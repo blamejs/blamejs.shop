@@ -1,4 +1,4 @@
-import { renderTemplate, escapeAttr, formatPrice, jsonLdScript } from "./_lib.js";
+import { renderTemplate, escapeHtml, escapeAttr, formatPrice, jsonLdScript } from "./_lib.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
@@ -164,7 +164,108 @@ var PRODUCT_PAGE =
   "      </div>\n" +
   "    </div>\n" +
   "  </div>\n" +
+  "  RAW_REVIEWS_PLACEHOLDER\n" +
   "</section>\n";
+
+// Accessible star glyph row. `value` is the displayed rating (rounded
+// to the nearest whole star for the glyph fill); the precise figure
+// rides in the visually-hidden label so a screen reader announces
+// "4.3 out of 5 stars" while sighted users see four-and-a-bit filled
+// stars. `aria-hidden` on the glyphs prevents double-announcement.
+function _stars(value, label) {
+  var filled = Math.round(value);
+  if (filled < 0) filled = 0;
+  if (filled > 5) filled = 5;
+  var glyphs = "";
+  for (var i = 1; i <= 5; i += 1) {
+    glyphs += "<span class=\"star" + (i <= filled ? " star--on" : "") + "\">" +
+      (i <= filled ? "★" : "☆") + "</span>";
+  }
+  return "<span class=\"stars\" aria-hidden=\"true\">" + glyphs + "</span>" +
+         "<span class=\"sr-only\">" + escapeHtml(label) + "</span>";
+}
+
+function _reviewDate(ts) {
+  var n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  // Locale-neutral ISO date (UTC) — deterministic across the edge's
+  // many PoPs, no Intl timezone surprises in the cached HTML.
+  return new Date(n).toISOString().slice(0, 10);
+}
+
+// Builds the PDP reviews block from the published aggregate + list
+// fetched at the edge (`worker/data/catalog.js#getReviewSummary` /
+// `#listPublishedReviews`). Renders the "no reviews yet" empty state
+// when the product has none — the section header always shows so the
+// submission form (server-rendered into RAW_FORM) has a home.
+function _buildReviews(summary, reviews, formHtml) {
+  summary = summary || { count: 0, avg_rating: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
+  reviews = reviews || [];
+  var count = Number(summary.count) || 0;
+
+  var head;
+  if (count > 0) {
+    var avg = Number(summary.avg_rating) || 0;
+    var avgStr = avg.toFixed(1);
+    var dist = summary.distribution || {};
+    var bars = "";
+    for (var s = 5; s >= 1; s -= 1) {
+      var n   = Number(dist[s]) || 0;
+      var pct = count > 0 ? Math.round((n / count) * 100) : 0;
+      bars +=
+        "<li class=\"rating-bar\">" +
+          "<span class=\"rating-bar__label\">" + s + " star</span>" +
+          "<span class=\"rating-bar__track\"><span class=\"rating-bar__fill\" style=\"width:" + pct + "%\"></span></span>" +
+          "<span class=\"rating-bar__count\">" + n + "</span>" +
+        "</li>";
+    }
+    head =
+      "<div class=\"reviews__summary\">" +
+        "<div class=\"reviews__average\">" +
+          "<span class=\"reviews__average-num\">" + escapeHtml(avgStr) + "</span>" +
+          _stars(avg, avgStr + " out of 5 stars") +
+          "<span class=\"reviews__count\">" + count + (count === 1 ? " review" : " reviews") + "</span>" +
+        "</div>" +
+        "<ul class=\"reviews__distribution\">" + bars + "</ul>" +
+      "</div>";
+  } else {
+    head = "<p class=\"reviews__empty\">No reviews yet. Be the first to review this product.</p>";
+  }
+
+  var list = "";
+  for (var i = 0; i < reviews.length; i += 1) {
+    var r = reviews[i];
+    var rating = Number(r.rating) || 0;
+    var verified = Number(r.verified_purchase) === 1
+      ? "<span class=\"review__verified\">Verified buyer</span>"
+      : "";
+    var date = _reviewDate(r.created_at);
+    var bodyHtml = r.body
+      ? "<p class=\"review__body\">" + escapeHtml(String(r.body)) + "</p>"
+      : "";
+    list +=
+      "<li class=\"review\">" +
+        "<div class=\"review__head\">" +
+          _stars(rating, rating + " out of 5 stars") +
+          "<h3 class=\"review__title\">" + escapeHtml(String(r.title || "")) + "</h3>" +
+        "</div>" +
+        "<div class=\"review__meta\">" + verified +
+          (date ? "<time class=\"review__date\" datetime=\"" + escapeAttr(date) + "\">" + escapeHtml(date) + "</time>" : "") +
+        "</div>" +
+        bodyHtml +
+      "</li>";
+  }
+  var listHtml = list
+    ? "<ul class=\"reviews__list\">" + list + "</ul>"
+    : "";
+
+  return "<section class=\"reviews\" aria-labelledby=\"reviews-title\">" +
+           "<h2 id=\"reviews-title\" class=\"reviews__heading\">Customer reviews</h2>" +
+           head +
+           listHtml +
+           (formHtml || "") +
+         "</section>";
+}
 
 function _wrap(opts) {
   var shopName      = opts.shopName || "blamejs.shop";
@@ -226,6 +327,9 @@ export function renderProduct(opts) {
   var variants    = opts.variants;
   var prices      = opts.prices;
   var media       = opts.media || [];
+  var reviewSummary = opts.reviewSummary || { count: 0, avg_rating: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
+  var reviews       = opts.reviews || [];
+  var reviewForm    = typeof opts.reviewForm === "string" ? opts.reviewForm : "";
   var shopName    = opts.shopName || "blamejs.shop";
   var cartCount   = opts.cartCount == null ? 0 : opts.cartCount;
   var searchQ     = opts.searchQ == null ? "" : opts.searchQ;
@@ -248,13 +352,15 @@ export function renderProduct(opts) {
   if (!rows) rows = "<tr><td colspan=\"4\" class=\"empty\">No variants available.</td></tr>";
 
   var galleryHtml = _buildPdpGallery(product, media, assetPrefix);
+  var reviewsHtml = _buildReviews(reviewSummary, reviews, reviewForm);
   var body = renderTemplate(PRODUCT_PAGE, {
     title:        product.title,
     description:  description,
     variant_rows: "RAW_ROWS_PLACEHOLDER",
   })
     .replace("RAW_GALLERY_PLACEHOLDER", galleryHtml)
-    .replace("RAW_ROWS_PLACEHOLDER", rows);
+    .replace("RAW_ROWS_PLACEHOLDER", rows)
+    .replace("RAW_REVIEWS_PLACEHOLDER", reviewsHtml);
 
   var heroMedia = media[0] || null;
   var ogImage   = heroMedia ? (assetPrefix + heroMedia.r2_key) : "/assets/brand/logo.png";
@@ -273,6 +379,20 @@ export function renderProduct(opts) {
     var hiMinor  = Math.max.apply(null, priceList);
     var currency = (prices[variants[0].id] && prices[variants[0].id].currency) || "USD";
     var divisor  = currency === "JPY" || currency === "KRW" ? 1 : 100;
+    // AggregateRating enriches the same product-result panel with the
+    // star rating + review count. Only emitted when published reviews
+    // exist — Google flags an `aggregateRating` with `reviewCount: 0`
+    // as invalid structured data.
+    var aggregateRating;
+    if (reviewSummary && Number(reviewSummary.count) > 0) {
+      aggregateRating = {
+        "@type":       "AggregateRating",
+        "ratingValue": (Number(reviewSummary.avg_rating) || 0).toFixed(1),
+        "reviewCount": Number(reviewSummary.count),
+        "bestRating":  5,
+        "worstRating": 1,
+      };
+    }
     jsonLd = jsonLdScript({
       "@context":    "https://schema.org",
       "@type":       "Product",
@@ -280,6 +400,7 @@ export function renderProduct(opts) {
       "description": description || ("Browse " + product.title + " on " + shopName + "."),
       "image":       heroMedia ? [ogImage] : undefined,
       "sku":         variants[0] && variants[0].sku,
+      "aggregateRating": aggregateRating,
       "offers":      {
         "@type":         "AggregateOffer",
         "priceCurrency": currency,

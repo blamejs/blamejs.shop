@@ -28,15 +28,19 @@ var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql"].map(function 
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
 
+var REVIEW_MIGS = ["0001_catalog.sql", "0011_reviews.sql"].map(function (f) {
+  return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
+});
+
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
   return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
 }
 
-function _makeQuery() {
+function _makeQuery(migs) {
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
-  MIGS.forEach(function (p) {
+  (migs || MIGS).forEach(function (p) {
     _splitSchema(nodeFs.readFileSync(p, "utf8")).forEach(function (s) { db.prepare(s).run(); });
   });
   return async function (sql, params) {
@@ -236,6 +240,103 @@ async function _orderTransition() {
   check("illegal transition → 4xx/5xx", r2.status >= 400);
 }
 
+async function _reviewModeration() {
+  var query   = _makeQuery(REVIEW_MIGS);
+  var catalog = bShop.catalog.create({ query: query });
+  var order   = bShop.order.create({ query: query });
+  var reviews = bShop.reviews.create({ query: query });
+  var router  = _fakeRouter();
+  bShop.admin.mount(router, { token: TOKEN, catalog: catalog, order: order, reviews: reviews });
+
+  var auth = { authorization: "Bearer " + TOKEN };
+
+  // Two products so the cross-product queue is genuinely exercised.
+  var pA = await catalog.products.create({ slug: "rev-a", title: "RevA", status: "active" });
+  var pB = await catalog.products.create({ slug: "rev-b", title: "RevB", status: "active" });
+  var cust = bShop.framework.uuid.v7();
+
+  // Three pending reviews across both products, one already published.
+  var s1 = await reviews.submit({ product_id: pA.id, customer_id: cust, rating: 5, title: "A1" });
+  var s2 = await reviews.submit({ product_id: pB.id, customer_id: cust, rating: 4, title: "B1" });
+  var s3 = await reviews.submit({ product_id: pA.id, customer_id: cust, rating: 3, title: "A2" });
+  await reviews.publish(s3.id); // s3 becomes published — must NOT appear in pending queue
+
+  // List defaults to pending, spans every product, excludes published.
+  var rList = await router._call("GET", "/admin/reviews", { headers: auth });
+  check("review list returns 200", rList.status === 200);
+  var page = JSON.parse(rList.body);
+  var listedIds = page.rows.map(function (r) { return r.id; });
+  check("pending queue spans both products", listedIds.indexOf(s1.id) !== -1 && listedIds.indexOf(s2.id) !== -1);
+  check("pending queue omits published", listedIds.indexOf(s3.id) === -1);
+  check("pending queue is pending-only", page.rows.every(function (r) { return r.status === "pending"; }));
+
+  // Explicit status filter narrows to published.
+  var rPub = await router._call("GET", "/admin/reviews", { headers: auth, url: "/admin/reviews?status=published" });
+  check("published filter returns 200", rPub.status === 200);
+  var pubPage = JSON.parse(rPub.body);
+  check("published filter returns only published", pubPage.rows.length === 1 && pubPage.rows[0].id === s3.id);
+
+  // GET single review.
+  var rGet = await router._call("GET", "/admin/reviews/" + s1.id, { headers: auth, params: { id: s1.id } });
+  check("review get returns 200", rGet.status === 200);
+  check("review get returns the row", JSON.parse(rGet.body).id === s1.id);
+
+  // GET missing review → 404.
+  var missingId = bShop.framework.uuid.v7();
+  var rGetMiss = await router._call("GET", "/admin/reviews/" + missingId, { headers: auth, params: { id: missingId } });
+  check("review get missing → 404", rGetMiss.status === 404);
+
+  // Publish flips status.
+  var rPublish = await router._call("POST", "/admin/reviews/" + s1.id + "/publish", {
+    headers: auth, params: { id: s1.id },
+  });
+  check("review publish returns 200", rPublish.status === 200);
+  check("review publish flips status", JSON.parse(rPublish.body).status === "published");
+
+  // Publish missing id → 404 (REVIEW_NOT_FOUND mapped).
+  var rPubMiss = await router._call("POST", "/admin/reviews/" + missingId + "/publish", {
+    headers: auth, params: { id: missingId },
+  });
+  check("review publish missing → 404", rPubMiss.status === 404);
+
+  // Reject sets rejected + records reason.
+  var rReject = await router._call("POST", "/admin/reviews/" + s2.id + "/reject", {
+    headers: auth, params: { id: s2.id }, body: { reason: "spam" },
+  });
+  check("review reject returns 200", rReject.status === 200);
+  check("review reject flips status", JSON.parse(rReject.body).status === "rejected");
+
+  // Reject missing id → 404.
+  var rRejMiss = await router._call("POST", "/admin/reviews/" + missingId + "/reject", {
+    headers: auth, params: { id: missingId }, body: { reason: "x" },
+  });
+  check("review reject missing → 404", rRejMiss.status === 404);
+
+  // Auth still gates the new routes.
+  var rNoAuth = await router._call("GET", "/admin/reviews", {});
+  check("review list requires auth", rNoAuth.status === 401);
+}
+
+async function _reviewsAbsent() {
+  var query   = _makeQuery(REVIEW_MIGS);
+  var catalog = bShop.catalog.create({ query: query });
+  var order   = bShop.order.create({ query: query });
+  var router  = _fakeRouter();
+  // No reviews dep → routes must not mount.
+  bShop.admin.mount(router, { token: TOKEN, catalog: catalog, order: order });
+
+  check("reviews-absent: list route not mounted", !router._routes["GET /admin/reviews"]);
+  check("reviews-absent: publish route not mounted", !router._routes["POST /admin/reviews/:id/publish"]);
+  check("reviews-absent: reject route not mounted", !router._routes["POST /admin/reviews/:id/reject"]);
+
+  var auth = { authorization: "Bearer " + TOKEN };
+  var threw = false;
+  try {
+    await router._call("GET", "/admin/reviews", { headers: auth });
+  } catch (_e) { threw = true; }
+  check("reviews-absent: calling the route throws (unregistered)", threw);
+}
+
 async function _factoryValidation() {
   var query = _makeQuery();
   var catalog = bShop.catalog.create({ query: query });
@@ -250,7 +351,18 @@ async function run() {
   await _bearerGate();
   await _productCRUD();
   await _orderTransition();
+  await _reviewModeration();
+  await _reviewsAbsent();
   await _factoryValidation();
 }
 
 module.exports = { run: run };
+
+if (require.main === module) {
+  run().then(function () {
+    process.stdout.write("admin: " + helpers.getChecks() + " checks passed\n");
+  }).catch(function (e) {
+    process.stderr.write((e && e.stack || String(e)) + "\n");
+    process.exit(1);
+  });
+}

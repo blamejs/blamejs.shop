@@ -265,6 +265,84 @@ async function _listForCustomer() {
   await assert.rejects(order.listForCustomer(customerId, { limit: 9999 }), /limit/);
 }
 
+async function _hasPurchasedProduct() {
+  var q = _makeQuery();
+  var catalog = bShop.catalog.create({ query: q });
+  var cart    = bShop.cart.create({ query: q, catalog: catalog });
+  var order   = bShop.order.create({ query: q });
+  var seed = await _seed(catalog, cart);
+  var customerId = _validUUID();
+
+  // Customer who hasn't bought anything yet → false.
+  check("hasPurchasedProduct false before any order",
+    (await order.hasPurchasedProduct(customerId, seed.product.id)) === false);
+
+  // Place a paid order for the product → true.
+  var o = await order.createFromCart((function () {
+    var oi = _orderInput(seed);
+    oi.customer_id = customerId;
+    return oi;
+  })());
+  await order.transition(o.id, "mark_paid");
+  check("hasPurchasedProduct true after paid order",
+    (await order.hasPurchasedProduct(customerId, seed.product.id)) === true);
+
+  // A different customer has not purchased it → false.
+  check("hasPurchasedProduct scopes by customer",
+    (await order.hasPurchasedProduct(_validUUID(), seed.product.id)) === false);
+
+  // A different product the customer never bought → false.
+  var p2 = await catalog.products.create({ slug: "ord-test-2", title: "OrderTest2", status: "active" });
+  check("hasPurchasedProduct scopes by product",
+    (await order.hasPurchasedProduct(customerId, p2.id)) === false);
+
+  // A pending order does not count as a purchase.
+  var sidP = _validUUID();
+  var cP   = await cart.create(sidP, { currency: "USD" });
+  await cart.addLine(cP.id, { variant_id: seed.variant.id, qty: 1 });
+  var custPending = _validUUID();
+  var inputP = _orderInput(seed);
+  inputP.cart_id     = cP.id;
+  inputP.session_id  = sidP;
+  inputP.customer_id = custPending;
+  await order.createFromCart(inputP);   // stays pending
+  check("hasPurchasedProduct excludes pending orders",
+    (await order.hasPurchasedProduct(custPending, seed.product.id)) === false);
+
+  // A cancelled order does not count as a purchase.
+  var sidC = _validUUID();
+  var cC   = await cart.create(sidC, { currency: "USD" });
+  await cart.addLine(cC.id, { variant_id: seed.variant.id, qty: 1 });
+  var custCancel = _validUUID();
+  var inputC = _orderInput(seed);
+  inputC.cart_id     = cC.id;
+  inputC.session_id  = sidC;
+  inputC.customer_id = custCancel;
+  var oc = await order.createFromCart(inputC);
+  await order.transition(oc.id, "cancel");
+  check("hasPurchasedProduct excludes cancelled orders",
+    (await order.hasPurchasedProduct(custCancel, seed.product.id)) === false);
+
+  // A refunded order still counts as a purchase (the buyer is verified).
+  var sidR = _validUUID();
+  var cR   = await cart.create(sidR, { currency: "USD" });
+  await cart.addLine(cR.id, { variant_id: seed.variant.id, qty: 1 });
+  var custRefund = _validUUID();
+  var inputR = _orderInput(seed);
+  inputR.cart_id     = cR.id;
+  inputR.session_id  = sidR;
+  inputR.customer_id = custRefund;
+  var orf = await order.createFromCart(inputR);
+  orf = await order.transition(orf.id, "mark_paid");
+  await order.transition(orf.id, "refund", { reason: "customer_request" });
+  check("hasPurchasedProduct includes refunded orders",
+    (await order.hasPurchasedProduct(custRefund, seed.product.id)) === true);
+
+  // Bad UUIDs throw TypeError on either argument.
+  await assert.rejects(order.hasPurchasedProduct("not-a-uuid", seed.product.id), /customer id/);
+  await assert.rejects(order.hasPurchasedProduct(customerId, "not-a-uuid"),       /product id/);
+}
+
 async function _validation() {
   var q = _makeQuery();
   var order = bShop.order.create({ query: q });
@@ -289,6 +367,7 @@ async function run() {
   await _cancelAndRefund();
   await _setPaymentIntent();
   await _listForCustomer();
+  await _hasPurchasedProduct();
   await _validation();
 }
 

@@ -93,6 +93,17 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? b.crypto.namespaceHash("order-cursor", process.env.D1_BRIDGE_SECRET)
         : "order-cursor-secret-dev-only";
 
+      // Reviews — opts in the storefront review display + submit routes
+      // and the admin moderation routes. Single instance shared by both
+      // surfaces. Cursor HMAC key derived like the others. The primitive
+      // only needs the externalDb query handle.
+      var reviewCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("review-cursor", process.env.D1_BRIDGE_SECRET)
+        : "review-cursor-secret-dev-only";
+      var reviews = (catalog && cart)
+        ? bShop.reviews.create({ cursorSecret: reviewCursorSecret })
+        : null;
+
       // Tax + shipping default tables — kick in when the operator
       // hasn't seeded `tax.rules` / `shipping.services` in config.
       // Zero-rate tax + a single $0 standard shipping service keeps
@@ -140,6 +151,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           config:        config,
           r2_bridge:     r2_bridge,
           catalogImport: catalogImport,
+          reviews:       reviews,
         });
       }
 
@@ -176,8 +188,14 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // primitive only needs the externalDb query handle (which
         // ships with this deploy via D1_BRIDGE_URL).
         sfDeps.newsletter = bShop.newsletter.create({});
+        // Reviews display + submit. The submit route gates on a verified
+        // purchase, which needs order reads — wire an order handle here
+        // regardless of Stripe (order reads don't touch the payment SDK).
+        // The checkout block below reuses this same handle.
+        if (reviews) sfDeps.reviews = reviews;
+        sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
-          var sfOrder = bShop.order.create({ cursorSecret: orderCursorSecret });
+          var sfOrder = sfDeps.order;
           var sfPayment = bShop.payment.create({
             apiKey:        process.env.STRIPE_API_KEY,
             webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
@@ -209,7 +227,6 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
             catalog: catalog, cart: cart, pricing: bShop.pricing,
             tax: sfTax, shipping: sfShipping, payment: sfPayment, order: sfOrder,
           });
-          sfDeps.order             = sfOrder;
           sfDeps.payment           = sfPayment;
           sfDeps.checkout          = sfCheckout;
           // Resolve the storefront's selected_shipping_id fallback

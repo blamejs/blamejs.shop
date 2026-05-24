@@ -20,6 +20,8 @@ import {
   searchProducts,
   listVariantsWithPrices,
   listMediaForProduct,
+  getReviewSummary,
+  listPublishedReviews,
   recentBlogArticles,
   listActiveProductSlugs,
   listPublishedBlogSlugs,
@@ -943,9 +945,11 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
         }),
       });
     }
-    const [variantsWithPrices, media] = await Promise.all([
+    const [variantsWithPrices, media, reviewSummary, reviewList] = await Promise.all([
       listVariantsWithPrices(env.DB, product.id, "USD"),
       listMediaForProduct(env.DB, product.id),
+      getReviewSummary(env.DB, product.id),
+      listPublishedReviews(env.DB, product.id, 10),
     ]);
     const variants = [];
     const prices = {};
@@ -972,14 +976,22 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
         };
       }
     }
+    // "Write a review" CTA → the container's auth-gated form route,
+    // which enforces login + the verified-purchase gate. encodeURIComponent
+    // keeps the slug safe inside the href attribute.
+    const reviewForm = '<a class="btn-secondary reviews__cta" href="/products/'
+      + encodeURIComponent(product.slug) + '/review">Write a review</a>';
     const html = renderProduct({
-      product:   product,
-      variants:  variants,
-      prices:    prices,
-      media:     media.rows,
-      shopName:  shopName,
-      cartCount: 0,
-      version:   version,
+      product:       product,
+      variants:      variants,
+      prices:        prices,
+      media:         media.rows,
+      reviewSummary: reviewSummary,
+      reviews:       reviewList.rows,
+      reviewForm:    reviewForm,
+      shopName:      shopName,
+      cartCount:     0,
+      version:       version,
     });
     // Hero-image preload — the PDP's LCP element is almost always the
     // first media row's image. Preloading it via Link rel=preload
