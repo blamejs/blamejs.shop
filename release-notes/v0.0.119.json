@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.119",
+  "date": "2026-05-24",
+  "headline": "Newsletter handler surfaces `X-Newsletter-Diag` header so the live 500 root cause is visible without wrangler tail",
+  "summary": "v0.0.118 added missing-table resilience to the newsletter handler, but every submission still 500s — the underlying D1 error isn't matching the `\"no such table\" / \"no such column\"` resilience-trigger regex. Without wrangler tail access during the diagnostic loop, the actual error message stays invisible. This patch adds an `X-Newsletter-Diag: <ErrorClass>: <first 96 chars of message>` response header (redacted through `_redact` so secrets never leak) on the 500 path. The body remains the canonical operator-facing error page; the header surfaces the failing step. Operator probes `curl -sI` and reads the diag value to pinpoint the live root cause (likely a D1 binding shape mismatch / migration gap / module-load issue), then ships a targeted fix in the next patch. The diag header is intentionally short-lived — removable once the cause is identified and permanently fixed.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "`X-Newsletter-Diag` response header on the 500 path", "body": "`_edgeNewsletter`'s outer catch now sets `X-Newsletter-Diag: <constructor.name>: <message[:96]>` (redacted through the framework's `b.redact.redact` pipeline). The body still renders the canonical 500 page; the header gives the operator a diagnostic surface without needing wrangler tail. Removable in a follow-up once the live root cause is identified and the underlying fix lands." }
+      ]
+    }
+  ]
+}
