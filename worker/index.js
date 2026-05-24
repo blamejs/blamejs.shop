@@ -871,15 +871,43 @@ async function _edgeNewsletter(request, env) {
     // a returning visitor's submit lands on the conflict path; the
     // detection of which path ran (new vs existing) is the row-count
     // delta from the run() meta.
-    const r = await env.DB
-      .prepare(
-        "INSERT INTO newsletter_signups (id, email_hash, email_normalized, source, created_at) " +
-        "VALUES (?1, ?2, ?3, ?4, ?5) " +
-        "ON CONFLICT(email_hash) DO NOTHING"
-      )
-      .bind(id, emailHash, normalized, "storefront-footer", now)
-      .run();
-    const inserted = r && r.meta && r.meta.changes > 0;
+    //
+    // Missing-table resilience: when migration `0010_newsletter_signups.sql`
+    // hasn't been applied to live D1 yet (or has been rolled back),
+    // the `INSERT` throws `no such table: newsletter_signups`. Surface
+    // a clean 503 "signup temporarily unavailable" instead of the
+    // generic 500 internal-error page so the visitor knows to retry
+    // and the operator sees a specific signal (the framework's
+    // `console.error` carries the underlying message).
+    var inserted = false;
+    try {
+      const r = await env.DB
+        .prepare(
+          "INSERT INTO newsletter_signups (id, email_hash, email_normalized, source, created_at) " +
+          "VALUES (?1, ?2, ?3, ?4, ?5) " +
+          "ON CONFLICT(email_hash) DO NOTHING"
+        )
+        .bind(id, emailHash, normalized, "storefront-footer", now)
+        .run();
+      inserted = r && r.meta && r.meta.changes > 0;
+    } catch (e) {
+      console.error("newsletter INSERT failed:", _redact(e && e.message || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+      var msg = e && e.message ? String(e.message) : "";
+      if (/no such table/i.test(msg) || /no such column/i.test(msg)) {
+        // Schema not provisioned — operator hasn't applied migrations.
+        // 503 + Retry-After signals "transient, try later" to the
+        // visitor and a specific signal to the operator.
+        return new Response("Newsletter signup temporarily unavailable. Please try again later.", {
+          status:  503,
+          headers: _withSecurityHeaders({
+            "content-type":  "text/plain; charset=utf-8",
+            "cache-control": "no-store",
+            "retry-after":   "60",
+          }),
+        });
+      }
+      throw e;  // unknown D1 failure — let the outer catch render the generic 500 page
+    }
 
     const html = renderNewsletterThanks({
       result:   inserted ? "new" : "existing",
