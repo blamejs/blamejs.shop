@@ -1,0 +1,21 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.112",
+  "date": "2026-05-23",
+  "headline": "Compose `b.crypto.toBase64Url` instead of reinventing — nine primitives + new detector",
+  "summary": "Nine framework primitives (`api-keys`, `carrier-accounts`, `customer-surveys`, `stock-alerts`, `stock-receipts`, `subscription-gifts`, `webhook-receiver`, `wishlist-sharing`, `storefront`'s server-side `_b64u`) shipped with hand-rolled base64url encoding — the canonical four-line `.toString(\"base64\").replace(/\\+/g, \"-\").replace(/\\//g, \"_\").replace(/=+$/, \"\")` chain. The trailing-padding `.replace(/=+$/, \"\")` strip is polynomial-ReDoS-shaped per CodeQL js/polynomial-redos. The framework's `b.crypto.toBase64Url(buf)` helper routes through Node's built-in `base64url` encoding which is linear-time and produces the same RFC 4648 §5 output. Every server-side callsite now composes the framework primitive. Two browser-side helpers in `lib/storefront.js`'s WebAuthn UI string-template (no `b.crypto` available in the page runtime) carry inline `allow:inline-base64url-three-replace` markers — `window.btoa` plus the three-replace shim is the browser-built-in equivalent. New `inline-base64url-three-replace` codebase-patterns detector enforces the composition shop-wide.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Nine primitives compose `b.crypto.toBase64Url`", "body": "`api-keys` `_generateToken`, `carrier-accounts` `_generateSecret`, `customer-surveys` `_generateToken`, `stock-alerts` `_mintToken` (inlined the redundant `_b64url` helper), `stock-receipts` `_generateToken`, `subscription-gifts` `_generateToken`, `webhook-receiver` `_generateSecret`, `wishlist-sharing` `_generateToken`, and `storefront`'s server-side `_b64u` helper all now route through `_b().crypto.toBase64Url(buf)`. Linear-time output, no polynomial-ReDoS surface, no Node-minor-version Buffer-flag-rename risk." }
+      ]
+    },
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "`inline-base64url-three-replace` codebase-patterns detector", "body": "Flags `.replace(/=+$/, ...)` anywhere under `lib/` or `worker/`. Catches the canonical four-line base64url reinvention chain at the trailing-padding-strip line. Ported verbatim (with shop-scope) from blamejs's catalog. Browser-side string-template emissions in `lib/storefront.js` carry inline allow markers documenting that the browser has no `b.crypto` runtime — `window.btoa` plus the three-replace shim is the built-in." }
+      ]
+    }
+  ]
+}

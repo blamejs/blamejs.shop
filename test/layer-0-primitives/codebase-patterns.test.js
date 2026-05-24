@@ -597,6 +597,14 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "`catch (e) { ... return null; }` in a Worker handler routes the exception back to the dispatcher which falls through to `_forwardToContainer`. That's a pass-through: the edge \"detected\" a failure and silently escalated it to a backend that can't help. The legitimate `return null` shape is in routing dispatch (`if (path === \"/\") return ...; return null;`), where null means \"this path isn't edge-routed, fall through\" — NOT \"my render threw, you handle it.\" Edge handlers must serve their own 5xx via `renderInternalError` and log to observability.",
   },
   {
+    id:        "inline-base64url-three-replace",
+    primitive: "b.crypto.toBase64Url(buf) — routes through Node's built-in 'base64url' encoding (linear-time, no regex backtracking surface)",
+    regex:     /\.replace\(\s*\/=\+\$\/[gG]?\s*,/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "The `.replace(/=+$/, \"\")` trailing-padding strip is polynomial-ReDoS-shaped per CodeQL js/polynomial-redos. The framework's `b.crypto.toBase64Url(buf)` helper routes through Node's built-in base64url encoding which is linear-time and produces the same RFC 4648 §5 output. Refactor any server-side reinvention to `_b().crypto.toBase64Url(buf)`. Browser-side string-template helpers shipped in `lib/storefront.js` carry inline `allow:inline-base64url-three-replace` markers because the page has no `b.crypto` to call — `window.btoa` plus the three-replace shim is the runtime-built-in equivalent. Ported from blamejs's catalog.",
+  },
+  {
     id:        "safeurl-parse-string-method",
     primitive: "`b.safeUrl.parse(s)` returns a WHATWG `URL` instance, not a string. Strip the trailing slash / concatenate the origin off `.href` / `.toString()` / `String(parsed)` — never call a string method (`.replace` / `.startsWith` / `.endsWith` / `.split` / `.includes` / `.slice` / `.indexOf` / `.toLowerCase` / `.toUpperCase`) directly on the return value or the worker throws TypeError at request time and the edge handler 503s.",
     // Matches `b.safeUrl.parse(...).<strMethod>(`. The `\b.\s*` chain
