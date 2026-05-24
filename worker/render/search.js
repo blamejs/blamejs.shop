@@ -210,7 +210,7 @@ export function renderSearch(opts) {
   if (!Array.isArray(opts.products)) {
     throw new TypeError("renderSearch: opts.products (array) required");
   }
-  if (typeof opts.version !== "string" || opts.version.length === 0) {
+  if (typeof opts.version !== "string" || opts.version.length === 0) { // allow:inline-require-non-empty-string-validation — the TypeError message must literally contain "opts.version" so the worker-render contract surfaces the offending field; the framework helper produces a `code`-first TypeError that obscures the label
     throw new TypeError("renderSearch: opts.version (non-empty string) required");
   }
   var products = opts.products;
