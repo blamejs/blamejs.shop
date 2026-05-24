@@ -92,7 +92,7 @@ node -e "
 
 | Purpose                           | Algorithm  | Fingerprint               |
 |-----------------------------------|------------|---------------------------|
-| Maintainer commit/tag signing key | SSH-ED25519 | *(populate on first signed tag — see below)* |
+| Maintainer commit/tag signing key | SSH-ED25519 | `SHA256:5oF/XWhFpMde9TRfEX2GAHiApAq/MXOS4vti5zQbD7g` (cross-check against `https://github.com/<maintainer>.keys` — see below) |
 | Release-signing public key        | ML-DSA-65 (FIPS 204) | `d40e1e2b06a2509271cc3cf76bd34c63d2fbb093f42e1e1f6b349288900ec044509ca183b3d735cda003d80eb6cf5d80fd9181ad897889e1c1f701d61b7902c9` (SHA3-512 of `keys/release-pqc-pub.json#publicKey`) |
 
 To populate the maintainer SSH fingerprint:
