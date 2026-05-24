@@ -253,8 +253,12 @@ async function _listForCustomer() {
   // referencing the same customer (will throw HMAC-mismatch when
   // decoded by our `order` instance).
   await otherOrder.listForCustomer(customerId, { limit: 2 });   // warm up — no cursor needed
-  // Forging by hand: tamper the cursor from pageA
-  var tampered = pageA.next_cursor.slice(0, -2) + (pageA.next_cursor.endsWith("==") ? "AA" : "XX");
+  // Forging by hand: flip the first character (always a base64url data
+  // char, never padding) to a guaranteed-different one so the cursor is
+  // always actually tampered. Replacing trailing chars with a fixed
+  // literal could be a no-op when the cursor already ends in them —
+  // which left the cursor valid and the rejection missing (a flake).
+  var tampered = (pageA.next_cursor.charAt(0) === "A" ? "B" : "A") + pageA.next_cursor.slice(1);
   await assert.rejects(
     order.listForCustomer(customerId, { limit: 2, cursor: tampered }),
     /cursor/i,
