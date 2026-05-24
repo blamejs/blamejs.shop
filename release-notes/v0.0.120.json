@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.0.120",
+  "date": "2026-05-24",
+  "headline": "Route POST /newsletter through the container — Workers `nodejs_compat` can't compute SHA3-512 (`b.crypto.namespaceHash`)",
+  "summary": "The v0.0.92 edge-served newsletter handler was 500-ing every submission with `Error: Digest method not supported`. Root cause surfaced via the temporary `X-Newsletter-Diag` header (added in v0.0.119): Cloudflare Workers' `nodejs_compat` runtime exposes `node:crypto` but the supported digest set is a subset of full Node — `createHash(\"sha3-512\")` isn't in it. Working around with a Web-Crypto-API SHA-256 fallback would silently diverge the Worker's `email_hash` values from the container's SHA3-512 values, breaking the unsubscribe lookup (different hash → different row → silent unsubscribe failure). The edge handler was the wrong substrate for this primitive. The POST falls through to `_forwardToContainer` so the framework's SHA3-512 path runs server-side and the `email_hash` column stays consistent across reads. The ~200ms container hop on signup submit is paid back by a working unsubscribe flow. The dead `_edgeNewsletter` function + its `renderNewsletterThanks` / `renderNewsletterError` imports + the diagnostic `X-Newsletter-Diag` header are all removed in the same patch.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Newsletter signup now uses the framework's SHA3-512 hash via the container", "body": "Removed: `_edgeNewsletter` handler (123 lines), `renderNewsletterThanks` / `renderNewsletterError` imports in `worker/index.js`, the `X-Newsletter-Diag` diagnostic response header (its job is done). The dispatch comment above the now-removed `if (pathname === \"/newsletter\" && ...)` block documents the substrate decision + the SHA3-512 / Workers-runtime constraint so the next operator doesn't re-introduce the edge handler." }
+      ]
+    }
+  ]
+}

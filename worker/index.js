@@ -8,8 +8,6 @@ import {
   renderTerms,
   renderNotFound,
   renderInternalError,
-  renderNewsletterThanks,
-  renderNewsletterError,
 } from "./render/policy.js";
 import { renderFeed } from "./render/feed.js";
 import { renderSitemap } from "./render/sitemap.js";
@@ -500,18 +498,15 @@ export default {
       }
     }
 
-    // 2d. POST /newsletter — edge-served form submit. The footer's
-    //     signup form is on every page; cutting the container hop on
-    //     the most-touched POST eliminates ~200ms per submit.
-    //     Defense: Sec-Fetch-Site (browsers send `same-origin` for
-    //     same-site forms; absent on legacy clients but no widespread
-    //     bot traffic carries SameSite cookies anyway). Email gates
-    //     through b.guardEmail.validateAddress; email_hash composed
-    //     via b.crypto.namespaceHash so the raw address never lands
-    //     in plaintext storage.
-    if (pathname === "/newsletter" && request.method === "POST" && env.EDGE_RENDER === "on") {
-      return await _edgeNewsletter(request, env);
-    }
+    // 2d. POST /newsletter — falls through to the container. The
+    //     edge can't compose `b.crypto.namespaceHash` (SHA3-512 via
+    //     `node:crypto.createHash` isn't in the set the Workers
+    //     `nodejs_compat` runtime exposes — `Error: Digest method
+    //     not supported`), and using a Web-Crypto-API SHA-256
+    //     fallback would silently diverge from the container's
+    //     SHA3-512 `email_hash` values, breaking the unsubscribe
+    //     lookup. The ~200ms per-submit container hop is paid back
+    //     by a consistent hash across substrates.
 
     // 3. Storefront read routes — render at the edge when enabled.
     //    Gated by env.EDGE_RENDER so it can be rolled back per-deploy
@@ -817,130 +812,6 @@ function _edgeError(route, e, request, env, version, shopName) {
       "cache-control": "no-store",
     }),
   });
-}
-
-async function _edgeNewsletter(request, env) {
-  const shopName = env.SHOP_NAME      || "blamejs.shop";
-  const version  = env.WORKER_VERSION || "0.0.0";
-  try {
-    // Sec-Fetch-Site gate. Browsers send this for every fetch since
-    // 2020; same-origin / same-site / none are all legitimate (the
-    // last covers same-window navigation and bookmarks). Cross-site
-    // POSTs are refused — they smell like CSRF / form-driven SSRF.
-    // The absence of the header (legacy browser) falls through —
-    // we don't want to break submissions from older clients, and the
-    // cookie SameSite=Lax defense covers that gap.
-    const sfs = request.headers.get("sec-fetch-site") || "";
-    if (sfs && sfs !== "same-origin" && sfs !== "same-site" && sfs !== "none") {
-      return new Response("Refused: cross-site POST", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
-    }
-    // Form body — application/x-www-form-urlencoded only. JSON
-    // submissions aren't part of the storefront form's shape and
-    // get refused at the boundary so future operator-facing JSON
-    // POSTs can't accidentally reach this handler.
-    const ct = (request.headers.get("content-type") || "").split(";")[0].trim();
-    if (ct !== "application/x-www-form-urlencoded") {
-      return new Response("Refused: unsupported content-type", { status: 415, headers: { "content-type": "text/plain; charset=utf-8" } });
-    }
-    const raw   = await request.text();
-    const form  = new URLSearchParams(raw);
-    const email = (form.get("email") || "").trim();
-
-    // Validate via b.guardEmail (RFC 5322 single-address with header-
-    // injection defense). The framework's validator throws a typed
-    // GuardEmailError on bad shape; we render the operator-facing
-    // error page on every failure mode without leaking the validator's
-    // internal code string.
-    try {
-      b.guardEmail.validateAddress(email);
-    } catch (_e) {
-      const html = renderNewsletterError({ shopName: shopName, version: version });
-      return new Response(html, { status: 400, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
-    }
-
-    // Normalize for storage. Lowercase + trim (already trimmed). The
-    // hash is namespaceHash'd so the raw address never lands on disk;
-    // the normalized form survives so unsubscribe + dedup can read
-    // back what the operator typed.
-    const normalized = email.toLowerCase();
-    const emailHash  = b.crypto.namespaceHash("newsletter-signup", normalized);
-    const now        = Date.now();
-    const id         = b.uuid.v7();
-
-    // Idempotent insert. The unique constraint on `email_hash` means
-    // a returning visitor's submit lands on the conflict path; the
-    // detection of which path ran (new vs existing) is the row-count
-    // delta from the run() meta.
-    //
-    // Missing-table resilience: when migration `0010_newsletter_signups.sql`
-    // hasn't been applied to live D1 yet (or has been rolled back),
-    // the `INSERT` throws `no such table: newsletter_signups`. Surface
-    // a clean 503 "signup temporarily unavailable" instead of the
-    // generic 500 internal-error page so the visitor knows to retry
-    // and the operator sees a specific signal (the framework's
-    // `console.error` carries the underlying message).
-    var inserted = false;
-    try {
-      const r = await env.DB
-        .prepare(
-          "INSERT INTO newsletter_signups (id, email_hash, email_normalized, source, created_at) " +
-          "VALUES (?1, ?2, ?3, ?4, ?5) " +
-          "ON CONFLICT(email_hash) DO NOTHING"
-        )
-        .bind(id, emailHash, normalized, "storefront-footer", now)
-        .run();
-      inserted = r && r.meta && r.meta.changes > 0;
-    } catch (e) {
-      console.error("newsletter INSERT failed:", _redact(e && e.message || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
-      var msg = e && e.message ? String(e.message) : "";
-      if (/no such table/i.test(msg) || /no such column/i.test(msg)) {
-        // Schema not provisioned — operator hasn't applied migrations.
-        // 503 + Retry-After signals "transient, try later" to the
-        // visitor and a specific signal to the operator.
-        return new Response("Newsletter signup temporarily unavailable. Please try again later.", {
-          status:  503,
-          headers: _withSecurityHeaders({
-            "content-type":  "text/plain; charset=utf-8",
-            "cache-control": "no-store",
-            "retry-after":   "60",
-          }),
-        });
-      }
-      throw e;  // unknown D1 failure — let the outer catch render the generic 500 page
-    }
-
-    const html = renderNewsletterThanks({
-      result:   inserted ? "new" : "existing",
-      shopName: shopName,
-      version:  version,
-    });
-    return new Response(html, {
-      status:  200,
-      headers: _withSecurityHeaders({
-        "content-type":  "text/html; charset=utf-8",
-        "cache-control": "no-store",
-      }),
-    });
-  } catch (e) {
-    // Surface the failing step in a redacted response header so the
-    // operator can diagnose without wrangler tail access. The header
-    // names the error class + first 96 chars of the message — secrets
-    // are stripped via _redact, the body remains the canonical 500
-    // page. Removable once the live root cause is identified +
-    // permanently fixed.
-    var diagClass = (e && e.constructor && e.constructor.name) || "Error";
-    var diagMsg   = e && e.message ? String(e.message).slice(0, 96) : "";
-    console.error("edge POST /newsletter failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
-    const html = renderInternalError({ shopName: shopName, version: version });
-    return new Response(html, {
-      status:  500,
-      headers: _withSecurityHeaders({
-        "content-type":      "text/html; charset=utf-8",
-        "cache-control":     "no-store",
-        "x-newsletter-diag": _redact(diagClass + ": " + diagMsg),
-      }),
-    });
-  }
 }
 
 async function _edgeCartEmpty(request, env, version, shopName) {
