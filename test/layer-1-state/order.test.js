@@ -222,7 +222,7 @@ async function _listForCustomer() {
   // created_at. Spin the event loop briefly so Date.now() advances
   // past the previous insert batch's millisecond.
   await helpers.waitUntil(function () { return Date.now() > inputs[2].updated_at; },
-    { timeoutMs: 100, label: "ms tick before transition" });
+    { timeoutMs: 5000, label: "ms tick before transition" });
   await order.transition(inputs[0].id, "mark_paid");
 
   var page = await order.listForCustomer(customerId, { limit: 10 });
