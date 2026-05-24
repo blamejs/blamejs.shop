@@ -70,7 +70,9 @@ jobs:
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.0
-      - run: bash scripts/vendor-update.sh --check
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/vendor-update.sh --check
 
   smoke:
     name: Smoke (${{ matrix.os }})
@@ -88,7 +90,11 @@ jobs:
       - name: Vendor blamejs (latest tag)
         # Smoke can't run without a vendored copy; fetch it fresh on
         # every CI run so we exercise against the latest blamejs
-        # release rather than a stale shrink-wrap.
+        # release rather than a stale shrink-wrap. GITHUB_TOKEN raises
+        # the GitHub API rate limit so tag resolution doesn't 403 on
+        # shared runner IP pools (the unauthenticated 60/hr cap).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/vendor-update.sh blamejs latest
         shell: bash
       - name: Run smoke
