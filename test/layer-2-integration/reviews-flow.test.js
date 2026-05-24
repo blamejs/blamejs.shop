@@ -205,18 +205,4 @@ async function _run() {
   }
 }
 
-async function run() {
-  await _run();
-  return { name: "reviews-flow" };
-}
-
-module.exports = { run: run };
-
-if (require.main === module) {
-  run().then(function () {
-    console.log("reviews-flow.test.js: PASS");
-  }).catch(function (e) {
-    console.error("reviews-flow.test.js: FAIL\n", e && e.stack || e);
-    process.exit(1);
-  });
-}
+module.exports = { run: _run };
