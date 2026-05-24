@@ -149,6 +149,33 @@ async function _run() {
     check("saved list empty after remove",      (await sfl.countForCustomer(buyerId)) === 0);
     var savedEmpty = await helpers.httpRequest({ port: handle.port, path: "/account/saved", jar: jar });
     check("saved empty-state shown",            savedEmpty.body.indexOf("Nothing saved for later") !== -1);
+
+    // Duplicate-variant collision: re-add the variant to the cart while
+    // a saved copy exists, then move-to-cart. The cart's UNIQUE
+    // (cart_id, variant_id) makes moveToCart's INSERT collide; the route
+    // must treat it gracefully (the variant is already in the cart), not 500.
+    var addBack = await helpers.httpRequest({ port: handle.port, path: "/cart/lines", method: "POST", form: { variant_id: variant.id, qty: 1 }, jar: jar });
+    var cartC = await helpers.httpRequest({ port: handle.port, path: "/cart", jar: jar });
+    await helpers.httpRequest({ port: handle.port, path: "/cart/lines/" + _lineIdFrom(cartC.body) + "/save", method: "POST", jar: jar });
+    var savedRow = (await sfl.listForCustomer({ customer_id: buyerId, limit: 10 })).rows[0];
+    // Re-add the same variant to the cart so the destination already has it.
+    await helpers.httpRequest({ port: handle.port, path: "/cart/lines", method: "POST", form: { variant_id: variant.id, qty: 1 }, jar: jar });
+    var dup = await helpers.httpRequest({ port: handle.port, path: "/saved/" + savedRow.id + "/move-to-cart", method: "POST", jar: jar });
+    check("collision move-to-cart not 500",     dup.status === 303 && (dup.headers["location"] || "") === "/cart");
+    check("collision drops the saved row",      (await sfl.countForCustomer(buyerId)) === 0);
+    check("addBack/cartC requests ran",         addBack.status === 303 && cartC.status === 200);
+
+    // Unavailable saved item (product gone): the saved page must offer
+    // Remove but NOT Move to cart (the move can't succeed).
+    await query(
+      "INSERT INTO save_for_later (id, customer_id, sku, variant_id, quantity, snapshot_price_minor, notes, saved_at) " +
+      "VALUES (?1, ?2, 'GHOST-SKU', ?3, 1, 1999, NULL, ?4)",
+      [b.uuid.v7(), buyerId, b.uuid.v7(), Date.now()],
+    );
+    var goneList = await helpers.httpRequest({ port: handle.port, path: "/account/saved", jar: jar });
+    check("gone item shows no-longer-available", goneList.body.indexOf("no longer available") !== -1);
+    check("gone item has a Remove form",         /\/saved\/[0-9a-f-]{36}\/remove/.test(goneList.body));
+    check("gone item has NO Move to cart",       goneList.body.indexOf("Move to cart") === -1);
   } finally {
     await _teardown(handle);
   }
