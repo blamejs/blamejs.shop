@@ -1,0 +1,21 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.1.12",
+  "date": "2026-05-25",
+  "headline": "Card payments now finalize the order — the Stripe webhook is handled end to end",
+  "summary": "A confirmed Stripe payment now advances the order from pending to paid. The container now serves the `POST /api/webhooks/stripe` route the edge worker forwards to: it re-verifies the event signature over the exact raw bytes, maps the event to the order's FSM transition, and is idempotent across Stripe's re-deliveries. Previously the edge verified the webhook but nothing consumed it on the container, so a paid PaymentIntent (card, Apple Pay, or Google Pay) left the order stuck in pending — no fulfillment, no paid status. Operators running checkout should upgrade and confirm their Stripe webhook points at `/api/webhooks/stripe`.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Stripe webhook completes the order", "body": "`POST /api/webhooks/stripe` is now handled on the container: the event signature is re-verified against `STRIPE_WEBHOOK_SECRET` over the raw request body (a tampered or unsigned event is rejected with 400), then `payment_intent.succeeded` / `.canceled` / `charge.refunded` drive the order FSM (`mark_paid` / `cancel` / `refund`). Re-deliveries are idempotent — an event for an order already in the target state is acknowledged with 200 and skipped. A delivery for an unknown PaymentIntent is acknowledged without effect. This closes the gap where a confirmed payment never moved the order out of `pending`." }
+      ]
+    },
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Raw-body capture for payment webhooks", "body": "A small middleware preserves the exact request bytes for the webhook path before the JSON body-parser runs, so signature verification (which is computed over the raw body) is reliable. It is scoped to the webhook routes and leaves every other request untouched." }
+      ]
+    }
+  ]
+}

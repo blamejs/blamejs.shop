@@ -68,6 +68,13 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
   var app = await b.createApp({
     dataDir: DATA_DIR,
     routes: function (r) {
+      // Capture the raw body for payment webhooks BEFORE the JSON parser
+      // consumes it — Stripe (and PayPal) verify the signature over the
+      // exact bytes. Must precede bodyParser; the webhook handlers read
+      // req.rawBody. Harmless for every other path (it only matches POSTs
+      // to the listed webhook routes).
+      r.use(bShop.storefront.webhookRawBodyCapture(["/api/webhooks/stripe"]));
+
       // Body parser — populates req.body from form-encoded + JSON
       // request bodies. Mounted before any POST handler so the
       // storefront cart-write routes can read form fields without
