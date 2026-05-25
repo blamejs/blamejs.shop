@@ -407,6 +407,40 @@ async function _inputValidation() {
   assert.throws(function () { s.refund({ payment_intent: "pi_abcd1234", amount_minor: 0 }); },        /amount_minor must be a positive/);
 }
 
+async function _paymentMethodDomains() {
+  var calls = [];
+  var mockHttp = {
+    request: function (req) {
+      calls.push(req);
+      return Promise.resolve({
+        statusCode: 200,
+        body: Buffer.from(JSON.stringify({ id: "pmd_1", domain_name: "example.com", apple_pay: { status: "active" } }), "utf8"),
+      });
+    },
+  };
+  var s = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_test_abcdefghijklmnop", httpClient: mockHttp });
+
+  // Validation — a bad domain throws (TypeError → 400 at the route)
+  // before any network call.
+  assert.throws(function () { s.registerPaymentMethodDomain("https://example.com/p"); }, /bare hostname/);
+  assert.throws(function () { s.registerPaymentMethodDomain("not a domain"); },          /bare hostname/);
+  assert.throws(function () { s.registerPaymentMethodDomain(""); },                       /bare hostname/);
+  check("no network call on a bad domain",       calls.length === 0);
+
+  // Register POSTs the form-encoded domain_name.
+  var reg = await s.registerPaymentMethodDomain("example.com");
+  check("register returns the domain object",     reg.id === "pmd_1");
+  check("register POSTs to payment_method_domains", calls[0].method === "POST" && calls[0].url.indexOf("/payment_method_domains") !== -1);
+  check("register body carries domain_name",      String(calls[0].body).indexOf("domain_name=example.com") !== -1);
+
+  // List with a filter is a GET carrying the query string, no body.
+  calls.length = 0;
+  await s.listPaymentMethodDomains({ domain_name: "example.com" });
+  check("list is a GET",                          calls[0].method === "GET");
+  check("list puts the filter in the query",      calls[0].url.indexOf("domain_name=example.com") !== -1);
+  check("list sends no body",                     !calls[0].body);
+}
+
 async function run() {
   await _verifierHappyPath();
   await _verifierHeaderCaseInsensitive();
@@ -424,6 +458,7 @@ async function run() {
   await _cleanupExpired();
   await _canonicalHashStable();
   await _factoryRejectsBadOptionTypes();
+  await _paymentMethodDomains();
 }
 
 module.exports = { run: run };
