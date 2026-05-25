@@ -146,6 +146,32 @@ curl -X POST https://your-shop.example.com/admin/products \
 
 See [`docs/deploy-cloudflare.md`](docs/deploy-cloudflare.md) for the full deploy recipe.
 
+## Optional integrations — what to set to enable each
+
+Every third-party integration is **off by default** and lights up only when you
+supply its credentials. Nothing here phones home or is enabled without your
+keys; the storefront runs fully (browse, cart, accounts) with none of them. Set
+the values as deployment secrets (`wrangler secret put …`) or environment
+variables. A signed-in operator can see the live on/off status of each at
+**`/admin/integrations`**. See [`.env.example`](.env.example) for the full list.
+
+| Integration | What it enables | Set this | Notes |
+|-------------|-----------------|----------|-------|
+| **Admin console** | The bearer-token JSON API + the `/admin` browser console (sign-in, setup wizard, dashboard). | `ADMIN_API_KEY` (≥ 16 chars — use 32 random bytes) | Sign in at `/admin` by pasting the key. Without it the admin surface doesn't mount. |
+| **Card checkout (Stripe)** | Checkout + the Payment Element on the pay page; refunds; subscription billing. | `STRIPE_API_KEY` (`sk_…`), `STRIPE_WEBHOOK_SECRET` (`whsec_…`), `STRIPE_PUBLISHABLE_KEY` (`pk_…`) | Point your Stripe webhook at `/api/webhooks/stripe`. Without these the shop stays browsable but checkout doesn't mount. |
+| **Apple Pay & Google Pay** | One-tap wallet buttons (Express Checkout Element) on the pay page. | Stripe (above) **+** register each web domain: `POST /admin/payment-method-domains {"domain_name":"shop.example.com"}` | Stripe performs Apple merchant validation and hosts the association file — **no Apple Developer account needed**. Apex, `www`, and each subdomain register separately; a live-mode registration also covers sandbox. |
+| **Sign in with Google** | A *Continue with Google* button on `/account/login` (OIDC). | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `SHOP_ORIGIN` (e.g. `https://shop.example.com`) | Create a Google Cloud **OAuth 2.0 Web** client; add `<SHOP_ORIGIN>/account/auth/google/callback` as an Authorized redirect URI; consent-screen scopes `openid email profile`. The button appears only when all three are set. |
+
+**Planned / not available:**
+
+- **Sign in with Apple** — the flow is wired in the framework, but it needs an
+  Apple Developer Program membership ($99/yr) and an ES256 client-secret minted
+  from your `.p8` key. Config-optional; shipping behind those credentials.
+- **PayPal** — a separate adapter (Orders v2 + its own webhook); planned.
+- **Shop Pay / "Sign in with Shop"** — **not available** to a self-hosted,
+  non-Shopify store: the credentials only issue from a Shopify Admin and payment
+  flows through Shopify Payments. There is no path to enable it here.
+
 ## Vendoring blamejs
 
 `blamejs.shop` vendors blamejs as a shallow git clone of the release tag

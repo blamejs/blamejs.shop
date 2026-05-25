@@ -70,6 +70,7 @@ async function _run() {
       bShop.admin.mount(r, {
         token: TOKEN, catalog: catalog, order: order, config: config,
         analytics: analytics, shop_name: "Test Shop",
+        integrations: { stripe: "enabled", express_checkout: "action", google_signin: "off" },
       });
     },
   });
@@ -131,6 +132,16 @@ async function _run() {
     // ... and by the bearer token (tooling), with no cookie.
     var dashBearer = await helpers.httpRequest({ port: port, path: "/admin/dashboard", headers: bearer });
     check("dashboard via bearer then 200",     dashBearer.status === 200);
+
+    // Integrations status page reflects the live on/off map.
+    var integ = await helpers.httpRequest({ port: port, path: "/admin/integrations", jar: jar });
+    check("integrations page then 200",        integ.status === 200);
+    check("integrations shows enabled Stripe",  integ.body.indexOf("Card checkout (Stripe)") !== -1 && integ.body.indexOf("Enabled") !== -1);
+    check("wallets show action-needed",         integ.body.indexOf("Action needed") !== -1);
+    check("integrations shows what to set",      integ.body.indexOf("GOOGLE_OAUTH_CLIENT_ID") !== -1 && integ.body.indexOf("Not configured") !== -1);
+    // Unauthenticated integrations page renders the login form, not status.
+    var integAnon = await helpers.httpRequest({ port: port, path: "/admin/integrations" });
+    check("anon integrations → login form",     integAnon.body.indexOf("Admin API key") !== -1);
 
     // Setup POST without auth bounces to the landing (no write).
     var noAuth = await helpers.httpRequest({ port: port, path: "/admin/setup", method: "POST", form: { shop_name: "Hijack" } });

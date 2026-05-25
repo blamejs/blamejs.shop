@@ -213,6 +213,23 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           catalogImport: catalogImport,
           reviews:       reviews,
           returns:       returns,
+          // Integration state map for /admin/integrations — "enabled" |
+          // "action" (credentials present, a one-time operator action
+          // still required) | "off". admin.js never reads process.env.
+          // Stripe needs the publishable key too (the pay route hard-
+          // fails without it). Wallets need Stripe AND a domain
+          // registered with Stripe, which env can't attest — so they're
+          // "action" (register your domain) once Stripe is ready, never
+          // auto-"enabled".
+          integrations: (function () {
+            var stripeReady = !!(process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET && process.env.STRIPE_PUBLISHABLE_KEY);
+            var googleReady = !!(process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET && process.env.SHOP_ORIGIN);
+            return {
+              stripe:           stripeReady ? "enabled" : "off",
+              express_checkout: stripeReady ? "action"  : "off",
+              google_signin:    googleReady ? "enabled" : "off",
+            };
+          })(),
         });
       }
 
