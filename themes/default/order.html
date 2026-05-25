@@ -23,4 +23,20 @@
     <tr class="total"><td>Total</td><td align="right">{{ total }}</td></tr>
   </table>
 </section>
+{% if has_recommendations %}
+<section class="catalog-section order-recommendations">
+  <header class="section-head"><h2 class="section-head__title">Customers also bought</h2></header>
+  <div class="grid">
+    {% for r in recommendations %}
+    <a class="product-card" href="/products/{{ r.slug }}">
+      {% if r.image_url %}<figure class="product-card__media"><img src="{{ r.image_url }}" alt="{{ r.image_alt }}" loading="lazy"></figure>{% endif %}
+      <div class="product-card__meta">
+        <h3 class="product-card__title">{{ r.title }}</h3>
+        <p class="product-card__price">{{ r.price }}</p>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
 {% endblock %}
