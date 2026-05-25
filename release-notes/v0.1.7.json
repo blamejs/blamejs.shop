@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.1.7",
+  "date": "2026-05-25",
+  "headline": "Admin console — persistent navigation and a products screen",
+  "summary": "The admin is now a cohesive, navigable web console rather than a set of disconnected pages. A persistent nav (Home, Dashboard, Products, Integrations, Setup) runs across every signed-in page, and Products is the first full management screen: browse the catalog, create a product, and archive or restore one — all from the browser. The JSON API is unchanged: an endpoint serves the HTML console to a signed-in browser and JSON to a bearer-token client, so tooling keeps working exactly as before.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Console navigation", "body": "Every signed-in admin page shares a top nav with the current section highlighted, so the dashboard, products, integrations, and setup wizard are one console. The shell is the same brand-matched layout as the dashboard." },
+        { "title": "Products management screen", "body": "`/admin/products` renders the catalog as a table (title, slug, status) with Archive / Restore actions and a New-product form, when opened in a signed-in browser. The same path returns the existing JSON list to a bearer-token client; create, archive, and restore content-negotiate the same way (browser form → redirect; bad input re-renders with a notice, never a 500). The product create / archive / restore JSON API is unchanged." }
+      ]
+    }
+  ]
+}

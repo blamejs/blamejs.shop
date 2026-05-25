@@ -143,6 +143,32 @@ async function _run() {
     var integAnon = await helpers.httpRequest({ port: port, path: "/admin/integrations" });
     check("anon integrations → login form",     integAnon.body.indexOf("Admin API key") !== -1);
 
+    // Console nav is present on authed pages.
+    check("authed page has console nav",        dashCookie.body.indexOf("admin-nav") !== -1 && dashCookie.body.indexOf("\"/admin/products\"") !== -1);
+
+    // Products console: HTML for the browser cookie, JSON for the bearer
+    // token (the API contract is unchanged).
+    var prodHtml = await helpers.httpRequest({ port: port, path: "/admin/products", jar: jar });
+    check("products page then 200",            prodHtml.status === 200);
+    check("products page shows create form",    prodHtml.body.indexOf("New product") !== -1);
+    var prodApi = await helpers.httpRequest({ port: port, path: "/admin/products", headers: bearer });
+    check("products API still JSON for bearer",  (prodApi.headers["content-type"] || "").indexOf("application/json") === 0);
+
+    // Create a product via the browser form → PRG redirect, then it shows.
+    var createP = await helpers.httpRequest({ port: port, path: "/admin/products", method: "POST", jar: jar,
+      form: { title: "Console Widget", slug: "console-widget", status: "active" } });
+    check("product create then 303",           createP.status === 303);
+    check("product create redirects created",   (createP.headers.location || "").indexOf("/admin/products?created=1") === 0);
+    var prodList = await helpers.httpRequest({ port: port, path: "/admin/products?created=1", jar: jar });
+    check("created product in the list",        prodList.body.indexOf("Console Widget") !== -1);
+    check("created banner shows",               prodList.body.indexOf("Product created") !== -1);
+    // Bad create (missing slug) re-renders with a notice, not a 500.
+    var badCreate = await helpers.httpRequest({ port: port, path: "/admin/products", method: "POST", jar: jar, form: { title: "No Slug" } });
+    check("bad product create then 400",        badCreate.status === 400);
+    // Unauthenticated products page → sign-in form, not data.
+    var prodAnon = await helpers.httpRequest({ port: port, path: "/admin/products" });
+    check("anon products → login form",         prodAnon.body.indexOf("Admin API key") !== -1);
+
     // Setup POST without auth bounces to the landing (no write).
     var noAuth = await helpers.httpRequest({ port: port, path: "/admin/setup", method: "POST", form: { shop_name: "Hijack" } });
     check("unauth setup POST then 303",        noAuth.status === 303);
