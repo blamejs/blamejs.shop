@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.1.17",
+  "date": "2026-05-25",
+  "headline": "Admin console — an inventory screen",
+  "summary": "Inventory joins the admin console. `/admin/inventory` lists stock per SKU — on hand, held, and available — with a low-stock filter, restocks a SKU, sets or clears its per-SKU low-stock threshold, and tracks a new SKU, all from a signed-in browser. As with the other console screens, the same path serves the existing JSON API to a bearer-token client unchanged.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Inventory management screen", "body": "`/admin/inventory` renders the inventory table (SKU, on-hand, held, available) with a low-stock filter (`?low=1`) that surfaces SKUs at or below their threshold, when opened in a signed-in browser; the same path serves a new JSON list to a bearer-token client. Each row's form restocks (add quantity) and sets the low-stock threshold (blank clears it) in one submit, and a form below tracks a new SKU. The create / restock JSON API is unchanged for tooling; the browser forms post and redirect (PRG), and a bad SKU is a no-op notice rather than a 500." },
+        { "title": "catalog.inventory.list", "body": "`catalog.inventory.list({ limit, low_only })` returns inventory rows (SKU ascending), optionally only those at or below their configured low-stock threshold — the read backing the console list and the JSON endpoint." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Console nav gains Inventory", "body": "The signed-in admin nav now includes Inventory alongside Products, Orders, Returns, and Reviews. The `/admin/inventory` list and the create / restock endpoints content-negotiate like the other screens: a bearer-token client gets the JSON API, a signed-in browser gets HTML. A request without the bearer token on these paths now returns the sign-in form on a GET and redirects on a write, matching the other console screens." }
+      ]
+    }
+  ]
+}
