@@ -224,10 +224,13 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           integrations: (function () {
             var stripeReady = !!(process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET && process.env.STRIPE_PUBLISHABLE_KEY);
             var googleReady = !!(process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET && process.env.SHOP_ORIGIN);
+            var appleReady  = !!(process.env.APPLE_TEAM_ID && process.env.APPLE_KEY_ID &&
+                                 process.env.APPLE_CLIENT_ID && process.env.APPLE_PRIVATE_KEY && process.env.SHOP_ORIGIN);
             return {
               stripe:           stripeReady ? "enabled" : "off",
               express_checkout: stripeReady ? "action"  : "off",
               google_signin:    googleReady ? "enabled" : "off",
+              apple_signin:     appleReady  ? "enabled" : "off",
             };
           })(),
         });
@@ -275,6 +278,31 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
               redirectUri:  process.env.SHOP_ORIGIN.replace(/\/$/, "") + "/account/auth/google/callback",
             });
           } catch (_e) { /* misconfigured — leave Google sign-in disabled */ }
+        }
+        // Sign in with Apple (OIDC). Apple's OAuth client secret is itself
+        // an ES256 JWT signed with the team's .p8 key — minted here at
+        // boot from APPLE_TEAM_ID / APPLE_KEY_ID / APPLE_CLIENT_ID (the
+        // Services ID) / APPLE_PRIVATE_KEY (.p8 PEM). The minted secret
+        // lasts 150 days; a redeploy re-mints it well inside Apple's
+        // 6-month ceiling. Apple posts the callback back (form_post), which
+        // the storefront's POST /account/auth/apple/callback handles.
+        if (process.env.APPLE_TEAM_ID && process.env.APPLE_KEY_ID &&
+            process.env.APPLE_CLIENT_ID && process.env.APPLE_PRIVATE_KEY && process.env.SHOP_ORIGIN) {
+          try {
+            sfDeps.oauthApple = b.auth.oauth.create({
+              provider:     "apple",
+              clientId:     process.env.APPLE_CLIENT_ID,
+              clientSecret: bShop.customers.mintAppleClientSecret({
+                team_id:     process.env.APPLE_TEAM_ID,
+                key_id:      process.env.APPLE_KEY_ID,
+                client_id:   process.env.APPLE_CLIENT_ID,
+                // The .p8 is multi-line PEM; allow \n-escaped single-line
+                // env values (common in CI secret stores) too.
+                private_key: process.env.APPLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+              }),
+              redirectUri:  process.env.SHOP_ORIGIN.replace(/\/$/, "") + "/account/auth/apple/callback",
+            });
+          } catch (_e) { /* misconfigured .p8 / IDs — leave Apple sign-in disabled */ }
         }
         // Newsletter signups — opts the /newsletter route in. The
         // primitive only needs the externalDb query handle (which

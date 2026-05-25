@@ -19,8 +19,9 @@
  *   - updatePasskeyCounter: monotonic enforcement, regression refused
  */
 
-var nodeFs   = require("node:fs");
-var nodePath = require("node:path");
+var nodeFs     = require("node:fs");
+var nodePath   = require("node:path");
+var nodeCrypto = require("node:crypto");
 var { DatabaseSync } = require("node:sqlite");
 
 var bShop   = require("../../lib");
@@ -255,6 +256,49 @@ async function _oidcValidation() {
   await assert.rejects(customers.signInWithOIDC({ provider: "google", subject: "no-email-sub", email_verified: true }), /email is required/);
 }
 
+// Apple client-secret JWT minter — round-trips against a generated P-256
+// key (no Apple account needed): the output must be a valid ES256 JWS with
+// the claims Apple requires and a P1363 signature that verifies.
+function _b64urlDecode(s) {
+  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
+function _appleClientSecret() {
+  var kp  = nodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  var pem = kp.privateKey.export({ type: "pkcs8", format: "pem" });
+  var jwt = bShop.customers.mintAppleClientSecret({
+    team_id: "TEAM123456", key_id: "KEY1234567", client_id: "com.example.shop",
+    private_key: pem, ttl_seconds: 3600,
+  });
+  var parts = jwt.split(".");
+  check("apple secret is a 3-part JWS",      parts.length === 3);
+  var header  = JSON.parse(_b64urlDecode(parts[0]).toString());
+  var payload = JSON.parse(_b64urlDecode(parts[1]).toString());
+  check("apple secret header is ES256",      header.alg === "ES256" && header.kid === "KEY1234567");
+  check("apple secret iss is the team",      payload.iss === "TEAM123456");
+  check("apple secret sub is the client",    payload.sub === "com.example.shop");
+  check("apple secret aud is appleid",       payload.aud === "https://appleid.apple.com");
+  check("apple secret exp honors ttl",       payload.exp - payload.iat === 3600);
+  var sig = _b64urlDecode(parts[2]);
+  check("apple secret sig is P1363 (64 B)",  sig.length === 64);
+  var ok = nodeCrypto.verify("sha256", Buffer.from(parts[0] + "." + parts[1]),
+    { key: kp.publicKey, dsaEncoding: "ieee-p1363" }, sig);
+  check("apple secret signature verifies",   ok === true);
+  // Default ttl (no ttl_seconds) is 150 days, expressed in seconds.
+  var dflt = bShop.customers.mintAppleClientSecret({
+    team_id: "T", key_id: "K", client_id: "C", private_key: pem,
+  });
+  var dp = JSON.parse(_b64urlDecode(dflt.split(".")[1]).toString());
+  check("apple secret default ttl 150 days", dp.exp - dp.iat === 150 * 24 * 60 * 60);
+  // Bad input throws (config-time validation).
+  assert.throws(function () { bShop.customers.mintAppleClientSecret({ team_id: "x", key_id: "y", client_id: "z" }); }, /required/);
+  assert.throws(function () { bShop.customers.mintAppleClientSecret({ team_id: "x", key_id: "y", client_id: "z", private_key: "nope" }); }, /valid PEM/);
+  var rsa = nodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+  assert.throws(function () {
+    bShop.customers.mintAppleClientSecret({ team_id: "x", key_id: "y", client_id: "z",
+      private_key: rsa.privateKey.export({ type: "pkcs8", format: "pem" }) });
+  }, /EC P-256/);
+}
+
 async function run() {
   await _register();
   await _byEmailHash();
@@ -271,6 +315,7 @@ async function run() {
   await _oidcRefusesUnverifiedEmailConflict();
   await _oidcUnverifiedNoCollisionCreates();
   await _oidcValidation();
+  _appleClientSecret();
 }
 
 module.exports = { run: run };
