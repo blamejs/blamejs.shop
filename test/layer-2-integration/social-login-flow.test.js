@@ -68,7 +68,7 @@ async function _boot(query, customers, oauthGoogle) {
     },
   });
   var bound = await app.listen({ port: 0, host: "127.0.0.1" });
-  return { app: app, port: bound.port, dataDir: dataDir };
+  return { app: app, port: bound.port, dataDir: dataDir, cart: cart };
 }
 
 async function _run() {
@@ -84,8 +84,14 @@ async function _run() {
     check("login page then 200",               login.status === 200);
     check("login shows the Google button",      login.body.indexOf("/account/login/google") !== -1);
 
+    // Seed a guest cart for a session, then carry that session cookie
+    // through the sign-in so we can assert the cart is adopted.
+    var sid = "oidc-session-0001-xyz";
+    await handle.cart.create(sid, { currency: "USD" });
+
     // Start: redirects to the provider + sets the sealed state cookie.
     var jar = helpers.cookieJar();
+    jar.capture({ "set-cookie": ["shop_sid=" + sid + "; Path=/"] });
     var start = await helpers.httpRequest({ port: port, path: "/account/login/google", jar: jar });
     check("start then 302",                    start.status === 302);
     // Parse + compare the host (not a substring check — a substring
@@ -99,7 +105,11 @@ async function _run() {
     check("callback redirects to /account",     (cb.headers.location || "") === "/account");
     check("callback set a shop_auth session",   !!jar.get("shop_auth"));
     // The customer now exists + is linked to the Google subject.
-    check("customer linked to google subject",  (await customers.byOAuthIdentity("google", "google-123")) !== null);
+    var linked = await customers.byOAuthIdentity("google", "google-123");
+    check("customer linked to google subject",  linked !== null);
+    // The guest cart was adopted into the account (so checkout attaches
+    // the order to the customer).
+    check("guest cart adopted on sign-in",       (await handle.cart.bySession(sid)).customer_id === linked.id);
 
     // A forged callback whose state doesn't match the cookie is dropped.
     var jar2 = helpers.cookieJar();
