@@ -135,6 +135,16 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.returns.create({ cursorSecret: returnsCursorSecret })
         : null;
 
+      // Collections — operator-curated + smart product lists, surfaced
+      // as public /collections browse pages. Needs the catalog handle
+      // (smart collections walk the catalog) + a cursor secret.
+      var collectionsCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("collections-cursor", process.env.D1_BRIDGE_SECRET)
+        : "collections-cursor-secret-dev-only";
+      var collections = (catalog && cart)
+        ? bShop.collections.create({ catalog: catalog, cursorSecret: collectionsCursorSecret })
+        : null;
+
       // Tax + shipping default tables — kick in when the operator
       // hasn't seeded `tax.rules` / `shipping.services` in config.
       // Zero-rate tax + a single $0 standard shipping service keeps
@@ -229,6 +239,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (saveForLater) sfDeps.saveForLater = saveForLater;
         if (addresses) sfDeps.addresses = addresses;
         if (returns) sfDeps.returns = returns;
+        if (collections) sfDeps.collections = collections;
         sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;
