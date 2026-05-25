@@ -88,7 +88,9 @@ async function _run() {
     var jar = helpers.cookieJar();
     var start = await helpers.httpRequest({ port: port, path: "/account/login/google", jar: jar });
     check("start then 302",                    start.status === 302);
-    check("start redirects to provider",        (start.headers.location || "").indexOf("accounts.google.com") !== -1);
+    // Parse + compare the host (not a substring check — a substring
+    // match would accept arbitrary hosts containing the string).
+    check("start redirects to provider",        new URL(start.headers.location || "http://x/").hostname === "accounts.google.com");
     check("start sets the oauth state cookie",  !!jar.get("shop_oauth"));
 
     // Callback with the matching state signs in → shop_auth session + redirect.
