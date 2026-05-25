@@ -1,0 +1,21 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.1.10",
+  "date": "2026-05-25",
+  "headline": "Admin console — a review moderation screen",
+  "summary": "Reviews join the admin console, completing the set of management screens. `/admin/reviews` is the moderation queue: filter by status (pending, published, rejected) and act on each submission inline — publish it, reject it with a reason, or take a published one back down. Reviews are short, so the queue shows each one in full (rating, title, body, verified-purchase flag) with its actions, no separate detail page. As with the other screens, every path content-negotiates: a bearer-token client gets the JSON API unchanged, a signed-in browser gets the HTML console.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Review moderation screen", "body": "`/admin/reviews` renders the review queue as inline cards (rating stars, title, body, verified-purchase flag, product, date) with status-filter chips, when opened in a signed-in browser; the same path serves the existing JSON list to a bearer-token client. Each card offers the actions that fit its status — a pending review can be published or rejected, a published one taken down, a rejected one published — with Reject taking a reason. Publish and reject post to their endpoints and redirect (PRG); a missing id is a no-op notice, never a 500." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Console nav gains Reviews; the reviews API content-negotiates", "body": "The signed-in admin nav now includes Reviews — shown, like Returns, only when the reviews primitive is wired. The `/admin/reviews` list and the publish / reject endpoints serve the HTML console to a signed-in browser while continuing to serve the JSON API to a bearer-token client unchanged. A request without the bearer token is no longer answered with a 401 on the list path — a browser GET receives the sign-in form — matching the other console screens." }
+      ]
+    }
+  ]
+}
