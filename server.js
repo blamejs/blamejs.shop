@@ -73,7 +73,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // exact bytes. Must precede bodyParser; the webhook handlers read
       // req.rawBody. Harmless for every other path (it only matches POSTs
       // to the listed webhook routes).
-      r.use(bShop.storefront.webhookRawBodyCapture(["/api/webhooks/stripe"]));
+      r.use(bShop.storefront.webhookRawBodyCapture(["/api/webhooks/stripe", "/api/webhooks/paypal"]));
 
       // Body parser — populates req.body from form-encoded + JSON
       // request bodies. Mounted before any POST handler so the
@@ -384,6 +384,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           });
           sfDeps.payment           = sfPayment;
           sfDeps.paypal            = sfPaypal;
+          sfDeps.paypal_client_id  = sfPaypal ? process.env.PAYPAL_CLIENT_ID : "";
           sfDeps.checkout          = sfCheckout;
           // Resolve the storefront's selected_shipping_id fallback
           // from config; the resolver re-reads per checkout POST so

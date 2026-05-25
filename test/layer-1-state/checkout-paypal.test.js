@@ -163,9 +163,25 @@ async function _validation() {
   await helpers.assert.rejects(bare.createPaypalOrder(_input(c.id)), /paypal adapter not wired/);
 }
 
+async function _captureIncomplete() {
+  // A capture that PayPal does NOT complete must leave the order pending and
+  // report handled:false (so the route surfaces an error, not a fake success).
+  var s = await _setup();
+  // Swap in a stub whose captureOrder returns a non-COMPLETED status.
+  s.paypal.captureOrder = async function (id) {
+    return { id: id, status: "PENDING", purchase_units: [{ payments: { captures: [{ id: "PP-CAP-" + id, status: "PENDING" }] } }] };
+  };
+  var c = await _newCart(s);
+  var created = await s.checkout.createPaypalOrder(_input(c.id));
+  var cap = await s.checkout.capturePaypalOrder(created.paypal_order_id);
+  check("incomplete capture not handled",          cap.handled === false);
+  check("incomplete capture leaves order pending", cap.order.status === "pending");
+}
+
 async function run() {
   await _createAndCapture();
   await _webhookBackstop();
+  await _captureIncomplete();
   await _validation();
 }
 
