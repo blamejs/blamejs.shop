@@ -2316,3 +2316,14 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
 @media (max-width: 30rem) {
   .collection-index-grid, .collection-grid { grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 }
+
+.account-recently-viewed { max-width: var(--container); margin-inline: auto; padding: var(--space-6) var(--gutter); }
+.account-recently-viewed__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; margin: var(--space-3) 0 var(--space-5); }
+.account-recently-viewed__title { font-family: var(--font-display); font-size: var(--text-2xl); margin: 0; }
+.recently-viewed__clear { margin: 0; }
+.recently-viewed-empty { color: var(--mute); }
+.recently-viewed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: var(--space-5); }
+
+@media (max-width: 30rem) {
+  .recently-viewed-grid { grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+}
