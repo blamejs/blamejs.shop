@@ -321,9 +321,11 @@ async function _reviewModeration() {
   });
   check("review reject missing → 404", rRejMiss.status === 404);
 
-  // Auth still gates the new routes.
+  // Auth still gates the route, content-negotiated: no bearer + no cookie
+  // on a GET serves the sign-in form (browsers), not data (the JSON API
+  // needs the bearer, exercised above).
   var rNoAuth = await router._call("GET", "/admin/reviews", {});
-  check("review list requires auth", rNoAuth.status === 401);
+  check("review list unauth → sign-in form", rNoAuth.status === 200 && /Admin API key/.test(rNoAuth.body || ""));
 }
 
 async function _reviewsAbsent() {
