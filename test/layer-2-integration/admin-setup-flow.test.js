@@ -59,6 +59,16 @@ async function _run() {
   var config    = bShop.config.create({ query: query });
   var analytics = bShop.analytics.create({ query: query });
 
+  // Stub payment provider — records refund calls so we can prove the
+  // console "Refund" issues a real provider refund (not a bare FSM move).
+  var refundCalls = [];
+  var stubPayment = {
+    refund: async function (args, idem) {
+      refundCalls.push({ args: args, idem: idem });
+      return { id: "re_test_1", amount: args.amount_minor || 3739 };
+    },
+  };
+
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-admin-"));
   var app = await b.createApp({
     dataDir:    dataDir,
@@ -69,7 +79,7 @@ async function _run() {
       r.use(b.middleware.bodyParser());
       bShop.admin.mount(r, {
         token: TOKEN, catalog: catalog, order: order, config: config,
-        analytics: analytics, shop_name: "Test Shop",
+        analytics: analytics, payment: stubPayment, shop_name: "Test Shop",
         integrations: { stripe: "enabled", express_checkout: "action", google_signin: "off" },
       });
     },
@@ -232,6 +242,21 @@ async function _run() {
     check("illegal transition then 303",       illegal.status === 303);
     check("illegal transition flags err",       (illegal.headers.location || "").indexOf("err=1") !== -1);
     check("status unchanged after refusal",    (await order.get(orderId)).status === "fulfilling");
+
+    // Refund moves money: the console Refund button must post to the
+    // payment-refund endpoint (which calls the provider THEN advances the
+    // FSM), never to the bare /transition endpoint.
+    var refundView = await helpers.httpRequest({ port: port, path: "/admin/orders/" + orderId, jar: jar });
+    check("refund button posts to /refund",     refundView.body.indexOf("/admin/orders/" + orderId + "/refund") !== -1);
+    check("no bare refund via /transition",      refundView.body.indexOf("value=\"refund\"") === -1);
+
+    var refunded = await helpers.httpRequest({ port: port, path: "/admin/orders/" + orderId + "/refund",
+      method: "POST", jar: jar, form: {} });
+    check("console refund then 303",           refunded.status === 303);
+    check("console refund flags moved",         (refunded.headers.location || "").indexOf("moved=1") !== -1);
+    check("provider refund was issued",        refundCalls.length === 1);
+    check("provider refund used the intent",   refundCalls[0].args.payment_intent === "pi_test_123");
+    check("order now refunded",                (await order.get(orderId)).status === "refunded");
 
     // Orders nav + page gated to authed users.
     var ordersAnon = await helpers.httpRequest({ port: port, path: "/admin/orders" });
