@@ -169,6 +169,74 @@ async function _run() {
     var prodAnon = await helpers.httpRequest({ port: port, path: "/admin/products" });
     check("anon products → login form",         prodAnon.body.indexOf("Admin API key") !== -1);
 
+    // ---- orders console -------------------------------------------------
+    // Seed a paid order (direct insert against a real cart so the cart FK
+    // holds) with one line, to exercise the list + detail + transition UI.
+    var cart = bShop.cart.create({ query: query, catalog: catalog });
+    var seededCart = await cart.create("admin-order-sess", { currency: "USD" });
+    var orderId = b.uuid.v7();
+    await query(
+      "INSERT INTO orders (id, cart_id, customer_id, session_id, status, currency, " +
+      "subtotal_minor, discount_minor, tax_minor, shipping_minor, grand_total_minor, " +
+      "payment_intent_id, ship_to_json, customer_email_hash, created_at, updated_at) " +
+      "VALUES (?1, ?2, NULL, ?3, 'paid', 'USD', 2999, 0, 240, 500, 3739, ?4, ?5, NULL, ?6, ?6)",
+      [orderId, seededCart.id, "admin-order-sess", "pi_test_123",
+       JSON.stringify({ name: "Buyer", line1: "1 Main St", city: "Town", country: "US" }), Date.now()],
+    );
+    await query(
+      "INSERT INTO order_lines (id, order_id, variant_id, sku, qty, unit_amount_minor, unit_currency, line_total_minor) " +
+      "VALUES (?1, ?2, ?3, ?4, 1, 2999, 'USD', 2999)",
+      [b.uuid.v7(), orderId, b.uuid.v7(), "WIDGET-1"],
+    );
+
+    // List: HTML for the browser, JSON for the bearer token.
+    var ordersHtml = await helpers.httpRequest({ port: port, path: "/admin/orders", jar: jar });
+    check("orders page then 200",              ordersHtml.status === 200);
+    check("orders list shows the order",        ordersHtml.body.indexOf(orderId.slice(0, 8)) !== -1);
+    check("orders list has status filters",     ordersHtml.body.indexOf("order-filters") !== -1);
+    var ordersApi = await helpers.httpRequest({ port: port, path: "/admin/orders", headers: bearer });
+    check("orders API still JSON for bearer",    (ordersApi.headers["content-type"] || "").indexOf("application/json") === 0);
+    check("orders API returns the row",          JSON.parse(ordersApi.body).rows.length === 1);
+
+    // Status filter narrows; a bad filter falls back to all with a notice.
+    var paidOnly = await helpers.httpRequest({ port: port, path: "/admin/orders?status=paid", jar: jar });
+    check("paid filter shows the order",        paidOnly.body.indexOf(orderId.slice(0, 8)) !== -1);
+    var shippedOnly = await helpers.httpRequest({ port: port, path: "/admin/orders?status=shipped", jar: jar });
+    check("shipped filter hides the paid order", shippedOnly.body.indexOf(orderId.slice(0, 8)) === -1);
+    var badFilter = await helpers.httpRequest({ port: port, path: "/admin/orders?status=bogus", jar: jar });
+    check("bad status filter then 200",         badFilter.status === 200);
+    check("bad status filter shows a notice",    badFilter.body.indexOf("Unknown status filter") !== -1);
+
+    // Detail: shows line items + the legal next actions (paid → fulfil / cancel / refund).
+    var detail = await helpers.httpRequest({ port: port, path: "/admin/orders/" + orderId, jar: jar });
+    check("order detail then 200",             detail.status === 200);
+    check("order detail shows the SKU",         detail.body.indexOf("WIDGET-1") !== -1);
+    check("order detail offers fulfil action",  detail.body.indexOf("Start fulfilment") !== -1);
+    var detailApi = await helpers.httpRequest({ port: port, path: "/admin/orders/" + orderId, headers: bearer });
+    check("order detail API still JSON",         (detailApi.headers["content-type"] || "").indexOf("application/json") === 0);
+    // A bad id renders the 404 list page, not a 500.
+    var missing = await helpers.httpRequest({ port: port, path: "/admin/orders/not-a-real-id", jar: jar });
+    check("missing order then 404",            missing.status === 404);
+
+    // Transition via the browser form → PRG to the detail, status advances.
+    var move = await helpers.httpRequest({ port: port, path: "/admin/orders/" + orderId + "/transition",
+      method: "POST", jar: jar, form: { event: "start_fulfillment" } });
+    check("transition then 303",               move.status === 303);
+    check("transition redirects to detail",     (move.headers.location || "").indexOf("/admin/orders/" + orderId) === 0);
+    check("order advanced to fulfilling",      (await order.get(orderId)).status === "fulfilling");
+
+    // An illegal transition from the new status is refused (redirect with
+    // an error flag), never a 500, and leaves the status unchanged.
+    var illegal = await helpers.httpRequest({ port: port, path: "/admin/orders/" + orderId + "/transition",
+      method: "POST", jar: jar, form: { event: "mark_paid" } });
+    check("illegal transition then 303",       illegal.status === 303);
+    check("illegal transition flags err",       (illegal.headers.location || "").indexOf("err=1") !== -1);
+    check("status unchanged after refusal",    (await order.get(orderId)).status === "fulfilling");
+
+    // Orders nav + page gated to authed users.
+    var ordersAnon = await helpers.httpRequest({ port: port, path: "/admin/orders" });
+    check("anon orders → login form",           ordersAnon.body.indexOf("Admin API key") !== -1);
+
     // Setup POST without auth bounces to the landing (no write).
     var noAuth = await helpers.httpRequest({ port: port, path: "/admin/setup", method: "POST", form: { shop_name: "Hijack" } });
     check("unauth setup POST then 303",        noAuth.status === 303);
