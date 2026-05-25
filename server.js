@@ -55,6 +55,16 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
     cart    = bShop.cart.create({ catalog: catalog });
   }
 
+  // The operator-configured shop name (set via the admin setup wizard,
+  // persisted to shop_config) drives the storefront header / page
+  // titles + the admin header. Read once at boot — edits apply on the
+  // next deploy. Falls back to the framework default when unconfigured.
+  var bootShopName = "blamejs.shop";
+  if (catalog && cart) {
+    try { bootShopName = await bShop.config.create({}).get("shop.name", "blamejs.shop"); }
+    catch (_e) { /* unconfigured — default */ }
+  }
+
   var app = await b.createApp({
     dataDir: DATA_DIR,
     routes: function (r) {
@@ -194,6 +204,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         var catalogImport = bShop.catalogImport.create({ catalog: catalog });
         bShop.admin.mount(r, {
           token:         process.env.ADMIN_API_KEY,
+          shop_name:     bootShopName,
           catalog:       catalog,
           order:         order,
           payment:       payment,
@@ -227,7 +238,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // Build the optional checkout + payment + order deps when
         // Stripe is configured. Without these the storefront stays
         // browsable but checkout-routes don't mount.
-        var sfDeps = { catalog: catalog, cart: cart };
+        var sfDeps = { catalog: catalog, cart: cart, config: { shop_name: bootShopName } };
         if (sfTheme) sfDeps.theme = sfTheme;
         // Customer accounts — opts the /account/* routes in. The
         // primitive only needs the externalDb query handle (which
