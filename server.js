@@ -145,6 +145,14 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.collections.create({ catalog: catalog, cursorSecret: collectionsCursorSecret })
         : null;
 
+      // Recently viewed — the signed-in customer's browse history.
+      // Views are recorded on the PDP and surfaced at
+      // /account/recently-viewed. Composes the catalog handle for
+      // product resolution.
+      var recentlyViewed = (catalog && cart)
+        ? bShop.recentlyViewed.create({ catalog: catalog })
+        : null;
+
       // Tax + shipping default tables — kick in when the operator
       // hasn't seeded `tax.rules` / `shipping.services` in config.
       // Zero-rate tax + a single $0 standard shipping service keeps
@@ -240,6 +248,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (addresses) sfDeps.addresses = addresses;
         if (returns) sfDeps.returns = returns;
         if (collections) sfDeps.collections = collections;
+        if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;
         sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;
