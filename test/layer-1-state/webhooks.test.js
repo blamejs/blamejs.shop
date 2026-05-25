@@ -288,7 +288,14 @@ async function _orderTransitionFanout() {
     lines: [{ variant_id: v.id, sku: "WH-1", qty: 1, unit_amount_minor: 1000, unit_currency: "USD" }],
   });
 
+  // Fan-out is fire-and-forget — the transition returns before the
+  // background delivery runs, so poll for it rather than asserting
+  // synchronously (a fixed sleep would flake under load).
   await order.transition(o.id, "mark_paid", { reason: "stripe" });
+  await helpers.waitUntil(function () { return transport.received.length >= 1; }, {
+    timeoutMs: 5000,
+    label:     "order.transition fan-out: webhook delivered",
+  });
   check("order.transition fires webhook", transport.received.length === 1);
   check("event header is order.mark_paid",
     transport.received[0].headers["Webhook-Event"] === "order.mark_paid");
