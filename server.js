@@ -213,6 +213,13 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           catalogImport: catalogImport,
           reviews:       reviews,
           returns:       returns,
+          // Live integration on/off map for the /admin/integrations
+          // status page (admin.js never reads process.env itself).
+          integrations: {
+            stripe:           !!(process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET),
+            express_checkout: !!(process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET),
+            google_signin:    !!(process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET && process.env.SHOP_ORIGIN),
+          },
         });
       }
 

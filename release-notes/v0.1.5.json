@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.1.5",
+  "date": "2026-05-25",
+  "headline": "Tell operators how to turn each integration on",
+  "summary": "Every third-party integration (Stripe card checkout, Apple/Google Pay, Sign in with Google) is off by default and only activates when you supply its credentials. This release documents exactly what to set for each — in the README, in a new .env.example, and in the admin console itself. A signed-in operator opens /admin/integrations to see, at a glance, which integrations are live and the precise environment variables (or one-time action) needed to enable the rest. Nothing is enabled without your keys.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Admin integrations status page", "body": "`/admin/integrations` lists each integration with a live Enabled / Not configured status and the exact variables or action to turn it on — Stripe keys, the payment-method-domain registration for wallets, the Google OAuth client + redirect URI. Read-only; secrets are never rendered. Linked from the admin landing." },
+        { "title": "Operator setup docs", "body": "A README \"Optional integrations\" section and a top-level `.env.example` enumerate every environment variable, what capability it unlocks, and the external setup (e.g. the Google OAuth redirect URI, the Stripe webhook path). Both note that Apple sign-in + PayPal are planned and that Shop Pay / \"Sign in with Shop\" isn't available to a self-hosted store." }
+      ]
+    }
+  ]
+}
