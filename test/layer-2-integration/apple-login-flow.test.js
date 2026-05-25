@@ -109,6 +109,11 @@ async function _run() {
     check("start then 302",                    start.status === 302);
     check("start redirects to Apple",           new URL(start.headers.location || "http://x/").hostname === "appleid.apple.com");
     check("start sets the oauth state cookie",  !!jar.get("shop_oauth"));
+    // form_post is a cross-site POST: the state cookie must be
+    // SameSite=None; Secure or the browser drops it on the callback.
+    var startSetCookie = String(start.headers["set-cookie"] || "");
+    check("state cookie is SameSite=None",      /shop_oauth=[^;]+;[^]*SameSite=None/i.test(startSetCookie));
+    check("state cookie is Secure",             /shop_oauth=[^;]+;[^]*Secure/i.test(startSetCookie));
 
     // Callback is a POST (form_post). The first-auth `user` blob carries
     // the name; assert it lands on the new account.
