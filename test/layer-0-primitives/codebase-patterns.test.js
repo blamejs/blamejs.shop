@@ -427,6 +427,23 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "Reading `req.headers.cookie` and splitting it by hand reinvents the cookie primitive's parser and silently mishandles cookie-tossing (duplicate names, last-write-wins) and CR/LF/NUL header-injection. Compose `b.cookies.create({ vault }).read(req, name)` — or `b.cookies.parseSafe(header)` when you only hold the raw header string.",
   },
   {
+    id:        "lazy-framework-accessor",
+    primitive: "var b = require(\"./index\").framework; … b.crypto / b.constants.TIME / b.middleware — capture the framework ONCE at module top and use `b.*` uniformly (the worker already does this). index.js sets `module.exports.framework` BEFORE its require cascade, so the eager top-level capture resolves cleanly during a circular require — the `_b()` lazy-accessor indirection it replaces added no safety.",
+    regex:     /\b_b\s*\(/,
+    scanScope: "lib",
+    allowlist: [],
+    reason:    "The `var bShop; function _b() { … return bShop.framework; }` lazy accessor (and every `_b().<member>` call) is redundant indirection: because index.js exposes `framework` on its exports before requiring any shop module, a module can capture `var b = require(\"./index\").framework;` at the top and dereference the cached `b` everywhere — uniform with the worker. Replace the accessor block with that one line, drop in-function `var b = _b();` re-captures, and use `b.*` directly. (Comment lines mentioning `_b()` are skipped by the scanner.)",
+  },
+  {
+    id:          "raw-control-byte-in-source",
+    primitive:   "Write control characters as escapes — \"\\u0000\" for a NUL separator, \"\\t\" for tab — never embed a raw C0 control byte in a source file. A raw NUL/control byte is byte-identical to its escape at runtime but turns the whole file binary to grep / `file` / diff / many editors.",
+    regex:       /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/,
+    scanScope:   "lib",
+    multiline:   true,
+    allowlist:   [],
+    reason:      "A raw control byte in source (e.g. a literal NUL used as a composite-map-key separator, `sku + \"<raw-NUL>\" + loc`) makes the file register as binary: grep skips it, `file` reports 'data', diffs garble, some editors corrupt it on save. Use the escape sequence instead — `\"\\u0000\"` for a NUL separator is identical at runtime and keeps the source plain text, so framework access reads the same `var b = require(\"./index\").framework` everywhere with no special-cased 'binary' modules.",
+  },
+  {
     id:        "manual-request-body-stream-read",
     primitive: "b.middleware.bodyParser() (req.body ← parsed) or b.middleware.bodyParser.raw({ contentTypes }) (req.body ← raw Buffer) — the framework reads, size-caps, and smuggling-pre-flights the HTTP request body, instead of hand-attaching req.on('data')/'end' + Buffer.concat",
     regex:     /\breq\s*\.\s*on\s*\(\s*["']data["']/,
