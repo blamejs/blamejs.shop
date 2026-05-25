@@ -233,11 +233,16 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
             var googleReady = !!(process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET && process.env.SHOP_ORIGIN);
             var appleReady  = !!(process.env.APPLE_TEAM_ID && process.env.APPLE_KEY_ID &&
                                  process.env.APPLE_CLIENT_ID && process.env.APPLE_PRIVATE_KEY && process.env.SHOP_ORIGIN);
+            // PayPal needs the credentials AND Stripe-backed checkout to be
+            // live (checkout mounts under Stripe today), AND a webhook id +
+            // the storefront button — so "action" once configured, not auto-on.
+            var paypalReady = !!(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_SECRET && stripeReady);
             return {
               stripe:           stripeReady ? "enabled" : "off",
               express_checkout: stripeReady ? "action"  : "off",
               google_signin:    googleReady ? "enabled" : "off",
               apple_signin:     appleReady  ? "enabled" : "off",
+              paypal:           paypalReady ? "action"  : "off",
             };
           })(),
         });
@@ -356,12 +361,29 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
               return await adapter.rates(ctx);
             },
           };
+          // PayPal (Orders v2) adapter — wired when the operator supplies a
+          // PayPal app's credentials. Distinct from Stripe; checkout exposes
+          // create/capture/webhook PayPal methods only when this is present.
+          // PAYPAL_ENV=live uses the production API; anything else is sandbox.
+          var sfPaypal = null;
+          if (process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_SECRET) {
+            try {
+              sfPaypal = bShop.payment.create({
+                adapter:   "paypal",
+                clientId:  process.env.PAYPAL_CLIENT_ID,
+                secret:    process.env.PAYPAL_SECRET,
+                sandbox:   process.env.PAYPAL_ENV !== "live",
+                webhookId: process.env.PAYPAL_WEBHOOK_ID || undefined,
+              });
+            } catch (_e) { sfPaypal = null; } // misconfigured — leave PayPal disabled
+          }
           var sfCheckout = bShop.checkout.create({
             catalog: catalog, cart: cart, pricing: bShop.pricing,
             tax: sfTax, shipping: sfShipping, payment: sfPayment, order: sfOrder,
-            customers: sfDeps.customers,
+            customers: sfDeps.customers, paypal: sfPaypal,
           });
           sfDeps.payment           = sfPayment;
+          sfDeps.paypal            = sfPaypal;
           sfDeps.checkout          = sfCheckout;
           // Resolve the storefront's selected_shipping_id fallback
           // from config; the resolver re-reads per checkout POST so
