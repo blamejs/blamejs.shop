@@ -427,6 +427,14 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "Reading `req.headers.cookie` and splitting it by hand reinvents the cookie primitive's parser and silently mishandles cookie-tossing (duplicate names, last-write-wins) and CR/LF/NUL header-injection. Compose `b.cookies.create({ vault }).read(req, name)` — or `b.cookies.parseSafe(header)` when you only hold the raw header string.",
   },
   {
+    id:        "manual-request-body-stream-read",
+    primitive: "b.middleware.bodyParser() (req.body ← parsed) or b.middleware.bodyParser.raw({ contentTypes }) (req.body ← raw Buffer) — the framework reads, size-caps, and smuggling-pre-flights the HTTP request body, instead of hand-attaching req.on('data')/'end' + Buffer.concat",
+    regex:     /\breq\s*\.\s*on\s*\(\s*["']data["']/,
+    scanScope: "lib",
+    allowlist: [],
+    reason:    "Hand-reading the HTTP request stream (`req.on('data')` + `Buffer.concat`) reinvents the body parser AND misses the router's await/next contract: this router awaits each middleware's return value and checks `next()` synchronously after, so a middleware that calls `next()` on the async `'end'` event returns before `next()` fires — the router stops the chain and the request hangs. For a route that needs the exact raw bytes (a webhook verifying a signature over the body), mount `b.middleware.bodyParser.raw({ contentTypes })` ahead of the JSON parser and read `req.body` (a Buffer). Reading a non-request Readable (file / import source) uses a different identifier (e.g. `stream.on`) and isn't matched.",
+  },
+  {
     id:        "fsm-name-not-audit-action-safe",
     primitive: "fsm.define({ name: \"<lowercase>[_<lowercase>]*\" }) — the framework's audit action validator at lib/vendor/blamejs/lib/audit.js:401 enforces `^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$` on every action, so the FSM `name` (which composes into `fsm.<name>.transition`) must match the same per-segment shape (`[a-z][a-z0-9_]*`)",
     regex:     /\bfsm\.define\s*\(\s*\{[\s\S]{0,200}?\bname\s*:\s*"(?![a-z][a-z0-9_]*"\s*,)[^"]*"/,
