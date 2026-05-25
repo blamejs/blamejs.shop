@@ -134,6 +134,13 @@ async function _run() {
     check("unknown-plan archive then 303",       miss.status === 303);
     check("unknown-plan flags err not archived", (miss.headers.location || "").indexOf("err=1") !== -1);
 
+    // No payment handle wired here, so the Stripe-backed cancel route is
+    // not mounted — a POST to it is a 404 (feature unavailable), never a
+    // misleading 400 from dereferencing a null payment. Plan CRUD above
+    // needed no Stripe and worked.
+    var cancel = await helpers.httpRequest({ port: port, path: "/admin/subscriptions/00000000-0000-7000-8000-000000000000/cancel", method: "POST", headers: bearer });
+    check("cancel route unmounted without Stripe", cancel.status === 404);
+
     // Auth gate: anon → sign-in form, not data.
     var anon = await helpers.httpRequest({ port: port, path: "/admin/subscription-plans" });
     check("anon plans → login form",             anon.body.indexOf("Admin API key") !== -1);
