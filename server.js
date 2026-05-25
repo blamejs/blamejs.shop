@@ -324,6 +324,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           var sfCheckout = bShop.checkout.create({
             catalog: catalog, cart: cart, pricing: bShop.pricing,
             tax: sfTax, shipping: sfShipping, payment: sfPayment, order: sfOrder,
+            customers: sfDeps.customers,
           });
           sfDeps.payment           = sfPayment;
           sfDeps.checkout          = sfCheckout;

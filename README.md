@@ -93,6 +93,7 @@ Every primitive is composed on the vendored blamejs surface — no npm runtime d
 - `migrations-d1/0026_customer_addresses.sql` — per-customer address book (default shipping/billing flags)
 - `migrations-d1/0023_returns.sql` — return authorizations + lines (RMA lifecycle FSM)
 - `migrations-d1/0205_customer_oauth_identities.sql` — federated sign-in identities (provider + subject, verified-email gating)
+- `migrations-d1/0206_orders_email_hash.sql` — queryable buyer-email hash on orders (guest-order reconciliation key)
 - `migrations-d1/0043_collections.sql` — manual + smart product collections (members + rules + sort strategy)
 - `migrations-d1/0050_recently_viewed.sql` — per-customer / per-session product browse history (dedup + per-subject cap)
 

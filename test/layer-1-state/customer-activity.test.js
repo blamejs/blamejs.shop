@@ -35,7 +35,7 @@ var assert           = helpers.assert;
 var MIGS = [
   "0001_catalog.sql",
   "0002_cart.sql",
-  "0003_order.sql",
+  "0003_order.sql", "0206_orders_email_hash.sql",
   "0006_customers.sql",
   "0011_reviews.sql",
   "0012_wishlist.sql",
