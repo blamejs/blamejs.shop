@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.1.14",
+  "date": "2026-05-25",
+  "headline": "PayPal payment adapter (Orders v2)",
+  "summary": "`payment.create({ adapter: \"paypal\", … })` is a new native PayPal adapter alongside the Stripe one — a from-scratch Orders-v2 client over the framework's SSRF-gated HTTP client, with no PayPal SDK dependency. It exchanges an OAuth2 client-credentials token (cached until it nears expiry), creates and captures orders, fetches and refunds them, and verifies inbound webhooks through PayPal's verify-webhook-signature API. This ships the adapter only; wiring it into the checkout flow and a storefront button comes next. Card / Stripe checkout is unchanged.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "PayPal Orders-v2 adapter", "body": "`payment.create({ adapter: \"paypal\", clientId, secret, sandbox?, webhookId?, apiBase? })` returns `{ createOrder, captureOrder, getOrder, refund, verifyWebhook }`. `createOrder({ amount_minor, currency, order_id?, return_url?, cancel_url? })` opens a CAPTURE-intent order (amounts converted to PayPal's decimal-string major units, including 0-decimal currencies); `captureOrder(id)` finalizes it; `refund({ capture_id, amount_minor?, currency? })` refunds full or partial; `getOrder(id)` reads status. Every call carries an OAuth2 bearer token exchanged once and cached until ~2 minutes before expiry, and a `PayPal-Request-Id` for idempotency (plus the shared idempotency cache when a `query` handle is wired). `verifyWebhook(headers, rawBody, { webhookId })` confirms an inbound event through PayPal's verify-webhook-signature API and returns `{ ok, event }`. Outbound HTTP goes through `b.httpClient` — no `paypal` npm dependency. Off until the operator supplies credentials; the Stripe adapter and existing checkout are unchanged." }
+      ]
+    }
+  ]
+}
