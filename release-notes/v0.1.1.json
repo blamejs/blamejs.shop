@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.1.1",
+  "date": "2026-05-25",
+  "headline": "Admin setup wizard + a browser-accessible admin console",
+  "summary": "The admin is now reachable from a browser, not just the bearer-token JSON API. Sign in once at /admin by pasting the ADMIN_API_KEY and a sealed, /admin-scoped session cookie carries you through the guided setup wizard (shop name, contact email, default currency, support URL — saved to shop config) and the analytics dashboard. The shop name set in the wizard drives the storefront header, page titles, and the admin header.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Browser admin sign-in", "body": "`/admin` renders a sign-in form; pasting the ADMIN_API_KEY sets a sealed `shop_admin` session cookie (SameSite=Strict, scoped to /admin) so the rendered admin pages are reachable from a browser. The JSON API stays bearer-only; the dashboard accepts either the cookie or the bearer token." },
+        { "title": "Setup wizard", "body": "`/admin/setup` is a guided form for the shop's core identity — name, contact email, default currency, support URL — validated (ISO-4217 currency, RFC-shaped email, http(s) support URL) and saved to shop config. The landing nags until setup is complete; the shop name then drives the storefront and admin headers." }
+      ]
+    }
+  ]
+}
