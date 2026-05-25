@@ -499,11 +499,15 @@ async function _returnModeration() {
   });
   check("approve bad-id → 4xx not 500", rApproveBadId.status >= 400 && rApproveBadId.status < 500);
 
-  // Auth gates every new route.
+  // Auth gates every route, content-negotiated like products/orders: the
+  // JSON API needs the bearer (exercised above); a request without it
+  // isn't served data — a browser GET gets the sign-in form, a write
+  // bounces to /admin. (A token client that omits the header therefore
+  // sees the form rather than a 401, matching the other console screens.)
   var rNoAuth = await router._call("GET", "/admin/returns", {});
-  check("returns list requires auth", rNoAuth.status === 401);
+  check("returns list unauth → sign-in form", rNoAuth.status === 200 && /Admin API key/.test(rNoAuth.body || ""));
   var rNoAuthApprove = await router._call("POST", "/admin/returns/" + r1.id + "/approve", { params: { id: r1.id }, body: {} });
-  check("returns approve requires auth", rNoAuthApprove.status === 401);
+  check("returns approve unauth → /admin redirect", rNoAuthApprove.status === 303);
 }
 
 async function _returnsAbsent() {

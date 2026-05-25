@@ -155,6 +155,9 @@ async function _run() {
 
     // Console nav is present on authed pages.
     check("authed page has console nav",        dashCookie.body.indexOf("admin-nav") !== -1 && dashCookie.body.indexOf("\"/admin/products\"") !== -1);
+    // This mount has no returns dep wired, so the Returns nav link is
+    // hidden (its routes aren't mounted — a link would 404).
+    check("nav hides Returns when unwired",     dashCookie.body.indexOf("\"/admin/returns\"") === -1);
 
     // Products console: HTML for the browser cookie, JSON for the bearer
     // token (the API contract is unchanged).
