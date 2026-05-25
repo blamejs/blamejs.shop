@@ -95,6 +95,18 @@ async function _captureAndRefund() {
   await pp.refund({ capture_id: "CAP-1", amount_minor: 500, currency: "USD" });
   var partBody = JSON.parse(calls[calls.length - 1].body);
   check("partial refund sends amount 5.00",        partBody.amount && partBody.amount.value === "5.00");
+  // Two keyless refunds on the same capture must NOT share a PayPal-Request-Id
+  // (else PayPal replays the first instead of executing the second).
+  await pp.refund({ capture_id: "CAP-1", amount_minor: 100, currency: "USD" });
+  var refundCalls = calls.filter(function (c) { return c.url.indexOf("/refund") !== -1; });
+  var ids = refundCalls.map(function (c) { return c.headers["paypal-request-id"]; });
+  check("keyless refunds get distinct request ids", new Set(ids).size === ids.length);
+  // An explicit idempotency key makes a retry stable (same id).
+  await pp.refund({ capture_id: "CAP-1", amount_minor: 100, currency: "USD" }, "rk-1");
+  await pp.refund({ capture_id: "CAP-1", amount_minor: 100, currency: "USD" }, "rk-1");
+  var keyed = calls.filter(function (c) { return c.url.indexOf("/refund") !== -1; }).slice(-2)
+    .map(function (c) { return c.headers["paypal-request-id"]; });
+  check("same idempotency key → same request id",   keyed[0] === keyed[1]);
 }
 
 async function _getOrder() {
