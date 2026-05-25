@@ -160,6 +160,11 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // signing secret is generated per endpoint on create.
       var webhooks = (catalog && cart) ? bShop.webhooks.create({}) : null;
 
+      // Recommendations — operator-curated overrides + co-purchase /
+      // category-popular / in-stock signals. Composes the catalog handle;
+      // powers the post-purchase "Customers also bought" rail.
+      var recommendations = (catalog && cart) ? bShop.recommendations.create({ catalog: catalog }) : null;
+
       // Collections — operator-curated + smart product lists, surfaced
       // as public /collections browse pages. Needs the catalog handle
       // (smart collections walk the catalog) + a cursor secret.
@@ -346,6 +351,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (returns) sfDeps.returns = returns;
         if (collections) sfDeps.collections = collections;
         if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;
+        if (recommendations) sfDeps.recommendations = recommendations;
         sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;
