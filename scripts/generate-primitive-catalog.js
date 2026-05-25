@@ -1,0 +1,161 @@
+"use strict";
+/**
+ * Primitive catalog generator.
+ *
+ * Scans the vendored framework (`lib/vendor/blamejs/lib/`) for `@primitive`
+ * doc tags and emits a machine-readable index of every framework primitive —
+ * name, signature, status, and a one-line capability summary — so "is there
+ * already a primitive for X?" is a fast lookup instead of a hopeful grep.
+ * This is the lookup the pre-write search gate uses to avoid hand-rolling
+ * something the framework already ships (base64url, cookie parsing, HMAC,
+ * request-body reading, …).
+ *
+ * Usage:
+ *   node scripts/generate-primitive-catalog.js            # markdown to stdout
+ *   node scripts/generate-primitive-catalog.js --json     # JSON to stdout
+ *   node scripts/generate-primitive-catalog.js --write     # write memory/specs/primitive-catalog.md
+ *
+ * Internal dev tooling — the catalog is a reference, not operator-facing
+ * surface; the default --write target is the untracked memory/specs/ scratch.
+ */
+
+var fs   = require("node:fs");
+var path = require("node:path");
+
+var VENDOR_LIB = path.resolve(__dirname, "..", "lib", "vendor", "blamejs", "lib");
+var OUT_FILE   = path.resolve(__dirname, "..", "memory", "specs", "primitive-catalog.md");
+
+function _walk(dir, out) {
+  out = out || [];
+  var entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+  catch (_e) { return out; }
+  entries.forEach(function (e) {
+    var full = path.join(dir, e.name);
+    if (e.isDirectory()) _walk(full, out);
+    else if (e.name.endsWith(".js")) out.push(full);
+  });
+  return out;
+}
+
+// Strip a doc line's ` * ` prefix; return null for a non-doc line.
+function _docText(line) {
+  var m = line.match(/^\s*\*\s?(.*)$/);
+  return m ? m[1] : null;
+}
+
+// Parse one file's doc blocks into primitive entries.
+function _parseFile(file) {
+  var lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
+  var entries = [];
+  for (var i = 0; i < lines.length; i += 1) {
+    var t = _docText(lines[i]);
+    if (t === null) continue;
+    var pm = t.match(/^@primitive\s+(\S+)/);
+    if (!pm) continue;
+    var name = pm[1];
+    var signature = null, status = null, summaryParts = [], sawTagsDone = false;
+    // Walk forward within the same doc block.
+    for (var j = i + 1; j < lines.length; j += 1) {
+      var dt = _docText(lines[j]);
+      if (dt === null) break;                 // doc block ended
+      var sm = dt.match(/^@signature\s+(.*)$/); if (sm) { signature = sm[1].trim(); continue; }
+      var stm = dt.match(/^@status\s+(.*)$/);   if (stm) { status = stm[1].trim(); continue; }
+      if (/^@(since|related|example|param|returns|throws|see|deprecated|module|title|intro)\b/.test(dt)) {
+        if (dt.indexOf("@example") === 0 && summaryParts.length) break; // summary already captured
+        continue;
+      }
+      if (dt === "") { if (summaryParts.length) { sawTagsDone = true; break; } continue; }
+      // First prose paragraph after the tags is the capability summary.
+      summaryParts.push(dt);
+      if (summaryParts.join(" ").length > 220) { sawTagsDone = true; break; }
+    }
+    void sawTagsDone;
+    var summary = summaryParts.join(" ").replace(/\s+/g, " ").trim();
+    // First sentence (cap length) keeps the index one-line-per-primitive.
+    var firstSentence = summary.split(/(?<=\.)\s/)[0];
+    if (firstSentence.length > 160) firstSentence = firstSentence.slice(0, 157) + "...";
+    entries.push({
+      name:      name,
+      signature: signature || name,
+      status:    status || "",
+      summary:   firstSentence,
+      namespace: name.split(".").slice(0, 2).join("."),
+    });
+  }
+  return entries;
+}
+
+function build() {
+  // Fail fast if the vendor tree is missing/unreadable, rather than emitting
+  // a misleading empty catalog (e.g. before / after a failed vendor refresh).
+  var stat;
+  try { stat = fs.statSync(VENDOR_LIB); }
+  catch (e) {
+    throw new Error("primitive-catalog: cannot read the vendored framework at " + VENDOR_LIB +
+      " (" + (e && e.message || e) + ") — run `bash scripts/vendor-update.sh blamejs <tag>` first");
+  }
+  if (!stat.isDirectory()) {
+    throw new Error("primitive-catalog: " + VENDOR_LIB + " is not a directory");
+  }
+  var files = _walk(VENDOR_LIB);
+  var all = [];
+  files.forEach(function (f) { all = all.concat(_parseFile(f)); });
+  // Dedupe by name (a primitive may be documented once); keep first.
+  var seen = {}, deduped = [];
+  all.forEach(function (e) { if (!seen[e.name]) { seen[e.name] = true; deduped.push(e); } });
+  deduped.sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
+  if (!deduped.length) {
+    throw new Error("primitive-catalog: scanned " + files.length + " file(s) under " + VENDOR_LIB +
+      " but found zero @primitive tags — the vendor tree looks wrong; refusing to write an empty catalog");
+  }
+  return deduped;
+}
+
+function renderMarkdown(entries) {
+  var lines = [];
+  lines.push("# Framework primitive catalog");
+  lines.push("");
+  lines.push("Generated by `node scripts/generate-primitive-catalog.js` from the vendored");
+  lines.push("framework's `@primitive` doc tags. **Search this before writing any non-trivial");
+  lines.push("helper** — if a primitive already covers the capability, compose it (`b.*`) instead");
+  lines.push("of hand-rolling. Regenerate after a vendor refresh. Internal reference; not");
+  lines.push("operator-facing.");
+  lines.push("");
+  lines.push("Total primitives: " + entries.length);
+  lines.push("");
+  var ns = null;
+  entries.forEach(function (e) {
+    if (e.namespace !== ns) {
+      ns = e.namespace;
+      lines.push("");
+      lines.push("## " + ns);
+      lines.push("");
+    }
+    var sig = "`" + e.signature + "`";
+    var st = e.status && e.status !== "stable" ? " _(" + e.status + ")_" : "";
+    lines.push("- " + sig + st + (e.summary ? " — " + e.summary : ""));
+  });
+  lines.push("");
+  return lines.join("\n");
+}
+
+function main() {
+  var argv = process.argv.slice(2);
+  var entries = build();
+  if (argv.indexOf("--json") !== -1) {
+    process.stdout.write(JSON.stringify(entries, null, 2) + "\n");
+    return;
+  }
+  var md = renderMarkdown(entries);
+  if (argv.indexOf("--write") !== -1) {
+    fs.mkdirSync(path.dirname(OUT_FILE), { recursive: true });
+    fs.writeFileSync(OUT_FILE, md);
+    process.stderr.write("wrote " + path.relative(path.resolve(__dirname, ".."), OUT_FILE).replace(/\\/g, "/") +
+      " (" + entries.length + " primitives, " + md.length + " bytes)\n");
+    return;
+  }
+  process.stdout.write(md);
+}
+
+main();
