@@ -245,6 +245,20 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // ships with this deploy via `r2_bridge` / `D1_BRIDGE_URL`),
         // so wire it whenever the data layer is present.
         sfDeps.customers = bShop.customers.create({});
+        // Sign in with Google (OIDC). Mounts the /account/login/google
+        // routes only when the operator supplies the OAuth client +
+        // SHOP_ORIGIN (for the exact redirect URI). The framework
+        // adapter owns discovery + PKCE + ID-token verification.
+        if (process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET && process.env.SHOP_ORIGIN) {
+          try {
+            sfDeps.oauthGoogle = b.auth.oauth.create({
+              provider:     "google",
+              clientId:     process.env.GOOGLE_OAUTH_CLIENT_ID,
+              clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+              redirectUri:  process.env.SHOP_ORIGIN.replace(/\/$/, "") + "/account/auth/google/callback",
+            });
+          } catch (_e) { /* misconfigured — leave Google sign-in disabled */ }
+        }
         // Newsletter signups — opts the /newsletter route in. The
         // primitive only needs the externalDb query handle (which
         // ships with this deploy via D1_BRIDGE_URL).
