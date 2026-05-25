@@ -209,6 +209,11 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           });
         }
         var catalogImport = bShop.catalogImport.create({ catalog: catalog });
+        // Subscription plans — the recurring-offer catalog surfaced at
+        // /admin/subscription-plans. Plan CRUD only needs the DB; binding
+        // customers to plans (the subscription instances + cancel routes)
+        // composes Stripe, so pass the payment handle when it's wired.
+        var subscriptions = bShop.subscriptions.create({ payment: payment });
         bShop.admin.mount(r, {
           token:         process.env.ADMIN_API_KEY,
           shop_name:     bootShopName,
@@ -220,6 +225,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           catalogImport: catalogImport,
           reviews:       reviews,
           returns:       returns,
+          subscriptions: subscriptions,
           // Integration state map for /admin/integrations — "enabled" |
           // "action" (credentials present, a one-time operator action
           // still required) | "off". admin.js never reads process.env.
