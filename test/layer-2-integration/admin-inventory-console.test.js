@@ -104,6 +104,12 @@ async function _run() {
     var apiRestock = await helpers.httpRequest({ port: port, path: "/admin/inventory/WIDGET-LOW/restock", method: "POST", headers: bearer, form: { qty: "5" } });
     check("bearer restock returns JSON",         (apiRestock.headers["content-type"] || "").indexOf("application/json") === 0 && JSON.parse(apiRestock.body).stock_on_hand === 8);
 
+    // Restock a non-existent SKU (stale/tampered form) → err flag, not a
+    // false "updated" success.
+    var miss = await helpers.httpRequest({ port: port, path: "/admin/inventory/NOPE-404/restock", method: "POST", jar: jar, form: { qty: "5" } });
+    check("unknown-SKU restock then 303",      miss.status === 303);
+    check("unknown-SKU flags err not updated",  (miss.headers.location || "").indexOf("err=1") !== -1);
+
     // Auth gate: anon → sign-in form, not data.
     var anon = await helpers.httpRequest({ port: port, path: "/admin/inventory" });
     check("anon inventory → login form",        anon.body.indexOf("Admin API key") !== -1);
