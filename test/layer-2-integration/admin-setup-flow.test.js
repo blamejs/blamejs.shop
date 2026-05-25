@@ -70,7 +70,7 @@ async function _run() {
       bShop.admin.mount(r, {
         token: TOKEN, catalog: catalog, order: order, config: config,
         analytics: analytics, shop_name: "Test Shop",
-        integrations: { stripe: true, express_checkout: true, google_signin: false },
+        integrations: { stripe: "enabled", express_checkout: "action", google_signin: "off" },
       });
     },
   });
@@ -137,6 +137,7 @@ async function _run() {
     var integ = await helpers.httpRequest({ port: port, path: "/admin/integrations", jar: jar });
     check("integrations page then 200",        integ.status === 200);
     check("integrations shows enabled Stripe",  integ.body.indexOf("Card checkout (Stripe)") !== -1 && integ.body.indexOf("Enabled") !== -1);
+    check("wallets show action-needed",         integ.body.indexOf("Action needed") !== -1);
     check("integrations shows what to set",      integ.body.indexOf("GOOGLE_OAUTH_CLIENT_ID") !== -1 && integ.body.indexOf("Not configured") !== -1);
     // Unauthenticated integrations page renders the login form, not status.
     var integAnon = await helpers.httpRequest({ port: port, path: "/admin/integrations" });
