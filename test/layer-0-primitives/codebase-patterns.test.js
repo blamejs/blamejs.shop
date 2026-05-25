@@ -428,11 +428,19 @@ var KNOWN_ANTIPATTERNS = [
   },
   {
     id:        "lazy-framework-accessor",
-    primitive: "var b = require(\"./index\").framework; … b.crypto / b.constants.TIME / b.middleware — capture the framework ONCE at module top and use `b.*` uniformly (the worker already does this). index.js sets `module.exports.framework` BEFORE its require cascade, so the eager top-level capture resolves cleanly during a circular require — the `_b()` lazy-accessor indirection it replaces added no safety.",
+    primitive: "var b = require(\"./vendor/blamejs\"); … b.crypto / b.constants.TIME / b.middleware — capture the framework ONCE at module top (straight from the vendored tree, the same object index.js re-exports as `.framework`) and use `b.*` uniformly, like the worker. No lazy `_b()` indirection.",
     regex:     /\b_b\s*\(/,
     scanScope: "lib",
     allowlist: [],
-    reason:    "The `var bShop; function _b() { … return bShop.framework; }` lazy accessor (and every `_b().<member>` call) is redundant indirection: because index.js exposes `framework` on its exports before requiring any shop module, a module can capture `var b = require(\"./index\").framework;` at the top and dereference the cached `b` everywhere — uniform with the worker. Replace the accessor block with that one line, drop in-function `var b = _b();` re-captures, and use `b.*` directly. (Comment lines mentioning `_b()` are skipped by the scanner.)",
+    reason:    "The `var bShop; function _b() { … return bShop.framework; }` lazy accessor (and every `_b().<member>` call) is redundant indirection. Capture the framework at module top with `var b = require(\"./vendor/blamejs\");` and use `b.*` directly. (Do NOT use `require(\"./index\").framework` — see `index-require-in-leaf`: it triggers index's require cascade mid-module-eval and breaks leaf-first imports. The vendor tree has no circular dependency on shop modules, so requiring it directly is safe.) Drop in-function `var b = _b();` re-captures. Comment lines mentioning `_b()` are skipped by the scanner.",
+  },
+  {
+    id:        "index-require-in-leaf",
+    primitive: "var b = require(\"./vendor/blamejs\"); for the framework — NEVER require(\"./index\") from a leaf lib module. index.js COMPOSES the vendor + every leaf; a leaf that requires it at module-eval triggers index's cascade while the leaf is still initializing, so index snapshots the leaf's half-built (empty) exports and `require(\"blamejs-shop\").<leaf>` becomes `{}` on a leaf-first import order.",
+    regex:     /require\(\s*["']\.\/index["']\s*\)/,
+    scanScope: "lib",
+    allowlist: [],
+    reason:    "Requiring `./index` from a leaf module is a circular-load footgun: loading the leaf first (e.g. `require(\"blamejs-shop/lib/addresses\")`) makes index run its `Object.assign({ addresses: require(\"./addresses\"), … })` cascade while addresses.js is blocked on this very require, so index captures the leaf's default `{}` export (the module reassigns `module.exports` later) — `require(\"blamejs-shop\").addresses.create` is then undefined. Leaves need the FRAMEWORK, not the composing index: `var b = require(\"./vendor/blamejs\");` (identical object, no circular dependency). Only index.js itself composes the leaves.",
   },
   {
     id:          "raw-control-byte-in-source",
