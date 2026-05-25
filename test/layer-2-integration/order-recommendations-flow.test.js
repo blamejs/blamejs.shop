@@ -94,8 +94,10 @@ async function _run() {
   var B = await _seedProduct(catalog, "rec-pinned", "Pinned Companion", 1500);
   await _seedProduct(catalog, "decoy", "Decoy Product", 900);
 
-  // Operator pins A → B so the rail is deterministic.
-  await recommendations.setOverride({ kind: "product", source_id: A.product.id, recommended_product_id: B.product.id, weight: 500, position: 0 });
+  // Operator pins A → B on the cart-rail scope (the order confirmation
+  // uses recommendForCart, whose override layer is kind "cart") so the
+  // rail is deterministic regardless of co-purchase history.
+  await recommendations.setOverride({ kind: "cart", source_id: A.product.id, recommended_product_id: B.product.id, weight: 500, position: 0 });
 
   var orderId = await _recordOrder(query, A.variant.id, A.sku);
 
