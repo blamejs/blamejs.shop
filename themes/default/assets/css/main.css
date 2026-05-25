@@ -1461,6 +1461,10 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   padding: var(--space-6);
   box-shadow: var(--shadow-md);
 }
+.pay-card__express { margin: 0 0 var(--space-5); }
+.pay-card__express[hidden] { display: none; }
+.pay-card__divider { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-5) 0; color: var(--mute); font-size: var(--text-sm); }
+.pay-card__divider::before, .pay-card__divider::after { content: ""; flex: 1; height: 1px; background: var(--hair); }
 .pay-card__element { margin: 0 0 var(--space-5); min-height: 6rem; }
 .pay-card__submit { width: 100%; }
 .pay-card__message {
