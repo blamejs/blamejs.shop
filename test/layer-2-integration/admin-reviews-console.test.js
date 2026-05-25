@@ -125,6 +125,9 @@ async function _run() {
       method: "POST", jar: jar, form: {} });
     check("bad-id publish then 303",           missing.status === 303);
     check("bad-id publish flags err",           (missing.headers.location || "").indexOf("err=1") !== -1);
+    // Following the err redirect surfaces a notice (not a silent refresh).
+    var errView = await helpers.httpRequest({ port: port, path: "/admin/reviews?err=1", jar: jar });
+    check("err flag shows a notice",            errView.body.indexOf("be completed for the review") !== -1);
 
     // Auth gate: anon queue → sign-in form, not data.
     var anon = await helpers.httpRequest({ port: port, path: "/admin/reviews" });
