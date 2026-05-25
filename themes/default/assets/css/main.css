@@ -1568,6 +1568,11 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   font-size: var(--text-xs);
   min-height: 1.2rem;
 }
+.auth-form__message--err { color: var(--danger); font-family: var(--font-sans); }
+.auth-oauth { margin-top: var(--space-5); }
+.auth-oauth__divider { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-4) 0; color: var(--mute); font-size: var(--text-sm); }
+.auth-oauth__divider::before, .auth-oauth__divider::after { content: ""; flex: 1; height: 1px; background: var(--hair); }
+.auth-oauth__btn { width: 100%; }
 .auth-card__alt {
   margin: var(--space-5) 0 0;
   padding-top: var(--space-4);

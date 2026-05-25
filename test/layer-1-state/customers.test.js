@@ -29,6 +29,7 @@ var check   = helpers.check;
 var assert  = helpers.assert;
 
 var MIG_CUSTOMERS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0006_customers.sql");
+var MIG_OAUTH     = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0205_customer_oauth_identities.sql");
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -39,6 +40,9 @@ function _makeQuery() {
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
   _splitSchema(nodeFs.readFileSync(MIG_CUSTOMERS, "utf8")).forEach(function (s) {
+    db.prepare(s).run();
+  });
+  _splitSchema(nodeFs.readFileSync(MIG_OAUTH, "utf8")).forEach(function (s) {
     db.prepare(s).run();
   });
   return async function (sql, params) {
@@ -202,6 +206,55 @@ async function _addPasskeyValidation() {
   }), /not found/);
 }
 
+async function _oidcNewAccount() {
+  var customers = bShop.customers.create({ query: _makeQuery() });
+  var rv = await customers.signInWithOIDC({ provider: "google", subject: "g-sub-1", email: "New.User@Example.com", email_verified: true });
+  check("oidc new account created",        rv.created === true && rv.linked_via === "new");
+  check("oidc new account has a customer",  !!(rv.customer && rv.customer.id));
+  // A second sign-in with the same subject resolves to the SAME customer.
+  var rv2 = await customers.signInWithOIDC({ provider: "google", subject: "g-sub-1", email: "new.user@example.com", email_verified: true });
+  check("oidc same subject → same customer", rv2.customer.id === rv.customer.id && rv2.created === false && rv2.linked_via === "oauth-subject");
+  check("byOAuthIdentity resolves the link", (await customers.byOAuthIdentity("google", "g-sub-1")).id === rv.customer.id);
+}
+
+async function _oidcLinksVerifiedEmail() {
+  var customers = bShop.customers.create({ query: _makeQuery() });
+  // A passwordless customer already exists for this email.
+  var existing = await customers.register({ email: "buyer@example.com", display_name: "Buyer" });
+  // Google sign-in with the SAME, VERIFIED email links to that account.
+  var rv = await customers.signInWithOIDC({ provider: "google", subject: "g-sub-2", email: "buyer@example.com", email_verified: true });
+  check("oidc verified email links existing", rv.customer.id === existing.id && rv.created === false && rv.linked_via === "verified-email");
+}
+
+async function _oidcRefusesUnverifiedEmailConflict() {
+  var customers = bShop.customers.create({ query: _makeQuery() });
+  await customers.register({ email: "victim@example.com", display_name: "Victim" });
+  // An attacker signs in with the victim's email but the IdP did NOT
+  // verify it. We must NOT link (takeover) and cannot create a colliding
+  // account → the sign-in is refused.
+  await assert.rejects(
+    customers.signInWithOIDC({ provider: "google", subject: "attacker-sub", email: "victim@example.com", email_verified: false }),
+    /not verified it|OAUTH_EMAIL_UNVERIFIED_CONFLICT/i,
+  );
+  check("attacker subject left unlinked", (await customers.byOAuthIdentity("google", "attacker-sub")) === null);
+}
+
+async function _oidcUnverifiedNoCollisionCreates() {
+  var customers = bShop.customers.create({ query: _makeQuery() });
+  // Unverified email with no existing account → a new account is created
+  // (the email is informational; the subject is the trust anchor).
+  var rv = await customers.signInWithOIDC({ provider: "google", subject: "fresh-sub", email: "fresh@example.com", email_verified: false });
+  check("oidc unverified+no-collision creates", rv.created === true && rv.linked_via === "new");
+}
+
+async function _oidcValidation() {
+  var customers = bShop.customers.create({ query: _makeQuery() });
+  await assert.rejects(customers.signInWithOIDC({ provider: "myspace", subject: "x", email: "a@b.com", email_verified: true }), /unknown provider/);
+  await assert.rejects(customers.signInWithOIDC({ provider: "google", subject: "", email: "a@b.com", email_verified: true }), /subject must be/);
+  // No email + no existing subject link → can't create an account.
+  await assert.rejects(customers.signInWithOIDC({ provider: "google", subject: "no-email-sub", email_verified: true }), /email is required/);
+}
+
 async function run() {
   await _register();
   await _byEmailHash();
@@ -213,6 +266,11 @@ async function run() {
   await _removePasskey();
   await _counterMonotonic();
   await _addPasskeyValidation();
+  await _oidcNewAccount();
+  await _oidcLinksVerifiedEmail();
+  await _oidcRefusesUnverifiedEmailConflict();
+  await _oidcUnverifiedNoCollisionCreates();
+  await _oidcValidation();
 }
 
 module.exports = { run: run };
