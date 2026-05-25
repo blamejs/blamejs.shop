@@ -25,7 +25,8 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var b = bShop.framework;
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0006_customers.sql", "0205_customer_oauth_identities.sql"]
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0006_customers.sql",
+            "0205_customer_oauth_identities.sql", "0206_orders_email_hash.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) { return t.replace(/--[^\n]*\n/g, "\n").split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean); }
@@ -58,17 +59,18 @@ function _stubOAuth(claims) {
 async function _boot(query, customers, oauthGoogle) {
   var catalog = bShop.catalog.create({ query: query });
   var cart    = bShop.cart.create({ query: query, catalog: catalog });
+  var order   = bShop.order.create({ query: query, cursorSecret: "oidc-flow" });
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-oidc-"));
   var app = await b.createApp({
     dataDir: dataDir, vault: { mode: "plaintext" }, db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
     middleware: { botGuard: false, rateLimit: false },
     routes: function (r) {
       r.use(b.middleware.bodyParser());
-      bShop.storefront.mount(r, { catalog: catalog, cart: cart, customers: customers, oauthGoogle: oauthGoogle });
+      bShop.storefront.mount(r, { catalog: catalog, cart: cart, customers: customers, order: order, oauthGoogle: oauthGoogle });
     },
   });
   var bound = await app.listen({ port: 0, host: "127.0.0.1" });
-  return { app: app, port: bound.port, dataDir: dataDir, cart: cart };
+  return { app: app, port: bound.port, dataDir: dataDir, cart: cart, order: order };
 }
 
 async function _run() {
@@ -87,7 +89,22 @@ async function _run() {
     // Seed a guest cart for a session, then carry that session cookie
     // through the sign-in so we can assert the cart is adopted.
     var sid = "oidc-session-0001-xyz";
-    await handle.cart.create(sid, { currency: "USD" });
+    var guestCart = await handle.cart.create(sid, { currency: "USD" });
+
+    // Seed a prior GUEST order under the same email (no owner yet),
+    // recording the buyer-email hash the way checkout does, to prove it
+    // gets claimed on the verified sign-in. Direct insert against the
+    // real cart so foreign keys hold; the reconciliation only touches
+    // the orders row.
+    var guestOrderId = b.uuid.v7();
+    await query(
+      "INSERT INTO orders (id, cart_id, customer_id, session_id, status, currency, " +
+      "subtotal_minor, discount_minor, tax_minor, shipping_minor, grand_total_minor, " +
+      "payment_intent_id, ship_to_json, customer_email_hash, created_at, updated_at) " +
+      "VALUES (?1, ?2, NULL, ?3, 'paid', 'USD', 2999, 0, 0, 0, 2999, NULL, ?4, ?5, ?6, ?6)",
+      [guestOrderId, guestCart.id, sid, JSON.stringify({ name: "Buyer", country: "US" }),
+       customers.hashEmail("buyer@example.com"), Date.now()],
+    );
 
     // Start: redirects to the provider + sets the sealed state cookie.
     var jar = helpers.cookieJar();
@@ -110,6 +127,9 @@ async function _run() {
     // The guest cart was adopted into the account (so checkout attaches
     // the order to the customer).
     check("guest cart adopted on sign-in",       (await handle.cart.bySession(sid)).customer_id === linked.id);
+    // The prior guest order placed under this (now verified) email is
+    // claimed into the account.
+    check("guest order claimed on verified sign-in", (await handle.order.get(guestOrderId)).customer_id === linked.id);
 
     // A forged callback whose state doesn't match the cookie is dropped.
     var jar2 = helpers.cookieJar();

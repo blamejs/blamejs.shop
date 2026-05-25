@@ -28,7 +28,7 @@ var b = bShop.framework;
 
 var TOKEN = "admin-token-0123456789abcdef-test"; // ≥ 16 chars
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0004_shop_config.sql"]
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql", "0004_shop_config.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
