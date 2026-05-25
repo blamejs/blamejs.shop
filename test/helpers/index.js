@@ -178,6 +178,29 @@ async function httpRequest(opts) {
   });
 }
 
+// Mint a sealed cookie value the way `b.cookies.writeSealed` does —
+// seal the JSON, then strip the on-wire "vault:" prefix the primitive
+// removes before it hits the cookie. Lets a flow test forge the
+// `shop_auth` cookie the storefront reads back via `readSealed`,
+// without driving the whole WebAuthn ceremony. `b` is the framework
+// handle (bShop.framework); the app must be booted first so the vault
+// is initialized.
+function sealedCookie(b, name, obj) {
+  var sealed = b.vault.seal(JSON.stringify(obj));
+  var stripped = sealed.indexOf("vault:") === 0 ? sealed.slice("vault:".length) : sealed;
+  return name + "=" + encodeURIComponent(stripped);
+}
+
+// The signed-in-customer cookie. `opts.exp` overrides the default
+// 1-hour expiry (epoch ms).
+function authCookie(b, customerId, opts) {
+  opts = opts || {};
+  return sealedCookie(b, "shop_auth", {
+    customer_id: customerId,
+    exp:         opts.exp || (Date.now() + 3600000),
+  });
+}
+
 module.exports = {
   assert:         assert,
   check:          check,
@@ -186,4 +209,6 @@ module.exports = {
   waitUntilEqual: waitUntilEqual,
   cookieJar:      cookieJar,
   httpRequest:    httpRequest,
+  sealedCookie:   sealedCookie,
+  authCookie:     authCookie,
 };

@@ -345,6 +345,14 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "Hand-rolled per-character escape misses an attack-relevant character about half the time (the four-char variants skip the apostrophe → single-quoted attribute injection) and drifts away from the canonical surface over time. `b.template.escapeHtml` is the one-call composition; the codebase-patterns sweep keeps any future copy from getting committed without an `allow:` marker citing the substrate constraint.",
   },
   {
+    id:        "manual-html-escape-map",
+    primitive: "b.template.escapeHtml(value) — the canonical five-character HTML-entity escape (`&`, `<`, `>`, `\"`, `'`); compose it instead of a local escape map + `.replace(/[&<>\"']/g, fn)`",
+    regex:     /\.replace\s*\(\s*\/\[&<>["']/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "A local `HTML_ESCAPE_MAP` + `String(s).replace(/[&<>\\\"']/g, fn)` reinvents the framework's HTML escaper. Two copies drift (one adds a character, one normalizes an entity differently) and the canonical surface stops being the single source of truth. Compose `b.template.escapeHtml` (via `_b().template.escapeHtml` in lib).",
+  },
+  {
     id:        "intl-numberformat-currency-reinvented",
     primitive: "b.money.of(amount, currency).format(locale) — decimal-safe currency rendering composed off Intl.NumberFormat with currency-exponent normalization (zero / two / three-decimal currencies handled identically)",
     regex:     /new\s+Intl\s*\.\s*NumberFormat\s*\([^)]*style\s*:\s*["']currency["']/,
@@ -403,6 +411,22 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "`createHmac(...)` reinvents the framework's HMAC primitive. The PQC-first default is `b.crypto.hmacSha3`; protocol-mandated SHA-256 (Stripe webhooks) composes through `b.crypto.hmacSha256` wired into the Worker adapter. Direct `createHmac` calls outside `worker/b.js` get flagged.",
   },
   {
+    id:        "manual-set-cookie-header",
+    primitive: "b.cookies.create({ vault }).write / writeSealed / clear — RFC 6265 serialization (attribute order, encoding, __Host-/__Secure- prefix invariants) + vault-sealed cookie helpers that append the Set-Cookie header for you",
+    regex:     /(?:setHeader|appendHeader)\s*\(\s*["']Set-Cookie["']/i,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "Hand-built `Set-Cookie` strings written via setHeader/appendHeader reinvent the cookie primitive's serialization and skip the sealed-cookie helpers (so the cookie's seal/unseal + prefix invariants drift). Compose a `b.cookies.create({ vault })` jar once and call write/writeSealed/clear; the jar serializes + appends the header itself.",
+  },
+  {
+    id:        "manual-cookie-header-parse",
+    primitive: "b.cookies.create({ vault }).read(req, name) / readSealed(req, name) — parses the Cookie header through the framework's RFC 6265 parser instead of a hand-rolled split (the Worker, which has no Node req, feeds the header string to b.cookies.parseSafe for duplicate-name + control-byte detection)",
+    regex:     /req\s*\.\s*headers\s*\.\s*[Cc]ookie\b/,
+    scanScope: "lib",
+    allowlist: [],
+    reason:    "Reading `req.headers.cookie` and splitting it by hand reinvents the cookie primitive's parser and silently mishandles cookie-tossing (duplicate names, last-write-wins) and CR/LF/NUL header-injection. Compose `b.cookies.create({ vault }).read(req, name)` — or `b.cookies.parseSafe(header)` when you only hold the raw header string.",
+  },
+  {
     id:        "fsm-name-not-audit-action-safe",
     primitive: "fsm.define({ name: \"<lowercase>[_<lowercase>]*\" }) — the framework's audit action validator at lib/vendor/blamejs/lib/audit.js:401 enforces `^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$` on every action, so the FSM `name` (which composes into `fsm.<name>.transition`) must match the same per-segment shape (`[a-z][a-z0-9_]*`)",
     regex:     /\bfsm\.define\s*\(\s*\{[\s\S]{0,200}?\bname\s*:\s*"(?![a-z][a-z0-9_]*"\s*,)[^"]*"/,
@@ -421,6 +445,20 @@ var KNOWN_ANTIPATTERNS = [
   // inherits. Each carries the same `id` / `primitive` / `regex` /
   // `reason` shape the upstream catalog uses so a future operator
   // diffing against blamejs sees the lineage.
+  {
+    id:        "raw-time-literal",
+    primitive: "C.TIME.seconds / minutes / hours / days / weeks (n) — via `var C = _b().constants` (lib) or `b.constants` (worker) — so every duration has one source of truth instead of hand-multiplied `n * 60 * …` / `n * 1000` / bare ms literals",
+    // High-signal duration-arithmetic shapes: a `* 1000` ms conversion,
+    // a `* 60` / `* 3600` / `* 86400` time-base multiply, or a bare
+    // second/ms duration literal (minute/hour/day/week). Standalone
+    // counts that aren't time math don't match; a genuine non-duration
+    // multiple (rare) takes a per-line `// allow:raw-time-literal —
+    // <reason>` marker. Ported from the framework's own catalog.
+    regex:     /[)\w.\]]\s*\*\s*1000\b|\b\d+\s*\*\s*(?:60|3600|86400)\b|\b(?:604800000|86400000|3600000|60000|604800|86400)\b/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "Hand-multiplied durations (`30 * 24 * 60 * 60 * 1000`, `5 * 60`, bare `86400000`) drift away from a single source of truth and read ambiguously (seconds? ms?). Compose `C.TIME.days(30)` / `.minutes(5)` etc. — the unit is named at the call site and the framework owns the math. lib/ aliases `var C = _b().constants` at module top (the index entry point exposes `framework` before the require cascade, so module-eval resolution is safe); the Worker uses `b.constants`.",
+  },
   {
     id:        "number-coerce-or-zero-on-json-source",
     primitive: "validate finite non-negative integer explicitly; never silently coerce JSON-source untrusted numerics with `Number(x) || 0`",

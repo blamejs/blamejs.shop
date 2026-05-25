@@ -69,8 +69,7 @@ async function _bootApp(deps) {
 }
 
 function _authCookie(customerId) {
-  var sealed = b.vault.seal(JSON.stringify({ customer_id: customerId, exp: Date.now() + 3600000 }));
-  return "shop_auth=" + encodeURIComponent(sealed);
+  return helpers.authCookie(b, customerId);
 }
 
 async function _teardown(handle) {
