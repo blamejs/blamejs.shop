@@ -87,6 +87,17 @@ function _parseFile(file) {
 }
 
 function build() {
+  // Fail fast if the vendor tree is missing/unreadable, rather than emitting
+  // a misleading empty catalog (e.g. before / after a failed vendor refresh).
+  var stat;
+  try { stat = fs.statSync(VENDOR_LIB); }
+  catch (e) {
+    throw new Error("primitive-catalog: cannot read the vendored framework at " + VENDOR_LIB +
+      " (" + (e && e.message || e) + ") — run `bash scripts/vendor-update.sh blamejs <tag>` first");
+  }
+  if (!stat.isDirectory()) {
+    throw new Error("primitive-catalog: " + VENDOR_LIB + " is not a directory");
+  }
   var files = _walk(VENDOR_LIB);
   var all = [];
   files.forEach(function (f) { all = all.concat(_parseFile(f)); });
@@ -94,6 +105,10 @@ function build() {
   var seen = {}, deduped = [];
   all.forEach(function (e) { if (!seen[e.name]) { seen[e.name] = true; deduped.push(e); } });
   deduped.sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
+  if (!deduped.length) {
+    throw new Error("primitive-catalog: scanned " + files.length + " file(s) under " + VENDOR_LIB +
+      " but found zero @primitive tags — the vendor tree looks wrong; refusing to write an empty catalog");
+  }
   return deduped;
 }
 
