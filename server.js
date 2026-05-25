@@ -152,6 +152,14 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.returns.create({ cursorSecret: returnsCursorSecret })
         : null;
 
+      // Outbound webhooks — operator-registered endpoints receive signed
+      // (HMAC-SHA3-512) deliveries on order lifecycle events. One shared
+      // instance: the order instances fan out transitions through it
+      // (order.create({ webhooks })), and the admin console manages
+      // endpoints + monitors deliveries. No external credentials — the
+      // signing secret is generated per endpoint on create.
+      var webhooks = (catalog && cart) ? bShop.webhooks.create({}) : null;
+
       // Collections — operator-curated + smart product lists, surfaced
       // as public /collections browse pages. Needs the catalog handle
       // (smart collections walk the catalog) + a cursor secret.
@@ -185,7 +193,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // opts in by setting the secret). Stripe-backed refund routes
       // only mount when STRIPE_API_KEY is also present.
       if (catalog && cart && process.env.ADMIN_API_KEY) {
-        var order   = bShop.order.create({ cursorSecret: orderCursorSecret });
+        var order   = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks });
         var payment = null;
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           payment = bShop.payment.create({
@@ -226,6 +234,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           reviews:       reviews,
           returns:       returns,
           subscriptions: subscriptions,
+          webhooks:      webhooks,
           // Integration state map for /admin/integrations — "enabled" |
           // "action" (credentials present, a one-time operator action
           // still required) | "off". admin.js never reads process.env.
@@ -337,7 +346,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (returns) sfDeps.returns = returns;
         if (collections) sfDeps.collections = collections;
         if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;
-        sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret });
+        sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;
           var sfPayment = bShop.payment.create({
