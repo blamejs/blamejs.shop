@@ -15,7 +15,7 @@
     {
       "heading": "Changed",
       "items": [
-        { "title": "Console nav gains Returns; the returns API content-negotiates", "body": "The signed-in admin nav now includes Returns alongside Home, Dashboard, Products, Orders, Integrations, and Setup. The `/admin/returns` list, detail, and approve / received / refund / reject endpoints now serve the HTML console to a signed-in browser while continuing to serve the JSON API to a bearer-token client unchanged. A request without the bearer token is no longer answered with a 401 on these paths — a browser GET receives the sign-in form and a write redirects to the console, matching the other console screens." }
+        { "title": "Console nav gains Returns; the returns API content-negotiates", "body": "The signed-in admin nav now includes Returns alongside Home, Dashboard, Products, Orders, Integrations, and Setup — shown only when the returns primitive is wired, so the link never points at an unmounted route. The `/admin/returns` list, detail, and approve / received / refund / reject endpoints now serve the HTML console to a signed-in browser while continuing to serve the JSON API to a bearer-token client unchanged. A request without the bearer token is no longer answered with a 401 on these paths — a browser GET receives the sign-in form and a write redirects to the console, matching the other console screens." }
       ]
     }
   ]
