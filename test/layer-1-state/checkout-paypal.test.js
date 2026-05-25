@@ -39,10 +39,12 @@ function _makeQuery() {
 
 function _fakePaypal() {
   var n = 0;
-  return {
+  var pp = {
     name: "fake-paypal",
+    captureCalls: 0,
     createOrder: async function (input) { n += 1; return { id: "PP-ORDER-" + n, status: "CREATED", _amount: input.amount_minor, _currency: input.currency }; },
     captureOrder: async function (id) {
+      pp.captureCalls += 1;
       return { id: id, status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: "PP-CAP-" + id, status: "COMPLETED" }] } }] };
     },
     getOrder: async function (id) { return { id: id, status: "APPROVED" }; },
@@ -51,6 +53,7 @@ function _fakePaypal() {
       try { return { ok: true, event: JSON.parse(rawBody) }; } catch (_e) { return { ok: false, reason: "malformed-body" }; }
     },
   };
+  return pp;
 }
 
 async function _setup() {
@@ -69,7 +72,7 @@ async function _setup() {
   var p = await catalog.products.create({ slug: "pp-test", title: "PP Test", status: "active" });
   var v = await catalog.variants.create(p.id, { sku: "PP-1", weight_grams: 250 });
   await catalog.prices.set(v.id, { currency: "USD", amount_minor: 2999 });
-  return { query: query, cart: cart, order: order, checkout: checkout, variant: v };
+  return { query: query, cart: cart, order: order, checkout: checkout, variant: v, paypal: paypal };
 }
 
 async function _newCart(s) {
@@ -103,9 +106,11 @@ async function _createAndCapture() {
   check("capture id surfaced",                         /^PP-CAP-/.test(cap.capture_id));
   check("order advanced to paid",                      cap.order.status === "paid");
 
-  // Re-capture (retry) is idempotent — order already paid, no second transition.
+  // Re-capture (retry) is idempotent AND must NOT hit PayPal again (a second
+  // remote capture would be rejected — orders capture once).
   var recap = await s.checkout.capturePaypalOrder(created.paypal_order_id);
-  check("re-capture leaves order paid",                recap.order.status === "paid");
+  check("re-capture leaves order paid",                recap.order.status === "paid" && recap.skipped === "already-advanced");
+  check("re-capture did not call PayPal again",        s.paypal.captureCalls === 1);
 }
 
 async function _webhookBackstop() {
