@@ -76,12 +76,10 @@ async function _teardown(handle) {
   try { nodeFs.rmSync(handle.dataDir, { recursive: true, force: true }); } catch (_e) { /* best-effort */ }
 }
 
-// Mint the same sealed `shop_auth` envelope the storefront writes at
+// Mint the same sealed `shop_auth` cookie the storefront writes at
 // login — a customer_id + a future expiry.
 function _authCookie(customerId) {
-  return "shop_auth=" + encodeURIComponent(
-    b.vault.seal(JSON.stringify({ customer_id: customerId, exp: Date.now() + 3600000 })),
-  );
+  return helpers.authCookie(b, customerId);
 }
 
 async function _run() {

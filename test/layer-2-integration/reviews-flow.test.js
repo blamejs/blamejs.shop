@@ -102,9 +102,8 @@ async function _bootApp(deps) {
 }
 
 function _authCookie(customerId) {
-  // Same envelope shape + encoding the storefront's _setAuthCookie uses.
-  var sealed = b.vault.seal(JSON.stringify({ customer_id: customerId, exp: Date.now() + 3600000 }));
-  return "shop_auth=" + encodeURIComponent(sealed);
+  // The same sealed-cookie shape the storefront's _setAuthCookie writes.
+  return helpers.authCookie(b, customerId);
 }
 
 async function _teardown(handle) {

@@ -39,6 +39,7 @@ import bFsm        from "../lib/vendor/blamejs/lib/fsm.js";
 import bGuardEmail from "../lib/vendor/blamejs/lib/guard-email.js";
 import bRedact     from "../lib/vendor/blamejs/lib/redact.js";
 import bCookies    from "../lib/vendor/blamejs/lib/cookies.js";
+import bConstants  from "../lib/vendor/blamejs/lib/constants.js";
 import bValidateOpts from "../lib/vendor/blamejs/lib/validate-opts.js";
 
 // `b.crypto.hmacSha256` extension. Composes node:crypto's
@@ -67,6 +68,7 @@ var b = {
   guardEmail: bGuardEmail,
   redact:     bRedact,
   cookies:    bCookies,
+  constants:  bConstants,
   validateOpts: bValidateOpts,
 };
 

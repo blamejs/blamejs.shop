@@ -441,7 +441,7 @@ export default {
         // field is a year out so crawlers don't repeatedly refetch.
         // Contact email is the operator-configurable owner; the
         // GitHub-issues fallback gives a public reporting path.
-        const expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+        const expires = new Date(Date.now() + b.constants.TIME.days(365)).toISOString();
         const body =
           "Contact: mailto:security@blamejs.shop\r\n" +
           "Contact: https://github.com/blamejs/blamejs.shop/security/advisories/new\r\n" +
@@ -453,7 +453,7 @@ export default {
           status:  200,
           headers: _withSecurityHeaders({
             "content-type":  "text/plain; charset=utf-8",
-            "cache-control": "public, max-age=3600, s-maxage=86400",
+            "cache-control": "public, max-age=3600, s-maxage=86400", // allow:raw-time-literal — HTTP Cache-Control directive seconds in a header string, not a duration expression
           }),
         });
       }
@@ -1139,7 +1139,7 @@ function _staticHtml(body, method, env, request) {
   }
   const headers = _withSecurityHeaders({
     "content-type":  "text/html; charset=utf-8",
-    "cache-control": "public, max-age=3600, s-maxage=86400, must-revalidate",
+    "cache-control": "public, max-age=3600, s-maxage=86400, must-revalidate", // allow:raw-time-literal — HTTP Cache-Control directive seconds in a header string, not a duration expression
     "link":          _earlyHintsLink(env || {}),
     "etag":          etag,
   });

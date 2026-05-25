@@ -107,8 +107,7 @@ async function _run() {
     var add = await helpers.httpRequest({ port: handle.port, path: "/cart/lines", method: "POST", form: { variant_id: variant.id, qty: 1 }, jar: jar });
     check("add-to-cart then 303",               add.status === 303);
     check("cart session cookie set",            !!jar.get("shop_sid"));
-    var sealed = b.vault.seal(JSON.stringify({ customer_id: buyerId, exp: Date.now() + 3600000 }));
-    jar.capture({ "set-cookie": ["shop_auth=" + encodeURIComponent(sealed) + "; Path=/"] });
+    jar.capture({ "set-cookie": [helpers.authCookie(b, buyerId) + "; Path=/"] });
 
     // Cart shows the line + a "Save for later" control.
     var cart1 = await helpers.httpRequest({ port: handle.port, path: "/cart", jar: jar });
