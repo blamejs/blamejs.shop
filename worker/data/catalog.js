@@ -122,6 +122,212 @@ export async function searchProducts(DB, opts) {
   return { rows: rows };
 }
 
+// ---- search facets + synonyms (edge read side) --------------------------
+
+// Build the LIKE pattern for a single search term — the same `\`-first
+// metacharacter neutralisation `searchProducts` uses, so a term
+// containing `%` / `_` matches only the literal character.
+function _likePattern(term) {
+  var escaped = String(term).toLowerCase()
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_");
+  return "%" + escaped + "%";
+}
+
+// Operator-curated active facet definitions, hydrated to the shape the
+// faceting module walks: `{ key, field, kind, buckets, display_limit }`.
+// Missing-table-resilient: operators who haven't applied migration
+// `0082_search_facets.sql` get an empty list instead of a D1 error
+// reaching the search render (see `getReviewSummary`).
+export async function loadSearchFacets(DB) {
+  try {
+    var res = await DB
+      .prepare(
+        "SELECT key, field, kind, buckets_json, display_limit FROM search_facets " +
+        "WHERE archived_at IS NULL AND active = 1 " +
+        "ORDER BY created_at ASC, key ASC"
+      )
+      .bind()
+      .all();
+    var rows = (res && res.results) ? res.results : [];
+    var out = [];
+    for (var i = 0; i < rows.length; i += 1) {
+      var buckets = null;
+      if (rows[i].buckets_json != null) {
+        try { buckets = JSON.parse(rows[i].buckets_json); }
+        catch (_e) { buckets = null; }                                 // allow:empty-catch-swallow — malformed buckets fall back to null; the facet is still surfaced so the operator can re-author
+        if (!Array.isArray(buckets)) buckets = null;
+      }
+      out.push({
+        key:           rows[i].key,
+        field:         rows[i].field,
+        kind:          rows[i].kind,
+        buckets:       buckets,
+        display_limit: rows[i].display_limit == null ? null : Number(rows[i].display_limit),
+      });
+    }
+    return out;
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return [];
+    throw e;
+  }
+}
+
+// Operator-curated synonym vocabulary — groups + typos + stopwords in
+// the shape `rewriteQuery` consumes. Missing-table-resilient: each
+// table is loaded independently so an operator who applied only some of
+// the search migrations still gets the tables they have.
+export async function loadSearchSynonymVocab(DB) {
+  var groups = [];
+  var typos = {};
+  var stopwords = {};
+  try {
+    var gRes = await DB.prepare("SELECT kind, terms_json FROM search_synonym_groups").bind().all();
+    var gRows = (gRes && gRes.results) ? gRes.results : [];
+    for (var i = 0; i < gRows.length; i += 1) {
+      var terms;
+      try { terms = JSON.parse(gRows[i].terms_json); }
+      catch (_e) { terms = []; }                                       // allow:empty-catch-swallow — malformed group dropped so a hand-edited row can't crash rewrite
+      if (Array.isArray(terms) && terms.length) groups.push({ kind: gRows[i].kind, terms: terms });
+    }
+  } catch (e) {
+    if (!(e && /no such table/i.test(e.message || ""))) throw e;
+  }
+  try {
+    var tRes = await DB.prepare("SELECT misspelling, correction FROM search_typos").bind().all();
+    var tRows = (tRes && tRes.results) ? tRes.results : [];
+    for (var t = 0; t < tRows.length; t += 1) typos[tRows[t].misspelling] = tRows[t].correction;
+  } catch (e2) {
+    if (!(e2 && /no such table/i.test(e2.message || ""))) throw e2;
+  }
+  try {
+    var sRes = await DB.prepare("SELECT word FROM search_stopwords").bind().all();
+    var sRows = (sRes && sRes.results) ? sRes.results : [];
+    for (var s = 0; s < sRows.length; s += 1) stopwords[sRows[s].word] = true;
+  } catch (e3) {
+    if (!(e3 && /no such table/i.test(e3.message || ""))) throw e3;
+  }
+  return { groups: groups, typos: typos, stopwords: stopwords };
+}
+
+// The facetable product universe for a query: every active product
+// whose title / description matches the canonical query OR any synonym
+// expansion term, decorated with the fields the facets compute against
+// (collection memberships, current price minor, in-stock flag). One
+// product round trip plus three small lookup round trips (collection
+// members, prices, inventory) — each missing-table-resilient so a
+// partially-migrated deploy degrades to the fields it has rather than
+// 500ing the search page.
+//
+// Returns `{ rows }` where each row carries the decorated display
+// columns (`_shapeDecoratedRow` shape) PLUS the facet fields
+// `collection` (array of slugs), `price_minor` (int|null), and
+// `in_stock` (bool). `terms` is the canonical query + expansion list;
+// an empty `terms` returns no rows.
+export async function searchFacetableProducts(DB, opts) {
+  opts = opts || {};
+  var terms = Array.isArray(opts.terms) ? opts.terms : [];
+  var dedup = {};
+  var cleaned = [];
+  for (var ti = 0; ti < terms.length; ti += 1) {
+    var term = typeof terms[ti] === "string" ? terms[ti].trim() : "";
+    if (!term.length || dedup[term.toLowerCase()]) continue;
+    dedup[term.toLowerCase()] = true;
+    cleaned.push(term);
+  }
+  if (!cleaned.length) return { rows: [] };
+  var currency = (typeof opts.currency === "string" && opts.currency.length === 3) ? opts.currency : "USD";
+  // Cap the candidate universe wider than the page so facet counts
+  // reflect the full match set, not just one page. MAX_LIMIT keeps the
+  // in-memory facet walk bounded.
+  var universeLimit = MAX_LIMIT;
+
+  // Build one OR-of-LIKE clause per term. Positional params: ?1 is the
+  // price currency, ?2 the universe limit; term patterns start at ?3.
+  var likeClauses = [];
+  var params = [currency, universeLimit];
+  var ph = 3;
+  for (var c = 0; c < cleaned.length; c += 1) {
+    var pat = _likePattern(cleaned[c]);
+    likeClauses.push("lower(p.title) LIKE ?" + ph + " ESCAPE '\\'");
+    params.push(pat);
+    ph += 1;
+    likeClauses.push("lower(p.description) LIKE ?" + ph + " ESCAPE '\\'");
+    params.push(pat);
+    ph += 1;
+  }
+  var res = await DB
+    .prepare(
+      DECORATED_SELECT +
+      "WHERE p.status = 'active' AND (" + likeClauses.join(" OR ") + ") " +
+      "ORDER BY p.updated_at DESC, p.id DESC LIMIT ?2"
+    )
+    .bind.apply(null, params)
+    .all();
+  var raw = (res && res.results) ? res.results : [];
+  if (!raw.length) return { rows: [] };
+
+  var ids = raw.map(function (r) { return r.id; });
+  var byId = {};
+  var rows = [];
+  for (var i = 0; i < raw.length; i += 1) {
+    var shaped = _shapeDecoratedRow(raw[i]);
+    shaped.collection = [];
+    shaped.price_minor = shaped.starting_price_minor != null ? shaped.starting_price_minor : null;
+    shaped.in_stock = false;
+    byId[shaped.id] = shaped;
+    rows.push(shaped);
+  }
+
+  var placeholders = ids.map(function (_v, n) { return "?" + (n + 1); }).join(", ");
+
+  // Collection memberships — categorical facet field `collection`.
+  try {
+    var cmRes = await DB
+      .prepare(
+        "SELECT cm.product_id AS pid, cm.collection_slug AS slug " +
+        "FROM collection_members cm " +
+        "JOIN collections col ON col.slug = cm.collection_slug AND col.archived_at IS NULL " +
+        "WHERE cm.product_id IN (" + placeholders + ")"
+      )
+      .bind.apply(null, ids)
+      .all();
+    var cmRows = (cmRes && cmRes.results) ? cmRes.results : [];
+    for (var cm = 0; cm < cmRows.length; cm += 1) {
+      var pr = byId[cmRows[cm].pid];
+      if (pr && cmRows[cm].slug) pr.collection.push(cmRows[cm].slug);
+    }
+  } catch (e) {
+    if (!(e && /no such table/i.test(e.message || ""))) throw e;
+  }
+
+  // In-stock — true when any variant SKU has available stock
+  // (stock_on_hand > stock_held). Boolean facet field `in_stock`.
+  try {
+    var invRes = await DB
+      .prepare(
+        "SELECT v.product_id AS pid, " +
+        "       MAX(CASE WHEN (inv.stock_on_hand - inv.stock_held) > 0 THEN 1 ELSE 0 END) AS any_stock " +
+        "FROM variants v " +
+        "JOIN inventory inv ON inv.sku = v.sku " +
+        "WHERE v.product_id IN (" + placeholders + ") " +
+        "GROUP BY v.product_id"
+      )
+      .bind.apply(null, ids)
+      .all();
+    var invRows = (invRes && invRes.results) ? invRes.results : [];
+    for (var iv = 0; iv < invRows.length; iv += 1) {
+      var prv = byId[invRows[iv].pid];
+      if (prv) prv.in_stock = Number(invRows[iv].any_stock) === 1;
+    }
+  } catch (e2) {
+    if (!(e2 && /no such table/i.test(e2.message || ""))) throw e2;
+  }
+
+  return { rows: rows };
+}
+
 // PDP read-side: variants × current price in one query. Each row
 // carries the variant columns plus `price_amount_minor` /
 // `price_currency` for the active price (NULL when no price is

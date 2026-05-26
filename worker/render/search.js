@@ -159,9 +159,139 @@ var SEARCH_EMPTY =
   "    <p class=\"search-empty__icon\" aria-hidden=\"true\">⌕</p>\n" +
   "    <h2>{{heading}}</h2>\n" +
   "    <p>{{copy}}</p>\n" +
+  "    {{clear_link}}\n" +
   "    <a href=\"/\" class=\"btn-ghost\">Browse the full catalog</a>\n" +
   "  </div>\n" +
   "</section>\n";
+
+var SEARCH_CORRECTION =
+  "<p class=\"search-correction\">Showing results for <strong>{{correction}}</strong>.</p>\n";
+
+var FACET_GROUP_HEAD =
+  "<fieldset class=\"facet-group\">\n" +
+  "  <legend class=\"facet-group__title\">{{label}}</legend>\n" +
+  "  <ul class=\"facet-group__options\">\n";
+
+var FACET_OPTION =
+  "<li class=\"facet-option\">\n" +
+  "  <a class=\"facet-option__link{{selected_class}}\" href=\"{{href}}\" rel=\"nofollow\"{{aria_pressed}}>\n" +
+  "    <span class=\"facet-option__box\" aria-hidden=\"true\">{{box}}</span>\n" +
+  "    <span class=\"facet-option__label\">{{label}}</span>\n" +
+  "    <span class=\"facet-option__count\">{{count}}</span>\n" +
+  "  </a>\n" +
+  "</li>\n";
+
+var FACET_CHIP =
+  "<a class=\"facet-chip\" href=\"{{href}}\" rel=\"nofollow\">\n" +
+  "  <span class=\"facet-chip__label\">{{label}}</span>\n" +
+  "  <span class=\"facet-chip__x\" aria-hidden=\"true\">×</span>\n" +
+  "  <span class=\"skip-link\">Remove filter</span>\n" +
+  "</a>\n";
+
+// Build a `/search?...` URL string from a query + applied-filters map.
+// `filters` is `{ facetKey: [value, ...] }`. The URLSearchParams
+// percent-encodes every value; the renderer HTML-escapes the result
+// when it lands in an `href` attribute.
+function _searchUrl(q, filters) {
+  var sp = new URLSearchParams();
+  if (typeof q === "string" && q.length) sp.set("q", q);
+  var keys = Object.keys(filters).sort();
+  for (var i = 0; i < keys.length; i += 1) {
+    var vals = filters[keys[i]] || [];
+    var sorted = vals.slice().sort();
+    for (var j = 0; j < sorted.length; j += 1) sp.append(keys[i], sorted[j]);
+  }
+  var qs = sp.toString();
+  return qs.length ? "/search?" + qs : "/search";
+}
+
+// Clone an applied-filters map with one value toggled on/off for a
+// facet key. Returns a fresh object (never mutates the input).
+function _toggleFilter(filters, key, value) {
+  var next = {};
+  var keys = Object.keys(filters);
+  for (var i = 0; i < keys.length; i += 1) next[keys[i]] = filters[keys[i]].slice();
+  var cur = next[key] || [];
+  var at = cur.indexOf(value);
+  if (at === -1) {
+    cur = cur.concat([value]);
+  } else {
+    cur = cur.slice(0, at).concat(cur.slice(at + 1));
+  }
+  if (cur.length) next[key] = cur;
+  else delete next[key];
+  return next;
+}
+
+function _renderFacets(facets, filters, q) {
+  var groups = [];
+  for (var f = 0; f < facets.length; f += 1) {
+    var facet = facets[f];
+    var optionsHtml = "";
+    var rendered = 0;
+    for (var o = 0; o < facet.options.length; o += 1) {
+      var opt = facet.options[o];
+      // Hide zero-count options that aren't already selected — they'd
+      // lead to an empty result set and clutter the chrome.
+      if (opt.count === 0 && !opt.selected) continue;
+      var toggled = _toggleFilter(filters, facet.key, opt.value);
+      optionsHtml += renderTemplate(FACET_OPTION, {
+        href:           _searchUrl(q, toggled),
+        selected_class: opt.selected ? " is-selected" : "",
+        aria_pressed:   "RAW_ARIA",
+        box:            opt.selected ? "✓" : "",
+        label:          opt.label,
+        count:          String(opt.count),
+      }).replace("RAW_ARIA", opt.selected ? " aria-pressed=\"true\"" : " aria-pressed=\"false\"");
+      rendered += 1;
+    }
+    if (rendered === 0) continue;
+    groups.push(
+      renderTemplate(FACET_GROUP_HEAD, { label: facet.label }) +
+      optionsHtml +
+      "  </ul>\n</fieldset>\n"
+    );
+  }
+  if (!groups.length) return "";
+  return "<aside class=\"search-facets\" aria-label=\"Filter results\">\n" +
+    "<h2 class=\"search-facets__title\">Filter</h2>\n" +
+    groups.join("") +
+    "</aside>\n";
+}
+
+// Active-filter chips with one-click removal. Each chip clears just its
+// own value; the leading "Clear all" link drops every facet but keeps
+// the query.
+function _renderActiveChips(facets, filters, q) {
+  var labelFor = {};
+  for (var f = 0; f < facets.length; f += 1) {
+    var byVal = {};
+    for (var o = 0; o < facets[f].options.length; o += 1) byVal[facets[f].options[o].value] = facets[f].options[o].label;
+    labelFor[facets[f].key] = { group: facets[f].label, values: byVal };
+  }
+  var chips = "";
+  var any = false;
+  var keys = Object.keys(filters).sort();
+  for (var k = 0; k < keys.length; k += 1) {
+    var meta = labelFor[keys[k]];
+    var vals = filters[keys[k]] || [];
+    for (var v = 0; v < vals.length; v += 1) {
+      var valLabel = meta && meta.values[vals[v]] != null ? meta.values[vals[v]] : vals[v];
+      var groupLabel = meta ? meta.group : keys[k];
+      chips += renderTemplate(FACET_CHIP, {
+        href:  _searchUrl(q, _toggleFilter(filters, keys[k], vals[v])),
+        label: groupLabel + ": " + valLabel,
+      });
+      any = true;
+    }
+  }
+  if (!any) return "";
+  var clearAll = renderTemplate(
+    "<a class=\"facet-chip facet-chip--clear\" href=\"{{href}}\" rel=\"nofollow\">Clear all filters</a>\n",
+    { href: _searchUrl(q, {}) }
+  );
+  return "<div class=\"search-active-filters\" aria-label=\"Active filters\">\n" + chips + clearAll + "</div>\n";
+}
 
 function _buildProductCard(p) {
   if (p.image_url) {
@@ -234,10 +364,38 @@ export function renderSearch(opts) {
     title   = "“" + qTrim + "”";
     summary = "Showing " + products.length + " match" + (products.length === 1 ? "" : "es") + " for your query.";
   }
+  // Facet chrome — facets is the computed group/option/count list,
+  // filters the validated applied-filters map. Both default to
+  // empty so a deploy that hasn't authored any facets renders the
+  // plain product grid exactly as before.
+  var facets  = Array.isArray(opts.facets) ? opts.facets : [];
+  var filters = (opts.filters && typeof opts.filters === "object") ? opts.filters : {};
+  var hasFilters = Object.keys(filters).length > 0;
+
+  // "Showing results for <correction>" — surfaced when synonym /
+  // typo rewrite changed what the shopper typed and there are matches.
+  var correctionHtml = "";
+  if (qTrim.length > 0 && typeof opts.correctedQuery === "string" &&
+      opts.correctedQuery.length > 0 && opts.correctedQuery !== qTrim) {
+    correctionHtml = renderTemplate(SEARCH_CORRECTION, { correction: opts.correctedQuery });
+  }
+
+  var facetsHtml = (qTrim.length > 0) ? _renderFacets(facets, filters, opts.q) : "";
+  var chipsHtml  = (qTrim.length > 0) ? _renderActiveChips(facets, filters, opts.q) : "";
+
   var header = renderTemplate(SEARCH_HEADER, { title: title, summary: summary });
-  var body;
+  var resultsInner;
   if (products.length === 0) {
-    body = header + renderTemplate(SEARCH_EMPTY, { heading: emptyHeading, copy: emptyCopy });
+    // When facets are active, give a path back to the unfiltered
+    // query rather than only "browse the catalog".
+    var clearLink = hasFilters
+      ? renderTemplate(
+          "<a href=\"{{href}}\" class=\"btn-ghost\">Clear filters</a>",
+          { href: _searchUrl(opts.q, {}) }
+        )
+      : "";
+    resultsInner = renderTemplate(SEARCH_EMPTY, { heading: emptyHeading, copy: emptyCopy, clear_link: "RAW_CLEAR" })
+      .replace("RAW_CLEAR", clearLink);
   } else {
     var assetPrefix = typeof opts.assetPrefix === "string" ? opts.assetPrefix : "/assets/";
     var cards = products.map(function (p) {
@@ -254,7 +412,15 @@ export function renderSearch(opts) {
         image_alt: imageAlt,
       });
     }).join("\n");
-    body = header + "<section class=\"search-grid\"><div class=\"grid\">" + cards + "</div></section>";
+    resultsInner = "<section class=\"search-grid\"><div class=\"grid\">" + cards + "</div></section>";
+  }
+  var body;
+  if (facetsHtml.length > 0) {
+    body = header + correctionHtml + chipsHtml +
+      "<div class=\"search-layout\">" + facetsHtml +
+      "<div class=\"search-layout__results\">" + resultsInner + "</div></div>";
+  } else {
+    body = header + correctionHtml + chipsHtml + resultsInner;
   }
   var shopName = opts.shopName || "blamejs.shop";
   return _wrap({
