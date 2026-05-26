@@ -156,6 +156,13 @@ async function _run() {
     check("cursor page returns the remainder",   p2.rows.length === 1 && p2.rows[0].id === alice.id);
     check("cursor page exhausts (no next)",      p2.next_cursor === null);
 
+    // The browser roster honors ?cursor too (not just the bearer API) — an
+    // operator can page past the first screen. Passing the next_cursor from
+    // page 1 returns the remainder (Alice) and excludes the first page.
+    var pageCursor = await helpers.httpRequest({ port: port, path: "/admin/customers?cursor=" + encodeURIComponent(p1.next_cursor), jar: jar });
+    check("browser roster honors ?cursor",       pageCursor.status === 200 && pageCursor.body.indexOf("Alice Anderson") !== -1);
+    check("browser cursor page excludes page 1", pageCursor.body.indexOf("Carol Clark") === -1 && pageCursor.body.indexOf("Bob Brown") === -1);
+
     // A tampered cursor is refused as a TypeError (bad request), never a 500.
     var tamperThrew = false;
     try { await customers.list({ cursor: "not-a-valid-cursor" }); } catch (e) { tamperThrew = e instanceof TypeError; }
