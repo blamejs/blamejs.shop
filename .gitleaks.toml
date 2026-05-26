@@ -41,3 +41,10 @@ description = "D1 migration files are pure schema DDL (CREATE TABLE / INDEX). Th
 paths = [
   '''^migrations-d1/.*\.sql$''',
 ]
+
+[[allowlists]]
+description = "Generated asset manifest — sha384 Subresource Integrity digests for the shipped theme stylesheets + island scripts. These are PUBLIC integrity hashes (the browser checks the served bytes against them), not credentials; their high-entropy base64 trips the generic-api-key rule. The manifest is rebuilt + drift-gated by scripts/generate-asset-manifest.js."
+paths = [
+  '''^lib/asset-manifest\.json$''',
+  '''^worker/asset-manifest\.json$''',
+]
