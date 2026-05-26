@@ -132,6 +132,8 @@ async function _runLayer(layerNum, layerName) {
   console.log("  " + _padRight("release-notes-rollup", 40) + " (ok)");
   _gate("changelog-in-sync", "generate-changelog-entry.js", ["--check"]);
   console.log("  " + _padRight("changelog-in-sync", 40) + " (ok)");
+  _gate("asset-manifest-in-sync", "generate-asset-manifest.js", ["--check"]);
+  console.log("  " + _padRight("asset-manifest-in-sync", 40) + " (ok)");
   _shellGate("vendor-drift", "bash scripts/vendor-update.sh --check");
   console.log("  " + _padRight("vendor-drift", 40) + " (ok)");
   // Worker-syntax check — walks every reachable file under worker/
