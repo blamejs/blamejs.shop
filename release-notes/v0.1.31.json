@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.1.31",
+  "date": "2026-05-26",
+  "headline": "Product compare — a side-by-side comparison table any shopper can build from the product pages",
+  "summary": "Shoppers can now line products up against each other. Every product page gains an \"Add to compare\" control; a \"Compare\" link in the footer opens a side-by-side table of the chosen products — image, price, availability, and each product's attributes in aligned rows. No sign-in is required: the comparison basket rides the visitor's existing sealed session cookie, and a signed-in shopper's customer id is carried alongside. The basket holds up to four products (a fifth add is refused with a notice rather than quietly dropping one), the toggle is idempotent, and a product that goes archived or out of stock resolves out of the table with a remove control instead of breaking the page. The control and table render identically from the edge and the container, and the comparison page reuses the catalog grid styling, so no new stylesheet ships.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Add to compare on the product page", "body": "Each product page shows an \"Add to compare\" / \"Remove from compare\" control reflecting whether the product is already in the basket. `POST /compare/toggle` adds or removes it and redirects back to where the shopper was (the redirect target is validated, so a crafted `return_to` can't bounce the visitor off-site). Comparing needs no account — the basket is keyed on the visitor's existing sealed session cookie; a signed-in shopper's customer id is captured alongside. The basket is capped at four products: a fifth add is refused with a notice and the basket is left unchanged." },
+        { "title": "The comparison table", "body": "`GET /compare` renders the selected products side by side — image, title, price, availability, and the per-product attributes resolved through the catalog, in aligned rows. Each column has a remove control, and `POST /compare/clear` empties the whole basket. A product that has since been archived or sold out shows in a gone/out-of-stock state with a remove control rather than failing the render. An empty basket shows a friendly empty state and mints no cookie. A \"Compare\" link sits in the footer on every page." }
+      ]
+    }
+  ]
+}

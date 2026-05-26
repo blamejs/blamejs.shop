@@ -288,6 +288,43 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.recentlyViewed.create({ catalog: catalog })
         : null;
 
+      // Product compare — the side-by-side comparison basket behind the
+      // PDP "Add to compare" toggle + the /compare table. The basket is
+      // keyed on the storefront session cookie (namespace-hashed by the
+      // primitive before it touches the database); a logged-in shopper's
+      // customer_id rides alongside. compareTable resolves the attribute
+      // matrix through this `catalog` adapter — `getProduct` returns the
+      // product enriched with a `variants` array (the primitive's
+      // variant-sourced attributes read `price_minor` / `weight` / `sku`
+      // off the first variant) plus the current USD price, so the baked-in
+      // price / sku / weight attributes resolve against this catalog's
+      // column shape. A per-resolve failure degrades to a null product
+      // (the table renders "—" / "no longer available"), never throws.
+      var productCompare = (catalog && cart)
+        ? bShop.productCompare.create({
+            catalog: {
+              getProduct: async function (productId) {
+                var product = await catalog.products.get(productId);
+                if (!product || product.status !== "active") return null;
+                var variants = await catalog.variants.listForProduct(productId);
+                var enrichedVariants = [];
+                for (var vi = 0; vi < variants.length; vi += 1) {
+                  var v = variants[vi];
+                  var priceMinor = null;
+                  var pr = await catalog.prices.current(v.id, "USD");
+                  if (pr) priceMinor = pr.amount_minor;
+                  enrichedVariants.push({
+                    sku:         v.sku,
+                    weight:      v.weight_grams,
+                    price_minor: priceMinor,
+                  });
+                }
+                return Object.assign({}, product, { variants: enrichedVariants });
+              },
+            },
+          })
+        : null;
+
       // Stripe payment handle — shared by the admin refund + subscription
       // routes and the storefront subscription-cancel route, so there's
       // one Stripe client per boot. Wired only when both the API key and
@@ -476,6 +513,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (collections) sfDeps.collections = collections;
         if (categoryNavigation) sfDeps.categoryNavigation = categoryNavigation;
         if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;
+        if (productCompare) sfDeps.productCompare = productCompare;
         if (recommendations) sfDeps.recommendations = recommendations;
         // Subscription self-management (/account/subscriptions) — the
         // shared instance. The list renders read-only without payment;
