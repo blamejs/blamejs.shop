@@ -355,3 +355,45 @@ export async function listPublishedReviews(DB, productId, limit) {
     throw e;
   }
 }
+
+// Approved Q&A threads for a product's PDP — each approved question
+// with its approved answers attached (pinned answer first, then by
+// vote_count, then oldest-first). Mirrors
+// `lib/product-qa.js#questionsForProduct` + `#answersForQuestion` but
+// reads D1 directly (the edge can't require the container's
+// primitives). Approved-only by construction so pending / rejected rows
+// never reach the storefront — never returns customer identity (the
+// schema stores `customer_id` / `customer_email_hash`, never a name).
+// `limit` caps the question count (clamped to MAX_LIMIT). Missing-table-
+// resilient (see `getReviewSummary`).
+export async function listProductQaThreads(DB, productId, limit) {
+  if (typeof productId !== "string" || productId.length === 0) return { rows: [] };
+  var lim = _clampLimit(limit == null ? 20 : limit);
+  try {
+    var qRes = await DB
+      .prepare(
+        "SELECT id, body, pinned, vote_count, occurred_at FROM product_qa_questions " +
+        "WHERE product_id = ?1 AND status = 'approved' " +
+        "ORDER BY occurred_at DESC, id DESC LIMIT ?2"
+      )
+      .bind(productId, lim)
+      .all();
+    var questions = (qRes && qRes.results) ? qRes.results : [];
+    for (var i = 0; i < questions.length; i += 1) {
+      var aRes = await DB
+        .prepare(
+          "SELECT author, body, is_operator, pinned, vote_count FROM product_qa_answers " +
+          "WHERE question_id = ?1 AND status = 'approved' " +
+          "ORDER BY pinned DESC, vote_count DESC, occurred_at ASC, id ASC LIMIT ?2"
+        )
+        .bind(questions[i].id, MAX_LIMIT)
+        .all();
+      questions[i].answers = (aRes && aRes.results) ? aRes.results : [];
+    }
+    return { rows: questions };
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return { rows: [] };
+    throw e;
+  }
+}
+

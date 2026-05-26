@@ -229,6 +229,18 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.customers.create({ cursorSecret: customersCursorSecret })
         : null;
 
+      // Product Q&A — opts in the storefront published-Q&A display + the
+      // ask-a-question route, plus the admin moderation console. Single
+      // instance shared by both surfaces. The primitive paginates with
+      // opaque (occurred_at:id) cursors rather than HMAC-tagged tuples,
+      // so it needs no cursor secret — only the externalDb query handle.
+      // Wired with the live `customers` instance so an authenticated
+      // questioner's customer_id is verified to exist before the row is
+      // stamped.
+      var productQa = (catalog && cart)
+        ? bShop.productQA.create({ customers: customers })
+        : null;
+
       // Outbound webhooks — operator-registered endpoints receive signed
       // (HMAC-SHA3-512) deliveries on order lifecycle events. One shared
       // instance: the order instances fan out transitions through it
@@ -344,6 +356,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           r2_bridge:     r2_bridge,
           catalogImport: catalogImport,
           reviews:       reviews,
+          productQa:     productQa,
           returns:       returns,
           customers:     customers,
           subscriptions: subscriptions,
@@ -455,6 +468,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // regardless of Stripe (order reads don't touch the payment SDK).
         // The checkout block below reuses this same handle.
         if (reviews) sfDeps.reviews = reviews;
+        if (productQa) sfDeps.productQa = productQa;
         if (wishlist) sfDeps.wishlist = wishlist;
         if (saveForLater) sfDeps.saveForLater = saveForLater;
         if (addresses) sfDeps.addresses = addresses;

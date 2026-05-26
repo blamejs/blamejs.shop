@@ -148,6 +148,15 @@ node -e "
   publishes them through `/admin/reviews`. The author identity is
   stored hash-only (`b.crypto.namespaceHash`) — the raw email is never
   persisted.
+- **Product Q&A is operator-moderated user-generated content.** A
+  customer question is stored `pending` and never reaches the product
+  page until an operator approves it through `/admin/questions`;
+  customer-submitted answers are not accepted from the storefront at
+  all — only the operator posts the authoritative answer, and it too
+  lands `pending` until approved. So neither an unmoderated question nor
+  an unmoderated reply can ever surface publicly. Author identity is the
+  customer id (verified against the customers primitive) or a hash-only
+  email — the raw address is never persisted.
 - **Gift-card codes are bearer secrets, stored hash-only.** A gift
   card's plaintext code is shown exactly once at issuance and never
   persisted — only its `namespaceHash` digest plus a 4-character hint
