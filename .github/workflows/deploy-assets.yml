@@ -38,6 +38,13 @@ concurrency:
 jobs:
   deploy:
     name: wrangler deploy (worker + container)
+    # Sync the R2 assets FIRST, then deploy the worker/container that
+    # references them by Subresource Integrity hash — a freshly-deployed
+    # worker must never point at assets not yet in R2, or its pages fail
+    # the integrity check. (The bytes rarely change between releases, so
+    # this only matters on an asset change; content-addressed/fingerprinted
+    # asset names would make it fully race-free — a future refinement.)
+    needs: assets
     runs-on: ubuntu-latest
     environment: npm-publish
     permissions:
