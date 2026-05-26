@@ -148,3 +148,15 @@ node -e "
   publishes them through `/admin/reviews`. The author identity is
   stored hash-only (`b.crypto.namespaceHash`) — the raw email is never
   persisted.
+- **Gift-card codes are bearer secrets, stored hash-only.** A gift
+  card's plaintext code is shown exactly once at issuance and never
+  persisted — only its `namespaceHash` digest plus a 4-character hint
+  for operator support lookups. Balance, lookup, and redeem hash the
+  submitted code and compare in constant time, so the store can't leak
+  a code even from a full database dump. The customer balance page
+  (`/gift-cards`) is not a code-existence oracle: unknown, malformed,
+  expired, voided, and fully-redeemed codes all return the same generic
+  "couldn't find a balance" so it can't be used to probe valid codes.
+  Redemption decrements with an atomic `balance >= amount` SQL guard
+  keyed on the order id, so concurrent or replayed checkouts can never
+  overdraw a card or apply more than the remaining balance.

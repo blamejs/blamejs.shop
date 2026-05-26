@@ -171,6 +171,14 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // signing secret is generated per endpoint on create.
       var webhooks = (catalog && cart) ? bShop.webhooks.create({}) : null;
 
+      // Gift cards — prepaid bearer balance redeemable at checkout, plus
+      // the append-only ledger of credit/debit/expire events. The card
+      // primitive owns the code + the balance snapshot; the ledger is
+      // the audit trail surfaced in the admin console. Both only need
+      // the externalDb query handle.
+      var giftcards      = (catalog && cart) ? bShop.giftcards.create({}) : null;
+      var giftCardLedger = (catalog && cart) ? bShop.giftCardLedger.create({}) : null;
+
       // Recommendations — operator-curated overrides + co-purchase /
       // category-popular / in-stock signals. Composes the catalog handle;
       // powers the post-purchase "Customers also bought" rail.
@@ -194,6 +202,26 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.recentlyViewed.create({ catalog: catalog })
         : null;
 
+      // Stripe payment handle — shared by the admin refund + subscription
+      // routes and the storefront subscription-cancel route, so there's
+      // one Stripe client per boot. Wired only when both the API key and
+      // webhook secret are present.
+      var payment = (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET)
+        ? bShop.payment.create({
+            apiKey:        process.env.STRIPE_API_KEY,
+            webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+          })
+        : null;
+
+      // Subscriptions — the recurring-offer catalog (/admin/subscription-
+      // plans) plus the customer self-management surface
+      // (/account/subscriptions). One instance shared by both: plan CRUD
+      // + reads need only the DB; binding/canceling subscriptions composes
+      // Stripe, so the shared payment handle is passed when it's wired.
+      var subscriptions = (catalog && cart)
+        ? bShop.subscriptions.create({ payment: payment })
+        : null;
+
       // Tax + shipping default tables — kick in when the operator
       // hasn't seeded `tax.rules` / `shipping.services` in config.
       // Zero-rate tax + a single $0 standard shipping service keeps
@@ -210,13 +238,9 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // only mount when STRIPE_API_KEY is also present.
       if (catalog && cart && process.env.ADMIN_API_KEY) {
         var order   = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks });
-        var payment = null;
-        if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
-          payment = bShop.payment.create({
-            apiKey:        process.env.STRIPE_API_KEY,
-            webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
-          });
-        }
+        // `payment` is the shared Stripe handle built at the top of the
+        // routes function (null when Stripe isn't configured) — the
+        // admin refund + subscription-cancel routes gate on it.
         // config is already constructed at the top of the routes
         // function (line 87) when catalog && cart are present; the
         // admin block reuses that handle.
@@ -233,11 +257,9 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           });
         }
         var catalogImport = bShop.catalogImport.create({ catalog: catalog });
-        // Subscription plans — the recurring-offer catalog surfaced at
-        // /admin/subscription-plans. Plan CRUD only needs the DB; binding
-        // customers to plans (the subscription instances + cancel routes)
-        // composes Stripe, so pass the payment handle when it's wired.
-        var subscriptions = bShop.subscriptions.create({ payment: payment });
+        // `subscriptions` is the shared instance built at the top of the
+        // routes function — reused here for /admin/subscription-plans +
+        // the admin cancel route, and by the storefront below.
         bShop.admin.mount(r, {
           token:         process.env.ADMIN_API_KEY,
           shop_name:     bootShopName,
@@ -251,6 +273,8 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           returns:       returns,
           customers:     customers,
           subscriptions: subscriptions,
+          giftcards:     giftcards,
+          giftCardLedger: giftCardLedger,
           webhooks:      webhooks,
           collections:   collections,
           // Integration state map for /admin/integrations — "enabled" |
@@ -364,13 +388,23 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (collections) sfDeps.collections = collections;
         if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;
         if (recommendations) sfDeps.recommendations = recommendations;
+        // Subscription self-management (/account/subscriptions) — the
+        // shared instance. The list renders read-only without payment;
+        // the cancel route mounts only when `sfDeps.payment` is wired
+        // (set in the Stripe block below).
+        if (subscriptions) sfDeps.subscriptions = subscriptions;
+        // Gift cards — the customer balance-check page (/gift-cards) and
+        // the redeem-at-checkout credit. Wired regardless of Stripe; the
+        // balance page needs only the card primitive.
+        if (giftcards) sfDeps.giftcards = giftcards;
         sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;
-          var sfPayment = bShop.payment.create({
-            apiKey:        process.env.STRIPE_API_KEY,
-            webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
-          });
+          // Reuse the shared Stripe handle (built at the top of the routes
+          // function under the same gate) so the storefront checkout +
+          // subscription-cancel routes and the admin routes drive one
+          // Stripe client per boot.
+          var sfPayment = payment;
           // Tax + shipping wrappers that re-read the operator's
           // config on each call. The wrapped adapter is rebuilt per
           // request from the latest `tax.rules` / `shipping.services`
@@ -414,6 +448,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
             catalog: catalog, cart: cart, pricing: bShop.pricing,
             tax: sfTax, shipping: sfShipping, payment: sfPayment, order: sfOrder,
             customers: sfDeps.customers, paypal: sfPaypal,
+            giftcards: giftcards, giftCardLedger: giftCardLedger,
           });
           sfDeps.payment           = sfPayment;
           sfDeps.paypal            = sfPaypal;

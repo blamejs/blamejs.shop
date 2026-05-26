@@ -1,0 +1,201 @@
+"use strict";
+/**
+ * Customer subscription self-management — full HTTP integration of the
+ * /account/subscriptions surface.
+ *
+ * Boots a real `b.createApp` server with the storefront wired with the
+ * subscriptions + catalog/cart/order/customers deps + a STUB payment
+ * (whose `subscriptions.cancel` returns a canceled object, so cancel
+ * works offline). One in-memory `node:sqlite` DB loaded from the live
+ * migrations. The signed-in customer is read from the sealed `shop_auth`
+ * cookie (minted via helpers.authCookie after boot). Two subscriptions
+ * are seeded directly: one owned by the buyer, one by a stranger. Covers
+ * list-shows-only-own / cancel-transitions-own / IDOR-refuses-foreign /
+ * anon-redirects-to-login.
+ *
+ * Network: zero — every request lands on 127.0.0.1; payment is a stub.
+ */
+
+process.env.BLAMEJS_SKIP_NTP_CHECK = "1";
+
+var nodeFs   = require("node:fs");
+var nodeOs   = require("node:os");
+var nodePath = require("node:path");
+var { DatabaseSync } = require("node:sqlite");
+
+var bShop   = require("../../lib");
+var helpers = require("../helpers");
+var check   = helpers.check;
+
+var b = bShop.framework;
+
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql", "0006_customers.sql", "0009_subscriptions.sql"]
+  .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
+
+function _splitSchema(text) {
+  var noComments = text.replace(/--[^\n]*\n/g, "\n");
+  return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
+}
+
+function _makeQuery() {
+  var db = new DatabaseSync(":memory:");
+  db.prepare("PRAGMA foreign_keys = ON").run();
+  MIGS.forEach(function (p) {
+    var stmts = _splitSchema(nodeFs.readFileSync(p, "utf8"));
+    for (var i = 0; i < stmts.length; i += 1) db.prepare(stmts[i]).run();
+  });
+  return async function (sql, params) {
+    var stmt = db.prepare(sql);
+    var verb = sql.replace(/^\s+|\s*--[^\n]*\n/g, "").trim().split(/\s+/)[0].toUpperCase();
+    if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
+      var info = stmt.run.apply(stmt, params || []);
+      return { rows: [], rowCount: Number(info.changes), lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
+    }
+    var rows = stmt.all.apply(stmt, params || []);
+    return { rows: rows, rowCount: rows.length };
+  };
+}
+
+// Offline Stripe stand-in. `subscriptions.cancel` echoes a canceled
+// subscription object in Stripe's shape so the primitive's cancel path
+// runs without a network hop. Records the id it was asked to cancel so
+// the test can assert it's never called for the foreign subscription.
+function _stubPayment(state) {
+  return {
+    subscriptions: {
+      cancel: async function (stripeId, opts, _idemKey) {
+        state.canceled.push(stripeId);
+        return {
+          id:                   stripeId,
+          status:               "canceled",
+          cancel_at_period_end: opts && opts.at_period_end ? true : false,
+          // allow:raw-time-literal — Stripe sends unix SECONDS; a fixed
+          // demo period end echoed back to exercise the cancel path.
+          current_period_start: 1700000000,
+          current_period_end:   1700604800,
+        };
+      },
+    },
+  };
+}
+
+// Seed a subscription (+ a plan it links to) owned by `customerId`.
+// Returns the local subscription id + the stripe id it carries.
+async function _seedSubscription(query, customerId, variantId, status) {
+  var now = Date.now();
+  var planId = b.uuid.v7();
+  await query(
+    "INSERT INTO subscription_plans (id, variant_id, stripe_price_id, interval, interval_count, " +
+    "currency, amount_minor, trial_days, active, created_at, updated_at) " +
+    "VALUES (?1, ?2, ?3, 'month', 1, 'usd', 1999, 0, 1, ?4, ?4)",
+    [planId, variantId, "price_" + planId.slice(0, 8), now],
+  );
+  var subId = b.uuid.v7();
+  // v7 UUIDs share a timestamp prefix, so a leading slice can collide;
+  // use the random tail for a unique stripe id.
+  var stripeId = "sub_" + subId.replace(/-/g, "").slice(-16);
+  await query(
+    "INSERT INTO subscriptions (id, customer_id, plan_id, stripe_subscription_id, status, " +
+    "current_period_start, current_period_end, cancel_at_period_end, created_at, updated_at) " +
+    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8)",
+    [subId, customerId, planId, stripeId, status || "active", now, now + 2592000000, now],
+  );
+  return { subId: subId, stripeId: stripeId, planId: planId };
+}
+
+async function _bootApp(deps) {
+  var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-shop-subs-"));
+  var app = await b.createApp({
+    dataDir:    dataDir,
+    vault:      { mode: "plaintext" },
+    db:         { atRest: "plain", auditSigning: { mode: "plaintext" } },
+    middleware: { botGuard: false, rateLimit: false },
+    routes: function (r) {
+      r.use(b.middleware.bodyParser());
+      bShop.storefront.mount(r, deps);
+    },
+  });
+  var bound = await app.listen({ port: 0, host: "127.0.0.1" });
+  return { app: app, port: bound.port, dataDir: dataDir };
+}
+
+async function _teardown(handle) {
+  if (!handle) return;
+  try { await handle.app.shutdown(); } catch (_e) { /* best-effort */ }
+  try { nodeFs.rmSync(handle.dataDir, { recursive: true, force: true }); } catch (_e) { /* best-effort */ }
+}
+
+async function _run() {
+  var query     = _makeQuery();
+  var catalog   = bShop.catalog.create({ query: query });
+  var cart      = bShop.cart.create({ query: query, catalog: catalog });
+  var order     = bShop.order.create({ query: query, cursorSecret: "subs-flow-order" });
+  var customers = bShop.customers.create({ query: query });
+
+  var stubState = { canceled: [] };
+  var payment   = _stubPayment(stubState);
+  var subscriptions = bShop.subscriptions.create({ query: query, payment: payment });
+
+  var product = await catalog.products.create({ slug: "coffee-box", title: "Coffee Box", description: "x", status: "active" });
+  var variant = await catalog.variants.create(product.id, { sku: "CFE-BOX", options: { size: "M" } });
+
+  var buyer    = b.uuid.v7();
+  var stranger = b.uuid.v7();
+  var owned    = await _seedSubscription(query, buyer, variant.id, "active");
+  var foreign  = await _seedSubscription(query, stranger, variant.id, "active");
+
+  var handle = await _bootApp({
+    catalog:       catalog,
+    cart:          cart,
+    order:         order,
+    customers:     customers,
+    subscriptions: subscriptions,
+    payment:       payment,
+    config:        { shop_name: "blamejs.shop" },
+  });
+
+  try {
+    var cookie = helpers.authCookie(b, buyer);
+
+    // Anon → login.
+    var anon = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions" });
+    check("anon subscriptions then 303 login",   anon.status === 303 && (anon.headers["location"] || "") === "/account/login");
+
+    // List shows only the buyer's own subscription, never the stranger's.
+    var list = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", headers: { cookie: cookie } });
+    check("subscriptions page then 200",          list.status === 200);
+    check("list shows the active status pill",    list.body.indexOf("subscription-status--active") !== -1);
+    check("list shows the plan price",            list.body.indexOf("$19.99") !== -1);
+    check("list shows a cancel control",          list.body.indexOf("/account/subscriptions/" + owned.subId + "/cancel") !== -1);
+    check("list hides the foreign subscription",  list.body.indexOf("/account/subscriptions/" + foreign.subId + "/cancel") === -1);
+
+    // IDOR guard — cancel of the stranger's subscription is refused (404)
+    // and the stub's cancel is NEVER reached for the foreign stripe id.
+    var idor = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + foreign.subId + "/cancel", method: "POST", headers: { cookie: cookie }, form: {} });
+    check("foreign cancel then 404 (IDOR guard)", idor.status === 404);
+    check("foreign stripe id never canceled",     stubState.canceled.indexOf(foreign.stripeId) === -1);
+    var foreignRow = await subscriptions.subscriptions.get(foreign.subId);
+    check("foreign subscription untouched",       foreignRow && foreignRow.status === "active");
+
+    // Malformed id → 404, not 500.
+    var malformed = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/not-a-uuid/cancel", method: "POST", headers: { cookie: cookie }, form: {} });
+    check("malformed cancel id then 404",         malformed.status === 404);
+
+    // Cancel the buyer's own subscription → 303 + transitioned to canceled.
+    var ok = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + owned.subId + "/cancel", method: "POST", headers: { cookie: cookie }, form: {} });
+    check("own cancel then 303 /account/subscriptions", ok.status === 303 && (ok.headers["location"] || "").indexOf("/account/subscriptions") === 0);
+    check("own stripe id was canceled",           stubState.canceled.indexOf(owned.stripeId) !== -1);
+    var ownedRow = await subscriptions.subscriptions.get(owned.subId);
+    check("own subscription now canceled",        ownedRow && ownedRow.status === "canceled");
+
+    // Re-list — the now-canceled subscription shows the canceled pill and
+    // no longer offers a cancel control.
+    var after = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", headers: { cookie: cookie } });
+    check("list shows canceled status pill",      after.body.indexOf("subscription-status--canceled") !== -1);
+    check("canceled row hides cancel control",    after.body.indexOf("/account/subscriptions/" + owned.subId + "/cancel") === -1);
+  } finally {
+    await _teardown(handle);
+  }
+}
+
+module.exports = { run: _run };
