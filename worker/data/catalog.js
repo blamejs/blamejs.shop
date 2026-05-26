@@ -263,7 +263,7 @@ export async function searchFacetableProducts(DB, opts) {
       "WHERE p.status = 'active' AND (" + likeClauses.join(" OR ") + ") " +
       "ORDER BY p.updated_at DESC, p.id DESC LIMIT ?2"
     )
-    .bind.apply(null, params)
+    .bind(...params)
     .all();
   var raw = (res && res.results) ? res.results : [];
   if (!raw.length) return { rows: [] };
@@ -291,7 +291,7 @@ export async function searchFacetableProducts(DB, opts) {
         "JOIN collections col ON col.slug = cm.collection_slug AND col.archived_at IS NULL " +
         "WHERE cm.product_id IN (" + placeholders + ")"
       )
-      .bind.apply(null, ids)
+      .bind(...ids)
       .all();
     var cmRows = (cmRes && cmRes.results) ? cmRes.results : [];
     for (var cm = 0; cm < cmRows.length; cm += 1) {
@@ -314,7 +314,7 @@ export async function searchFacetableProducts(DB, opts) {
         "WHERE v.product_id IN (" + placeholders + ") " +
         "GROUP BY v.product_id"
       )
-      .bind.apply(null, ids)
+      .bind(...ids)
       .all();
     var invRows = (invRes && invRes.results) ? invRes.results : [];
     for (var iv = 0; iv < invRows.length; iv += 1) {
