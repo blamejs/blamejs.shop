@@ -88,6 +88,7 @@ var LAYOUT =
   "          <li><a href=\"/categories\">Categories</a></li>\n" +
   "          <li><a href=\"/?sort=new\">New arrivals</a></li>\n" +
   "          <li><a href=\"/?sort=sale\">On sale</a></li>\n" +
+  "          <li><a href=\"/compare\">Compare</a></li>\n" +
   "          <li><a href=\"/cart\">Cart</a></li>\n" +
   "        </ul>\n" +
   "      </div>\n" +

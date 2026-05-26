@@ -88,6 +88,7 @@ var LAYOUT =
   "          <li><a href=\"/categories\">Categories</a></li>\n" +
   "          <li><a href=\"/?sort=new\">New arrivals</a></li>\n" +
   "          <li><a href=\"/?sort=sale\">On sale</a></li>\n" +
+  "          <li><a href=\"/compare\">Compare</a></li>\n" +
   "          <li><a href=\"/cart\">Cart</a></li>\n" +
   "        </ul>\n" +
   "      </div>\n" +
@@ -165,6 +166,7 @@ var PRODUCT_PAGE =
   "        </div>\n" +
   "      </div>\n" +
   "      RAW_WISHLIST_PLACEHOLDER\n" +
+  "      RAW_COMPARE_PLACEHOLDER\n" +
   "    </div>\n" +
   "  </div>\n" +
   "  RAW_REVIEWS_PLACEHOLDER\n" +
@@ -190,6 +192,24 @@ function _buildWishlist(productId, count) {
              "</button>" +
            "</form>" +
            countHtml +
+         "</div>";
+}
+
+// Product-level "Add to compare" control. The toggle is a plain form
+// POST to the container route (the edge can't read the sealed session
+// to know if THIS product is already in the basket, so the label is
+// action-only; the /compare table is the source of truth for the
+// current basket). Shared verbatim with the container renderer so both
+// substrates emit identical markup.
+function _buildCompare(productId) {
+  return "<div class=\"compare\">" +
+           "<form class=\"compare__form\" method=\"post\" action=\"/compare/toggle\">" +
+             "<input type=\"hidden\" name=\"product_id\" value=\"" + escapeAttr(productId) + "\">" +
+             "<button type=\"submit\" class=\"btn-secondary compare__btn\">" +
+               "<span class=\"compare__icon\" aria-hidden=\"true\">⇄</span> Add to compare" +
+             "</button>" +
+           "</form>" +
+           "<a class=\"compare__link card-link\" href=\"/compare\">View compare →</a>" +
          "</div>";
 }
 
@@ -444,6 +464,7 @@ export function renderProduct(opts) {
   var reviewsHtml = _buildReviews(reviewSummary, reviews, reviewForm);
   var qaHtml = _buildProductQa(qaQuestions, qaForm);
   var wishlistHtml = _buildWishlist(product.id, wishlistCount);
+  var compareHtml = _buildCompare(product.id);
   var body = renderTemplate(PRODUCT_PAGE, {
     title:        product.title,
     description:  description,
@@ -452,6 +473,7 @@ export function renderProduct(opts) {
     .replace("RAW_GALLERY_PLACEHOLDER", galleryHtml)
     .replace("RAW_ROWS_PLACEHOLDER", rows)
     .replace("RAW_WISHLIST_PLACEHOLDER", wishlistHtml)
+    .replace("RAW_COMPARE_PLACEHOLDER", compareHtml)
     .replace("RAW_REVIEWS_PLACEHOLDER", reviewsHtml)
     .replace("RAW_QA_PLACEHOLDER", qaHtml);
 
