@@ -187,6 +187,11 @@ async function _run() {
     check("active filter hides archived",        act.body.indexOf("summer-picks") === -1);
     var arc = await helpers.httpRequest({ port: port, path: "/admin/collections?active=0", jar: jar });
     check("archived filter shows archived",      arc.body.indexOf("summer-picks") !== -1);
+    check("archived filter hides active",        arc.body.indexOf("active-stock") === -1);
+    // Bearer JSON archived filter is archived-only too (same predicate).
+    var arcApi = await helpers.httpRequest({ port: port, path: "/admin/collections?active=0", headers: bearer });
+    var arcSlugs = JSON.parse(arcApi.body).rows.map(function (c) { return c.slug; });
+    check("bearer archived filter = archived-only", arcSlugs.indexOf("summer-picks") !== -1 && arcSlugs.indexOf("active-stock") === -1);
 
     // A bad / unknown slug is a 404 page (notice), never a 500.
     var miss = await helpers.httpRequest({ port: port, path: "/admin/collections/does-not-exist", jar: jar });
