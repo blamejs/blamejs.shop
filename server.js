@@ -260,6 +260,14 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.collections.create({ catalog: catalog, cursorSecret: collectionsCursorSecret })
         : null;
 
+      // Category navigation — the hierarchical category tree surfaced as
+      // public /categories browse pages (index + per-category breadcrumb
+      // + sub-category grid). Composes the catalog handle (held for the
+      // product-count adjacency); the browse pages read only the tree.
+      var categoryNavigation = (catalog && cart)
+        ? bShop.categoryNavigation.create({ catalog: catalog })
+        : null;
+
       // Recently viewed — the signed-in customer's browse history.
       // Views are recorded on the PDP and surfaced at
       // /account/recently-viewed. Composes the catalog handle for
@@ -452,6 +460,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (addresses) sfDeps.addresses = addresses;
         if (returns) sfDeps.returns = returns;
         if (collections) sfDeps.collections = collections;
+        if (categoryNavigation) sfDeps.categoryNavigation = categoryNavigation;
         if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;
         if (recommendations) sfDeps.recommendations = recommendations;
         // Subscription self-management (/account/subscriptions) — the
