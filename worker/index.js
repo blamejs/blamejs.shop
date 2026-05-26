@@ -28,6 +28,7 @@ import {
   listMediaForProduct,
   getReviewSummary,
   listPublishedReviews,
+  listProductQaThreads,
   getWishlistCount,
   recentBlogArticles,
   listActiveProductSlugs,
@@ -957,11 +958,12 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
         }),
       });
     }
-    const [variantsWithPrices, media, reviewSummary, reviewList, wishlistCount] = await Promise.all([
+    const [variantsWithPrices, media, reviewSummary, reviewList, qaThreads, wishlistCount] = await Promise.all([
       listVariantsWithPrices(env.DB, product.id, "USD"),
       listMediaForProduct(env.DB, product.id),
       getReviewSummary(env.DB, product.id),
       listPublishedReviews(env.DB, product.id, 10),
+      listProductQaThreads(env.DB, product.id, 20),
       getWishlistCount(env.DB, product.id),
     ]);
     const variants = [];
@@ -994,6 +996,11 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
     // keeps the slug safe inside the href attribute.
     const reviewForm = '<a class="btn-secondary reviews__cta" href="/products/'
       + encodeURIComponent(product.slug) + '/review">Write a review</a>';
+    // "Ask a question" CTA → the container's auth-gated form route,
+    // which enforces login. encodeURIComponent keeps the slug safe
+    // inside the href attribute.
+    const qaForm = '<a class="btn-secondary reviews__cta" href="/products/'
+      + encodeURIComponent(product.slug) + '/question">Ask a question</a>';
     const html = renderProduct({
       product:       product,
       variants:      variants,
@@ -1002,6 +1009,8 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
       reviewSummary: reviewSummary,
       reviews:       reviewList.rows,
       reviewForm:    reviewForm,
+      qaQuestions:   qaThreads.rows,
+      qaForm:        qaForm,
       wishlistCount: wishlistCount,
       shopName:      shopName,
       cartCount:     0,

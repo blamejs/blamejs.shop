@@ -168,6 +168,7 @@ var PRODUCT_PAGE =
   "    </div>\n" +
   "  </div>\n" +
   "  RAW_REVIEWS_PLACEHOLDER\n" +
+  "  RAW_QA_PLACEHOLDER\n" +
   "</section>\n";
 
 // Product-level "Save to wishlist" control + social-proof count. The
@@ -291,6 +292,66 @@ function _buildReviews(summary, reviews, formHtml) {
            (formHtml || "") +
          "</section>";
 }
+// Builds the PDP Product Q&A block from the approved questions + their
+// approved answers fetched at the edge
+// (`worker/data/catalog.js#listProductQaThreads`). Renders the "no
+// questions yet" empty state when the product has none. Reuses the
+// reviews section's theme classes so no new CSS ships. Mirrors the
+// container renderer (`lib/storefront.js#_buildProductQa`) byte-for-byte
+// so both render paths stay in sync.
+function _buildProductQa(questions, ctaHtml) {
+  questions = questions || [];
+
+  var head;
+  if (questions.length > 0) {
+    head = "<p class=\"reviews__count\">" + questions.length +
+      (questions.length === 1 ? " question answered" : " questions answered") + "</p>";
+  } else {
+    head = "<p class=\"reviews__empty\">No questions yet. Be the first to ask about this product.</p>";
+  }
+
+  var list = "";
+  for (var i = 0; i < questions.length; i += 1) {
+    var q = questions[i];
+    var answers = q.answers || [];
+    var answerHtml = "";
+    for (var j = 0; j < answers.length; j += 1) {
+      var a = answers[j];
+      var who = Number(a.is_operator) === 1
+        ? "<span class=\"review__verified\">Answered by the seller</span>"
+        : (a.author === "system"
+            ? "<span class=\"review__verified\">Automated answer</span>"
+            : "<span class=\"review__verified\">Customer answer</span>");
+      var pinned = Number(a.pinned) === 1
+        ? "<span class=\"review__verified\">Top answer</span>"
+        : "";
+      answerHtml +=
+        "<li class=\"review qa__answer\">" +
+          "<div class=\"review__meta\">" + who + pinned + "</div>" +
+          "<p class=\"review__body\">" + escapeHtml(String(a.body)) + "</p>" +
+        "</li>";
+    }
+    var answerList = answerHtml
+      ? "<ul class=\"reviews__list qa__answers\">" + answerHtml + "</ul>"
+      : "<p class=\"reviews__empty\">Awaiting an answer.</p>";
+    list +=
+      "<li class=\"review qa__question\">" +
+        "<div class=\"review__head\">" +
+          "<h3 class=\"review__title\">" + escapeHtml(String(q.body)) + "</h3>" +
+        "</div>" +
+        answerList +
+      "</li>";
+  }
+  var listHtml = list ? "<ul class=\"reviews__list\">" + list + "</ul>" : "";
+
+  return "<section class=\"reviews qa\" aria-labelledby=\"qa-title\">" +
+           "<h2 id=\"qa-title\" class=\"reviews__heading\">Questions &amp; answers</h2>" +
+           head +
+           listHtml +
+           (ctaHtml || "") +
+         "</section>";
+}
+
 
 function _wrap(opts) {
   var shopName      = opts.shopName || "blamejs.shop";
@@ -355,6 +416,8 @@ export function renderProduct(opts) {
   var reviewSummary = opts.reviewSummary || { count: 0, avg_rating: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
   var reviews       = opts.reviews || [];
   var reviewForm    = typeof opts.reviewForm === "string" ? opts.reviewForm : "";
+  var qaQuestions   = opts.qaQuestions || [];
+  var qaForm        = typeof opts.qaForm === "string" ? opts.qaForm : "";
   var wishlistCount = opts.wishlistCount == null ? 0 : opts.wishlistCount;
   var shopName    = opts.shopName || "blamejs.shop";
   var cartCount   = opts.cartCount == null ? 0 : opts.cartCount;
@@ -379,6 +442,7 @@ export function renderProduct(opts) {
 
   var galleryHtml = _buildPdpGallery(product, media, assetPrefix);
   var reviewsHtml = _buildReviews(reviewSummary, reviews, reviewForm);
+  var qaHtml = _buildProductQa(qaQuestions, qaForm);
   var wishlistHtml = _buildWishlist(product.id, wishlistCount);
   var body = renderTemplate(PRODUCT_PAGE, {
     title:        product.title,
@@ -388,7 +452,8 @@ export function renderProduct(opts) {
     .replace("RAW_GALLERY_PLACEHOLDER", galleryHtml)
     .replace("RAW_ROWS_PLACEHOLDER", rows)
     .replace("RAW_WISHLIST_PLACEHOLDER", wishlistHtml)
-    .replace("RAW_REVIEWS_PLACEHOLDER", reviewsHtml);
+    .replace("RAW_REVIEWS_PLACEHOLDER", reviewsHtml)
+    .replace("RAW_QA_PLACEHOLDER", qaHtml);
 
   var heroMedia = media[0] || null;
   var ogImage   = heroMedia ? (assetPrefix + heroMedia.r2_key) : "/assets/brand/logo.png";
