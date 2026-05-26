@@ -207,4 +207,30 @@ export default [
     },
     rules: COMMON_RULES,
   },
+  // Browser "island" scripts shipped as static theme assets — plain
+  // <script> (not a module), DOM + Web-platform globals. These run in the
+  // visitor's browser, not Node, so they get the browser binding surface.
+  {
+    files: ["themes/**/assets/js/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2024,
+      sourceType:  "script",
+      globals: {
+        window:           "readonly",
+        document:         "readonly",
+        navigator:        "readonly",
+        location:         "readonly",
+        console:          "readonly",
+        atob:             "readonly",
+        btoa:             "readonly",
+        fetch:            "readonly",
+        setTimeout:       "readonly",
+        clearTimeout:     "readonly",
+        URL:              "readonly",
+        URLSearchParams:  "readonly",
+        FormData:         "readonly",
+      },
+    },
+    rules: COMMON_RULES,
+  },
 ];

@@ -32,6 +32,33 @@ var PORT     = parseInt(process.env.PORT || "8080", 10);
 var DATA_DIR = process.env.DATA_DIR || "./data";
 
 (async function main() {
+  // createApp's secure defaults unlock TWO wrapped components at boot — the
+  // vault AND the audit-signing keypair — and the framework reads their
+  // passphrases from BLAMEJS_VAULT_PASSPHRASE / BLAMEJS_AUDIT_SIGNING_PASSPHRASE.
+  // The deploy contract (docs/deploy-cloudflare.md + the header above)
+  // documents a single operator secret, VAULT_PASSPHRASE. Without bridging it,
+  // an operator who follows the docs sets a name the framework never reads;
+  // the wrapped components have no passphrase source in a container (no TTY);
+  // createApp throws — crash-looping the container so every write route
+  // (add-to-cart, checkout, account, admin) is unreachable while edge-rendered
+  // reads still work. Bridge the one documented secret onto both: the vault
+  // passphrase is the secret as-is; the audit-signing passphrase is derived
+  // from it, domain-separated via namespaceHash, so one operator secret
+  // unlocks both with distinct key material. An explicitly-set BLAMEJS_*
+  // always wins; the _FILE variant is honored for the vault path.
+  if (process.env.VAULT_PASSPHRASE) {
+    if (!process.env.BLAMEJS_VAULT_PASSPHRASE) {
+      process.env.BLAMEJS_VAULT_PASSPHRASE = process.env.VAULT_PASSPHRASE;
+    }
+    if (!process.env.BLAMEJS_AUDIT_SIGNING_PASSPHRASE) {
+      process.env.BLAMEJS_AUDIT_SIGNING_PASSPHRASE =
+        b.crypto.namespaceHash("shop-audit-signing-passphrase", process.env.VAULT_PASSPHRASE);
+    }
+  }
+  if (process.env.VAULT_PASSPHRASE_FILE && !process.env.BLAMEJS_VAULT_PASSPHRASE_FILE) {
+    process.env.BLAMEJS_VAULT_PASSPHRASE_FILE = process.env.VAULT_PASSPHRASE_FILE;
+  }
+
   // Optional: wire a Cloudflare D1 backend when the deploy provides
   // bridge credentials. Initializes externalDb before createApp so
   // the framework's cluster-mode boot picks it up automatically.
@@ -152,6 +179,17 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.returns.create({ cursorSecret: returnsCursorSecret })
         : null;
 
+      // Customers — passkey / OIDC accounts. Opts the storefront /account/*
+      // routes in AND the read-only /admin/customers roster. Single instance
+      // shared by both surfaces. Cursor HMAC key for the admin list derived
+      // like the others. The primitive only needs the externalDb query handle.
+      var customersCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("customers-cursor", process.env.D1_BRIDGE_SECRET)
+        : "customers-cursor-secret-dev-only";
+      var customers = (catalog && cart)
+        ? bShop.customers.create({ cursorSecret: customersCursorSecret })
+        : null;
+
       // Outbound webhooks — operator-registered endpoints receive signed
       // (HMAC-SHA3-512) deliveries on order lifecycle events. One shared
       // instance: the order instances fan out transitions through it
@@ -159,6 +197,14 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // endpoints + monitors deliveries. No external credentials — the
       // signing secret is generated per endpoint on create.
       var webhooks = (catalog && cart) ? bShop.webhooks.create({}) : null;
+
+      // Gift cards — prepaid bearer balance redeemable at checkout, plus
+      // the append-only ledger of credit/debit/expire events. The card
+      // primitive owns the code + the balance snapshot; the ledger is
+      // the audit trail surfaced in the admin console. Both only need
+      // the externalDb query handle.
+      var giftcards      = (catalog && cart) ? bShop.giftcards.create({}) : null;
+      var giftCardLedger = (catalog && cart) ? bShop.giftCardLedger.create({}) : null;
 
       // Recommendations — operator-curated overrides + co-purchase /
       // category-popular / in-stock signals. Composes the catalog handle;
@@ -183,6 +229,26 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.recentlyViewed.create({ catalog: catalog })
         : null;
 
+      // Stripe payment handle — shared by the admin refund + subscription
+      // routes and the storefront subscription-cancel route, so there's
+      // one Stripe client per boot. Wired only when both the API key and
+      // webhook secret are present.
+      var payment = (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET)
+        ? bShop.payment.create({
+            apiKey:        process.env.STRIPE_API_KEY,
+            webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+          })
+        : null;
+
+      // Subscriptions — the recurring-offer catalog (/admin/subscription-
+      // plans) plus the customer self-management surface
+      // (/account/subscriptions). One instance shared by both: plan CRUD
+      // + reads need only the DB; binding/canceling subscriptions composes
+      // Stripe, so the shared payment handle is passed when it's wired.
+      var subscriptions = (catalog && cart)
+        ? bShop.subscriptions.create({ payment: payment })
+        : null;
+
       // Tax + shipping default tables — kick in when the operator
       // hasn't seeded `tax.rules` / `shipping.services` in config.
       // Zero-rate tax + a single $0 standard shipping service keeps
@@ -199,13 +265,9 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // only mount when STRIPE_API_KEY is also present.
       if (catalog && cart && process.env.ADMIN_API_KEY) {
         var order   = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks });
-        var payment = null;
-        if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
-          payment = bShop.payment.create({
-            apiKey:        process.env.STRIPE_API_KEY,
-            webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
-          });
-        }
+        // `payment` is the shared Stripe handle built at the top of the
+        // routes function (null when Stripe isn't configured) — the
+        // admin refund + subscription-cancel routes gate on it.
         // config is already constructed at the top of the routes
         // function (line 87) when catalog && cart are present; the
         // admin block reuses that handle.
@@ -222,11 +284,9 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           });
         }
         var catalogImport = bShop.catalogImport.create({ catalog: catalog });
-        // Subscription plans — the recurring-offer catalog surfaced at
-        // /admin/subscription-plans. Plan CRUD only needs the DB; binding
-        // customers to plans (the subscription instances + cancel routes)
-        // composes Stripe, so pass the payment handle when it's wired.
-        var subscriptions = bShop.subscriptions.create({ payment: payment });
+        // `subscriptions` is the shared instance built at the top of the
+        // routes function — reused here for /admin/subscription-plans +
+        // the admin cancel route, and by the storefront below.
         bShop.admin.mount(r, {
           token:         process.env.ADMIN_API_KEY,
           shop_name:     bootShopName,
@@ -238,7 +298,10 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           catalogImport: catalogImport,
           reviews:       reviews,
           returns:       returns,
+          customers:     customers,
           subscriptions: subscriptions,
+          giftcards:     giftcards,
+          giftCardLedger: giftCardLedger,
           webhooks:      webhooks,
           collections:   collections,
           // Integration state map for /admin/integrations — "enabled" |
@@ -293,11 +356,10 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // browsable but checkout-routes don't mount.
         var sfDeps = { catalog: catalog, cart: cart, config: { shop_name: bootShopName } };
         if (sfTheme) sfDeps.theme = sfTheme;
-        // Customer accounts — opts the /account/* routes in. The
-        // primitive only needs the externalDb query handle (which
-        // ships with this deploy via `r2_bridge` / `D1_BRIDGE_URL`),
-        // so wire it whenever the data layer is present.
-        sfDeps.customers = bShop.customers.create({});
+        // Customer accounts — opts the /account/* routes in. Reuses the
+        // single `customers` instance built above (also wired into the
+        // admin roster), so both surfaces share one handle.
+        sfDeps.customers = customers;
         // Sign in with Google (OIDC). Mounts the /account/login/google
         // routes only when the operator supplies the OAuth client +
         // SHOP_ORIGIN (for the exact redirect URI). The framework
@@ -353,13 +415,23 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (collections) sfDeps.collections = collections;
         if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;
         if (recommendations) sfDeps.recommendations = recommendations;
+        // Subscription self-management (/account/subscriptions) — the
+        // shared instance. The list renders read-only without payment;
+        // the cancel route mounts only when `sfDeps.payment` is wired
+        // (set in the Stripe block below).
+        if (subscriptions) sfDeps.subscriptions = subscriptions;
+        // Gift cards — the customer balance-check page (/gift-cards) and
+        // the redeem-at-checkout credit. Wired regardless of Stripe; the
+        // balance page needs only the card primitive.
+        if (giftcards) sfDeps.giftcards = giftcards;
         sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;
-          var sfPayment = bShop.payment.create({
-            apiKey:        process.env.STRIPE_API_KEY,
-            webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
-          });
+          // Reuse the shared Stripe handle (built at the top of the routes
+          // function under the same gate) so the storefront checkout +
+          // subscription-cancel routes and the admin routes drive one
+          // Stripe client per boot.
+          var sfPayment = payment;
           // Tax + shipping wrappers that re-read the operator's
           // config on each call. The wrapped adapter is rebuilt per
           // request from the latest `tax.rules` / `shipping.services`
@@ -403,6 +475,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
             catalog: catalog, cart: cart, pricing: bShop.pricing,
             tax: sfTax, shipping: sfShipping, payment: sfPayment, order: sfOrder,
             customers: sfDeps.customers, paypal: sfPaypal,
+            giftcards: giftcards, giftCardLedger: giftCardLedger,
           });
           sfDeps.payment           = sfPayment;
           sfDeps.paypal            = sfPaypal;

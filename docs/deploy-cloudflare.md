@@ -124,7 +124,7 @@ the operator sets the bridge secret + any application-level secrets:
 | --------------------- | ----------------- | ------------------------------------------------- |
 | `PORT`                | platform-managed  | Cloudflare Containers sets this — don't override. |
 | `DATA_DIR`            | `wrangler.toml`   | Per-instance volatile dir. `./data` is fine.      |
-| `VAULT_PASSPHRASE`    | `wrangler secret` | Unlocks `b.vault`. Required.                      |
+| `VAULT_PASSPHRASE`    | `wrangler secret` | Required. Unlocks the vault **and** the audit-signing keypair (the entry point bridges it to `BLAMEJS_VAULT_PASSPHRASE` and derives a domain-separated `BLAMEJS_AUDIT_SIGNING_PASSPHRASE`). Without it the container can't unlock its wrapped keys, has no TTY to prompt, and crash-loops — taking every write route (add-to-cart, checkout, account, admin) down while edge-rendered reads still work. |
 | `D1_BRIDGE_URL`       | platform-injected | URL of the bound Worker. Don't hand-set.          |
 | `D1_BRIDGE_SECRET`    | `wrangler secret` | Must match the Worker's binding of the same name. |
 | `D1_BRIDGE_PATH`      | optional          | Override (default `/_/db/query`).                 |
@@ -133,13 +133,24 @@ the operator sets the bridge secret + any application-level secrets:
 ## Deploy
 
 ```bash
-npx wrangler deploy
+npm run deploy
 ```
 
-This builds the Dockerfile, pushes the container image to
-Cloudflare's registry, and updates the Worker. The first deploy can
-take a few minutes for the image build; subsequent deploys are fast
+This runs `wrangler deploy` — which builds the Dockerfile, pushes the
+container image to Cloudflare's registry, and updates the Worker — and
+then `scripts/sync-r2-assets.js`, which uploads the theme stylesheets to
+the R2 bucket the Worker serves `/assets/*` from. **Both steps matter:**
+`wrangler deploy` ships the Worker + container but does *not* touch R2, so
+running it alone leaves the freshly-deployed HTML pointing at a stale
+stylesheet (new markup, old CSS — an "old UI" that's really a missing
+asset sync). `npm run deploy` keeps them in lockstep. The first deploy
+can take a few minutes for the image build; subsequent deploys are fast
 because Cloudflare caches the vendored layer.
+
+> Brand images and product media live in R2 directly (operator-uploaded /
+> written by the container's R2 bridge) and aren't repo-sourced, so the
+> sync step only covers the theme stylesheets that ship in the repo. Run
+> `npm run sync-assets` on its own to re-push them without a full deploy.
 
 ## Wire a custom domain
 

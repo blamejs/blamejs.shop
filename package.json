@@ -1,12 +1,14 @@
 {
   "name": "@blamejs/blamejs-shop",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "description": "Open-source framework built on blamejs. Vendored stack, zero npm runtime deps, PQC-first crypto, security-on by default.",
   "main": "lib/index.js",
   "scripts": {
     "start": "node server.js",
     "test": "node test/smoke.js",
-    "vendor": "bash scripts/vendor-update.sh"
+    "vendor": "bash scripts/vendor-update.sh",
+    "sync-assets": "node scripts/sync-r2-assets.js",
+    "deploy": "wrangler deploy && node scripts/sync-r2-assets.js"
   },
   "engines": {
     "node": ">=24.14.1"
