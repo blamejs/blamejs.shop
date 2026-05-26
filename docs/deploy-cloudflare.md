@@ -79,6 +79,16 @@ first deploy:
 npx wrangler d1 migrations apply blamejs-shop --remote
 ```
 
+After the first deploy this is automated: Cloudflare's git-integration
+"Workers Builds" rolls the Worker + container on every push to `main`,
+and the `Cloudflare data sync` GitHub Actions workflow applies any
+pending migrations and syncs the R2 theme assets on the same push (the
+two steps the native build doesn't cover). The apply is idempotent —
+already-recorded migrations are skipped — so the command above stays
+valid for a manual run. Migrations are additive-only, so a container
+rolled out before the sync finishes degrades to the feature's empty
+state and self-heals once the migration lands.
+
 The shipped migration set:
 
 | File                                      | What                                                              |

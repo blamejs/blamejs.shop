@@ -1,25 +1,36 @@
-# Deploy to Cloudflare — the Worker + container, and the R2 theme assets.
+# Post-push data layer for the Cloudflare deploy — R2 theme assets and
+# D1 schema migrations.
 #
-# Cloudflare's git-integration "Workers Builds" auto-deploy is disabled, so
-# this workflow owns the whole deploy. On every push to main (and on manual
-# dispatch):
-#   - `deploy` runs `wrangler deploy`: bundles the Worker, builds the
-#     container image from the Dockerfile (running the in-image smoke
-#     gate), pushes it to the Cloudflare registry, and rolls the deploy.
+# Cloudflare's git-integration "Workers Builds" owns the Worker +
+# container roll on every push to main. It does NOT sync R2 objects or
+# run D1 migrations, so this workflow fills exactly those two gaps — and
+# nothing else. It must never run `wrangler deploy`: a second deploy of
+# the Worker/container races the native build and can leave the container
+# wedged on a mixed image set.
+#
+# On every push to main (and on manual dispatch):
+#   - `migrations` applies any pending D1 migrations under migrations-d1/
+#     to the remote database. Idempotent — wrangler skips migrations
+#     already recorded in the d1_migrations tracking table, so re-runs are
+#     safe and a push with no new migration is a no-op.
 #   - `assets` syncs the theme stylesheets / fonts / island scripts to the
-#     R2 bucket the Worker serves /assets/* from. `wrangler deploy` never
-#     touches R2, so without this a stylesheet/font change would ship a
-#     Worker pointing at stale objects.
+#     R2 bucket the Worker serves /assets/* from.
+#
+# Migrations are additive-only (a new migration never alters an applied
+# one), so a container that the native build rolls out before this
+# workflow finishes degrades gracefully — a feature whose table isn't
+# present yet returns its empty state rather than failing — and self-heals
+# the moment the migration lands.
 #
 # Auth: CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID (the `npm-publish`
-# environment). The token needs Workers Scripts:Edit + Cloudflare
-# Containers + Workers R2 Storage:Edit; an R2-only token can't deploy the
-# Worker/container.
+# environment). The token needs D1:Edit (migrations) + Workers R2
+# Storage:Edit (assets). It does NOT need Workers Scripts:Edit — the
+# native Workers Builds integration owns the Worker/container deploy.
 #
 # Actions are pinned to a 40-char commit SHA; the trailing comment names
 # the tag it resolves to (mutable tag, immutable SHA).
 
-name: Deploy (worker + container + assets)
+name: Cloudflare data sync (R2 assets + D1 migrations)
 
 on:
   push:
@@ -29,22 +40,16 @@ on:
 permissions:
   contents: read
 
-# Never roll two deploys at once; let an in-flight deploy finish rather
-# than cancel it (a cancelled container roll can leave a mixed image set).
+# Never run two data syncs at once; let an in-flight run finish rather
+# than cancel it (a cancelled migration apply could leave the tracking
+# table mid-batch).
 concurrency:
-  group: deploy-prod
+  group: cf-data-sync-prod
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: wrangler deploy (worker + container)
-    # Sync the R2 assets FIRST, then deploy the worker/container that
-    # references them by Subresource Integrity hash — a freshly-deployed
-    # worker must never point at assets not yet in R2, or its pages fail
-    # the integrity check. (The bytes rarely change between releases, so
-    # this only matters on an asset change; content-addressed/fingerprinted
-    # asset names would make it fully race-free — a future refinement.)
-    needs: assets
+  migrations:
+    name: Apply D1 migrations
     runs-on: ubuntu-latest
     environment: npm-publish
     permissions:
@@ -52,19 +57,23 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # GitHub Actions sets CI=true, which puts wrangler in
+      # non-interactive mode so `d1 migrations apply` proceeds without a
+      # confirmation prompt.
+      CI: "true"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
         with: { node-version: '24.14.1' }
       - name: Install wrangler
         run: npm ci
-      - name: Deploy worker + container
+      - name: Apply pending migrations
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set — cannot deploy. Set both environment secrets."
+            echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set — cannot apply D1 migrations."
             exit 1
           fi
-          node node_modules/wrangler/bin/wrangler.js deploy
+          node node_modules/wrangler/bin/wrangler.js d1 migrations apply blamejs-shop --remote
 
   assets:
     name: Sync theme assets to R2
