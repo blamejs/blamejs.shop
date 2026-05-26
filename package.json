@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "test": "node test/smoke.js",
-    "vendor": "bash scripts/vendor-update.sh"
+    "vendor": "bash scripts/vendor-update.sh",
+    "sync-assets": "node scripts/sync-r2-assets.js",
+    "deploy": "wrangler deploy && node scripts/sync-r2-assets.js"
   },
   "engines": {
     "node": ">=24.14.1"

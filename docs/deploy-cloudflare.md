@@ -133,13 +133,24 @@ the operator sets the bridge secret + any application-level secrets:
 ## Deploy
 
 ```bash
-npx wrangler deploy
+npm run deploy
 ```
 
-This builds the Dockerfile, pushes the container image to
-Cloudflare's registry, and updates the Worker. The first deploy can
-take a few minutes for the image build; subsequent deploys are fast
+This runs `wrangler deploy` — which builds the Dockerfile, pushes the
+container image to Cloudflare's registry, and updates the Worker — and
+then `scripts/sync-r2-assets.js`, which uploads the theme stylesheets to
+the R2 bucket the Worker serves `/assets/*` from. **Both steps matter:**
+`wrangler deploy` ships the Worker + container but does *not* touch R2, so
+running it alone leaves the freshly-deployed HTML pointing at a stale
+stylesheet (new markup, old CSS — an "old UI" that's really a missing
+asset sync). `npm run deploy` keeps them in lockstep. The first deploy
+can take a few minutes for the image build; subsequent deploys are fast
 because Cloudflare caches the vendored layer.
+
+> Brand images and product media live in R2 directly (operator-uploaded /
+> written by the container's R2 bridge) and aren't repo-sourced, so the
+> sync step only covers the theme stylesheets that ship in the repo. Run
+> `npm run sync-assets` on its own to re-push them without a full deploy.
 
 ## Wire a custom domain
 
