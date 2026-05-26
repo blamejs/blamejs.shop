@@ -397,3 +397,206 @@ export async function listProductQaThreads(DB, productId, limit) {
   }
 }
 
+// Current price (minor units) for a SKU in `currency`, or null. The
+// edge has no catalog primitive; this reads the variant → price join
+// directly. Used by the bundle pricer + the quantity-break sampler.
+async function _skuPriceMinor(DB, sku, currency) {
+  var row = await DB
+    .prepare(
+      "SELECT pr.amount_minor AS amount_minor, pr.currency AS currency " +
+      "FROM variants v " +
+      "JOIN prices pr ON pr.variant_id = v.id AND pr.currency = ?2 AND pr.effective_until IS NULL " +
+      "WHERE v.sku = ?1 LIMIT 1"
+    )
+    .bind(sku, currency)
+    .first();
+  return row && Number.isInteger(Number(row.amount_minor))
+    ? { amount_minor: Number(row.amount_minor), currency: row.currency }
+    : null;
+}
+
+// Is a SKU buyable at the edge — a real variant that isn't sold out?
+// A SKU with no inventory row is treated as available (the operator
+// hasn't opted into stock tracking), matching the container.
+async function _skuBuyableEdge(DB, sku) {
+  var v = await DB.prepare("SELECT id, product_id, title FROM variants WHERE sku = ?1 LIMIT 1").bind(sku).first();
+  if (!v) return null;
+  var inv = await DB.prepare("SELECT stock_on_hand, stock_held FROM inventory WHERE sku = ?1 LIMIT 1").bind(sku).first();
+  if (inv && (Number(inv.stock_on_hand) - Number(inv.stock_held)) <= 0) return false;
+  return v;
+}
+
+// Display title for a member SKU — the owning product's title, falling
+// back to the variant title, then the raw SKU.
+async function _memberTitle(DB, sku) {
+  var v = await DB.prepare("SELECT product_id, title FROM variants WHERE sku = ?1 LIMIT 1").bind(sku).first();
+  if (!v) return sku;
+  var p = await DB.prepare("SELECT title FROM products WHERE id = ?1 LIMIT 1").bind(v.product_id).first();
+  return (p && p.title) || v.title || sku;
+}
+
+// Bundle offers for a product's variant SKUs — the edge mirror of
+// `lib/storefront.js#_resolveBundleOffers`. Finds every bundle that
+// lists one of `variantSkus` as a direct component, prices it from the
+// live catalog (sum-of-parts vs the stored basis-point discount,
+// integer-floor — matching `lib/bundles.js#priceBundle`), checks every
+// member is buyable, and returns minor-unit offers the edge renderer
+// formats. Missing-table-resilient: returns [] so the PDP renders
+// without the rail.
+export async function getBundlesForProduct(DB, variantSkus, currency) {
+  var cur = (typeof currency === "string" && currency.length === 3) ? currency : "USD";
+  if (!Array.isArray(variantSkus) || variantSkus.length === 0) return [];
+  var seen = Object.create(null);
+  var offers = [];
+  try {
+    for (var s = 0; s < variantSkus.length; s += 1) {
+      var bRes = await DB
+        .prepare(
+          "SELECT DISTINCT bc.bundle_sku FROM bundle_components bc " +
+          "JOIN bundles bn ON bn.bundle_sku = bc.bundle_sku " +
+          "WHERE bc.sku = ?1 ORDER BY bn.updated_at DESC, bn.bundle_sku DESC"
+        )
+        .bind(variantSkus[s])
+        .all();
+      var bundleSkus = (bRes && bRes.results) ? bRes.results : [];
+      for (var i = 0; i < bundleSkus.length; i += 1) {
+        var bundleSku = bundleSkus[i].bundle_sku;
+        if (seen[bundleSku]) continue;
+        seen[bundleSku] = true;
+
+        var bundleRow = await DB.prepare("SELECT * FROM bundles WHERE bundle_sku = ?1 LIMIT 1").bind(bundleSku).first();
+        if (!bundleRow) continue;
+        var compRes = await DB
+          .prepare(
+            "SELECT sku, quantity FROM bundle_components WHERE bundle_sku = ?1 ORDER BY sort_order ASC, sku ASC"
+          )
+          .bind(bundleSku)
+          .all();
+        var comps = (compRes && compRes.results) ? compRes.results : [];
+
+        var componentsOut = [];
+        var allBuyable = true;
+        var priceable = true;
+        var listMinor = 0;
+        var priceCurrency = cur;
+        for (var j = 0; j < comps.length; j += 1) {
+          var comp = comps[j];
+          var qty = Number(comp.quantity);
+          var buyable = await _skuBuyableEdge(DB, comp.sku);
+          if (!buyable) allBuyable = false;
+          componentsOut.push({ sku: comp.sku, quantity: qty, title: await _memberTitle(DB, comp.sku) });
+          var price = await _skuPriceMinor(DB, comp.sku, cur);
+          if (!price) { priceable = false; continue; }
+          priceCurrency = price.currency;
+          listMinor += price.amount_minor * qty;
+        }
+
+        var discountBps = bundleRow.bundle_discount_bps;
+        var discountMinor = 0;
+        if (priceable && discountBps != null && Number(discountBps) > 0) {
+          discountMinor = Math.floor((listMinor * Number(discountBps)) / 10000);
+        }
+        var amountMinor = listMinor - discountMinor;
+        var available = allBuyable && priceable;
+
+        offers.push({
+          bundle_sku:         bundleSku,
+          title:              bundleRow.title,
+          components:         componentsOut,
+          list_total_minor:   listMinor,
+          amount_minor:       amountMinor,
+          discount_minor:     priceable ? discountMinor : 0,
+          currency:           priceCurrency,
+          available:          available,
+          unavailable_reason: available
+            ? null
+            : (!priceable
+                ? "Pricing for this bundle isn't available right now."
+                : "One or more items in this bundle are out of stock."),
+        });
+      }
+    }
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return [];
+    throw e;
+  }
+  return offers;
+}
+
+// Quantity-break rows for a SKU against `unitMinor` — the edge mirror
+// of `lib/storefront.js#_resolveQtyBreaks`. Reads the active sku-scoped
+// tier sets + their tiers and replays the kind-specific unit-price math
+// (`lib/quantity-discounts.js#_applyRule`) so the displayed "price
+// each" matches what the cart charges at that quantity. Returns
+// ascending range rows ("1–4", "5–9", "10+") in minor units (the edge
+// renderer formats); [] when no active sku-scoped schedule exists. The
+// `money` arg is the `worker/b.js` handle (the data layer takes no
+// import so it stays format-agnostic). Missing-table-resilient.
+export async function getQtyBreaksForSku(DB, sku, unitMinor, currency, money) {
+  var cur = (typeof currency === "string" && currency.length === 3) ? currency : "USD";
+  if (typeof sku !== "string" || !sku.length || !Number.isInteger(unitMinor)) return [];
+  var tiers = [];
+  try {
+    var setsRes = await DB
+      .prepare("SELECT id FROM qd_tier_sets WHERE scope = 'sku' AND scope_id = ?1 AND archived_at IS NULL")
+      .bind(sku)
+      .all();
+    var sets = (setsRes && setsRes.results) ? setsRes.results : [];
+    for (var i = 0; i < sets.length; i += 1) {
+      var tRes = await DB
+        .prepare(
+          "SELECT min_quantity, discount_kind, value FROM qd_tiers WHERE tier_set_id = ?1 ORDER BY min_quantity ASC"
+        )
+        .bind(sets[i].id)
+        .all();
+      var rows = (tRes && tRes.results) ? tRes.results : [];
+      for (var j = 0; j < rows.length; j += 1) tiers.push(rows[j]);
+    }
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return [];
+    throw e;
+  }
+  if (tiers.length === 0) return [];
+  tiers.sort(function (a, b2) { return Number(a.min_quantity) - Number(b2.min_quantity); });
+
+  function _discountedUnit(kind, value, minQty) {
+    var v = Number(value);
+    if (kind === "percent_off") {
+      var keepBps = 10000 - v;
+      if (keepBps < 0) keepBps = 0;
+      var priced = money.of(BigInt(unitMinor), cur).multiply([BigInt(keepBps), BigInt(10000)]);
+      var u = Number(priced.toMinorUnits());
+      return u < 0 ? 0 : u;
+    }
+    if (kind === "amount_off_each") {
+      var u2 = unitMinor - v;
+      return u2 < 0 ? 0 : u2;
+    }
+    if (kind === "amount_off_total") {
+      var listLine = unitMinor * minQty;
+      var sub = listLine - v;
+      if (sub < 0) sub = 0;
+      var eff = money.of(BigInt(sub), cur).multiply([1n, BigInt(minQty)]);
+      return Number(eff.toMinorUnits());
+    }
+    if (kind === "fixed_each_price") {
+      return v < 0 ? 0 : v;
+    }
+    return unitMinor;
+  }
+
+  var out = [];
+  if (Number(tiers[0].min_quantity) > 1) {
+    out.push({ label: "1–" + (Number(tiers[0].min_quantity) - 1), unit_minor: unitMinor, currency: cur });
+  }
+  for (var k = 0; k < tiers.length; k += 1) {
+    var t = tiers[k];
+    var next = tiers[k + 1];
+    var minQ = Number(t.min_quantity);
+    var label = next ? (minQ + "–" + (Number(next.min_quantity) - 1)) : (minQ + "+");
+    var unit = _discountedUnit(t.discount_kind, t.value, minQ);
+    out.push({ label: label, unit_minor: unit, currency: cur });
+  }
+  return out;
+}
+

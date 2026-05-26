@@ -165,10 +165,12 @@ var PRODUCT_PAGE =
   "          </table>\n" +
   "        </div>\n" +
   "      </div>\n" +
+  "      RAW_QTYBREAK_PLACEHOLDER\n" +
   "      RAW_WISHLIST_PLACEHOLDER\n" +
   "      RAW_COMPARE_PLACEHOLDER\n" +
   "    </div>\n" +
   "  </div>\n" +
+  "  RAW_BUNDLES_PLACEHOLDER\n" +
   "  RAW_REVIEWS_PLACEHOLDER\n" +
   "  RAW_QA_PLACEHOLDER\n" +
   "</section>\n";
@@ -372,6 +374,92 @@ function _buildProductQa(questions, ctaHtml) {
          "</section>";
 }
 
+// Builds the PDP "Bundle & save" rail. `offers` carry pre-formatted
+// price strings (the edge renderer formats the minor-unit figures from
+// `worker/data/catalog.js#getBundlesForProduct` before calling this) so
+// this is pure string assembly. Mirrors the container renderer
+// (`lib/storefront.js#_renderBundles`) byte-for-byte so both render
+// paths emit identical markup. An unavailable offer renders disabled
+// with a reason instead of the add form. Returns "" when there are no
+// offers so the PDP shows no empty rail.
+function _buildBundles(offers) {
+  offers = offers || [];
+  if (offers.length === 0) return "";
+  var cards = "";
+  for (var i = 0; i < offers.length; i += 1) {
+    var o = offers[i];
+    var members = "";
+    for (var j = 0; j < o.components.length; j += 1) {
+      var c = o.components[j];
+      members +=
+        "<li class=\"bundle-card__member\">" +
+          "<span class=\"bundle-card__member-qty\">" + escapeHtml(String(c.quantity)) + "&times;</span> " +
+          "<span class=\"bundle-card__member-title\">" + escapeHtml(String(c.title)) + "</span> " +
+          "<code class=\"bundle-card__member-sku\">" + escapeHtml(String(c.sku)) + "</code>" +
+        "</li>";
+    }
+    var pricing =
+      "<div class=\"bundle-card__pricing\">" +
+        "<span class=\"bundle-card__list\">Buy separately " + escapeHtml(o.list_total_str) + "</span>" +
+        "<span class=\"bundle-card__price price\">Bundle price " + escapeHtml(o.amount_str) + "</span>" +
+        (o.discount_str ? "<span class=\"bundle-card__save\">You save " + escapeHtml(o.discount_str) + "</span>" : "") +
+      "</div>";
+    var action;
+    if (o.available) {
+      action =
+        "<form method=\"post\" action=\"/cart/bundle\" class=\"bundle-card__form\">" +
+          "<input type=\"hidden\" name=\"bundle_sku\" value=\"" + escapeHtml(o.bundle_sku) + "\">" +
+          "<button type=\"submit\" class=\"btn-primary btn-primary--sm\">Add bundle to cart</button>" +
+        "</form>";
+    } else {
+      action =
+        "<p class=\"bundle-card__unavailable\">" +
+          escapeHtml(o.unavailable_reason || "This bundle is currently unavailable.") +
+        "</p>";
+    }
+    cards +=
+      "<article class=\"bundle-card" + (o.available ? "" : " bundle-card--unavailable") + "\">" +
+        "<h3 class=\"bundle-card__title\">" + escapeHtml(String(o.title)) + "</h3>" +
+        "<ul class=\"bundle-card__members\">" + members + "</ul>" +
+        pricing +
+        action +
+      "</article>";
+  }
+  return "<section class=\"bundles\" aria-labelledby=\"bundles-title\">" +
+           "<h2 id=\"bundles-title\" class=\"bundles__heading\">Bundle &amp; save</h2>" +
+           "<div class=\"bundles__grid\">" + cards + "</div>" +
+         "</section>";
+}
+
+// Builds the PDP quantity-break table. `breaks` carry pre-formatted
+// unit-price strings (the edge renderer formats the minor-unit figures
+// from `worker/data/catalog.js#getQtyBreaksForSku` first). Mirrors the
+// container renderer (`lib/storefront.js#_renderQtyBreaks`) byte-for-
+// byte. Returns "" when there are no breaks.
+function _buildQtyBreaks(breaks) {
+  breaks = breaks || [];
+  if (breaks.length === 0) return "";
+  var rows = "";
+  for (var i = 0; i < breaks.length; i += 1) {
+    var br = breaks[i];
+    rows +=
+      "<tr>" +
+        "<td class=\"qty-break__range\">" + escapeHtml(String(br.label)) + "</td>" +
+        "<td class=\"qty-break__unit price\">" + escapeHtml(String(br.unit_str)) + "</td>" +
+      "</tr>";
+  }
+  return "<div class=\"qty-breaks\">" +
+           "<h2 class=\"qty-breaks__title\">Buy more, save more</h2>" +
+           "<div class=\"table-scroll\">" +
+             "<table class=\"qty-break-table\">" +
+               "<thead><tr><th>Quantity</th><th>Price each</th></tr></thead>" +
+               "<tbody>" + rows + "</tbody>" +
+             "</table>" +
+           "</div>" +
+           "<p class=\"qty-breaks__note\">Discount applies automatically in your cart.</p>" +
+         "</div>";
+}
+
 
 function _wrap(opts) {
   var shopName      = opts.shopName || "blamejs.shop";
@@ -438,6 +526,25 @@ export function renderProduct(opts) {
   var reviewForm    = typeof opts.reviewForm === "string" ? opts.reviewForm : "";
   var qaQuestions   = opts.qaQuestions || [];
   var qaForm        = typeof opts.qaForm === "string" ? opts.qaForm : "";
+  // Bundle offers + quantity-break rows arrive in minor units from the
+  // edge data layer; format them into the same display-string shape the
+  // container builds before handing to the shared markup assemblers, so
+  // the two render paths emit byte-identical HTML.
+  var bundleOffers  = (opts.bundleOffers || []).map(function (o) {
+    return {
+      bundle_sku:         o.bundle_sku,
+      title:              o.title,
+      components:         o.components,
+      list_total_str:     formatPrice(o.list_total_minor, o.currency),
+      amount_str:         formatPrice(o.amount_minor, o.currency),
+      discount_str:       o.discount_minor > 0 ? formatPrice(o.discount_minor, o.currency) : null,
+      available:          o.available,
+      unavailable_reason: o.unavailable_reason,
+    };
+  });
+  var qtyBreaks     = (opts.qtyBreaks || []).map(function (br) {
+    return { label: br.label, unit_str: formatPrice(br.unit_minor, br.currency) };
+  });
   var wishlistCount = opts.wishlistCount == null ? 0 : opts.wishlistCount;
   var shopName    = opts.shopName || "blamejs.shop";
   var cartCount   = opts.cartCount == null ? 0 : opts.cartCount;
@@ -463,6 +570,8 @@ export function renderProduct(opts) {
   var galleryHtml = _buildPdpGallery(product, media, assetPrefix);
   var reviewsHtml = _buildReviews(reviewSummary, reviews, reviewForm);
   var qaHtml = _buildProductQa(qaQuestions, qaForm);
+  var bundlesHtml = _buildBundles(bundleOffers);
+  var qtyBreaksHtml = _buildQtyBreaks(qtyBreaks);
   var wishlistHtml = _buildWishlist(product.id, wishlistCount);
   var compareHtml = _buildCompare(product.id);
   var body = renderTemplate(PRODUCT_PAGE, {
@@ -472,8 +581,10 @@ export function renderProduct(opts) {
   })
     .replace("RAW_GALLERY_PLACEHOLDER", galleryHtml)
     .replace("RAW_ROWS_PLACEHOLDER", rows)
+    .replace("RAW_QTYBREAK_PLACEHOLDER", qtyBreaksHtml)
     .replace("RAW_WISHLIST_PLACEHOLDER", wishlistHtml)
     .replace("RAW_COMPARE_PLACEHOLDER", compareHtml)
+    .replace("RAW_BUNDLES_PLACEHOLDER", bundlesHtml)
     .replace("RAW_REVIEWS_PLACEHOLDER", reviewsHtml)
     .replace("RAW_QA_PLACEHOLDER", qaHtml);
 
