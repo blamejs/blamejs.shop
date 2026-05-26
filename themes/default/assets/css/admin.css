@@ -1,0 +1,190 @@
+/* =================================================================
+   blamejs.shop — admin console
+   Served from /assets so the strict `style-src 'self'` CSP allows it
+   (an inline <style> block or inline style="" attributes are refused
+   by the same policy). Self-hosted fonts under ../fonts keep
+   `font-src 'self'` clean — no cross-origin font CDN.
+   ================================================================= */
+
+/* ---- self-hosted typography (Inter / Inter Tight, latin subset) --
+   SIL OFL 1.1 — see ../fonts/OFL.txt. Same-origin so it loads under
+   `font-src 'self'`; `font-display:swap` paints text immediately in
+   the system fallback, then swaps when the file arrives. */
+@font-face {
+  font-family: "Inter"; font-style: normal; font-weight: 400;
+  font-display: swap; src: url("../fonts/inter-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter"; font-style: normal; font-weight: 500;
+  font-display: swap; src: url("../fonts/inter-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter"; font-style: normal; font-weight: 600;
+  font-display: swap; src: url("../fonts/inter-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter Tight"; font-style: normal; font-weight: 600;
+  font-display: swap; src: url("../fonts/inter-tight-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter Tight"; font-style: normal; font-weight: 700;
+  font-display: swap; src: url("../fonts/inter-tight-700.woff2") format("woff2");
+}
+
+:root {
+  --ink:#191919; --ink-2:#414141; --mute:#727272; --hair:#e3e3e3;
+  --hair-2:#efefef; --paper:#ffffff; --bg:#f6f5f3; --accent:#fa4f09;
+  --accent-d:#d8410a; --accent-tint:#fff3ee;
+  --font-display:"Inter Tight","Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-body:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,"JetBrains Mono",monospace;
+  --shadow-sm:0 1px 2px rgba(15,15,15,.04), 0 1px 3px rgba(15,15,15,.06);
+  --shadow-md:0 10px 30px -18px rgba(15,15,15,.35);
+  --radius:10px;
+}
+* { box-sizing: border-box; }
+html, body { margin:0; padding:0; background:var(--bg); }
+body { font-family:var(--font-body); color:var(--ink); font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }
+h1, h2, h3, h4 { font-family:var(--font-display); font-weight:700; letter-spacing:-0.011em; margin:0 0 .65rem; }
+a { color:var(--accent-d); }
+
+/* ---- header + nav ------------------------------------------------ */
+.admin-header { background:var(--ink); color:var(--paper); border-bottom:3px solid var(--accent); }
+.admin-header__inner { max-width:80rem; margin:0 auto; padding:1.15rem 1.5rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+.admin-header h1 { color:var(--paper); font-size:1.05rem; margin:0; font-weight:600; letter-spacing:.04em; text-transform:uppercase; }
+.admin-header .brand-accent { color:var(--accent); }
+.window-label { font-size:.8rem; color:#a9a9a9; }
+.admin-nav { background:var(--paper); border-bottom:1px solid var(--hair); position:sticky; top:0; z-index:5; }
+.admin-nav__inner { max-width:80rem; margin:0 auto; padding:0 1.5rem; display:flex; gap:.15rem; flex-wrap:wrap; }
+.admin-nav a { display:inline-block; padding:.85rem .95rem; color:var(--ink-2); text-decoration:none; font-size:.84rem; font-weight:600; border-bottom:2px solid transparent; transition:color .12s, border-color .12s; }
+.admin-nav a:hover { color:var(--ink); }
+.admin-nav a.active { color:var(--accent); border-bottom-color:var(--accent); }
+
+main { max-width:80rem; margin:0 auto; padding:2.5rem 1.5rem 5rem; }
+section { margin-bottom:2.5rem; }
+section h2 { font-size:1.15rem; letter-spacing:-0.01em; margin-bottom:1.1rem; }
+
+/* ---- stat cards -------------------------------------------------- */
+.stat-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(12rem, 1fr)); gap:1rem; }
+.stat-card { background:var(--paper); border:1px solid var(--hair); border-radius:var(--radius); padding:1.25rem 1.4rem; box-shadow:var(--shadow-sm); }
+.stat-card .label { font-size:.72rem; text-transform:uppercase; letter-spacing:.07em; color:var(--mute); font-weight:600; }
+.stat-card .value { font-family:var(--font-display); font-weight:700; font-size:1.85rem; color:var(--ink); margin-top:.35rem; line-height:1.1; letter-spacing:-0.02em; }
+.stat-card .value.accent { color:var(--accent); }
+
+/* ---- panels + layout -------------------------------------------- */
+.panel { background:var(--paper); border:1px solid var(--hair); border-radius:var(--radius); padding:1.5rem; box-shadow:var(--shadow-sm); }
+.two-col { display:grid; grid-template-columns:2fr 1fr; gap:1.5rem; align-items:start; }
+@media (max-width: 56rem) { .two-col { grid-template-columns:1fr; } }
+
+/* ---- tables ------------------------------------------------------ */
+table { width:100%; border-collapse:collapse; font-size:.9rem; }
+thead th { text-align:left; padding:.7rem .75rem; border-bottom:2px solid var(--ink); font-family:var(--font-display); font-weight:600; font-size:.72rem; letter-spacing:.05em; text-transform:uppercase; color:var(--mute); }
+tbody td { padding:.7rem .75rem; border-bottom:1px solid var(--hair-2); }
+tbody tr:last-child td { border-bottom:none; }
+tbody tr:hover td { background:#fbfaf9; }
+td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+tr.row--low td { background:#fff8e1; }
+
+/* ---- status pills ------------------------------------------------ */
+.status-pill { display:inline-block; padding:.15rem .55rem; border-radius:999px; font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.04em; background:var(--bg); color:var(--ink-2); border:1px solid var(--hair); }
+.status-pill.paid, .status-pill.fulfilling, .status-pill.shipped, .status-pill.delivered { background:#e9f5ec; color:#1f6b3a; border-color:#bfe1c9; }
+.status-pill.refunded { background:#fff1eb; color:var(--accent-d); border-color:#f6c5af; }
+.status-pill.cancelled { background:#f2f2f2; color:var(--mute); }
+.status-pill.pending { background:#fff8e1; color:#7a5d0f; border-color:#f1e1a8; }
+
+/* ---- sparkline + misc surfaces ----------------------------------- */
+.spark { width:100%; height:8rem; background:var(--bg); border:1px solid var(--hair); border-radius:8px; padding:.5rem; }
+.spark svg { display:block; width:100%; height:100%; }
+.empty { color:var(--mute); font-style:italic; padding:1.25rem 0; text-align:center; }
+.meta { color:var(--mute); font-size:.85rem; margin-bottom:1rem; }
+.order-id { font-family:var(--font-mono); font-size:.78rem; color:var(--ink-2); }
+
+/* ---- forms ------------------------------------------------------- */
+.form-field { display:block; margin-bottom:1.1rem; }
+.form-field span { display:block; font-size:.74rem; text-transform:uppercase; letter-spacing:.05em; color:var(--mute); font-weight:600; margin-bottom:.35rem; }
+.form-field input, .form-field select { width:100%; max-width:28rem; padding:.6rem .75rem; border:1px solid var(--hair); border-radius:8px; font:inherit; background:var(--paper); }
+.form-field input:focus, .form-field select:focus { outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent); }
+.form-field small { display:block; color:var(--mute); font-size:.78rem; margin-top:.3rem; }
+
+/* ---- buttons ----------------------------------------------------- */
+.btn { display:inline-flex; align-items:center; gap:.4rem; background:var(--accent); color:var(--paper); border:1px solid var(--accent); padding:.6rem 1.1rem; border-radius:8px; font-family:var(--font-display); font-weight:700; font-size:.82rem; letter-spacing:.03em; text-transform:uppercase; text-decoration:none; cursor:pointer; transition:background .12s, border-color .12s, transform .04s; }
+.btn:hover { background:var(--accent-d); border-color:var(--accent-d); }
+.btn:active { transform:translateY(1px); }
+.btn--ghost { background:transparent; color:var(--ink); border-color:var(--ink); }
+.btn--ghost:hover { background:var(--ink); color:var(--paper); }
+.btn--danger { background:transparent; color:var(--accent-d); border-color:var(--accent-d); }
+.btn--danger:hover { background:var(--accent-d); color:var(--paper); }
+
+/* ---- chips / filters --------------------------------------------- */
+.order-filters { display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:1.25rem; }
+.chip { display:inline-block; padding:.3rem .8rem; border-radius:999px; border:1px solid var(--hair); color:var(--ink-2); text-decoration:none; font-size:.78rem; text-transform:capitalize; background:var(--paper); }
+.chip:hover { border-color:var(--accent); }
+.chip--on { background:var(--ink); color:var(--paper); border-color:var(--ink); }
+
+/* ---- order detail ------------------------------------------------ */
+.order-totals { width:100%; }
+.order-totals td { padding:.3rem 0; border:none; }
+.order-actions { display:flex; flex-wrap:wrap; gap:.6rem; }
+.return-actions { display:grid; grid-template-columns:repeat(auto-fit,minmax(16rem,1fr)); gap:1.25rem; }
+.return-action { border:1px solid var(--hair); border-radius:var(--radius); padding:1rem; }
+.return-action h4 { margin:0 0 .6rem; font-size:.9rem; }
+
+/* ---- reviews ----------------------------------------------------- */
+.review-card { margin-bottom:1rem; }
+.review-card__head { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-bottom:.5rem; }
+.review-card__body { margin:.25rem 0 .75rem; white-space:pre-wrap; }
+.review-stars { color:#c9821f; letter-spacing:.1em; }
+.review-reject { display:inline-flex; gap:.4rem; align-items:center; }
+.review-reject input { padding:.45rem .6rem; border:1px solid var(--hair); border-radius:6px; font-size:.82rem; }
+
+/* ---- inventory inline row form ----------------------------------- */
+.inv-row-form { display:flex; gap:.4rem; align-items:center; }
+.inv-row-form input { padding:.4rem .5rem; border:1px solid var(--hair); border-radius:6px; font-size:.82rem; }
+
+/* ---- nav cards (landing) ----------------------------------------- */
+.nav-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(14rem,1fr)); gap:1rem; }
+.nav-card { display:block; background:var(--paper); border:1px solid var(--hair); border-radius:var(--radius); padding:1.4rem; text-decoration:none; color:var(--ink); box-shadow:var(--shadow-sm); transition:border-color .12s, box-shadow .12s, transform .08s; }
+.nav-card:hover { border-color:var(--accent); box-shadow:var(--shadow-md); transform:translateY(-2px); }
+.nav-card h3 { margin:0 0 .35rem; font-size:1.05rem; }
+.nav-card p { margin:0; color:var(--mute); font-size:.88rem; }
+
+/* ---- banners ----------------------------------------------------- */
+.banner { padding:.9rem 1.1rem; border-radius:var(--radius); margin-bottom:1.5rem; font-size:.92rem; }
+.banner a { font-weight:600; }
+.banner--warn { background:#fff8e1; border:1px solid #f1e1a8; color:#7a5d0f; }
+.banner--ok { background:#e9f5ec; border:1px solid #bfe1c9; color:#1f6b3a; }
+.banner--err { background:var(--accent-tint); border:1px solid #f6c5af; color:var(--accent-d); }
+.actions-row { display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; margin-top:1.5rem; }
+
+/* ---- sign-in card ------------------------------------------------ */
+.signin-wrap { min-height:50vh; display:flex; align-items:center; justify-content:center; padding:1rem 0; }
+.signin-card { width:100%; max-width:25rem; background:var(--paper); border:1px solid var(--hair); border-radius:14px; padding:2.25rem 2rem; box-shadow:var(--shadow-md); }
+.signin-card h2 { font-size:1.3rem; margin:0 0 .4rem; }
+.signin-card .signin-lede { color:var(--mute); font-size:.9rem; margin:0 0 1.5rem; }
+.signin-card .btn { width:100%; justify-content:center; padding:.7rem 1.1rem; }
+.signin-mark { display:inline-flex; align-items:center; gap:.5rem; font-family:var(--font-display); font-weight:700; font-size:.85rem; letter-spacing:.06em; text-transform:uppercase; color:var(--mute); margin-bottom:1.5rem; }
+.signin-mark .dot { width:.55rem; height:.55rem; border-radius:50%; background:var(--accent); }
+
+/* ---- utilities (replace former inline style="" — refused by CSP) - */
+.subhead { font-family:var(--font-display); font-weight:700; font-size:.95rem; margin:0 0 .75rem; }
+.subhead--sp { margin-top:1.25rem; }
+.subhead--sp-lg { margin-top:1.5rem; }
+.form-inline { display:inline; }
+.mt { margin-top:1.5rem; }
+.mt-1 { margin-top:1rem; }
+.mt-125 { margin-top:1.25rem; }
+.mw-30 { max-width:30rem; }
+.mw-34 { max-width:34rem; }
+.mw-40 { max-width:40rem; }
+.mw-42 { max-width:42rem; }
+.mw-48 { max-width:48rem; }
+.input-code { text-transform:uppercase; max-width:8rem; }
+.input-narrow { width:6rem; }
+.u-mute { color:var(--mute); }
+.fs-105 { font-size:1.05rem; }
+.kv { display:block; margin:.3rem 0; }
+.m-04 { margin:.4rem 0; }
+.legend-sm { padding:0 .4rem; font-size:.85rem; }
+fieldset.box legend { font-family:var(--font-display); font-weight:600; }
+.box { border:1px solid var(--hair); border-radius:.5rem; padding:.75rem 1rem; margin:1rem 0; }
+.code-block { white-space:pre-wrap; word-break:break-all; background:var(--bg); border:1px solid var(--hair); border-radius:.5rem; padding:.75rem; }

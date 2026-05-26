@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.1.23",
+  "date": "2026-05-25",
+  "headline": "The admin console renders styled again, and both surfaces now self-host their fonts",
+  "summary": "The admin console shipped its design system as an inline <style> block, inline style=\"\" attributes, and a cross-origin Google Fonts link — all three of which the strict `style-src 'self'` / `font-src 'self'` CSP that governs container-served routes refuses, so the console rendered as an unstyled page in production. Its styling now lives in an external stylesheet served from /assets (like the storefront's), and the typeface is self-hosted, so the console renders as designed under the same CSP that protects it. Both the storefront and the console now serve Inter from /assets rather than naming it and hoping the visitor has it installed.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Admin console renders unstyled in production", "body": "Every `/admin` screen built its design system three ways the strict CSP refuses: an inline `<style>` block, inline `style=\"\"` attributes, and a `<link>` to fonts.googleapis.com. Container-served routes run under `style-src 'self'` / `font-src 'self'`, which drops all three — so the console arrived as unstyled HTML (a plain page) once deployed, even though it looked correct in isolation. The styling now ships as `/assets/themes/default/css/admin.css`, an external file `'self'` allows, linked with a `sha384` Subresource Integrity digest so the browser rejects a tampered or stale object; the inline attributes are gone, folded into that stylesheet. A render-shell test asserts every admin screen links the external stylesheet, carries no inline styles, and pulls no third-party font host, so the regression can't return. Operators redeploy to pick this up — `npm run deploy` uploads the new stylesheet (and the fonts below) to R2 as part of the asset sync." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Inter is self-hosted on both the storefront and the console", "body": "The default theme named Inter / Inter Tight first in its font stack but shipped no font files, so the intended typography only rendered for visitors who happened to have Inter installed locally — everyone else fell back to a system sans-serif. The latin subset of Inter (400/500/600) and Inter Tight (600/700) now ships under `themes/default/assets/fonts` and is referenced via `@font-face`, so the typeface renders for every visitor and loads same-origin under `font-src 'self'` — no cross-origin font CDN on any page. The fonts are SIL OFL 1.1 (license alongside the files); `font-display:swap` paints text immediately in the system fallback and swaps when the file arrives." },
+        { "title": "Admin console visual refresh", "body": "With the stylesheet external it also got a pass: a proper centered sign-in card (replacing the bare form that was the first thing an operator saw), softer surfaces and shadows on cards and panels, a sticky console nav, and consistent spacing. The brand palette (ink + the storefront's accent) and every screen's structure are unchanged — this is presentation only." }
+      ]
+    }
+  ]
+}

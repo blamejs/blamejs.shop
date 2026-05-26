@@ -5,6 +5,32 @@
    passing `theme_css` to the storefront renderers.
    ================================================================= */
 
+/* ---- self-hosted typography (Inter / Inter Tight, latin subset) --
+   SIL OFL 1.1 — see ../fonts/OFL.txt. Self-hosted so the named fonts
+   in --font-display / --font-body actually render for every visitor
+   (not just those with Inter installed locally) and load under a
+   strict `font-src 'self'` policy — no cross-origin font CDN. */
+@font-face {
+  font-family: "Inter"; font-style: normal; font-weight: 400;
+  font-display: swap; src: url("../fonts/inter-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter"; font-style: normal; font-weight: 500;
+  font-display: swap; src: url("../fonts/inter-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter"; font-style: normal; font-weight: 600;
+  font-display: swap; src: url("../fonts/inter-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter Tight"; font-style: normal; font-weight: 600;
+  font-display: swap; src: url("../fonts/inter-tight-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter Tight"; font-style: normal; font-weight: 700;
+  font-display: swap; src: url("../fonts/inter-tight-700.woff2") format("woff2");
+}
+
 :root {
   /* ---- palette --------------------------------------------------- */
   --ink:        #0d0d0d;
