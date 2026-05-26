@@ -262,6 +262,27 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // powers the post-purchase "Customers also bought" rail.
       var recommendations = (catalog && cart) ? bShop.recommendations.create({ catalog: catalog }) : null;
 
+      // Bundles — virtual kit SKUs surfaced on the PDP as a "Bundle &
+      // save" rail with an atomic add-all-members action. Composes the
+      // catalog handle (component SKUs resolve through it) + a cursor
+      // secret for the operator-facing list. The storefront prices each
+      // bundle server-side from the live catalog.
+      var bundlesCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("bundles-cursor", process.env.D1_BRIDGE_SECRET)
+        : "bundles-cursor-secret-dev-only";
+      var bundles = (catalog && cart)
+        ? bShop.bundles.create({ catalog: catalog, cursorSecret: bundlesCursorSecret })
+        : null;
+
+      // Quantity discounts — automatic per-line price breaks ("buy 5,
+      // save 10%"). Surfaced on the PDP as a quantity-break table and
+      // applied server-side at cart render + checkout so the line +
+      // cart totals reflect the break. Composes the catalog handle for
+      // the sku-scope referential check.
+      var quantityDiscounts = (catalog && cart)
+        ? bShop.quantityDiscounts.create({ catalog: catalog })
+        : null;
+
       // Collections — operator-curated + smart product lists, surfaced
       // as public /collections browse pages. Needs the catalog handle
       // (smart collections walk the catalog) + a cursor secret.
@@ -515,6 +536,11 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;
         if (productCompare) sfDeps.productCompare = productCompare;
         if (recommendations) sfDeps.recommendations = recommendations;
+        // Bundles + quantity discounts — the PDP "Bundle & save" rail +
+        // atomic bundle add, and the quantity-break table + cart/checkout
+        // repricing. Both price server-side from the live catalog.
+        if (bundles) sfDeps.bundles = bundles;
+        if (quantityDiscounts) sfDeps.quantityDiscounts = quantityDiscounts;
         // Subscription self-management (/account/subscriptions) — the
         // shared instance. The list renders read-only without payment;
         // the cancel route mounts only when `sfDeps.payment` is wired
@@ -595,7 +621,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
             tax: sfTax, shipping: sfShipping, payment: sfPayment, order: sfOrder,
             customers: sfDeps.customers, paypal: sfPaypal,
             giftcards: giftcards, giftCardLedger: giftCardLedger,
-            loyalty: loyalty,
+            loyalty: loyalty, quantityDiscounts: quantityDiscounts,
           });
           sfDeps.payment           = sfPayment;
           sfDeps.paypal            = sfPaypal;

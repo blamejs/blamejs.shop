@@ -2429,3 +2429,54 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
 @media (max-width: 30rem) {
   .recently-viewed-grid { grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 }
+
+/* Bundle & save rail — composite "frequently bought together" offers. */
+.bundles {
+  border-top: 1px solid var(--hair);
+  margin-top: var(--space-7);
+  padding-top: var(--space-6);
+}
+.bundles__heading {
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  margin: 0 0 var(--space-5);
+}
+.bundles__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: var(--space-5);
+}
+.bundle-card {
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.bundle-card--unavailable { opacity: 0.7; }
+.bundle-card__title { font-size: var(--text-lg); margin: 0; }
+.bundle-card__members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.bundle-card__member { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+.bundle-card__member-qty { font-weight: 600; color: var(--mute); }
+.bundle-card__member-sku { font-size: var(--text-sm); color: var(--mute-2); }
+.bundle-card__pricing { display: flex; flex-direction: column; gap: var(--space-1); }
+.bundle-card__list { color: var(--mute); text-decoration: line-through; }
+.bundle-card__price { font-weight: 700; }
+.bundle-card__save { color: #1c7a3f; font-weight: 600; }
+.bundle-card__unavailable { color: var(--mute); margin: 0; font-style: italic; }
+
+/* Quantity-break table — automatic "buy more, save more" tiers. */
+.qty-breaks {
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+}
+.qty-breaks__title { font-size: var(--text-lg); margin: 0 0 var(--space-3); }
+.qty-break-table { width: 100%; border-collapse: collapse; }
+.qty-break-table th, .qty-break-table td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--hair-2); }
+.qty-break__unit { font-weight: 600; }
+.qty-breaks__note { margin: var(--space-3) 0 0; color: var(--mute); font-size: var(--text-sm); }

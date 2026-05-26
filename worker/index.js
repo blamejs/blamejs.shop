@@ -35,6 +35,8 @@ import {
   listPublishedBlogSlugs,
   listBlogArticles,
   getBlogArticleBySlug,
+  getBundlesForProduct,
+  getQtyBreaksForSku,
 } from "./data/catalog.js";
 
 // Cloudflare Worker — edge router for blamejs.shop.
@@ -1001,6 +1003,19 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
     // inside the href attribute.
     const qaForm = '<a class="btn-secondary reviews__cta" href="/products/'
       + encodeURIComponent(product.slug) + '/question">Ask a question</a>';
+    // Bundle offers + the quantity-break table for the first variant.
+    // Both price server-side from the live D1 catalog (the edge mirror
+    // of the container's server-authoritative resolution) and both
+    // degrade to empty on a missing-table read so the PDP renders.
+    const variantSkus = variants.map(function (v) { return v.sku; });
+    const firstVariant = variants[0] || null;
+    const firstPrice = firstVariant ? prices[firstVariant.id] : null;
+    const [bundleOffers, qtyBreaks] = await Promise.all([
+      getBundlesForProduct(env.DB, variantSkus, "USD"),
+      firstVariant && firstPrice
+        ? getQtyBreaksForSku(env.DB, firstVariant.sku, firstPrice.amount_minor, firstPrice.currency, b.money)
+        : Promise.resolve([]),
+    ]);
     const html = renderProduct({
       product:       product,
       variants:      variants,
@@ -1011,6 +1026,8 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
       reviewForm:    reviewForm,
       qaQuestions:   qaThreads.rows,
       qaForm:        qaForm,
+      bundleOffers:  bundleOffers,
+      qtyBreaks:     qtyBreaks,
       wishlistCount: wishlistCount,
       shopName:      shopName,
       cartCount:     0,
