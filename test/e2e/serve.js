@@ -74,4 +74,10 @@ function _makeQuery() {
   function _stop() { app.shutdown().then(function () { try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ } process.exit(0); }); }
   process.on("SIGINT", _stop);
   process.on("SIGTERM", _stop);
-})().catch(function (e) { console.error("E2E_BOOT_FAIL", e && e.stack || e); process.exit(1); });
+})().catch(function (e) {
+  // Re-throw rather than logging the error — a boot failure's message /
+  // stack can carry passphrase-adjacent config, and this is a dev harness.
+  // Node's default handler prints it to stderr and exits non-zero.
+  process.exitCode = 1;
+  throw e;
+});
