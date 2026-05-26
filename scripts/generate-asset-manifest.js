@@ -29,9 +29,15 @@ var b    = require("../lib/vendor/blamejs");
 var REPO_ROOT  = path.resolve(__dirname, "..");
 var ASSET_ROOT = path.join(REPO_ROOT, "themes", "default", "assets");
 var VERSION    = require("../package.json").version;
+// Both runtimes read a committed copy. `lib/` is REQUIRED — the container
+// runtime (lib/storefront.js, lib/admin.js) unconditionally requires it and
+// it's present in every build context that runs this check. `worker/` is
+// OPTIONAL for the check — the container image build excludes worker/
+// (.dockerignore), so it's legitimately absent there; its drift is caught
+// in the full-tree CI run and the edge build, where it IS present.
 var TARGETS    = [
-  path.join(REPO_ROOT, "lib", "asset-manifest.json"),
-  path.join(REPO_ROOT, "worker", "asset-manifest.json"),
+  { file: path.join(REPO_ROOT, "lib", "asset-manifest.json"),    required: true },
+  { file: path.join(REPO_ROOT, "worker", "asset-manifest.json"), required: false },
 ];
 
 // Extensions that get an integrity attribute on a <link>/<script>. Fonts
@@ -62,18 +68,36 @@ var manifest = build();
 
 if (mode === "check") {
   var drift = false;
+  var checked = 0;
   TARGETS.forEach(function (t) {
-    var have = fs.existsSync(t) ? fs.readFileSync(t, "utf8") : "";
-    if (have !== manifest) {
+    var rel = path.relative(REPO_ROOT, t.file);
+    if (!fs.existsSync(t.file)) {
+      if (t.required) {
+        // A required copy must be present wherever the check runs — its
+        // absence means an accidental deletion (or a never-generated
+        // manifest), and the runtime that requires it would break.
+        drift = true;
+        console.error("[asset-manifest] MISSING — " + rel +
+          " is required; run `node scripts/generate-asset-manifest.js --rebuild`");
+      } else {
+        // Optional copy absent from this build context (e.g. the container
+        // image excludes worker/). Its drift is caught in the full-tree CI
+        // run + the edge build, where it IS present.
+        console.log("[asset-manifest] skip — " + rel + " not in this context");
+      }
+      return;
+    }
+    checked += 1;
+    if (fs.readFileSync(t.file, "utf8") !== manifest) {
       drift = true;
-      console.error("[asset-manifest] DRIFT — " + path.relative(REPO_ROOT, t) +
+      console.error("[asset-manifest] DRIFT — " + rel +
         " is stale; run `node scripts/generate-asset-manifest.js --rebuild`");
     }
   });
   if (drift) process.exit(1);
-  console.log("[asset-manifest] OK — both manifests match the on-disk assets (v" + VERSION + ")");
+  console.log("[asset-manifest] OK — " + checked + " manifest(s) match the on-disk assets (v" + VERSION + ")");
 } else {
-  TARGETS.forEach(function (t) { fs.writeFileSync(t, manifest); });
+  TARGETS.forEach(function (t) { fs.writeFileSync(t.file, manifest); });
   var n = Object.keys(JSON.parse(manifest).assets).length;
   console.log("[asset-manifest] OK — wrote " + n + " asset digest(s) at v" + VERSION + " to lib/ + worker/");
 }
