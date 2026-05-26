@@ -174,3 +174,18 @@ node -e "
   the order total and the live balance (a request for more than either
   is refused, not silently clamped to a windfall), and a guest cart
   with no account can't redeem at all.
+- **Referral rewards are fraud-guarded — no self-referral, no
+  double-attribution, no double-reward.** The `/r/<code>` landing only
+  sets the attribution cookie for a live, active code and never reveals
+  whether a guessed code exists (unknown / malformed / disabled all
+  redirect home identically). A new account is attributed to the
+  referrer named in the sealed cookie, with a self-referral guard so a
+  code can never refer its own owner, and each customer is attributed
+  only once (first-touch); an existing customer signing back in is never
+  re-attributed. The reward fires only when a referred customer's first
+  order reaches paid, rides the order's paid transition fire-and-forget,
+  and is recorded once per order so a re-delivered payment webhook can't
+  double-reward — guest orders and later orders don't qualify. Referred
+  emails are stored hash-only (`b.crypto.namespaceHash`), and the
+  account leaderboard exposes rank plus initials only, never an email or
+  account id.

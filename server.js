@@ -198,6 +198,26 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.loyaltyRedemption.create({ loyalty: loyalty })
         : null;
 
+      // Referrals — refer-a-friend with two-sided rewards. `referrals`
+      // owns the per-customer code + the invitation funnel; the reward-
+      // on-first-order credit rides the order primitive's paid transition
+      // (wired below, like the loyalty earn fan-out). `referralLeaderboard`
+      // sits on top to surface top-referrer rankings + tiered bonuses.
+      // The shareable link points at the container-served /r/<code>
+      // landing, which sets the attribution cookie and redirects home —
+      // derived from SHOP_ORIGIN so the link is absolute when the operator
+      // has set their origin (otherwise the primitive's default base is
+      // overridden per request from the Host header inside the route).
+      var referralLinkBase = process.env.SHOP_ORIGIN
+        ? process.env.SHOP_ORIGIN.replace(/\/$/, "") + "/r/"
+        : null;
+      var referrals = (catalog && cart)
+        ? bShop.referrals.create(referralLinkBase ? { linkBase: referralLinkBase } : {})
+        : null;
+      var referralLeaderboard = (catalog && cart)
+        ? bShop.referralLeaderboard.create({})
+        : null;
+
       // Customers — passkey / OIDC accounts. Opts the storefront /account/*
       // routes in AND the read-only /admin/customers roster. Single instance
       // shared by both surfaces. Cursor HMAC key for the admin list derived
@@ -283,7 +303,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // opts in by setting the secret). Stripe-backed refund routes
       // only mount when STRIPE_API_KEY is also present.
       if (catalog && cart && process.env.ADMIN_API_KEY) {
-        var order   = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules });
+        var order   = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals });
         // `payment` is the shared Stripe handle built at the top of the
         // routes function (null when Stripe isn't configured) — the
         // admin refund + subscription-cancel routes gate on it.
@@ -451,7 +471,18 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (loyalty) sfDeps.loyalty = loyalty;
         if (loyaltyEarnRules) sfDeps.loyaltyEarnRules = loyaltyEarnRules;
         if (loyaltyRedemption) sfDeps.loyaltyRedemption = loyaltyRedemption;
-        sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules });
+        // Referrals — the /account/referrals page (the customer's code +
+        // shareable link, the friends they've referred + status, and the
+        // rewards funnel), the /r/<code> attribution landing, and the
+        // in-account top-referrer leaderboard. The reward-on-first-order
+        // credit is wired into the order primitive below (it fans the paid
+        // transition into referrals.trackPurchase), not into the storefront.
+        // SHOP_ORIGIN gives the absolute shareable link; absent it, the
+        // route falls back to the request Host header.
+        if (referrals) sfDeps.referrals = referrals;
+        if (referralLeaderboard) sfDeps.referralLeaderboard = referralLeaderboard;
+        if (process.env.SHOP_ORIGIN) sfDeps.shop_origin = process.env.SHOP_ORIGIN;
+        sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;
           // Reuse the shared Stripe handle (built at the top of the routes
