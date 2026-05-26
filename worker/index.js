@@ -19,7 +19,7 @@ import { renderFeed } from "./render/feed.js";
 import { renderSitemap } from "./render/sitemap.js";
 import { renderBlogList, renderBlogArticle } from "./render/blog.js";
 import { renderCart } from "./render/cart.js";
-import { minifyHtml as _minify } from "./render/_lib.js";
+import { minifyHtml as _minify, assetUrl as _assetUrl } from "./render/_lib.js";
 import {
   listActiveProducts,
   getProductBySlug,
@@ -1112,10 +1112,11 @@ function _withSecurityHeaders(base) {
 // theme bundle every page references; per-route preloads (hero
 // images, etc.) compose by appending to the same header.
 function _earlyHintsLink(env, extras) {
-  // Same version source as the document stylesheet `<link>` (_edgeRender)
-  // so the HTTP/103 preload URL matches what the page actually requests —
-  // a mismatched `?v=` would make the browser fetch the stylesheet twice.
-  var version = env.WORKER_VERSION || assetManifest.version;
+  // Same fingerprinted URL the document stylesheet `<link>` emits (the
+  // renderers resolve `css/main.css` to its content-fingerprinted path via
+  // the shared manifest helper), so the HTTP/103 preload target matches what
+  // the page actually requests — a divergent URL would make the browser
+  // fetch the stylesheet twice.
   // No `crossorigin` — the preload target is same-origin and the
   // matching `<link rel="stylesheet">` tag has no `crossorigin`
   // either. Adding `crossorigin` to the preload makes the browser
@@ -1123,7 +1124,7 @@ function _earlyHintsLink(env, extras) {
   // attribute) doesn't match credentials mode, the preload sits
   // unused, and devtools warns "request credentials mode does not
   // match. Consider taking a look at crossorigin attribute".
-  var base    = "</assets/themes/default/css/main.css?v=" + version + ">; rel=preload; as=style";
+  var base    = "<" + _assetUrl("css/main.css") + ">; rel=preload; as=style";
   if (!Array.isArray(extras) || extras.length === 0) return base;
   // Per-route preload merge — every extra entry is `{ href, as }`.
   // Cloudflare auto-promotes the comma-separated Link header to

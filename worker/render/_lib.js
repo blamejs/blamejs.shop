@@ -3,6 +3,46 @@
 // validated bridge between the Worker substrate and the framework's
 // leaf modules.
 import b from "../b.js";
+// Asset integrity + fingerprint + version manifest, bundled into the
+// Worker. The edge has no filesystem to hash assets at request time, so
+// the SRI digest + the content-fingerprinted path are read from this
+// committed manifest — the byte-identical twin of lib/asset-manifest.json
+// the container reads. Both runtimes therefore emit the same asset URLs.
+import assetManifest from "../asset-manifest.json";
+
+// Content-fingerprinted asset URL — `/assets/themes/default/<fingerprinted>`,
+// where the fingerprint embeds a hash of the asset bytes (`main.<hash>.css`).
+// The hash IS the cache-buster, so no `?v=` query is appended: each URL maps
+// one-to-one onto a byte-content. This makes the Worker/R2 deploy order
+// irrelevant — a not-yet-synced asset 404s instead of poisoning SRI, and
+// pages already in flight keep loading the old fingerprinted object that
+// still exists in R2. Mirrors lib/storefront.js `_assetUrl` byte-for-byte
+// so the edge and the container emit identical asset URLs. An asset missing
+// from the manifest (a custom operator theme) falls back to its plain path.
+export function assetUrl(relUnderThemeAssets) {
+  var entry = assetManifest.assets[relUnderThemeAssets];
+  var fp    = (entry && entry.fingerprinted) || relUnderThemeAssets;
+  return "/assets/themes/default/" + fp;
+}
+
+// Subresource Integrity for a default-theme asset — the sha384 digest
+// (W3C SRI 1.0) from the manifest, or null for an asset we don't ship
+// (a custom operator theme, whose bytes aren't ours to hash). Mirrors
+// lib/storefront.js `_assetSri`.
+export function assetSri(relUnderThemeAssets) {
+  var entry = assetManifest.assets[relUnderThemeAssets];
+  return (entry && entry.integrity) || null;
+}
+
+// `<link rel="stylesheet">` integrity attribute (with leading space) for a
+// theme stylesheet URL — present only when the URL is the default theme CSS
+// we ship and can hash; a custom operator-supplied `theme_css` is left
+// without an integrity attribute. Mirrors the container's `_wrap` logic so
+// the emitted tag is byte-identical across both renderers.
+export function stylesheetIntegrityAttr(themeCssUrl) {
+  var sri = (themeCssUrl === assetUrl("css/main.css")) ? assetSri("css/main.css") : null;
+  return sri ? " integrity=\"" + sri + "\"" : "";
+}
 
 export function escapeHtml(s) {
   return b.template.escapeHtml(s);

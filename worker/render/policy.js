@@ -1,7 +1,7 @@
 // Static policy pages (privacy, terms). Composed off a minimal
 // layout that doesn't carry the storefront hero / marquee / catalog
 // chrome — these are read-once legal docs, not a commerce surface.
-import { renderTemplate } from "./_lib.js";
+import { renderTemplate, assetUrl, stylesheetIntegrityAttr } from "./_lib.js";
 import b from "../b.js";
 
 var LAYOUT =
@@ -13,7 +13,7 @@ var LAYOUT =
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{description}}\">\n" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
-  "  <link rel=\"stylesheet\" href=\"{{theme_css}}\">\n" +
+  "  <link rel=\"stylesheet\" href=\"{{theme_css}}\"RAW_CSS_INTEGRITY>\n" +
   "  <meta name=\"robots\" content=\"index, follow\">\n" +
   "</head>\n" +
   "<body>\n" +
@@ -51,7 +51,7 @@ var LAYOUT =
 
 function _wrap(opts, bodyHtml) {
   var shopName = opts.shopName || "blamejs.shop";
-  var themeCss = opts.themeCss  || ("/assets/themes/default/css/main.css?v=" + (opts.version || "0.0.0"));
+  var themeCss = opts.themeCss  || assetUrl("css/main.css");
   return renderTemplate(LAYOUT, {
     title:            opts.title,
     title_h1:         opts.title,
@@ -63,7 +63,8 @@ function _wrap(opts, bodyHtml) {
     lede:             opts.lede,
     updated:          opts.updated,
     year:             String(new Date().getUTCFullYear()),
-  }).replace("RAW_BODY_PLACEHOLDER", bodyHtml);
+  }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
+    .replace("RAW_BODY_PLACEHOLDER", bodyHtml);
 }
 
 var PRIVACY_BODY =

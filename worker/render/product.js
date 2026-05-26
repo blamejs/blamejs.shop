@@ -1,4 +1,4 @@
-import { renderTemplate, escapeHtml, escapeAttr, formatPrice, jsonLdScript } from "./_lib.js";
+import { renderTemplate, escapeHtml, escapeAttr, formatPrice, jsonLdScript, assetUrl, stylesheetIntegrityAttr } from "./_lib.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
@@ -9,7 +9,7 @@ var LAYOUT =
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{og_description}}\">\n" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
-  "  <link rel=\"stylesheet\" href=\"{{theme_css}}\">\n" +
+  "  <link rel=\"stylesheet\" href=\"{{theme_css}}\"RAW_CSS_INTEGRITY>\n" +
   "  <meta property=\"og:type\" content=\"{{og_type}}\">\n" +
   "  <meta property=\"og:site_name\" content=\"{{shop_name}}\">\n" +
   "  <meta property=\"og:title\" content=\"{{og_title}}\">\n" +
@@ -481,7 +481,8 @@ function _wrap(opts) {
     og_image:       ogImage,
     og_url:         ogUrl,
     body:           "RAW_BODY_PLACEHOLDER",
-  }).replace("RAW_BODY_PLACEHOLDER", opts.body);
+  }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(opts.themeCss))
+    .replace("RAW_BODY_PLACEHOLDER", opts.body);
 }
 
 function _buildPdpGallery(product, media, assetPrefix) {
@@ -553,7 +554,7 @@ export function renderProduct(opts) {
   var description = product.description || "";
   var themeCss    = (typeof opts.themeCss === "string" && opts.themeCss.length)
     ? opts.themeCss
-    : (assetPrefix + "themes/default/css/main.css?v=" + opts.version);
+    : assetUrl("css/main.css");
 
   var rendered = variants.map(function (v) {
     var price = prices[v.id];

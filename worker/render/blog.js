@@ -5,7 +5,7 @@
 // but it's file-backed; inline-string body needs a separate path).
 // Operators who want markdown formatting compose `b.template`
 // elsewhere and pass the rendered HTML in.
-import { renderTemplate, jsonLdScript } from "./_lib.js";
+import { renderTemplate, jsonLdScript, assetUrl, stylesheetIntegrityAttr } from "./_lib.js";
 import b from "../b.js";
 
 var LAYOUT =
@@ -17,7 +17,7 @@ var LAYOUT =
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{description}}\">\n" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
-  "  <link rel=\"stylesheet\" href=\"{{theme_css}}\">\n" +
+  "  <link rel=\"stylesheet\" href=\"{{theme_css}}\"RAW_CSS_INTEGRITY>\n" +
   "  <link rel=\"alternate\" type=\"application/rss+xml\" href=\"/feed.xml\" title=\"{{shop_name_rss}} Blog\">\n" +
   "  <meta property=\"og:type\" content=\"{{og_type}}\">\n" +
   "  <meta property=\"og:title\" content=\"{{og_title}}\">\n" +
@@ -56,7 +56,7 @@ var LAYOUT =
 
 function _wrap(opts, bodyHtml) {
   var shopName = opts.shopName || "blamejs.shop";
-  var themeCss = opts.themeCss || ("/assets/themes/default/css/main.css?v=" + (opts.version || "0.0.0"));
+  var themeCss = opts.themeCss || assetUrl("css/main.css");
   return renderTemplate(LAYOUT, {
     title:             opts.title,
     shop_name:         shopName,
@@ -70,7 +70,8 @@ function _wrap(opts, bodyHtml) {
     og_description:    opts.description,
     og_image:          opts.ogImage || "/assets/brand/logo.png",
     year:              String(new Date().getUTCFullYear()),
-  }).replace("RAW_BODY_PLACEHOLDER", bodyHtml);
+  }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
+    .replace("RAW_BODY_PLACEHOLDER", bodyHtml);
 }
 
 function _isoDate(epochMs) {

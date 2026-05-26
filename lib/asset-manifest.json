@@ -1,9 +1,21 @@
 {
   "version": "0.1.32",
   "assets": {
-    "css/admin.css": "sha384-rvjL1QySBgNJGEUDusbbMCkL3fsjmzcwUvTp9pljo/0Nn/lErxq2AbY8EYvDF9Ch",
-    "css/main.css": "sha384-A2m9cYLHIlIrFvTluTOaZz9r8F90yWIKd3SHOlyNwQwtaOBrzlsn/NDR1vso6dSF",
-    "js/passkey-login.js": "sha384-65i1wVHIkiS2e0YiOV6oUOF9+tNR7s6QRvpnWaEne43P+B8UvKLTpDgp4MSKNGqX",
-    "js/passkey-register.js": "sha384-RaSkJbTpc6ClfPy5QyaY96doIqBqa9CLeIB1CzWnL05pSSJEA9IrIK0S7V7igRxY"
+    "css/admin.css": {
+      "integrity": "sha384-rvjL1QySBgNJGEUDusbbMCkL3fsjmzcwUvTp9pljo/0Nn/lErxq2AbY8EYvDF9Ch",
+      "fingerprinted": "css/admin.4dc78dfc45d0736d.css"
+    },
+    "css/main.css": {
+      "integrity": "sha384-A2m9cYLHIlIrFvTluTOaZz9r8F90yWIKd3SHOlyNwQwtaOBrzlsn/NDR1vso6dSF",
+      "fingerprinted": "css/main.91c0dfab0198569c.css"
+    },
+    "js/passkey-login.js": {
+      "integrity": "sha384-65i1wVHIkiS2e0YiOV6oUOF9+tNR7s6QRvpnWaEne43P+B8UvKLTpDgp4MSKNGqX",
+      "fingerprinted": "js/passkey-login.f3d6787bdd5e20df.js"
+    },
+    "js/passkey-register.js": {
+      "integrity": "sha384-RaSkJbTpc6ClfPy5QyaY96doIqBqa9CLeIB1CzWnL05pSSJEA9IrIK0S7V7igRxY",
+      "fingerprinted": "js/passkey-register.8f6ee49284ab4226.js"
+    }
   }
 }
