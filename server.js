@@ -346,6 +346,23 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           })
         : null;
 
+      // Search synonyms — query rewriting (stopwords + typo correction
+      // + stemming) and synonym expansion on the storefront search box.
+      // One shared instance; the primitive caches the operator-curated
+      // groups / typos / stopwords in memory and only needs the
+      // externalDb query handle.
+      var searchSynonyms = (catalog && cart) ? bShop.searchSynonyms.create({}) : null;
+
+      // Search facets — filterable search-result chrome. The primitive
+      // reads its facet registry off the DB (default externalDb query
+      // handle) and computes counts in-memory against a per-request
+      // product universe, so it's wired as a factory the storefront's
+      // /search route calls with that request's catalog snapshot. This
+      // keeps concurrent searches from sharing one catalog binding.
+      var searchFacets = (catalog && cart)
+        ? function (perRequestCatalog) { return bShop.searchFacets.create({ catalog: perRequestCatalog }); }
+        : null;
+
       // Stripe payment handle — shared by the admin refund + subscription
       // routes and the storefront subscription-cancel route, so there's
       // one Stripe client per boot. Wired only when both the API key and
@@ -541,6 +558,11 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // repricing. Both price server-side from the live catalog.
         if (bundles) sfDeps.bundles = bundles;
         if (quantityDiscounts) sfDeps.quantityDiscounts = quantityDiscounts;
+        // Search synonyms + facets — opt the /search route into query
+        // expansion + filterable facet chrome. Synonyms is the shared
+        // rewrite instance; facets is the per-request factory.
+        if (searchSynonyms) sfDeps.searchSynonyms = searchSynonyms;
+        if (searchFacets) sfDeps.searchFacets = searchFacets;
         // Subscription self-management (/account/subscriptions) — the
         // shared instance. The list renders read-only without payment;
         // the cancel route mounts only when `sfDeps.payment` is wired

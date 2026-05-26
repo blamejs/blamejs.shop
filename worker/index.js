@@ -23,7 +23,9 @@ import { minifyHtml as _minify, assetUrl as _assetUrl } from "./render/_lib.js";
 import {
   listActiveProducts,
   getProductBySlug,
-  searchProducts,
+  searchFacetableProducts,
+  loadSearchFacets,
+  loadSearchSynonymVocab,
   listVariantsWithPrices,
   listMediaForProduct,
   getReviewSummary,
@@ -38,6 +40,11 @@ import {
   getBundlesForProduct,
   getQtyBreaksForSku,
 } from "./data/catalog.js";
+import {
+  computeFacets,
+  applyFilters,
+  rewriteQuery,
+} from "./data/search-faceting.js";
 
 // Cloudflare Worker — edge router for blamejs.shop.
 //
@@ -917,21 +924,85 @@ async function _edgeHome(request, env, _url, version, shopName) {
   }
 }
 
+// Hard caps mirroring `lib/search-facets.js`'s applied-filter
+// validators so a hostile / stale URL can't blow the in-memory facet
+// walk. Garbage values and unknown facet keys are dropped rather than
+// refused: a shopper who lands on a link with a removed-facet param
+// still gets a clean results page.
+var SEARCH_MAX_FACET_KEYS    = 32;
+var SEARCH_MAX_FACET_VALUES  = 64;
+var SEARCH_MAX_VALUE_LEN     = 256;
+var SEARCH_CONTROL_BYTE_RE   = /[\x00-\x1f\x7f]/;
+
+// Parse `?key=value` repeats into the `{ facetKey: [value, ...] }`
+// shape the faceting module consumes, keeping only keys that match a
+// loaded facet definition and values that survive the length / control-
+// byte guards. `facets` is the loaded definition list.
+function _parseAppliedFilters(searchParams, facets) {
+  var known = {};
+  for (var i = 0; i < facets.length; i += 1) known[facets[i].key] = true;
+  var out = {};
+  var keyCount = 0;
+  searchParams.forEach(function (rawVal, rawKey) {
+    if (rawKey === "q") return;
+    if (!Object.prototype.hasOwnProperty.call(known, rawKey)) return;
+    if (typeof rawVal !== "string") return;
+    if (!rawVal.length || rawVal.length > SEARCH_MAX_VALUE_LEN) return;
+    if (SEARCH_CONTROL_BYTE_RE.test(rawVal)) return;
+    if (!Object.prototype.hasOwnProperty.call(out, rawKey)) {
+      if (keyCount >= SEARCH_MAX_FACET_KEYS) return;
+      out[rawKey] = [];
+      keyCount += 1;
+    }
+    var arr = out[rawKey];
+    if (arr.length >= SEARCH_MAX_FACET_VALUES) return;
+    if (arr.indexOf(rawVal) !== -1) return;
+    arr.push(rawVal);
+  });
+  return out;
+}
+
 async function _edgeSearch(request, env, url, version, shopName) {
   try {
     const qRaw = url.searchParams.get("q") || "";
     const q    = qRaw.length > 200 ? qRaw.slice(0, 200) : qRaw;
-    let products = [];
+    let products    = [];
+    let facets      = [];
+    let filters     = {};
+    let correctedQ  = "";
     if (q.trim().length > 0) {
-      const page = await searchProducts(env.DB, { q: q, limit: 24, currency: "USD" });
-      products = page.rows;
+      // Synonym + typo rewrite expands the typed query into the
+      // canonical term plus operator-curated expansions BEFORE the
+      // product query runs, so "tee" matches "t-shirt".
+      const vocab   = await loadSearchSynonymVocab(env.DB);
+      const rewrite = rewriteQuery(q, vocab);
+      correctedQ = rewrite.canonical;
+      const terms = [];
+      if (rewrite.canonical.length) terms.push(rewrite.canonical);
+      for (let i = 0; i < rewrite.expansions.length; i += 1) terms.push(rewrite.expansions[i]);
+      // Fall back to the raw query when rewrite produced nothing
+      // (e.g. an all-stopword query) so search never silently drops
+      // to empty on a non-empty input.
+      if (!terms.length) terms.push(q.trim());
+
+      const facetDefs = await loadSearchFacets(env.DB);
+      filters = _parseAppliedFilters(url.searchParams, facetDefs);
+
+      const universe = await searchFacetableProducts(env.DB, { terms: terms, currency: "USD" });
+      // Counts reflect the full match set with the focal facet left
+      // open; the result grid is the set narrowed by every filter.
+      facets   = computeFacets(facetDefs, universe.rows, filters);
+      products = applyFilters(facetDefs, universe.rows, filters).slice(0, 24);
     }
     const html = renderSearch({
-      q:         q,
-      products:  products,
-      shopName:  shopName,
-      cartCount: 0,
-      version:   version,
+      q:              q,
+      products:       products,
+      facets:         facets,
+      filters:        filters,
+      correctedQuery: correctedQ,
+      shopName:       shopName,
+      cartCount:      0,
+      version:        version,
     });
     return _html(html, request.method, env);
   } catch (e) {
