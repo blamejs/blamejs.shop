@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.1.33",
+  "date": "2026-05-26",
+  "headline": "Search filters and synonyms — narrow results by facet, and match what shoppers mean, not just what they typed",
+  "summary": "Search gains filters and smarter matching. A search result page now shows facet groups — collection, price range, and in-stock — as filter controls; choosing one narrows the results, the counts beside each option reflect the current result set, and choices combine across groups. Active filters show with a one-click clear, and filters carry through pagination rather than dropping on page two. All filtering is server-side from query parameters, so it works with no client JavaScript. Separately, the query itself is expanded through an operator-curated synonym and typo vocabulary before the catalog is searched, so a search for \"tee\" matches \"t-shirt\" and a near-miss spelling still finds the product, with a \"Showing results for\" note when the query was corrected. Filters and synonym matching work identically whether the page is served from the edge or the container, and garbage filter values are ignored rather than erroring.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Faceted search filters", "body": "A search result page shows facet groups — collection, price range, and in-stock availability — as server-rendered filter controls. Selecting a facet narrows the results and is reflected in the URL (for example `/search?q=shirt&collection=summer&in_stock=1`), the count beside each option reflects how many results it would yield against the current query, and facets combine across groups. Active filters render as removable chips with a clear-all path, and the active filters carry through result pagination so page two keeps the filter set. All filtering is server-side from the query string — no client JavaScript — and unknown facet keys, out-of-range price values, and garbage filter values are ignored rather than erroring. With filters applied and no matches, the page shows an empty state with a clear-filters link." },
+        { "title": "Synonym and typo-tolerant query matching", "body": "Before the catalog is searched, the query is expanded through an operator-curated vocabulary: synonym groups (so \"tee\" matches \"t-shirt\"), common typo corrections, and stopword removal. When the query is corrected or expanded, the page shows a \"Showing results for\" note. A query that still matches nothing falls back to the raw terms so search never silently empties on an unknown word." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Search renders filters and synonym matching identically at the edge and the container", "body": "The faceting and synonym logic runs in both the edge worker and the container search path, producing the same results and the same filter chrome whichever serves the page. The edge path reads the catalog and the facet/synonym vocabulary directly from the database, missing-table-resilient, so a shop without the optional facet configuration still searches normally." }
+      ]
+    }
+  ]
+}
