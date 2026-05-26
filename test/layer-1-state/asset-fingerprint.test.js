@@ -104,6 +104,17 @@ function _containerEmitsFingerprinted() {
 }
 
 async function _edgeContainerParity() {
+  // The edge render modules live under worker/, which the container build
+  // context excludes (.dockerignore) — so in the in-image smoke gate
+  // worker/render/home.js isn't present. Skip the edge-parity assertions in
+  // that context; they're covered by the full-tree CI run where worker/ IS
+  // present, and the container-side fingerprint checks above still exercise
+  // this image. Mirrors the asset-manifest check treating the worker copy as
+  // optional outside the full tree.
+  var fs = require("node:fs");
+  var edgeHomePath = nodePath.join(WORKER_DIR, "home.js");
+  if (!fs.existsSync(edgeHomePath)) return;
+
   _registerJsonHook();
   // Dynamic import needs a file:// URL (Windows absolute paths aren't valid
   // ESM specifiers otherwise). Node prints a one-shot
@@ -111,7 +122,7 @@ async function _edgeContainerParity() {
   // `.js` as ESM — expected and harmless: production bundles the edge with
   // esbuild, and this repo can't set `"type":"module"` because lib/ is
   // CommonJS. It's an informational stderr line, not a test signal.
-  var edgeHome = await import(nodeUrl.pathToFileURL(nodePath.join(WORKER_DIR, "home.js")).href);
+  var edgeHome = await import(nodeUrl.pathToFileURL(edgeHomePath).href);
 
   var containerHome = storefront.renderHome({ products: [], shop_name: "Acme" });
   var edgeHomeHtml  = edgeHome.renderHome({ products: [], shopName: "Acme", version: manifest.version });
