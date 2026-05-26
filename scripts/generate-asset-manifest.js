@@ -62,16 +62,30 @@ var manifest = build();
 
 if (mode === "check") {
   var drift = false;
+  var checked = 0;
   TARGETS.forEach(function (t) {
-    var have = fs.existsSync(t) ? fs.readFileSync(t, "utf8") : "";
-    if (have !== manifest) {
+    // A target absent from this build context isn't drift. The container
+    // image excludes worker/ (.dockerignore), so worker/asset-manifest.json
+    // isn't present when smoke runs inside the image; its drift is still
+    // caught wherever the file IS present (CI runs the full tree). Only
+    // a file that exists AND differs from the rebuild is stale.
+    if (!fs.existsSync(t)) {
+      console.log("[asset-manifest] skip — " + path.relative(REPO_ROOT, t) + " not in this context");
+      return;
+    }
+    checked += 1;
+    if (fs.readFileSync(t, "utf8") !== manifest) {
       drift = true;
       console.error("[asset-manifest] DRIFT — " + path.relative(REPO_ROOT, t) +
         " is stale; run `node scripts/generate-asset-manifest.js --rebuild`");
     }
   });
   if (drift) process.exit(1);
-  console.log("[asset-manifest] OK — both manifests match the on-disk assets (v" + VERSION + ")");
+  if (checked === 0) {
+    console.error("[asset-manifest] no manifest present to check — expected at least lib/asset-manifest.json");
+    process.exit(1);
+  }
+  console.log("[asset-manifest] OK — " + checked + " manifest(s) match the on-disk assets (v" + VERSION + ")");
 } else {
   TARGETS.forEach(function (t) { fs.writeFileSync(t, manifest); });
   var n = Object.keys(JSON.parse(manifest).assets).length;
