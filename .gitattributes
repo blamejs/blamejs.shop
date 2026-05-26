@@ -34,3 +34,16 @@ release-notes/*.json text eol=lf
 *.tar binary
 *.tgz binary
 *.pdf binary
+
+# Vendored web fonts — binary, never line-ending-converted.
+*.woff2 binary
+*.woff binary
+
+# Theme text assets are hashed for Subresource Integrity and feed the
+# asset-manifest drift gate (smoke `generate-asset-manifest.js --check`).
+# The sha384 digest must be byte-stable across Windows/Linux checkouts
+# AND match the exact bytes served from R2, or the browser rejects the
+# resource. Pin LF (like the changelog / release-notes drift artifacts
+# above) so the working copy, git, CI, and the served object all agree.
+themes/**/*.css text eol=lf
+themes/**/*.js text eol=lf
