@@ -1,0 +1,9 @@
+{
+  "version": "0.1.24",
+  "assets": {
+    "css/admin.css": "sha384-8Hl8BIl/PCTCz8C+3ISqkMBe/q/Or+Pat84ORoFCpr3N4gVBrjpNB6qwK/JAyIvS",
+    "css/main.css": "sha384-ifVDi+6dgkDbXwN7/6oOQ/NG5C2NRM9BWr0BUGZKLlRlfg6dzYofF56Ym4kKWxtb",
+    "js/passkey-login.js": "sha384-nK8qgismN998OTW7e0y8bPMyytiv4GQdde9whX6zj5oYpqvP4Th/Fef8J3c2VA+n",
+    "js/passkey-register.js": "sha384-d7CwHSgTbtEAOMyLfM8DIZ6pVoV/sqnCk5dWF98SniGdOBLole7WE4P1CQgq8Hrx"
+  }
+}

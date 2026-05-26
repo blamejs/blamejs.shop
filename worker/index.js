@@ -1,5 +1,11 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import b from "./b.js";
+// Asset integrity + version manifest (built by scripts/generate-asset-manifest.js,
+// bundled into the Worker). The edge renders read the release version + the
+// default-theme SRI digests from here — the Worker has no filesystem to hash
+// assets at request time, so without this it fell back to a `0.0.0` cache-
+// buster and emitted no integrity attribute.
+import assetManifest from "./asset-manifest.json";
 import { renderHome }    from "./render/home.js";
 import { renderProduct } from "./render/product.js";
 import { renderSearch }  from "./render/search.js";
@@ -761,7 +767,7 @@ async function _edgeRenderCached(request, env, url, ctx) {
 // the real count requires reading the sealed `shop_sid` cookie, which
 // depends on the vault primitive landing in the Worker bundle.
 async function _edgeRender(request, env, url) {
-  const version  = env.WORKER_VERSION || "0.0.0";
+  const version  = env.WORKER_VERSION || assetManifest.version;
   const shopName = env.SHOP_NAME      || "blamejs.shop";
   const path     = url.pathname;
 
