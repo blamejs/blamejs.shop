@@ -34,6 +34,9 @@ jobs:
   sync:
     name: Sync theme assets to R2
     runs-on: ubuntu-latest
+    # The Cloudflare credentials live in the `npm-publish` environment
+    # alongside the other deploy secrets; the job reads them from there.
+    environment: npm-publish
     permissions:
       contents: read
     env:
