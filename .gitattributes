@@ -47,3 +47,10 @@ release-notes/*.json text eol=lf
 # above) so the working copy, git, CI, and the served object all agree.
 themes/**/*.css text eol=lf
 themes/**/*.js text eol=lf
+
+# The generated asset manifests are compared byte-for-byte by the same
+# drift gate (`--check` reads the committed file and diffs the rebuild,
+# which emits LF). Pin LF so a Windows checkout doesn't turn them CRLF
+# and fail the diff against the LF rebuild.
+lib/asset-manifest.json text eol=lf
+worker/asset-manifest.json text eol=lf
