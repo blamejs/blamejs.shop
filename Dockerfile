@@ -49,6 +49,12 @@ FROM base AS runtime
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV DATA_DIR=/app/data
+# Encrypted-at-rest (createApp's secure default) keeps decrypted scratch
+# off persistent disk and so requires a tmpfs. /dev/shm is a real tmpfs
+# in OCI runtimes — point the framework at it rather than relaxing to
+# atRest:'plain'. Bump the container's shm size if a large local working
+# set ever needs it.
+ENV BLAMEJS_TMPDIR=/dev/shm
 # Hand `/app` + `/app/data` to the non-root `node` user before
 # dropping privileges so `b.createApp` can create the vault + db
 # directory tree at boot without root.
@@ -65,12 +71,18 @@ COPY --from=test /app/.test-output/smoke.log /usr/share/blamejs-shop/smoke.log
 COPY --chown=node:node --from=vendor /app/lib/vendor/ ./lib/vendor/
 COPY --chown=node:node lib/ ./lib/
 COPY --chown=node:node server.js ./
+COPY --chown=node:node scripts/healthcheck.js ./scripts/healthcheck.js
 COPY --chown=node:node package.json ./
 COPY --chown=node:node LICENSE README.md SECURITY.md ./
 
 EXPOSE 8080
-HEALTHCHECK --interval=10s --timeout=2s --start-period=10s --retries=3 \
-  CMD wget -qO- "http://127.0.0.1:${PORT}/_/health" || exit 1
+# Liveness via Node, not wget: the app's bot-guard blocks header-less
+# automation clients (wget / curl) by design, so a wget probe is 403'd
+# and the container gets wrongly marked unhealthy and crash-looped. The
+# Node probe sends a browser-shaped request that passes bot-guard like
+# real traffic — fixing the caller, not weakening the security middleware.
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+  CMD node scripts/healthcheck.js
 
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "server.js"]

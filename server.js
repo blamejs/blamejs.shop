@@ -32,6 +32,33 @@ var PORT     = parseInt(process.env.PORT || "8080", 10);
 var DATA_DIR = process.env.DATA_DIR || "./data";
 
 (async function main() {
+  // createApp's secure defaults unlock TWO wrapped components at boot — the
+  // vault AND the audit-signing keypair — and the framework reads their
+  // passphrases from BLAMEJS_VAULT_PASSPHRASE / BLAMEJS_AUDIT_SIGNING_PASSPHRASE.
+  // The deploy contract (docs/deploy-cloudflare.md + the header above)
+  // documents a single operator secret, VAULT_PASSPHRASE. Without bridging it,
+  // an operator who follows the docs sets a name the framework never reads;
+  // the wrapped components have no passphrase source in a container (no TTY);
+  // createApp throws — crash-looping the container so every write route
+  // (add-to-cart, checkout, account, admin) is unreachable while edge-rendered
+  // reads still work. Bridge the one documented secret onto both: the vault
+  // passphrase is the secret as-is; the audit-signing passphrase is derived
+  // from it, domain-separated via namespaceHash, so one operator secret
+  // unlocks both with distinct key material. An explicitly-set BLAMEJS_*
+  // always wins; the _FILE variant is honored for the vault path.
+  if (process.env.VAULT_PASSPHRASE) {
+    if (!process.env.BLAMEJS_VAULT_PASSPHRASE) {
+      process.env.BLAMEJS_VAULT_PASSPHRASE = process.env.VAULT_PASSPHRASE;
+    }
+    if (!process.env.BLAMEJS_AUDIT_SIGNING_PASSPHRASE) {
+      process.env.BLAMEJS_AUDIT_SIGNING_PASSPHRASE =
+        b.crypto.namespaceHash("shop-audit-signing-passphrase", process.env.VAULT_PASSPHRASE);
+    }
+  }
+  if (process.env.VAULT_PASSPHRASE_FILE && !process.env.BLAMEJS_VAULT_PASSPHRASE_FILE) {
+    process.env.BLAMEJS_VAULT_PASSPHRASE_FILE = process.env.VAULT_PASSPHRASE_FILE;
+  }
+
   // Optional: wire a Cloudflare D1 backend when the deploy provides
   // bridge credentials. Initializes externalDb before createApp so
   // the framework's cluster-mode boot picks it up automatically.

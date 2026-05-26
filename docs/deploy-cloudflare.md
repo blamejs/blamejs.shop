@@ -124,7 +124,7 @@ the operator sets the bridge secret + any application-level secrets:
 | --------------------- | ----------------- | ------------------------------------------------- |
 | `PORT`                | platform-managed  | Cloudflare Containers sets this — don't override. |
 | `DATA_DIR`            | `wrangler.toml`   | Per-instance volatile dir. `./data` is fine.      |
-| `VAULT_PASSPHRASE`    | `wrangler secret` | Unlocks `b.vault`. Required.                      |
+| `VAULT_PASSPHRASE`    | `wrangler secret` | Required. Unlocks the vault **and** the audit-signing keypair (the entry point bridges it to `BLAMEJS_VAULT_PASSPHRASE` and derives a domain-separated `BLAMEJS_AUDIT_SIGNING_PASSPHRASE`). Without it the container can't unlock its wrapped keys, has no TTY to prompt, and crash-loops — taking every write route (add-to-cart, checkout, account, admin) down while edge-rendered reads still work. |
 | `D1_BRIDGE_URL`       | platform-injected | URL of the bound Worker. Don't hand-set.          |
 | `D1_BRIDGE_SECRET`    | `wrangler secret` | Must match the Worker's binding of the same name. |
 | `D1_BRIDGE_PATH`      | optional          | Override (default `/_/db/query`).                 |

@@ -2,9 +2,15 @@
   "$schema": "../scripts/release-notes-schema.json",
   "version": "0.1.22",
   "date": "2026-05-25",
-  "headline": "Gift cards, customer subscription self-management, and a customers admin roster",
-  "summary": "Three additions land together. Gift cards can be issued, checked, and redeemed at checkout as a credit against the order total, with an operator ledger. Customers manage their own subscriptions at `/account/subscriptions`. And a read-only customers roster joins the admin console.",
+  "headline": "Fix the container boot crash-loop, plus gift cards, subscription self-management, and a customers roster",
+  "summary": "The deployable container could crash-loop on startup, taking every write route (add-to-cart, checkout, account, admin) down while edge-rendered reads kept working — this release fixes that boot path. It also adds gift cards (issue / balance / redeem-at-checkout with an operator ledger), customer subscription self-management at `/account/subscriptions`, and a read-only customers roster in the admin console.",
   "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Container no longer crash-loops on startup", "body": "The container boot had three ways to fail before it could serve a request, each of which left edge-rendered reads working while every container-served route (add-to-cart, cart update / remove, checkout, `/account`, `/admin`) was unreachable. (1) The secure-default boot unlocks a wrapped vault **and** a wrapped audit-signing keypair, which the framework reads from `BLAMEJS_VAULT_PASSPHRASE` / `BLAMEJS_AUDIT_SIGNING_PASSPHRASE`, but the deploy contract documents a single `VAULT_PASSPHRASE` the framework never read — so the container had no passphrase source, no TTY to prompt, and exited. The entry point now bridges the documented secret onto the vault passphrase and derives a domain-separated audit-signing passphrase from it. (2) Encrypted-at-rest requires a tmpfs; the image now points it at `/dev/shm` rather than failing to find one. (3) The Docker liveness probe was `wget`, which bot-guard blocks as automation (403), so a healthy container was marked unhealthy and stopped — the probe is now a browser-shaped Node request (`scripts/healthcheck.js`) that passes bot-guard like real traffic, without exempting the health path from the security middleware. A boot gate (`test/layer-2-integration/server-boot.test.js`) spawns the real entry point and asserts it listens, answers the probe, and still blocks header-less clients. Operators must redeploy the container to pick this up." }
+      ]
+    },
     {
       "heading": "Added",
       "items": [
@@ -16,7 +22,7 @@
     {
       "heading": "Changed",
       "items": [
-        { "title": "Console nav gains Customers and Gift cards; order fan-out unchanged", "body": "The signed-in admin nav now includes Customers and Gift cards alongside the existing screens, each shown when its primitive is wired. All new endpoints content-negotiate like the rest of the console: a bearer-token client gets the JSON API, a signed-in browser gets HTML; a request without the bearer token returns the sign-in form on a GET and redirects on a write. The customers roster, the subscription cancel, and the gift-card balance page all degrade gracefully when an optional dependency (payment, or the primitive itself) isn't configured." }
+        { "title": "Console nav gains Customers and Gift cards", "body": "The signed-in admin nav now includes Customers and Gift cards alongside the existing screens, each shown when its primitive is wired. All new endpoints content-negotiate like the rest of the console: a bearer-token client gets the JSON API, a signed-in browser gets HTML; a request without the bearer token returns the sign-in form on a GET and redirects on a write. The customers roster, the subscription cancel, and the gift-card balance page all degrade gracefully when an optional dependency (payment, or the primitive itself) isn't configured." }
       ]
     }
   ]
