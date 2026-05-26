@@ -160,3 +160,17 @@ node -e "
   Redemption decrements with an atomic `balance >= amount` SQL guard
   keyed on the order id, so concurrent or replayed checkouts can never
   overdraw a card or apply more than the remaining balance.
+- **Loyalty points are account-scoped money — earned and spent under
+  the same double-spend discipline.** The `/account/loyalty` page and
+  the redeem actions are login-gated and read the customer id from the
+  sealed session cookie, never from request input, so a customer only
+  ever sees and spends their own balance. Points earned on a paid order
+  are awarded fire-and-forget off the request path and deduped on the
+  order id (`loyalty_earn_log`'s `(rule, customer, event-ref)` UNIQUE),
+  so a re-delivered payment webhook can't double-credit. Spending points
+  — redeeming a reward or applying a checkout credit — debits through
+  the same atomic `balance >= points` SQL guard, so concurrent or
+  replayed requests can't overdraw. A checkout credit is capped at both
+  the order total and the live balance (a request for more than either
+  is refused, not silently clamped to a windfall), and a guest cart
+  with no account can't redeem at all.

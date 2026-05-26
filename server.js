@@ -179,6 +179,25 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.returns.create({ cursorSecret: returnsCursorSecret })
         : null;
 
+      // Loyalty — customer points balance + tier, the earn rules that
+      // mint points on order events, and the reward catalog customers
+      // redeem against. Three composed instances sharing one ledger:
+      //   * `loyalty` owns the balance + the audited transaction trail.
+      //   * `loyaltyEarnRules` composes `loyalty` so awardForEvent posts
+      //     earned points straight to the balance; the order primitive
+      //     fans the paid transition into it (earn-on-purchase).
+      //   * `loyaltyRedemption` composes `loyalty` so redeeming a reward
+      //     debits points + records the redemption.
+      // No cursor secret — loyalty pagination cursors are opaque
+      // epoch-ms offsets, not HMAC-tagged tuples.
+      var loyalty = (catalog && cart) ? bShop.loyalty.create({}) : null;
+      var loyaltyEarnRules = (catalog && cart)
+        ? bShop.loyaltyEarnRules.create({ loyalty: loyalty })
+        : null;
+      var loyaltyRedemption = (catalog && cart)
+        ? bShop.loyaltyRedemption.create({ loyalty: loyalty })
+        : null;
+
       // Customers — passkey / OIDC accounts. Opts the storefront /account/*
       // routes in AND the read-only /admin/customers roster. Single instance
       // shared by both surfaces. Cursor HMAC key for the admin list derived
@@ -264,7 +283,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // opts in by setting the secret). Stripe-backed refund routes
       // only mount when STRIPE_API_KEY is also present.
       if (catalog && cart && process.env.ADMIN_API_KEY) {
-        var order   = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks });
+        var order   = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules });
         // `payment` is the shared Stripe handle built at the top of the
         // routes function (null when Stripe isn't configured) — the
         // admin refund + subscription-cancel routes gate on it.
@@ -424,7 +443,15 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // the redeem-at-checkout credit. Wired regardless of Stripe; the
         // balance page needs only the card primitive.
         if (giftcards) sfDeps.giftcards = giftcards;
-        sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks });
+        // Loyalty — the /account/loyalty page (balance + ledger + earn
+        // rules + reward catalog), the redeem-a-reward action, and the
+        // redeem-points-at-checkout credit. The earn-on-purchase award
+        // is wired into the order primitive below (it fans the paid
+        // transition into the earn rules), not into the storefront.
+        if (loyalty) sfDeps.loyalty = loyalty;
+        if (loyaltyEarnRules) sfDeps.loyaltyEarnRules = loyaltyEarnRules;
+        if (loyaltyRedemption) sfDeps.loyaltyRedemption = loyaltyRedemption;
+        sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules });
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;
           // Reuse the shared Stripe handle (built at the top of the routes
@@ -476,6 +503,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
             tax: sfTax, shipping: sfShipping, payment: sfPayment, order: sfOrder,
             customers: sfDeps.customers, paypal: sfPaypal,
             giftcards: giftcards, giftCardLedger: giftCardLedger,
+            loyalty: loyalty,
           });
           sfDeps.payment           = sfPayment;
           sfDeps.paypal            = sfPaypal;
