@@ -19,6 +19,20 @@
  * `assets/` segment: `themes/default/assets/css/main.css` →
  * `themes/default/css/main.css`. Brand images / media are operator-managed
  * in R2 directly and are not repo-sourced, so they're left untouched.
+ *
+ * Content-fingerprinted keys: the renderers reference SRI-bearing assets
+ * (`.css` / `.js` / `.mjs`) by a content-fingerprinted name
+ * (`css/main.<hash>.css`) so the Worker/R2 deploy order doesn't matter. For
+ * each such default-theme asset this uploads the SAME bytes a SECOND time
+ * under the fingerprinted key (`themes/default/css/main.<hash>.css`) IN
+ * ADDITION to the plain key — the plain key still serves any non-default
+ * theme and any direct fetch. The logical→fingerprinted map is read from the
+ * committed manifest (lib/asset-manifest.json), the same source the
+ * renderers read, so the uploaded key matches the emitted `<link>`/`<script>`
+ * URL exactly. Previously-uploaded fingerprinted objects are NEVER deleted:
+ * pages already served reference the old hash, and the old object is what
+ * keeps them working until they're re-fetched. Non-hashed assets (fonts,
+ * images, brand) keep only their plain keys.
  */
 
 var nodeFs   = require("node:fs");
@@ -29,6 +43,14 @@ var BUCKET    = "blamejs-shop-assets";
 var REPO_ROOT = nodePath.resolve(__dirname, "..");
 var THEMES    = nodePath.join(REPO_ROOT, "themes");
 var DRY_RUN   = process.argv.indexOf("--dry-run") !== -1;
+
+// The asset manifest maps a default-theme asset path (`css/main.css`) to its
+// content-fingerprinted name (`css/main.<hash>.css`). Read from lib/ — the
+// container copy is always present and is the byte-identical twin of the
+// worker copy the edge bundles. Only the default theme is fingerprinted
+// (it's the only theme whose bytes the framework ships and hashes).
+var FINGERPRINT_MANIFEST = require("../lib/asset-manifest.json");
+var FINGERPRINTED_EXTS   = { ".css": true, ".js": true, ".mjs": true };
 
 // Content types by extension — set explicitly so a stylesheet is served as
 // text/css (a wrong type makes the browser refuse it under strict MIME).
@@ -57,8 +79,19 @@ function _collectJobs() {
     if (!ent.isDirectory()) return;
     var assetsDir = nodePath.join(THEMES, ent.name, "assets");
     if (!nodeFs.existsSync(assetsDir)) return;
+    var isDefault = ent.name === "default";
     _walk(assetsDir, [], []).forEach(function (f) {
+      // Always upload under the plain key.
       jobs.push({ file: f.file, key: "themes/" + ent.name + "/" + f.rel });
+      // For the default theme's SRI-bearing assets, also upload the SAME
+      // bytes under the fingerprinted key the renderers emit. The manifest
+      // is keyed by the asset path under the theme root (e.g. `css/main.css`)
+      // and carries the fingerprinted name (`css/main.<hash>.css`).
+      if (!isDefault) return;
+      if (!FINGERPRINTED_EXTS[nodePath.extname(f.rel).toLowerCase()]) return;
+      var entry = FINGERPRINT_MANIFEST.assets[f.rel];
+      if (!entry || !entry.fingerprinted) return;
+      jobs.push({ file: f.file, key: "themes/" + ent.name + "/" + entry.fingerprinted });
     });
   });
   return jobs;

@@ -23,7 +23,8 @@ var b       = bShop.framework;
 var helpers = require("../helpers");
 var check   = helpers.check;
 
-var ASSETS = nodePath.join(__dirname, "..", "..", "themes", "default", "assets");
+var ASSETS   = nodePath.join(__dirname, "..", "..", "themes", "default", "assets");
+var manifest = require("../../lib/asset-manifest.json");
 
 // Minimal opts for the two screens that dereference a required record;
 // every other renderAdmin* defaults its opts.
@@ -39,6 +40,8 @@ async function _run() {
   // The integrity the browser will check against the served bytes.
   var adminCssBytes = nodeFs.readFileSync(nodePath.join(ASSETS, "css", "admin.css"));
   var adminCssSri   = b.crypto.sri(adminCssBytes, { algorithm: "sha384" });
+  // The content-fingerprinted path the link should carry (no `?v=`).
+  var adminCssFp    = manifest.assets["css/admin.css"].fingerprinted;
 
   var fns = Object.keys(admin).filter(function (k) {
     return /^renderAdmin/.test(k) && typeof admin[k] === "function";
@@ -51,7 +54,11 @@ async function _run() {
     check(fn + ": no inline style=\"\" attr",    html.indexOf("style=\"") === -1);
     check(fn + ": no Google Fonts stylesheet",   !(/https?:\/\/fonts\.googleapis\.com\//.test(html)));
     check(fn + ": no Google Fonts preconnect",   !(/https?:\/\/fonts\.gstatic\.com/.test(html)));
-    check(fn + ": links external admin.css",     html.indexOf("/assets/themes/default/css/admin.css?v=") !== -1);
+    // admin.css is referenced by its content-fingerprinted name
+    // (`admin.<hash>.css`, no `?v=`) so the Worker/R2 deploy order can't
+    // poison the SRI: a not-yet-synced object 404s instead of mismatching.
+    check(fn + ": links fingerprinted admin.css", html.indexOf("/assets/themes/default/" + adminCssFp) !== -1);
+    check(fn + ": admin.css link has no ?v=",     html.indexOf("/assets/themes/default/css/admin.css?v=") === -1);
     check(fn + ": pins admin.css with SRI",      html.indexOf("integrity=\"" + adminCssSri + "\"") !== -1);
   });
 

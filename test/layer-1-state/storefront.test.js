@@ -243,7 +243,12 @@ async function _layoutTokens() {
   check("layout has NO Google Fonts link",           !(/https?:\/\/fonts\.googleapis\.com\//.test(html)));
   check("layout has NO Google Fonts preconnect",     !(/https?:\/\/fonts\.gstatic\.com/.test(html)));
   check("layout links the theme stylesheet",         html.indexOf("rel=\"stylesheet\"") !== -1);
-  check("layout points at default theme css",         html.indexOf("/assets/themes/default/css/main.css") !== -1);
+  // The default theme CSS is referenced by its content-fingerprinted name
+  // (`main.<hash>.css`, no `?v=`), so match the fingerprinted shape rather
+  // than the plain filename. (Fingerprint coverage lives in
+  // asset-fingerprint.test.js; this just confirms the default path is wired.)
+  check("layout points at fingerprinted default theme css",
+    /\/assets\/themes\/default\/css\/main\.[a-f0-9]{8,}\.css/.test(html));
 
   // (2) Layout: HTML structure the page renderers + a11y consumers depend on.
   check("layout offers skip-link target",             html.indexOf("id=\"main\"") !== -1);
