@@ -1086,7 +1086,10 @@ function _withSecurityHeaders(base) {
 // theme bundle every page references; per-route preloads (hero
 // images, etc.) compose by appending to the same header.
 function _earlyHintsLink(env, extras) {
-  var version = env.WORKER_VERSION || "0.0.0";
+  // Same version source as the document stylesheet `<link>` (_edgeRender)
+  // so the HTTP/103 preload URL matches what the page actually requests —
+  // a mismatched `?v=` would make the browser fetch the stylesheet twice.
+  var version = env.WORKER_VERSION || assetManifest.version;
   // No `crossorigin` — the preload target is same-origin and the
   // matching `<link rel="stylesheet">` tag has no `crossorigin`
   // either. Adding `crossorigin` to the preload makes the browser
