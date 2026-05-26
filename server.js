@@ -152,6 +152,17 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.returns.create({ cursorSecret: returnsCursorSecret })
         : null;
 
+      // Customers — passkey / OIDC accounts. Opts the storefront /account/*
+      // routes in AND the read-only /admin/customers roster. Single instance
+      // shared by both surfaces. Cursor HMAC key for the admin list derived
+      // like the others. The primitive only needs the externalDb query handle.
+      var customersCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("customers-cursor", process.env.D1_BRIDGE_SECRET)
+        : "customers-cursor-secret-dev-only";
+      var customers = (catalog && cart)
+        ? bShop.customers.create({ cursorSecret: customersCursorSecret })
+        : null;
+
       // Outbound webhooks — operator-registered endpoints receive signed
       // (HMAC-SHA3-512) deliveries on order lifecycle events. One shared
       // instance: the order instances fan out transitions through it
@@ -238,6 +249,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           catalogImport: catalogImport,
           reviews:       reviews,
           returns:       returns,
+          customers:     customers,
           subscriptions: subscriptions,
           webhooks:      webhooks,
           collections:   collections,
@@ -293,11 +305,10 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // browsable but checkout-routes don't mount.
         var sfDeps = { catalog: catalog, cart: cart, config: { shop_name: bootShopName } };
         if (sfTheme) sfDeps.theme = sfTheme;
-        // Customer accounts — opts the /account/* routes in. The
-        // primitive only needs the externalDb query handle (which
-        // ships with this deploy via `r2_bridge` / `D1_BRIDGE_URL`),
-        // so wire it whenever the data layer is present.
-        sfDeps.customers = bShop.customers.create({});
+        // Customer accounts — opts the /account/* routes in. Reuses the
+        // single `customers` instance built above (also wired into the
+        // admin roster), so both surfaces share one handle.
+        sfDeps.customers = customers;
         // Sign in with Google (OIDC). Mounts the /account/login/google
         // routes only when the operator supplies the OAuth client +
         // SHOP_ORIGIN (for the exact redirect URI). The framework
