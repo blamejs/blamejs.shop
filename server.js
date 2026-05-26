@@ -240,6 +240,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           returns:       returns,
           subscriptions: subscriptions,
           webhooks:      webhooks,
+          collections:   collections,
           // Integration state map for /admin/integrations — "enabled" |
           // "action" (credentials present, a one-time operator action
           // still required) | "off". admin.js never reads process.env.
