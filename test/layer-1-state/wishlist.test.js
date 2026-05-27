@@ -159,7 +159,7 @@ async function _listForCustomerEmptyAndPopulated() {
     if (i < products.length - 1) {
       var beforeMs = Date.now();
       await helpers.waitUntil(function () { return Date.now() > beforeMs; },
-        { timeoutMs: 100, label: "ms tick between wishlist adds" });
+        { timeoutMs: 2000, label: "ms tick between wishlist adds" });
     }
   }
 
@@ -185,7 +185,7 @@ async function _listForCustomerCursorPagination() {
     ids.push(e.id);
     var beforeMs = Date.now();
     await helpers.waitUntil(function () { return Date.now() > beforeMs; },
-      { timeoutMs: 100, label: "ms tick between wishlist adds" });
+      { timeoutMs: 2000, label: "ms tick between wishlist adds" });
   }
 
   var pageA = await wishlist.listForCustomer(customer, { limit: 2 });

@@ -516,7 +516,7 @@ async function _listAndPaginate() {
   for (var i = 0; i < 3; i += 1) {
     var beforeTs = Date.now();
     await helpers.waitUntil(function () { return Date.now() > beforeTs; }, {
-      timeoutMs: 200, label: "clock advance",
+      timeoutMs: 2000, label: "clock advance",
     });
     var r = await f.lr.redeemForCustomer({ customer_id: cid, reward_slug: "a-perk" });
     redeemedIds.push(r.redemption_id);

@@ -391,7 +391,7 @@ async function _customerBackordersOrdering() {
     // that implementation detail.
     await helpers.waitUntil(function (start) {
       return function () { return Date.now() > start; };
-    }(Date.now()), { timeoutMs: 100, intervalMs: 1, label: "ms tick" });
+    }(Date.now()), { timeoutMs: 2000, intervalMs: 1, label: "ms tick" });
   }
 
   // Add an unrelated customer's row so the scoping check has signal.
