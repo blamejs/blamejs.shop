@@ -378,11 +378,11 @@ async function _currentBreachesAndForOrder() {
   // Advance the monotonic clock so the next breach sorts after the first
   await helpers.waitUntil(function (start) {
     return function () { return Date.now() > start; };
-  }(Date.now()), { timeoutMs: 100, intervalMs: 1, label: "ms tick" });
+  }(Date.now()), { timeoutMs: 2000, intervalMs: 1, label: "ms tick" });
   await sla.recordBreach({ order_id: orderA, policy_slug: "p", breach_type: "deliver", hours_over: 100 });
   await helpers.waitUntil(function (start) {
     return function () { return Date.now() > start; };
-  }(Date.now()), { timeoutMs: 100, intervalMs: 1, label: "ms tick" });
+  }(Date.now()), { timeoutMs: 2000, intervalMs: 1, label: "ms tick" });
   await sla.recordBreach({ order_id: orderB, policy_slug: "p", breach_type: "ship",    hours_over: 30 });
 
   var all = await sla.currentBreaches();
@@ -563,7 +563,7 @@ async function _multipleActivePoliciesMostRecentWins() {
   // Advance the monotonic clock so the second policy's updated_at is strictly later
   await helpers.waitUntil(function (start) {
     return function () { return Date.now() > start; };
-  }(Date.now()), { timeoutMs: 100, intervalMs: 1, label: "ms tick" });
+  }(Date.now()), { timeoutMs: 2000, intervalMs: 1, label: "ms tick" });
   await sla.definePolicy({ slug: "new", priority: "standard", ship_within_hours: 12, deliver_within_hours: 24 });
 
   var ev = await sla.evaluateOrder({

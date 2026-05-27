@@ -241,7 +241,7 @@ async function _historyPagination() {
   async function _earnWithDistinctTs() {
     var beforeTs = Date.now();
     await helpers.waitUntil(function () { return Date.now() > beforeTs; }, {
-      timeoutMs: 200, label: "clock advance",
+      timeoutMs: 2000, label: "clock advance",
     });
     return loy.earn({ customer_id: cid, points: 10, source: "order-paid" });
   }

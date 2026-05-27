@@ -415,11 +415,11 @@ async function _expireOlderThan() {
   var afterRows = (await s.query("SELECT id FROM save_for_later WHERE customer_id = ?1", [customer])).rows;
   check("expireOlderThan: old row gone",          afterRows.length === 1 && afterRows[0].id === fresh2.id);
 
-  // days=0 — remove everything. Wait a tick so fresh2's saved_at
-  // is strictly < the threshold the call computes.
-  var beforeMs = Date.now();
-  await helpers.waitUntil(function () { return Date.now() > beforeMs; },
-    { timeoutMs: 100, label: "ms tick before expireOlderThan(0)" });
+  // days=0 — remove everything. Force fresh2's saved_at strictly into the
+  // past so the threshold the call computes (now) is greater — deterministic,
+  // with no reliance on a wall-clock tick (which flaked under the loaded
+  // container-build runner). Mirrors the saved_at backdating above.
+  await s.query("UPDATE save_for_later SET saved_at = ?1 WHERE id = ?2", [Date.now() - 1000, fresh2.id]);
   var nuked = await s.sfl.expireOlderThan(0);
   check("expireOlderThan(0): clears every row",   nuked.removed === 1);
 }
@@ -449,7 +449,7 @@ async function _listAndPagination() {
     ids.push(added.id);
     var beforeMs = Date.now();
     await helpers.waitUntil(function () { return Date.now() > beforeMs; },
-      { timeoutMs: 100, label: "ms tick between save adds" });
+      { timeoutMs: 2000, label: "ms tick between save adds" });
   }
 
   // Customer count.
