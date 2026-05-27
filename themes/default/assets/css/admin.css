@@ -47,7 +47,7 @@
   --raised-3:#26262e; --sunken:#0b0b0e;
   --white:#F9F8FA; --ink-soft:#d3d3dc; --ink-mute:#9b9ba7;
   /* status hues kept in the violet-compatible dark system */
-  --success:#4ad06a; --warn:#e3c14e; --danger:#ff6b6b;
+  --success:#4ad06a; --warn:#e3c14e; --danger:#ff6b6b; --danger-deep:#b3261e;
 
   /* ---- admin semantic names (values now dark; the names survive) -- */
   --ink:var(--white);             /* primary text */
@@ -154,7 +154,7 @@ tr.row--low td { background:rgba(227,193,78,.10); }
 .btn--ghost { background:transparent; color:var(--ink); border-color:var(--hair-strong); }
 .btn--ghost:hover { background:var(--hover); border-color:var(--ink-2); box-shadow:none; }
 .btn--danger { background:transparent; color:var(--danger); border-color:rgba(255,107,107,.5); }
-.btn--danger:hover { background:var(--danger); color:var(--white); border-color:var(--danger); box-shadow:none; }
+.btn--danger:hover { background:var(--danger-deep); color:var(--white); border-color:var(--danger-deep); box-shadow:none; }
 
 /* ---- chips / filters --------------------------------------------- */
 .order-filters { display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:1.25rem; }
