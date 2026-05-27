@@ -1640,6 +1640,7 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
 }
 .cart-page__checkout { width: 100%; }
 .cart-page__note { margin: var(--space-4) 0 0; color: var(--mute); font-size: var(--text-xs); }
+.cart-page__note--warn { color: var(--warn, #e3c14e); font-size: var(--text-sm); }
 
 /* ---- PDP buy-box ------------------------------------------------------
    A contained, well-spaced purchase card so price / variant / quantity /
@@ -2587,39 +2588,15 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   animation: blink 1.05s steps(1) infinite;
 }
 
-/* Glitch-shield brand lockup — a violet hex plate with an inner dark
-   plate, ready for a `>_`-style glyph. */
-.shield {
-  position: relative;
-  width: 38px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  color: var(--white);
-  clip-path: polygon(50% 0, 100% 16%, 100% 58%, 50% 100%, 0 58%, 0 16%);
-  background: linear-gradient(155deg, var(--violet-light), var(--violet) 45%, var(--violet-deep));
-  box-shadow: var(--glow-soft);
-}
-.shield::before {
-  content: "";
-  position: absolute;
-  inset: 2px;
-  clip-path: polygon(50% 0, 100% 16%, 100% 58%, 50% 100%, 0 58%, 0 16%);
-  background: linear-gradient(160deg, #2a0f38, #160820);
-}
-.shield__glyph {
-  position: relative;
-  z-index: 1;
-  font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 12px;
-  line-height: 1;
-  letter-spacing: -0.02em;
-  color: var(--white);
-  text-align: center;
-}
-@media (hover: hover) {
-  .shield--hover:hover { animation: shieldGlitch 0.5s steps(2, end) 1; }
+/* PDP trust-badge brand mark — the real shield favicon rendered inline,
+   so the badge carries the actual brand mark rather than a CSS hex
+   approximation. */
+.pdp__badge-mark {
+  width: 22px;
+  height: 22px;
+  vertical-align: -0.32em;
+  margin-right: 0.15rem;
+  filter: drop-shadow(0 0 6px rgba(173, 56, 219, 0.35));
 }
 
 @keyframes blink {
@@ -2630,13 +2607,6 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   0%   { box-shadow: 0 0 0 0 rgba(173,56,219,.6); }
   70%  { box-shadow: 0 0 0 7px rgba(173,56,219,0); }
   100% { box-shadow: 0 0 0 0 rgba(173,56,219,0); }
-}
-@keyframes shieldGlitch {
-  0%   { transform: translate(0,0); }
-  25%  { transform: translate(-1.5px, 1px); filter: drop-shadow(2px 0 rgba(178,71,220,.8)); }
-  50%  { transform: translate(1.5px, -1px); filter: drop-shadow(-2px 0 rgba(173,56,219,.8)); }
-  75%  { transform: translate(-1px, 0); }
-  100% { transform: translate(0,0); filter: none; }
 }
 @keyframes heroFlicker {
   0%   { opacity: .2; transform: translateX(-2px); }
@@ -2661,7 +2631,6 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
      stays solid + visible rather than blinking. */
   .glitch--live, .dot--live { animation: none; }
   .term-cursor { animation: none; opacity: 1; }
-  .shield--hover:hover { animation: none; }
 }
 
 /* ---- screen-reader-only utility --------------------------------- */

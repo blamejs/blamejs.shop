@@ -174,7 +174,7 @@ function _buildBuyBox(variants, escAttr) {
 
   var trustLine =
     "<div class=\"pdp__meta\">\n" +
-    "        <span class=\"pdp__badge\"><span class=\"shield\" aria-hidden=\"true\"><span class=\"shield__glyph\">&gt;_</span></span> Post-quantum secured checkout · ML-KEM-1024 key agreement · ML-DSA-65 receipt signature.</span>\n" +
+    "        <span class=\"pdp__badge\"><img class=\"pdp__badge-mark\" src=\"/assets/brand/favicon.svg\" alt=\"\" aria-hidden=\"true\" width=\"22\" height=\"22\"> Post-quantum secured checkout · ML-KEM-1024 key agreement · ML-DSA-65 receipt signature.</span>\n" +
     "      </div>";
 
   // Many variants → keep the compact table (still a per-row add form).
