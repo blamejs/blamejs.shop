@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.3",
+  "date": "2026-05-27",
+  "headline": "Admin console adopts the dark violet brand — the operator dashboard now matches the storefront",
+  "summary": "The admin console has been restyled from its previous light theme and orange accent onto the same dark violet identity as the storefront: a neutral near-black canvas with violet reserved for accents, the self-hosted Hanken Grotesk and Space Mono typefaces in place of Inter, and Space Mono carrying the terminal-style chrome (header mark, navigation, micro-labels, figures, SKUs, order ids, and code). Stat cards, tables, status pills, forms, buttons, banners, nav cards, and the sign-in card are all recoloured for the dark surface with contrast preserved — order statuses keep their meaning (green for paid/shipped, amber for pending, violet for refunded, muted for cancelled), form inputs read clearly on the dark wells, and the revenue sparkline is drawn in the brand violet. Operators on the default theme get the new console on upgrade; no admin functionality, routes, or data change.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Dark violet admin theme", "body": "The admin stylesheet is rebuilt on the storefront's palette — near-black surfaces, neutral hairline borders, and violet reserved for accents (active nav, primary buttons, the `/ admin` mark, focus states, and the revenue sparkline) rather than the former light paper and orange. Self-hosted Hanken Grotesk (display/body) and Space Mono (chrome/mono) replace Inter, loaded under the strict `font-src 'self'` policy." },
+        { "title": "Components recoloured for the dark surface", "body": "Stat cards, the orders table, status pills, filter chips, forms, buttons (primary/ghost/danger), banners, nav cards, the gift-card detail grid, and the sign-in card are all restyled for dark with contrast maintained. Order-status pills keep their semantics — green for paid/shipped/fulfilling/delivered, amber for pending, violet for refunded, muted for cancelled. Form inputs sit on recessed dark wells with light text and a violet focus ring." }
+      ]
+    }
+  ]
+}

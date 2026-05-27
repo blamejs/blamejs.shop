@@ -70,12 +70,12 @@ async function _run() {
 
   // Self-hosted typography: each stylesheet declares @font-face against
   // ../fonts for the families it actually uses, and every referenced
-  // woff2 exists on disk as a real WOFF2. The admin console keeps the
-  // Inter / Inter Tight pairing; the storefront ships the Hanken Grotesk
-  // + Space Mono brand pairing.
+  // woff2 exists on disk as a real WOFF2. Both the admin console and the
+  // storefront ship the Hanken Grotesk + Space Mono brand pairing.
   var fontsByStylesheet = {
-    "css/admin.css": ["inter-400.woff2", "inter-500.woff2", "inter-600.woff2",
-                      "inter-tight-600.woff2", "inter-tight-700.woff2"],
+    "css/admin.css": ["hankengrotesk-400.woff2", "hankengrotesk-500.woff2",
+                      "hankengrotesk-600.woff2", "hankengrotesk-700.woff2",
+                      "spacemono-400.woff2", "spacemono-700.woff2"],
     "css/main.css":  ["hankengrotesk-400.woff2", "hankengrotesk-500.woff2",
                       "hankengrotesk-600.woff2", "hankengrotesk-700.woff2",
                       "hankengrotesk-800.woff2", "spacemono-400.woff2",
