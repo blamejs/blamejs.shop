@@ -177,6 +177,19 @@ export function consentScriptTag() {
     (sri ? " integrity=\"" + sri + "\"" : "") + " defer data-consent-policy=\"v1\"></script>";
 }
 
+// `<script>` tag for the cart-count island — byte-identical to the
+// container's `_islandScript("cart-count.js", { id })` (no policy attr).
+// Always emitted: every storefront chrome page server-renders the nav
+// cart badge (0 on the cookie-less edge render) and this island corrects
+// it from `/cart/count`, a container route that unseals `shop_sid`. The
+// strict `script-src 'self'` CSP allows the same-origin external file;
+// `defer` keeps it off the critical path.
+export function cartCountScriptTag() {
+  var sri = assetSri("js/cart-count.js");
+  return "<script id=\"cart-count-island\" src=\"" + assetUrl("js/cart-count.js") + "\"" +
+    (sri ? " integrity=\"" + sri + "\"" : "") + " defer></script>";
+}
+
 // Announcement-bar markup for a resolved row — BYTE-IDENTICAL to the
 // container's `_buildAnnouncementBar` (lib/storefront.js) so the edge +
 // container outputs match (the asset-fingerprint parity test guards this).

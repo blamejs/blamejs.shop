@@ -1,5 +1,5 @@
 {
-  "version": "0.2.8",
+  "version": "0.2.9",
   "assets": {
     "css/admin.css": {
       "integrity": "sha384-FgqvXcZygYkJjjOtXAeu9xi6AtYqkchPnJKcS0OeHm8lynhd9r4RfdpoT7P7j7/l",
@@ -12,6 +12,10 @@
     "js/announcement.js": {
       "integrity": "sha384-z4zcEMn+tScoVnYRE4nEf8N/oyvpxdpaxTNrT4QO/jURChid4+qjAvWkzatCaAPq",
       "fingerprinted": "js/announcement.59eab4872d2f3b4c.js"
+    },
+    "js/cart-count.js": {
+      "integrity": "sha384-K/rkm//Dzg8nuOfpaeenJvLKKl+6DEuvuJi1LLgd46BK+dd1HYmU8R7/gHHjtEsr",
+      "fingerprinted": "js/cart-count.bfc2eb434b19c00a.js"
     },
     "js/consent.js": {
       "integrity": "sha384-KKMQ0og8HPOykRRPpUyxX7dMhTvKySfVtpGX/jGWzZwNaN/c4OykvRvXpqBHcQST",
