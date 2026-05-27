@@ -1,4 +1,4 @@
-import { renderTemplate, escapeHtml, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher } from "./_lib.js";
+import { renderTemplate, escapeHtml, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -130,6 +130,7 @@ var LAYOUT =
   "  </footer>\n" +
   CONSENT_BANNER +
   "RAW_CONSENT_SCRIPT" +
+  "RAW_CART_COUNT_SCRIPT" +
   "RAW_ANNOUNCEMENT_SCRIPT" +
   "</body>\n" +
   "</html>\n";
@@ -419,6 +420,7 @@ function _wrap(opts) {
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
     .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
+    .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
     .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "")
     .replace("RAW_CURRENCY_SWITCHER", currencySwitcher({
       currencies:  opts.currency_options,
