@@ -57,14 +57,14 @@
   --violet-darkest: #370947;
 
   /* ---- canvas + ink ---------------------------------------------- */
-  --near-black:     #050305;  /* page canvas */
-  --raised:         #140e1b;  /* elevated dark, violet-tinted */
-  --raised-2:       #1a1222;  /* card / higher elevation */
-  --raised-3:       #221730;  /* hover / chip-active */
-  --sunken:         #0c0810;  /* recessed wells, code blocks */
+  --near-black:     #08080a;  /* page canvas — neutral near-black (violet is the accent, not the field) */
+  --raised:         #131317;  /* elevated dark — neutral charcoal */
+  --raised-2:       #1b1b21;  /* card / higher elevation */
+  --raised-3:       #26262e;  /* hover / chip-active */
+  --sunken:         #0b0b0e;  /* recessed wells, code blocks */
   --white:          #F9F8FA;
-  --ink-soft:       #cabbd6;  /* secondary text — AA on dark (~9:1) */
-  --ink-mute:       #9d8aae;  /* muted captions — AA small (~4.8:1) */
+  --ink-soft:       #d3d3dc;  /* secondary text — neutral, high contrast on dark */
+  --ink-mute:       #9b9ba7;  /* muted captions — neutral grey, AA small */
 
   /* ---- status hues (kept in the violet-compatible dark system) --- */
   --success:        #4ad06a;
@@ -88,17 +88,18 @@
   --text-muted:      var(--ink-soft);   /* AA on dark for body copy */
   --text-subtle:     var(--ink-mute);   /* captions / hints */
 
-  /* ---- borders (low-opacity violet hairlines) -------------------- */
-  --border:          rgba(173, 56, 219, 0.16);
-  --border-strong:   rgba(173, 56, 219, 0.30);
+  /* ---- borders (neutral hairlines; violet reserved for accents) -- */
+  --border:          rgba(249, 248, 250, 0.10);
+  --border-strong:   rgba(249, 248, 250, 0.18);
   --border-soft:     rgba(249, 248, 250, 0.06);
+  --border-accent:   rgba(173, 56, 219, 0.45);  /* only on selected/active/focus */
 
   /* ---- accent + glow --------------------------------------------- */
   --color-accent:        #AD38DB;
   --color-accent-hover:  #B247DC;
   /* accent text that clears 4.5:1 on the dark surfaces for small text */
   --color-accent-text:   #c977ec;
-  --color-price:         #c977ec;
+  --color-price:         var(--white);  /* high-contrast; prominence via mono weight + size, not hue */
   --glow-color:          rgba(173, 56, 219, 0.45);
   --glow:        0 0 0 1px rgba(173,56,219,.45), 0 0 18px rgba(173,56,219,.35), 0 0 42px rgba(173,56,219,.18);
   --glow-soft:   0 0 24px rgba(173,56,219,.22);
@@ -171,9 +172,9 @@
   --radius-pill: 999px;
   /* hard-edged + glow shadows — a crisp violet hairline ring plus a
      soft neon halo, replacing the old soft grey drop-shadows. */
-  --shadow-sm:  0 0 0 1px var(--border);
-  --shadow-md:  0 0 0 1px var(--border-strong), 0 0 24px rgba(173,56,219,.22);
-  --shadow-lg:  0 0 0 1px var(--border-strong), 0 0 42px rgba(173,56,219,.30), 0 24px 60px -28px rgba(0,0,0,.8);
+  --shadow-sm:  0 0 0 1px var(--border), 0 2px 8px -4px rgba(0,0,0,.6);
+  --shadow-md:  0 0 0 1px var(--border-strong), 0 16px 40px -24px rgba(0,0,0,.7);
+  --shadow-lg:  0 0 0 1px var(--border-strong), 0 28px 64px -28px rgba(0,0,0,.85);
   --shadow-accent: var(--glow);
   --ease-out:       cubic-bezier(.2, .7, .2, 1);
   --duration-fast:  140ms;
@@ -757,10 +758,10 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
   border-radius: 50%;
   flex-shrink: 0;
 }
-/* terminal traffic-light dots, recolored into the violet family */
-.hero__card-dot--r { background: var(--violet-light); }
-.hero__card-dot--y { background: var(--violet-mid); }
-.hero__card-dot--g { background: var(--violet-deep); }
+/* terminal traffic-light dots — natural macOS-window colors */
+.hero__card-dot--r { background: #ef5f56; }
+.hero__card-dot--y { background: #e3c14e; }
+.hero__card-dot--g { background: #4ec46e; }
 .hero__card-url { margin-left: var(--space-3); }
 .hero__card-body {
   margin: 0;
@@ -769,11 +770,11 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
   background: transparent;
 }
 .hero__card-body code { font-family: inherit; color: var(--text); }
-/* syntax tokens — violet-family palette so the code reads on-brand */
-.tk-k { color: #d28cf0; }    /* keyword */
-.tk-f { color: #c977ec; }    /* function */
-.tk-s { color: #e0b0f5; }    /* string */
-.tk-c { color: var(--ink-mute); font-style: italic; } /* comment */
+/* syntax tokens — natural console palette (keyword carries the brand violet) */
+.tk-k { color: #c678dd; }    /* keyword — violet (brand) */
+.tk-f { color: #61afef; }    /* function — blue */
+.tk-s { color: #98c379; }    /* string — green */
+.tk-c { color: #7f848e; font-style: italic; } /* comment — grey */
 
 /* =================================================================
    MARQUEE
@@ -933,18 +934,19 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
   box-shadow: var(--glow-soft);
 }
 .collection-card__art {
+  background-color: var(--surface-raised);
   background-image:
-    radial-gradient(circle at 75% 25%, rgba(173,56,219,0.30) 0%, transparent 55%),
-    var(--card-gradient, linear-gradient(135deg, var(--violet-deep) 0%, var(--violet-darkest) 100%));
-  background-color: var(--card-bg, var(--violet-darkest));
+    radial-gradient(circle at var(--art-glow, 75% 25%), rgba(173,56,219,0.22) 0%, transparent 60%),
+    linear-gradient(150deg, var(--surface-card) 0%, var(--surface) 100%);
 }
-/* swatch gradients — one violet->magenta hue family, stepped by depth */
-.collection-card__art--1 { --card-gradient: linear-gradient(135deg, #AD38DB 0%, #732A8D 100%); --card-bg: #AD38DB; }
-.collection-card__art--2 { --card-gradient: linear-gradient(135deg, #511961 0%, #221730 100%); --card-bg: #511961; }
-.collection-card__art--3 { --card-gradient: linear-gradient(135deg, #B247DC 0%, #A04BB8 100%); --card-bg: #B247DC; }
-.collection-card__art--4 { --card-gradient: linear-gradient(135deg, #732A8D 0%, #370947 100%); --card-bg: #732A8D; }
-.collection-card__art--5 { --card-gradient: linear-gradient(135deg, #A04BB8 0%, #511961 100%); --card-bg: #A04BB8; }
-.collection-card__art--6 { --card-gradient: linear-gradient(135deg, #370947 0%, #050305 100%); --card-bg: #370947; }
+/* dark tiles with a subtle violet glow that shifts per tile for variety —
+   violet reads as a hint, not a full magenta fill */
+.collection-card__art--1 { --art-glow: 78% 22%; }
+.collection-card__art--2 { --art-glow: 24% 30%; }
+.collection-card__art--3 { --art-glow: 50% 82%; }
+.collection-card__art--4 { --art-glow: 84% 74%; }
+.collection-card__art--5 { --art-glow: 28% 72%; }
+.collection-card__art--6 { --art-glow: 60% 16%; }
 .collection-card__meta {
   padding: var(--space-5);
   border-top: 1px solid var(--border);
@@ -1581,6 +1583,43 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
 }
 .cart-page__checkout { width: 100%; }
 .cart-page__note { margin: var(--space-4) 0 0; color: var(--mute); font-size: var(--text-xs); }
+
+/* ---- PDP buy-box ------------------------------------------------------
+   A contained, well-spaced purchase card so price / variant / quantity /
+   CTA read as one clear group instead of blending into the column. */
+.pdp__buybox {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-5);
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  margin: var(--space-5) 0 var(--space-4);
+}
+.pdp__buybox .featured-product__price { margin: 0; line-height: 1; }
+.pdp__buybox > form { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; }
+.pdp__buybox .pdp__variants, .pdp__buybox fieldset { border: 0; padding: 0; margin: 0; }
+.pdp__buybox .variant-row__sku { margin: 0; color: var(--text-subtle); font-size: var(--text-sm); }
+.pdp__buybox label[for="buybox-qty"] {
+  font-size: var(--text-xs); color: var(--text-subtle);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  margin-bottom: calc(-1 * var(--space-2));
+}
+.pdp__buybox .variant-row__qty { width: 5rem; }
+.pdp__buybox .cart-page__checkout { width: 100%; margin-top: var(--space-2); justify-content: center; }
+/* trust line right under the buy-box — a calm full-width note, not a pill */
+.pdp__buybox + .pdp__meta { margin: 0 0 var(--space-5); }
+.pdp__buybox + .pdp__meta .pdp__badge {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  width: 100%; border: 0; background: none; padding: 0;
+  text-transform: none; letter-spacing: 0; font-weight: 500;
+  color: var(--text-subtle); font-size: var(--text-xs); line-height: 1.5;
+}
+/* secondary actions (wishlist / compare) — one separated row below */
+.pdp__info .wishlist, .pdp__info .compare {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  margin-top: var(--space-4); vertical-align: middle;
+}
+.pdp__info .wishlist { margin-right: var(--space-4); }
 
 /* ---- checkout form --------------------------------------------- */
 .form-stack {

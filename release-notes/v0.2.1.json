@@ -1,0 +1,17 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.1",
+  "date": "2026-05-27",
+  "headline": "Theme tuning — stronger contrast, a cleaner product buy-box, and natural code-sample colors",
+  "summary": "A polish pass over the new dark theme. The palette is rebalanced so the brand violet reads as a deliberate accent rather than the whole field: surfaces, borders, and shadows are now neutral dark, body text and prices are high-contrast near-white, and violet is concentrated on calls-to-action, the hero accent, and the newsletter band. The product page's buy-box is now a single contained card — price, variant, quantity, and add-to-cart group cleanly with proper spacing and alignment instead of blending into the column, and the wishlist/compare controls sit in their own separated row. The homepage code sample uses natural syntax-highlight colours (green strings, blue functions, violet keywords) with the usual window dots. The home collection tiles are calmer dark tiles with a subtle violet glow rather than solid magenta swatches.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Rebalanced palette for contrast", "body": "Surfaces (`--surface`, card and raised tiers) and borders are now neutral dark instead of violet-tinted; secondary text and prices are high-contrast near-white; default shadows are neutral. The violet accent is reserved for primary buttons, the hero accent word, focus states, and the newsletter/framework bands — so contrast and hierarchy are clearer and the page no longer reads as a single wash of magenta." },
+        { "title": "Product buy-box is a contained, aligned card", "body": "Price, variant chip(s), quantity, and the full-width add-to-cart now sit in one bordered buy-box card with consistent spacing, the price rendered in high-contrast white, and the post-quantum-secured-checkout trust line as a calm note beneath it. The wishlist and compare controls are grouped into their own row, separated from the buy-box. No change to add-to-cart, variant, or currency behaviour." },
+        { "title": "Natural code-sample colours and calmer collection tiles", "body": "The homepage server-rendered code sample now uses a natural console palette — green strings, blue function names, violet keywords, grey comments — with red/yellow/green window dots. The home collection tiles are dark with a subtle, position-varied violet glow instead of solid violet gradient fills." }
+      ]
+    }
+  ]
+}
