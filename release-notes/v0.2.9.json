@@ -1,0 +1,21 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.9",
+  "date": "2026-05-27",
+  "headline": "Storefront read pages stay fast for every visitor — the cart badge updates client-side",
+  "summary": "Restores full edge-render speed for returning and signed-in shoppers. Every storefront read page (home, product listing, search, blog) now renders at the edge for all visitors again; the nav cart badge renders server-side and a tiny client island corrects the number from a new lightweight endpoint. The result: the fast cached page AND an accurate cart count, without sending a shopper-with-a-cart through the slower origin on every page.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Fast read pages for shoppers who have a session", "body": "A visitor carrying a cart or sign-in cookie is once again served the edge-rendered storefront pages instead of being routed to the origin container, so the home page and other read pages load quickly for returning visitors, not just first-time guests. The nav cart count stays correct via the island below." }
+      ]
+    },
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "`GET /cart/count` + a cart-count island", "body": "A new endpoint returns the current session's cart line count as JSON (`{\"count\": N}`), cached `no-store`, with no product hydration. A small deferred same-origin script (`assets/js/cart-count.js`) reads it on load and updates the nav badge text and its aria-label. A visitor with JavaScript off keeps the server-rendered badge. The script is a same-origin external file, so the existing `script-src 'self'` policy already permits it — no CSP change required." }
+      ]
+    }
+  ]
+}
