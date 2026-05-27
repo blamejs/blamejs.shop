@@ -331,6 +331,17 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       var giftcards      = (catalog && cart) ? bShop.giftcards.create({}) : null;
       var giftCardLedger = (catalog && cart) ? bShop.giftCardLedger.create({}) : null;
 
+      // Announcement bar — sitewide operator promo/notice strip. The
+      // primitive resolves the highest-priority active announcement for a
+      // viewer (theme rank urgency>promo>info>success) after audience +
+      // dismissal gating; the storefront renders it as page-top chrome and
+      // the admin console manages it. The console exposes the all / guest /
+      // logged_in audiences; the primitive's segment audience needs an
+      // isMember(customer_id, segment_slug) handle (the segments primitive
+      // exposes segmentsForCustomer, not isMember) so it stays unexposed
+      // until that adapter is wired — segment rows are simply not offered.
+      var announcementBar = (catalog && cart) ? bShop.announcementBar.create({}) : null;
+
       // Recommendations — operator-curated overrides + co-purchase /
       // category-popular / in-stock signals. Composes the catalog handle;
       // powers the post-purchase "Customers also bought" rail.
@@ -513,6 +524,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           giftCardLedger: giftCardLedger,
           webhooks:      webhooks,
           collections:   collections,
+          announcementBar: announcementBar,
           // Integration state map for /admin/integrations — "enabled" |
           // "action" (credentials present, a one-time operator action
           // still required) | "off". admin.js never reads process.env.
@@ -639,6 +651,10 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;
         if (productCompare) sfDeps.productCompare = productCompare;
         if (recommendations) sfDeps.recommendations = recommendations;
+        // Announcement bar — sitewide promo/notice chrome. The storefront
+        // resolves + renders the active bar per request (page-top) and
+        // mounts the dismiss route; the admin console manages the rows.
+        if (announcementBar) sfDeps.announcementBar = announcementBar;
         // Bundles + quantity discounts — the PDP "Bundle & save" rail +
         // atomic bundle add, and the quantity-break table + cart/checkout
         // repricing. Both price server-side from the live catalog.

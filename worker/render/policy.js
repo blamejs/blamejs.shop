@@ -1,7 +1,7 @@
 // Static policy pages (privacy, terms). Composed off a minimal
 // layout that doesn't carry the storefront hero / marquee / catalog
 // chrome — these are read-once legal docs, not a commerce surface.
-import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag } from "./_lib.js";
+import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, announcementBar, announcementScriptTag } from "./_lib.js";
 import b from "../b.js";
 
 var LAYOUT =
@@ -18,6 +18,7 @@ var LAYOUT =
   "</head>\n" +
   "<body>\n" +
   "  <a class=\"skip-link\" href=\"#main\">Skip to content</a>\n" +
+  "RAW_ANNOUNCEMENT_BAR" +
   "  <header class=\"site-header\">\n" +
   "    <div class=\"site-header__inner\">\n" +
   "      <a href=\"/\" class=\"brand\" aria-label=\"{{shop_name}}\"><img src=\"/assets/brand/logo.png\" alt=\"{{shop_name}}\"></a>\n" +
@@ -49,6 +50,7 @@ var LAYOUT =
   "  </footer>\n" +
   CONSENT_BANNER +
   "RAW_CONSENT_SCRIPT" +
+  "RAW_ANNOUNCEMENT_SCRIPT" +
   "</body>\n" +
   "</html>\n";
 
@@ -67,7 +69,9 @@ function _wrap(opts, bodyHtml) {
     updated:          opts.updated,
     year:             String(new Date().getUTCFullYear()),
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
+    .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
+    .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "")
     .replace("RAW_BODY_PLACEHOLDER", bodyHtml);
 }
 
