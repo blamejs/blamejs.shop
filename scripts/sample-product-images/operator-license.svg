@@ -1,43 +1,69 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="Operator License — one-year individual playbook archive license">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" role="img" aria-label="Support License · 1 Year" color="#C254E8">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#2a0f5c"/>
-      <stop offset="100%" stop-color="#6a1bff"/>
+    <radialGradient id="sl-glow" cx="50%" cy="42%" r="55%">
+      <stop offset="0%" stop-color="#AD38DB" stop-opacity="0.42"/>
+      <stop offset="55%" stop-color="#732A8D" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#08080a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sl-doc" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a1422"/>
+      <stop offset="100%" stop-color="#0c0a12"/>
     </linearGradient>
-    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#1a1a1a"/>
-      <stop offset="100%" stop-color="#3a3a3a"/>
+    <linearGradient id="sl-edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#AD38DB"/>
+      <stop offset="100%" stop-color="#732A8D"/>
     </linearGradient>
-    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
-      <path d="M48 0H0V48" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
-    </pattern>
+    <radialGradient id="sl-seal" cx="50%" cy="38%" r="65%">
+      <stop offset="0%" stop-color="#C357E8"/>
+      <stop offset="60%" stop-color="#AD38DB"/>
+      <stop offset="100%" stop-color="#732A8D"/>
+    </radialGradient>
   </defs>
-  <rect width="800" height="800" fill="url(#g)"/>
-  <rect width="800" height="800" fill="url(#grid)"/>
 
-  <!-- License card with PQC sig stripe -->
-  <g transform="translate(400,440) rotate(-4)">
-    <rect x="-260" y="-150" width="520" height="300" rx="20" fill="url(#card)" stroke="rgba(255,255,255,0.2)" stroke-width="2"/>
-    <rect x="-260" y="-150" width="520" height="40" rx="20" fill="#fa4f09"/>
-    <rect x="-260" y="-130" width="520" height="20" fill="#fa4f09"/>
-    <text x="-240" y="-122" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="16" font-weight="700" letter-spacing="0.24em" fill="#ffffff">OPERATOR LICENSE · 1Y</text>
-    <text x="-240" y="-50" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="600" fill="rgba(255,255,255,0.7)">Holder</text>
-    <text x="-240" y="-12" font-family="ui-sans-serif, system-ui, sans-serif" font-size="32" font-weight="800" fill="#ffffff">operator@blamejs.shop</text>
-    <text x="-240" y="46" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="500" letter-spacing="0.2em" fill="rgba(255,255,255,0.5)">VALID THROUGH 2027-05-22</text>
-    <g transform="translate(-240,80)">
-      <rect x="0" y="0" width="280" height="40" rx="6" fill="rgba(0,0,0,0.35)"/>
-      <text x="14" y="28" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="14" fill="rgba(255,255,255,0.78)">ml-dsa-65: oK9d3v…q42</text>
-    </g>
-    <g transform="translate(160,80)">
-      <circle cx="0" cy="20" r="20" fill="#fa4f09"/>
-      <text x="0" y="27" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="800" fill="#ffffff" text-anchor="middle">PQC</text>
-    </g>
+  <!-- soft glow behind subject -->
+  <rect width="300" height="300" fill="url(#sl-glow)"/>
+
+  <!-- faint backdrop grid -->
+  <g stroke="currentColor" stroke-opacity="0.08" stroke-width="1">
+    <path d="M0 50 H300 M0 100 H300 M0 150 H300 M0 200 H300 M0 250 H300 M50 0 V300 M100 0 V300 M150 0 V300 M200 0 V300 M250 0 V300"/>
   </g>
 
-  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" fill="#ffffff">
-    <text x="60" y="92" font-size="22" font-weight="700" letter-spacing="0.24em" fill="#b67aff">CATALOG · DIGITAL</text>
-    <text x="60" y="148" font-size="64" font-weight="800" letter-spacing="-0.02em">Operator License</text>
-    <text x="60" y="194" font-size="22" font-weight="500" fill="rgba(255,255,255,0.7)">ML-DSA-signed delivery · 1-year term</text>
-    <text x="60" y="752" font-size="18" font-weight="600" letter-spacing="0.16em" fill="rgba(255,255,255,0.45)">OPR-LIC-1Y</text>
+  <!-- certificate document -->
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <!-- back sheet (offset, for depth) -->
+    <rect x="78" y="58" width="132" height="172" rx="8" fill="#0c0a12" stroke="#732A8D" stroke-width="2" opacity="0.7"/>
+    <!-- front sheet -->
+    <rect x="64" y="48" width="132" height="172" rx="8" fill="url(#sl-doc)" stroke="url(#sl-edge)" stroke-width="3"/>
+
+    <!-- header band -->
+    <rect x="78" y="62" width="104" height="3.4" rx="1.7" fill="#AD38DB"/>
+    <!-- terminal brand mark >_ -->
+    <path d="M82 80 L90 86 L82 92" fill="none" stroke="currentColor" stroke-width="3" stroke-opacity="0.95"/>
+    <path d="M96 92 H112" stroke="currentColor" stroke-width="3" stroke-opacity="0.95"/>
+
+    <!-- body text lines -->
+    <g stroke="currentColor" stroke-width="3" stroke-opacity="0.32">
+      <path d="M82 108 H178"/>
+      <path d="M82 122 H178"/>
+      <path d="M82 136 H156"/>
+    </g>
+    <!-- "1 YEAR" emphasis line -->
+    <rect x="82" y="150" width="58" height="9" rx="2.5" fill="#732A8D" fill-opacity="0.55"/>
   </g>
+
+  <!-- wax / certification seal with ribbon -->
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <!-- ribbon tails -->
+    <path d="M156 188 L150 214 L162 206 L174 214 L168 188 Z" fill="#732A8D" stroke="#732A8D" stroke-width="2"/>
+    <!-- scalloped seal ring -->
+    <circle cx="162" cy="184" r="30" fill="url(#sl-seal)" stroke="#C357E8" stroke-width="2"/>
+    <circle cx="162" cy="184" r="22" fill="none" stroke="#08080a" stroke-opacity="0.35" stroke-width="2" stroke-dasharray="4 4"/>
+    <!-- key inside seal -->
+    <circle cx="155" cy="178" r="6" fill="none" stroke="#08080a" stroke-width="3" stroke-opacity="0.85"/>
+    <path d="M159.5 182.5 L172 195 M168 191 L164 195 M172 195 L168 199" fill="none" stroke="#08080a" stroke-width="3" stroke-opacity="0.85"/>
+  </g>
+
+  <!-- glow accent dots -->
+  <circle cx="206" cy="64" r="4.5" fill="#AD38DB"/>
+  <circle cx="58" cy="226" r="3.2" fill="#C357E8" fill-opacity="0.85"/>
 </svg>

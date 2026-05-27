@@ -1,53 +1,62 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="Signing Cable — USB-C cable with in-line PQC signing chip">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" role="img" aria-label="Signing cable" color="#C254E8">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0a1f44"/>
-      <stop offset="100%" stop-color="#0d2f5e"/>
+    <radialGradient id="cabGlow" cx="50%" cy="50%" r="58%">
+      <stop offset="0%" stop-color="#AD38DB" stop-opacity="0.34"/>
+      <stop offset="58%" stop-color="#732A8D" stop-opacity="0.11"/>
+      <stop offset="100%" stop-color="#AD38DB" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="cabCord" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#C254E8"/>
+      <stop offset="50%" stop-color="#AD38DB"/>
+      <stop offset="100%" stop-color="#6E2887"/>
     </linearGradient>
-    <linearGradient id="connector" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#2a2a2a"/>
-      <stop offset="100%" stop-color="#0d0d0d"/>
+    <linearGradient id="cabPlug" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#C254E8"/>
+      <stop offset="48%" stop-color="#AD38DB"/>
+      <stop offset="100%" stop-color="#6E2887"/>
     </linearGradient>
-    <linearGradient id="chip" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#fa4f09"/>
-      <stop offset="100%" stop-color="#c93b00"/>
+    <linearGradient id="cabPod" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8E33B0"/>
+      <stop offset="100%" stop-color="#5C2272"/>
     </linearGradient>
-    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
-      <path d="M48 0H0V48" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
-    </pattern>
   </defs>
-  <rect width="800" height="800" fill="url(#g)"/>
-  <rect width="800" height="800" fill="url(#grid)"/>
-
-  <!-- Cable curving across, chip mid-line -->
-  <g transform="translate(400,460)">
-    <!-- cable -->
-    <path d="M-280 -40 Q -180 -120 -60 -40 Q 60 40 180 -40 Q 260 -90 280 -40"
-          fill="none" stroke="#1a1a1a" stroke-width="22" stroke-linecap="round"/>
-    <path d="M-280 -40 Q -180 -120 -60 -40 Q 60 40 180 -40 Q 260 -90 280 -40"
-          fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="22" stroke-linecap="round" stroke-dasharray="2 16"/>
-
-    <!-- USB-C connector left -->
-    <g transform="translate(-300,-40) rotate(-20)">
-      <rect x="-30" y="-22" width="60" height="44" rx="8" fill="url(#connector)" stroke="rgba(255,255,255,0.2)" stroke-width="2"/>
-      <rect x="-16" y="-10" width="32" height="20" rx="10" fill="#444"/>
-    </g>
-    <!-- USB-C connector right -->
-    <g transform="translate(300,-40) rotate(20)">
-      <rect x="-30" y="-22" width="60" height="44" rx="8" fill="url(#connector)" stroke="rgba(255,255,255,0.2)" stroke-width="2"/>
-      <rect x="-16" y="-10" width="32" height="20" rx="10" fill="#444"/>
-    </g>
-    <!-- in-line PQC chip -->
-    <g transform="translate(-60,-40)">
-      <rect x="-60" y="-30" width="120" height="60" rx="10" fill="url(#chip)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-      <text x="0" y="7" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="18" font-weight="800" letter-spacing="0.16em" fill="#ffffff" text-anchor="middle">PQC</text>
-    </g>
+  <rect width="300" height="300" fill="url(#cabGlow)"/>
+  <g stroke="currentColor" stroke-opacity="0.08" stroke-width="1">
+    <path d="M0 50 H300 M0 100 H300 M0 150 H300 M0 200 H300 M0 250 H300 M50 0 V300 M100 0 V300 M150 0 V300 M200 0 V300 M250 0 V300"/>
   </g>
-
-  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" fill="#ffffff">
-    <text x="60" y="92" font-size="22" font-weight="700" letter-spacing="0.24em" fill="#7fb1ff">CATALOG · HARDWARE</text>
-    <text x="60" y="148" font-size="64" font-weight="800" letter-spacing="-0.02em">Signing Cable</text>
-    <text x="60" y="194" font-size="22" font-weight="500" fill="rgba(255,255,255,0.65)">USB-C · in-line ML-DSA-65 signing chip</text>
-    <text x="60" y="752" font-size="18" font-weight="600" letter-spacing="0.16em" fill="rgba(255,255,255,0.45)">SGN-CBL-1M</text>
+  <!-- the cable cord: an S-curve sweeping from lower-left plug to upper-right plug -->
+  <path d="M58 232 C 92 196, 96 150, 132 138 C 174 124, 192 96, 240 70"
+        fill="none" stroke="#5C2272" stroke-width="13" stroke-linecap="round"/>
+  <path d="M58 232 C 92 196, 96 150, 132 138 C 174 124, 192 96, 240 70"
+        fill="none" stroke="url(#cabCord)" stroke-width="8" stroke-linecap="round"/>
+  <path d="M58 232 C 92 196, 96 150, 132 138 C 174 124, 192 96, 240 70"
+        fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2.4" stroke-linecap="round"/>
+  <!-- lower-left USB-C connector -->
+  <g>
+    <rect x="36" y="226" width="34" height="20" rx="9" transform="rotate(-44 53 236)" fill="#5C2272"/>
+    <rect x="40" y="229" width="26" height="14" rx="7" transform="rotate(-44 53 236)" fill="url(#cabPlug)"/>
+    <rect x="44" y="234" width="17" height="4" rx="2" transform="rotate(-44 52.5 236)" fill="currentColor" fill-opacity="0.6"/>
   </g>
+  <rect x="62" y="218" width="14" height="13" rx="3" transform="rotate(-44 69 224.5)" fill="#6E2887"/>
+  <!-- upper-right USB-C connector -->
+  <g>
+    <rect x="230" y="60" width="34" height="20" rx="9" transform="rotate(-44 247 70)" fill="#5C2272"/>
+    <rect x="234" y="63" width="26" height="14" rx="7" transform="rotate(-44 247 70)" fill="url(#cabPlug)"/>
+    <rect x="238" y="68" width="17" height="4" rx="2" transform="rotate(-44 246.5 70)" fill="currentColor" fill-opacity="0.6"/>
+  </g>
+  <rect x="224" y="78" width="14" height="13" rx="3" transform="rotate(-44 231 84.5)" fill="#6E2887"/>
+  <!-- in-line signing-chip pod mid-cable -->
+  <g transform="rotate(-30 150 150)">
+    <rect x="116" y="128" width="68" height="44" rx="14" fill="#5C2272"/>
+    <rect x="120" y="132" width="60" height="36" rx="11" fill="url(#cabPod)"/>
+    <rect x="120" y="132" width="60" height="15" rx="11" fill="#ffffff" fill-opacity="0.12"/>
+    <!-- shield with checkmark -->
+    <path d="M150 138 L165 143 V153 C165 162 158 167 150 170 C142 167 135 162 135 153 V143 Z"
+          fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"/>
+    <path d="M143.5 153.5 L148.5 158.5 L157 148"
+          fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <!-- glow accent dots -->
+  <circle cx="150" cy="62" r="3.5" fill="#AD38DB"/>
+  <circle cx="216" cy="232" r="3" fill="#C254E8" fill-opacity="0.85"/>
 </svg>

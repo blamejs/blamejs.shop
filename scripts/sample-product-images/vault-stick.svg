@@ -1,49 +1,66 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="Vault Stick — hardware authenticator with PQC keypair">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" role="img" aria-label="Quantum-Key Hardware Token" color="#C254E8">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0a1f44"/>
-      <stop offset="100%" stop-color="#1a3a7a"/>
-    </linearGradient>
-    <linearGradient id="hwBody" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#fa4f09"/>
-      <stop offset="100%" stop-color="#c93b00"/>
-    </linearGradient>
-    <linearGradient id="usb" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#cccccc"/>
-      <stop offset="100%" stop-color="#888888"/>
-    </linearGradient>
-    <radialGradient id="led" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0%" stop-color="#2c8a3f" stop-opacity="1"/>
-      <stop offset="100%" stop-color="#2c8a3f" stop-opacity="0"/>
+    <radialGradient id="qkGlow" cx="50%" cy="46%" r="55%">
+      <stop offset="0%" stop-color="#AD38DB" stop-opacity="0.34"/>
+      <stop offset="55%" stop-color="#732A8D" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#AD38DB" stop-opacity="0"/>
     </radialGradient>
-    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
-      <path d="M48 0H0V48" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
-    </pattern>
+    <linearGradient id="qkBody" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#C254E8"/>
+      <stop offset="48%" stop-color="#AD38DB"/>
+      <stop offset="100%" stop-color="#732A8D"/>
+    </linearGradient>
+    <linearGradient id="qkCap" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8E33B0"/>
+      <stop offset="100%" stop-color="#5C2272"/>
+    </linearGradient>
+    <linearGradient id="qkUsb" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#732A8D"/>
+      <stop offset="100%" stop-color="#AD38DB"/>
+    </linearGradient>
   </defs>
-  <rect width="800" height="800" fill="url(#g)"/>
-  <rect width="800" height="800" fill="url(#grid)"/>
 
-  <!-- Vault Stick silhouette, rotated -->
-  <g transform="translate(400,470) rotate(-18)">
-    <!-- USB-A connector -->
-    <rect x="-260" y="-30" width="120" height="60" rx="4" fill="url(#usb)" stroke="rgba(0,0,0,0.4)" stroke-width="2"/>
-    <rect x="-250" y="-18" width="100" height="36" rx="2" fill="#444"/>
+  <!-- soft radial glow behind subject -->
+  <rect width="300" height="300" fill="url(#qkGlow)"/>
+
+  <!-- faint backdrop grid -->
+  <g stroke="currentColor" stroke-opacity="0.08" stroke-width="1">
+    <path d="M0 50 H300 M0 100 H300 M0 150 H300 M0 200 H300 M0 250 H300 M50 0 V300 M100 0 V300 M150 0 V300 M200 0 V300 M250 0 V300"/>
+  </g>
+
+  <!-- token, rotated for premium 3/4 feel -->
+  <g transform="rotate(-26 150 150)">
+    <!-- USB-C connector -->
+    <rect x="56" y="138" width="40" height="24" rx="6" fill="url(#qkUsb)" stroke="#5C2272" stroke-width="2"/>
+    <rect x="64" y="146" width="22" height="8" rx="4" fill="#08080a" fill-opacity="0.55"/>
+
     <!-- body -->
-    <rect x="-140" y="-45" width="320" height="90" rx="14" fill="url(#hwBody)" stroke="rgba(255,255,255,0.25)" stroke-width="2"/>
-    <!-- touch ring -->
-    <circle cx="120" cy="0" r="22" fill="rgba(0,0,0,0.45)" stroke="#ffffff" stroke-width="2" stroke-opacity="0.4"/>
-    <circle cx="120" cy="0" r="10" fill="url(#led)"/>
-    <circle cx="120" cy="0" r="5" fill="#2c8a3f"/>
-    <!-- branding -->
-    <text x="-60" y="8" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="22" font-weight="800" letter-spacing="0.18em" fill="#ffffff">VAULT</text>
-    <!-- keychain hole -->
-    <circle cx="160" cy="-30" r="6" fill="rgba(0,0,0,0.5)"/>
+    <rect x="92" y="120" width="150" height="60" rx="18" fill="url(#qkBody)" stroke="#5C2272" stroke-width="2.5"/>
+    <!-- body sheen -->
+    <rect x="100" y="127" width="134" height="14" rx="7" fill="#ffffff" fill-opacity="0.12"/>
+
+    <!-- shield motif on the cap -->
+    <g>
+      <path d="M196 134 L222 142 L222 158 C222 169 211 176 196 182 C181 176 170 169 170 158 L170 142 Z" fill="url(#qkCap)" stroke="#08080a" stroke-opacity="0.35" stroke-width="2"/>
+      <!-- key + bitting inside shield, fine detail in currentColor -->
+      <g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="190" cy="153" r="6.5"/>
+        <path d="M196 153 H210 M205 153 V161 M210 153 V160"/>
+      </g>
+    </g>
+
+    <!-- terminal prompt mark etched on the body -->
+    <g fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.92">
+      <path d="M112 142 L121 150 L112 158"/>
+      <path d="M127 159 H148"/>
+    </g>
+
+    <!-- capacitive activation ring -->
+    <circle cx="156" cy="150" r="13" fill="none" stroke="#08080a" stroke-opacity="0.3" stroke-width="2"/>
+    <circle cx="156" cy="150" r="13" fill="none" stroke="currentColor" stroke-width="2" stroke-opacity="0.5" stroke-dasharray="3 4"/>
   </g>
 
-  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" fill="#ffffff">
-    <text x="60" y="92" font-size="22" font-weight="700" letter-spacing="0.24em" fill="#7fb1ff">CATALOG · HARDWARE</text>
-    <text x="60" y="148" font-size="64" font-weight="800" letter-spacing="-0.02em">Vault Stick</text>
-    <text x="60" y="194" font-size="22" font-weight="500" fill="rgba(255,255,255,0.65)">ML-DSA-65 keypair · USB-A · touch attest</text>
-    <text x="60" y="752" font-size="18" font-weight="600" letter-spacing="0.16em" fill="rgba(255,255,255,0.45)">VLT-STK-V1</text>
-  </g>
+  <!-- glow accent dots -->
+  <circle cx="232" cy="84" r="4" fill="#AD38DB"/>
+  <circle cx="64" cy="226" r="3" fill="#C254E8" fill-opacity="0.85"/>
 </svg>
