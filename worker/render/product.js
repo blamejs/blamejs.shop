@@ -143,6 +143,91 @@ var VARIANT_ROW =
   "  </td>\n" +
   "</tr>\n";
 
+// PDP buy-box. A single cart-add form posting `variant_id` + `qty` to
+// /cart/lines (unchanged endpoint + field names). Multi-variant
+// selection is server-rendered radio chips sharing `name="variant_id"`
+// — the checked radio is what POSTs, so variant choice works with zero
+// client JS. The lead price renders large + mono + violet; each chip
+// carries its own price so a shopper sees per-variant pricing before
+// they pick. Above twelve variants the chip wall gets unwieldy, so the
+// existing compact variant table (VARIANT_ROW) is the fallback — it
+// keeps a per-row add form, so the same endpoint contract holds.
+// `variants` is the pre-formatted array [{ id, sku, title, price }]
+// the renderers already build; `escAttr` is the path's HTML escaper.
+// Mirrors the container (lib/storefront.js#_buildBuyBox) byte-for-byte.
+var BUYBOX_CHIP_LIMIT = 12;
+
+function _buildBuyBox(variants, escAttr) {
+  if (!variants || variants.length === 0) {
+    return "<div class=\"pdp__variants\">\n" +
+           "        <h2 class=\"pdp__variants-title\">Choose a variant</h2>\n" +
+           "        <div class=\"table-scroll\">\n" +
+           "          <table class=\"variant-table\">\n" +
+           "            <thead><tr><th>Variant</th><th>SKU</th><th>Price</th><th class=\"variant-table__action-h\">Action</th></tr></thead>\n" +
+           "            <tbody><tr><td colspan=\"4\" class=\"empty\">No variants available.</td></tr></tbody>\n" +
+           "          </table>\n" +
+           "        </div>\n" +
+           "      </div>";
+  }
+
+  var trustLine =
+    "<div class=\"pdp__meta\">\n" +
+    "        <span class=\"pdp__badge\"><span class=\"shield\" aria-hidden=\"true\"><span class=\"shield__glyph\">&gt;_</span></span> Post-quantum secured checkout · ML-KEM-1024 key agreement · ML-DSA-65 receipt signature.</span>\n" +
+    "      </div>";
+
+  // Many variants → keep the compact table (still a per-row add form).
+  if (variants.length > BUYBOX_CHIP_LIMIT) {
+    var rows = variants.map(function (v) {
+      return renderTemplate(VARIANT_ROW, { title: v.title, sku: v.sku, price: v.price, variant_id: v.id });
+    }).join("");
+    return "<div class=\"pdp__variants\">\n" +
+           "        <h2 class=\"pdp__variants-title\">Choose a variant</h2>\n" +
+           "        <div class=\"table-scroll\">\n" +
+           "          <table class=\"variant-table\">\n" +
+           "            <thead><tr><th>Variant</th><th>SKU</th><th>Price</th><th class=\"variant-table__action-h\">Action</th></tr></thead>\n" +
+           "            <tbody>" + rows + "</tbody>\n" +
+           "          </table>\n" +
+           "        </div>\n" +
+           "      </div>\n" +
+           "      " + trustLine;
+  }
+
+  var lead = variants[0];
+  var single = variants.length === 1;
+  var chips = "";
+  if (!single) {
+    for (var i = 0; i < variants.length; i += 1) {
+      var v = variants[i];
+      chips +=
+        "<label class=\"pdp__badge\">" +
+          "<input type=\"radio\" name=\"variant_id\" value=\"" + escAttr(v.id) + "\"" + (i === 0 ? " checked" : "") + ">" +
+          " <span class=\"variant-row__title\">" + escAttr(v.title) + "</span>" +
+          " <span class=\"variant-row__sku\"><code>" + escAttr(v.sku) + "</code></span>" +
+          " <span class=\"variant-row__price price\">" + escAttr(v.price) + "</span>" +
+        "</label>";
+    }
+  }
+
+  var variantBlock = single
+    ? "<p class=\"variant-row__sku\"><code>" + escAttr(lead.sku) + "</code></p>" +
+      "<input type=\"hidden\" name=\"variant_id\" value=\"" + escAttr(lead.id) + "\">"
+    : "<fieldset class=\"pdp__variants\">\n" +
+      "          <legend class=\"pdp__variants-title\">Choose a variant</legend>\n" +
+      "          <div class=\"pdp__meta\">" + chips + "</div>\n" +
+      "        </fieldset>";
+
+  return "<div class=\"pdp__buybox\">\n" +
+         "        <p class=\"featured-product__price\">" + escAttr(lead.price) + "</p>\n" +
+         "        <form method=\"post\" action=\"/cart/lines\">\n" +
+         "          " + variantBlock + "\n" +
+         "          <label class=\"pdp__variants-title\" for=\"buybox-qty\">Quantity</label>\n" +
+         "          <input id=\"buybox-qty\" type=\"number\" name=\"qty\" value=\"1\" min=\"1\" max=\"99\" class=\"variant-row__qty\" aria-label=\"Quantity\">\n" +
+         "          <button type=\"submit\" class=\"btn-primary cart-page__checkout\">$ add to cart</button>\n" +
+         "        </form>\n" +
+         "      </div>\n" +
+         "      " + trustLine;
+}
+
 var PRODUCT_PAGE =
   "<section class=\"pdp\">\n" +
   "  <nav class=\"breadcrumb\" aria-label=\"Breadcrumb\">\n" +
@@ -159,18 +244,10 @@ var PRODUCT_PAGE =
   "      <p class=\"pdp__description\">{{description}}</p>\n" +
   "      <div class=\"pdp__meta\">\n" +
   "        <span class=\"pdp__badge pdp__badge--ok\"><span class=\"dot dot--live\" aria-hidden=\"true\"></span> In stock</span>\n" +
-  "        <span class=\"pdp__badge\">Ships from origin</span>\n" +
+  "        <span class=\"pdp__badge\">Ships in 1–2 business days</span>\n" +
   "        <span class=\"pdp__badge\">Stripe-secured checkout</span>\n" +
   "      </div>\n" +
-  "      <div class=\"pdp__variants\">\n" +
-  "        <h2 class=\"pdp__variants-title\">Choose a variant</h2>\n" +
-  "        <div class=\"table-scroll\">\n" +
-  "          <table class=\"variant-table\">\n" +
-  "            <thead><tr><th>Variant</th><th>SKU</th><th>Price</th><th class=\"variant-table__action-h\">Action</th></tr></thead>\n" +
-  "            <tbody>{{variant_rows}}</tbody>\n" +
-  "          </table>\n" +
-  "        </div>\n" +
-  "      </div>\n" +
+  "      RAW_BUYBOX_PLACEHOLDER\n" +
   "      RAW_QTYBREAK_PLACEHOLDER\n" +
   "      RAW_WISHLIST_PLACEHOLDER\n" +
   "      RAW_COMPARE_PLACEHOLDER\n" +
@@ -599,10 +676,7 @@ export function renderProduct(opts) {
     return { id: v.id, sku: v.sku, title: vTitle, price: priceStr };
   });
 
-  var rows = rendered.map(function (v) {
-    return renderTemplate(VARIANT_ROW, { title: v.title, sku: v.sku, price: v.price, variant_id: v.id });
-  }).join("");
-  if (!rows) rows = "<tr><td colspan=\"4\" class=\"empty\">No variants available.</td></tr>";
+  var buyboxHtml = _buildBuyBox(rendered, escapeHtml);
 
   var galleryHtml = _buildPdpGallery(product, media, assetPrefix);
   var reviewsHtml = _buildReviews(reviewSummary, reviews, reviewForm);
@@ -614,10 +688,9 @@ export function renderProduct(opts) {
   var body = renderTemplate(PRODUCT_PAGE, {
     title:        product.title,
     description:  description,
-    variant_rows: "RAW_ROWS_PLACEHOLDER",
   })
     .replace("RAW_GALLERY_PLACEHOLDER", galleryHtml)
-    .replace("RAW_ROWS_PLACEHOLDER", rows)
+    .replace("RAW_BUYBOX_PLACEHOLDER", buyboxHtml)
     .replace("RAW_QTYBREAK_PLACEHOLDER", qtyBreaksHtml)
     .replace("RAW_WISHLIST_PLACEHOLDER", wishlistHtml)
     .replace("RAW_COMPARE_PLACEHOLDER", compareHtml)

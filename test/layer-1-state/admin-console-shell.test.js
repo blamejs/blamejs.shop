@@ -68,19 +68,30 @@ async function _run() {
   check("sign-in renders the card shell",        login.indexOf("class=\"signin-card\"") !== -1);
   check("sign-in still posts to /admin/login",   login.indexOf("action=\"/admin/login\"") !== -1);
 
-  // Self-hosted typography: both stylesheets declare @font-face against
-  // ../fonts, and every referenced woff2 exists on disk as a real WOFF2.
-  var fontFiles = ["inter-400.woff2", "inter-500.woff2", "inter-600.woff2",
-                   "inter-tight-600.woff2", "inter-tight-700.woff2"];
-  ["css/admin.css", "css/main.css"].forEach(function (rel) {
+  // Self-hosted typography: each stylesheet declares @font-face against
+  // ../fonts for the families it actually uses, and every referenced
+  // woff2 exists on disk as a real WOFF2. The admin console keeps the
+  // Inter / Inter Tight pairing; the storefront ships the Hanken Grotesk
+  // + Space Mono brand pairing.
+  var fontsByStylesheet = {
+    "css/admin.css": ["inter-400.woff2", "inter-500.woff2", "inter-600.woff2",
+                      "inter-tight-600.woff2", "inter-tight-700.woff2"],
+    "css/main.css":  ["hankengrotesk-400.woff2", "hankengrotesk-500.woff2",
+                      "hankengrotesk-600.woff2", "hankengrotesk-700.woff2",
+                      "hankengrotesk-800.woff2", "spacemono-400.woff2",
+                      "spacemono-700.woff2"],
+  };
+  var seen = {};
+  Object.keys(fontsByStylesheet).forEach(function (rel) {
     var css = nodeFs.readFileSync(nodePath.join(ASSETS, rel), "utf8");
     check(rel + " declares @font-face",          css.indexOf("@font-face") !== -1);
     check(rel + " has no cross-origin font URL", !(/https?:\/\/fonts\.(googleapis|gstatic)\.com/.test(css)));
-    fontFiles.forEach(function (f) {
+    fontsByStylesheet[rel].forEach(function (f) {
       check(rel + " references " + f,            css.indexOf(f) !== -1);
+      seen[f] = true;
     });
   });
-  fontFiles.forEach(function (f) {
+  Object.keys(seen).forEach(function (f) {
     var p = nodePath.join(ASSETS, "fonts", f);
     check("vendored font present: " + f,         nodeFs.existsSync(p));
     check("vendored font is real WOFF2: " + f,   nodeFs.readFileSync(p).slice(0, 4).toString("latin1") === "wOF2");
