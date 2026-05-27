@@ -144,7 +144,7 @@ async function _run() {
     await helpers.httpRequest({ port: handle.port, path: "/cart/lines/" + lineId2 + "/save", method: "POST", jar: jar });
     var page2 = await sfl.listForCustomer({ customer_id: buyerId, limit: 10 });
     var rem = await helpers.httpRequest({ port: handle.port, path: "/saved/" + page2.rows[0].id + "/remove", method: "POST", jar: jar });
-    check("remove then 303 /account/saved",     rem.status === 303 && (rem.headers["location"] || "") === "/account/saved");
+    check("remove then 303 /account/saved",     rem.status === 303 && (rem.headers["location"] || "") === "/account/saved?ok=removed");
     check("saved list empty after remove",      (await sfl.countForCustomer(buyerId)) === 0);
     var savedEmpty = await helpers.httpRequest({ port: handle.port, path: "/account/saved", jar: jar });
     check("saved empty-state shown",            savedEmpty.body.indexOf("Nothing saved for later") !== -1);

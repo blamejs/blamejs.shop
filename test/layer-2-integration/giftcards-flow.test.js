@@ -145,14 +145,15 @@ async function _run() {
       port: port, path: "/admin/gift-cards", method: "POST", jar: jarAdmin,
       form: { amount_minor: "5000", currency: "USD" },
     });
-    check("form issue then 303",              formIssue.status === 303);
-    check("form issue redirects with code",   (formIssue.headers.location || "").indexOf("/admin/gift-cards/") === 0 &&
-                                              (formIssue.headers.location || "").indexOf("issued=") !== -1);
-    // The detail page shows the code once.
-    var detailAfterIssue = await helpers.httpRequest({ port: port, path: formIssue.headers.location, jar: jarAdmin });
-    check("detail shows shown-once banner",   detailAfterIssue.body.indexOf("shown once") !== -1);
-    // Recover the $50 plaintext code from the redirect query.
-    var fiftyCode = decodeURIComponent((formIssue.headers.location.split("issued=")[1] || ""));
+    // The one-time code is rendered in the POST response body (shown-once
+    // reveal), NOT redirected into the URL — so it never lands in browser
+    // history / the Location header / access logs.
+    check("form issue then 200 (no redirect)", formIssue.status === 200);
+    check("form issue never leaks code in a URL", (formIssue.headers.location || "").indexOf("issued=") === -1);
+    check("issue body shows shown-once banner", formIssue.body.indexOf("shown once") !== -1);
+    // Recover the $50 plaintext code from the reveal banner's <code> element.
+    var fiftyMatch = formIssue.body.match(/Copy the code now[^<]*<code[^>]*>([^<]+)<\/code>/);
+    var fiftyCode = fiftyMatch ? fiftyMatch[1] : "";
     check("recovered $50 code",               fiftyCode.length >= 16);
 
     // ---- customer balance check ---------------------------------------

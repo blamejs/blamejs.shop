@@ -180,8 +180,8 @@ var FACET_GROUP_HEAD =
 
 var FACET_OPTION =
   "<li class=\"facet-option\">\n" +
-  "  <a class=\"facet-option__link{{selected_class}}\" href=\"{{href}}\" rel=\"nofollow\"{{aria_pressed}}>\n" +
-  "    <span class=\"facet-option__box\" aria-hidden=\"true\">{{box}}</span>\n" +
+  "  <a class=\"facet-option__link{{selected_class}}\" href=\"{{href}}\" rel=\"nofollow\"{{aria_current}}>\n" +
+  "    <span class=\"facet-option__box\" aria-hidden=\"true\">{{box}}</span>{{selected_cue}}\n" +
   "    <span class=\"facet-option__label\">{{label}}</span>\n" +
   "    <span class=\"facet-option__count\">{{count}}</span>\n" +
   "  </a>\n" +
@@ -244,11 +244,13 @@ function _renderFacets(facets, filters, q) {
       optionsHtml += renderTemplate(FACET_OPTION, {
         href:           _searchUrl(q, toggled),
         selected_class: opt.selected ? " is-selected" : "",
-        aria_pressed:   "RAW_ARIA",
+        aria_current:   "RAW_ARIA",
         box:            opt.selected ? "✓" : "",
+        selected_cue:   "RAW_CUE",
         label:          opt.label,
         count:          String(opt.count),
-      }).replace("RAW_ARIA", opt.selected ? " aria-pressed=\"true\"" : " aria-pressed=\"false\"");
+      }).replace("RAW_ARIA", opt.selected ? " aria-current=\"true\"" : "")
+        .replace("RAW_CUE", opt.selected ? "<span class=\"sr-only\">Selected: </span>" : "");
       rendered += 1;
     }
     if (rendered === 0) continue;
