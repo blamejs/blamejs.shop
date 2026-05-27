@@ -144,6 +144,40 @@ async function _confirm() {
   check("confirm marks cart converted",          c.status === "converted");
 }
 
+async function _confirmPersistsFullAddress() {
+  var s = await _setup();
+  var result = await s.checkout.confirm({
+    cart_id: s.cartRow.id,
+    ship_to: {
+      line1: "500 Market St", line2: "Suite 5", city: "San Francisco",
+      country: "US", state: "CA", postal: "94103",
+    },
+    selected_shipping_id: "std",
+    customer: { email: "buyer@example.com", name: "Ada Lovelace" },
+    idempotency_key: "idemp_" + nodeCrypto.randomUUID(),
+  });
+  // Re-read through the order model so we exercise the ship_to_json
+  // round-trip, not just the in-flight object.
+  var stored = await s.order.get(result.order.id);
+  check("confirm persists ship_to.line1",  stored.ship_to.line1 === "500 Market St");
+  check("confirm persists ship_to.line2",  stored.ship_to.line2 === "Suite 5");
+  check("confirm persists ship_to.city",   stored.ship_to.city  === "San Francisco");
+  check("confirm persists ship_to.country", stored.ship_to.country === "US");
+}
+
+async function _confirmRejectsMalformedAddress() {
+  var s = await _setup();
+  // A street line beyond the 200-char cap is refused as a client error
+  // (TypeError), not silently stored.
+  await assert.rejects(s.checkout.confirm({
+    cart_id: s.cartRow.id,
+    ship_to: { line1: "x".repeat(201), city: "Town", country: "US" },
+    selected_shipping_id: "std",
+    customer: { email: "buyer@example.com" },
+    idempotency_key: "idemp_" + nodeCrypto.randomUUID(),
+  }), /ship_to\.line1 malformed/);
+}
+
 async function _confirmRefusesZeroTotal() {
   // Build a setup where every cost component is zero:
   //   - cart line at 0 minor units
@@ -218,6 +252,8 @@ async function _webhookBadSig() {
 async function run() {
   await _quote();
   await _confirm();
+  await _confirmPersistsFullAddress();
+  await _confirmRejectsMalformedAddress();
   await _confirmRefusesZeroTotal();
   await _webhookDispatchHappyPath();
   await _webhookBadSig();

@@ -859,10 +859,13 @@ async function _edgeRenderCached(request, env, url, ctx) {
 //
 // Returns a Response when the request matched a storefront route;
 // returns null when the path is not an edge-served route, in which
-// case the caller falls through to the container forward. The cart
-// count display is intentionally fixed at zero for now — surfacing
-// the real count requires reading the sealed `shop_sid` cookie, which
-// depends on the vault primitive landing in the Worker bundle.
+// case the caller falls through to the container forward. The edge
+// serves only the unauthenticated, no-cart visitor: the nav cart
+// count is reliably zero for them (no session = no cart row). A
+// visitor carrying a session cookie is handed to the container,
+// which has the vault keychain to unseal `shop_sid`, look up the
+// real cart, and render the correct nav count — so the badge is
+// never stale on the pages a shopper-with-a-cart actually browses.
 async function _edgeRender(request, env, url) {
   const version  = env.WORKER_VERSION || assetManifest.version;
   const shopName = env.SHOP_NAME      || "blamejs.shop";
@@ -874,6 +877,14 @@ async function _edgeRender(request, env, url) {
   // ever serves the default-locale chrome, so handing these off keeps
   // the two substrates' resolution from diverging.
   if (_hasLocaleChoice(request, url, env)) return null;
+
+  // A visitor with a session cookie has a cart (or an account) the edge
+  // can't read — the sealed `shop_sid` needs the container's vault to
+  // unseal. Hand every edge route to the container for these visitors so
+  // the nav cart count + any session-aware chrome render correctly.
+  // These requests already bypass the edge cache (see _edgeRenderCached),
+  // so there's no cache hit to forfeit — only a count-0 render to avoid.
+  if (_hasSessionCookie(request)) return null;
 
   if (path === "/") {
     return await _edgeHome(request, env, url, version, shopName);
@@ -891,12 +902,11 @@ async function _edgeRender(request, env, url) {
     return await _edgeProduct(request, env, url, version, shopName, slug);
   }
   if (path === "/cart") {
-    // Guests (no session cookie) see the empty-cart render straight
-    // from the edge — no container hop, no sealed-session decrypt.
-    // Visitors with a `shop_sid` / `shop_auth` cookie fall through
-    // to the container path which has the framework's vault keychain
-    // and can decrypt the session to look up the real cart row.
-    if (_hasSessionCookie(request)) return null;
+    // Only guests reach here (the session-cookie guard above already
+    // forwarded carted/authed visitors to the container, which decrypts
+    // the session and renders the real cart). A guest has no cart row,
+    // so the edge serves the empty-cart render directly — no container
+    // hop, no sealed-session decrypt.
     return await _edgeCartEmpty(request, env, version, shopName);
   }
   if (path === "/blog") {

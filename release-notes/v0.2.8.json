@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.8",
+  "date": "2026-05-27",
+  "headline": "A complete shipping address at checkout, and an accurate cart count on every page",
+  "summary": "Two storefront fixes. Checkout now collects a real, shippable address — a street line, an optional apt/suite line, and a city — alongside the region, postal code, and country it already took; a signed-in customer's default saved address pre-fills the form, the address shows on the order confirmation, and the order export carries it so fulfilment has everything it needs. Separately, the navigation cart badge now shows the correct item count on the catalog, product, search, and blog pages — not only on the cart and account pages — by rendering those pages for a shopper-with-a-cart on the path that can read their session.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Cart count is correct on every page", "body": "The nav cart badge previously read zero on edge-rendered pages (home, product, search, blog) for a shopper who had items in their cart, while the cart and account pages showed the real count. A request that carries a session cookie is now rendered on the path that can unseal the session and read the cart, so the badge is consistent everywhere. Guests — who have no cart — still get the fast cached render with a count of zero, which is correct for them." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Checkout collects a complete shipping address", "body": "The shipping step now takes a street address (line 1, plus an optional apartment / suite / unit line) and a city in addition to the region, postal code, and country it already collected, so a placed order carries an address you can actually ship to. Street line and city are marked required for the common physical-goods path; the server treats them as optional so a digital-only order still completes. A signed-in customer's default saved address pre-fills the form." },
+        { "title": "Shipping address on the confirmation page and in the order export", "body": "The order confirmation now shows the ship-to address, and the order CSV / NDJSON export gains `shipping_line1`, `shipping_line2`, and `shipping_city` columns (inserted after `customer_name`) so a fulfilment handoff has the full address. Consumers that key on the header name are unaffected; a consumer that keys on absolute column position should re-map to the 27-column layout." }
+      ]
+    }
+  ]
+}

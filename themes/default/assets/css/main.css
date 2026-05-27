@@ -1776,6 +1776,19 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   position: sticky;
   top: 6rem;
 }
+.order-page__ship {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--hair);
+}
+.order-ship-address {
+  font-style: normal;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  color: var(--mute);
+  font-size: var(--text-sm);
+}
 
 @media (max-width: 80rem) {
   .cart-page__grid, .order-page__grid { grid-template-columns: 1fr; }
