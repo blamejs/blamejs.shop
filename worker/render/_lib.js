@@ -137,6 +137,46 @@ export function jsonLdScript(data) {
   return "<script type=\"application/ld+json\">" + serialised + "</script>";
 }
 
+// Cookie-consent banner markup — the byte-identical twin of
+// lib/storefront.js's CONSENT_BANNER. Lives here so every worker LAYOUT
+// embeds the same chrome the container renders (the storefront's pages
+// render in BOTH substrates; the banner must match across them). Static
+// markup — nothing reflected, so no escape surface. The dismissal +
+// return-to-current-page enhancement is the consent island
+// (themes/default/assets/js/consent.js); JS-off visitors still get a
+// fully working server-rendered form (POST /consent).
+export var CONSENT_BANNER =
+  "  <div class=\"consent-banner\" id=\"consent-banner\" role=\"dialog\" aria-modal=\"false\" aria-labelledby=\"consent-title\" aria-describedby=\"consent-desc\">\n" +
+  "    <div class=\"consent-banner__inner\">\n" +
+  "      <div class=\"consent-banner__copy\">\n" +
+  "        <h2 class=\"consent-banner__title\" id=\"consent-title\">Your privacy choices</h2>\n" +
+  "        <p class=\"consent-banner__desc\" id=\"consent-desc\">We use strictly-necessary cookies to run the shop (your session, security tokens, and this choice itself). Optional cookies — functional, analytics, marketing, and preferences — are off until you turn them on. You can change this any time from <a href=\"/cookies\">Manage cookies</a>.</p>\n" +
+  "      </div>\n" +
+  "      <form class=\"consent-banner__actions\" method=\"post\" action=\"/consent\">\n" +
+  "        <input type=\"hidden\" name=\"return_to\" value=\"/\" data-consent-return>\n" +
+  "        <button type=\"submit\" name=\"choice\" value=\"accept_all\" class=\"btn-primary consent-banner__btn\">Accept all</button>\n" +
+  "        <button type=\"submit\" name=\"choice\" value=\"reject\" class=\"btn-ghost consent-banner__btn\">Reject non-essential</button>\n" +
+  "        <a class=\"consent-banner__manage\" href=\"/cookies\">Manage preferences</a>\n" +
+  "      </form>\n" +
+  "    </div>\n" +
+  "  </div>\n";
+
+// `<script>` tag for the consent island, resolved to its content-
+// fingerprinted URL + SRI from the shared manifest — byte-identical to the
+// container's `_islandScript("consent.js", { id, policy })`. The strict
+// `script-src 'self'` CSP allows this same-origin external script (inline
+// scripts are blocked). `defer` keeps it off the critical path. The
+// `data-consent-policy` value is the active consent policy version the
+// island compares against the flag cookie to decide whether to re-prompt;
+// edge-rendered (cookie-less, cached) pages stamp the initial "v1" — bump
+// it in lockstep with the container's policy version when the cookie policy
+// materially changes.
+export function consentScriptTag() {
+  var sri = assetSri("js/consent.js");
+  return "<script id=\"consent-island\" src=\"" + assetUrl("js/consent.js") + "\"" +
+    (sri ? " integrity=\"" + sri + "\"" : "") + " defer data-consent-policy=\"v1\"></script>";
+}
+
 export function formatPrice(minorUnits, currency) {
   if (!Number.isInteger(minorUnits)) {
     throw new TypeError("formatPrice: minorUnits must be an integer, got " + JSON.stringify(minorUnits));

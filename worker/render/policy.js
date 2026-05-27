@@ -1,7 +1,7 @@
 // Static policy pages (privacy, terms). Composed off a minimal
 // layout that doesn't carry the storefront hero / marquee / catalog
 // chrome — these are read-once legal docs, not a commerce surface.
-import { renderTemplate, assetUrl, stylesheetIntegrityAttr } from "./_lib.js";
+import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag } from "./_lib.js";
 import b from "../b.js";
 
 var LAYOUT =
@@ -42,10 +42,13 @@ var LAYOUT =
   "      <ul>\n" +
   "        <li><a href=\"/privacy\">Privacy</a></li>\n" +
   "        <li><a href=\"/terms\">Terms</a></li>\n" +
+  "        <li><a href=\"/cookies\">Manage cookies</a></li>\n" +
   "        <li><a href=\"https://github.com/blamejs/blamejs.shop\" rel=\"noopener\">Source</a></li>\n" +
   "      </ul>\n" +
   "    </div>\n" +
   "  </footer>\n" +
+  CONSENT_BANNER +
+  "RAW_CONSENT_SCRIPT" +
   "</body>\n" +
   "</html>\n";
 
@@ -64,6 +67,7 @@ function _wrap(opts, bodyHtml) {
     updated:          opts.updated,
     year:             String(new Date().getUTCFullYear()),
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
+    .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_BODY_PLACEHOLDER", bodyHtml);
 }
 

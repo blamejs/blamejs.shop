@@ -2480,3 +2480,90 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
 .qty-break-table th, .qty-break-table td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--hair-2); }
 .qty-break__unit { font-weight: 600; }
 .qty-breaks__note { margin: var(--space-3) 0 0; color: var(--mute); font-size: var(--text-sm); }
+
+/* Cookie-consent banner — fixed to the bottom of the viewport, present
+   on every page until the visitor decides. Visible by default (JS-off
+   visitors get a working server-rendered form); the consent island sets
+   data-consent-decided on <html> once a choice cookie exists, which
+   hides it. */
+.consent-banner {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 90;
+  background: var(--ink);
+  color: var(--paper);
+  border-top: 2px solid var(--accent);
+  box-shadow: 0 -12px 32px -16px rgba(13,13,13,0.55);
+}
+[data-consent-decided] .consent-banner { display: none; }
+.consent-banner__inner {
+  max-width: var(--maxw, 76rem);
+  margin: 0 auto;
+  padding: var(--space-4) var(--gutter, 1.5rem);
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+.consent-banner__copy { flex: 1 1 28rem; min-width: 0; }
+.consent-banner__title {
+  font-family: var(--font-display);
+  font-size: var(--text-md, 1.0625rem);
+  margin: 0 0 var(--space-1);
+  color: var(--paper);
+}
+.consent-banner__desc {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--mute-3);
+  line-height: 1.5;
+}
+.consent-banner__desc a { color: var(--paper); text-decoration: underline; }
+.consent-banner__desc a:hover { color: var(--accent); }
+.consent-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin: 0;
+}
+.consent-banner__btn { white-space: nowrap; }
+.consent-banner__manage {
+  color: var(--paper);
+  text-decoration: underline;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.consent-banner__manage:hover { color: var(--accent); }
+@media (max-width: 40rem) {
+  .consent-banner__actions { width: 100%; }
+  .consent-banner__btn { flex: 1 1 auto; }
+}
+
+/* Cookie preference center — the /cookies manage page. Per-category
+   opt-in toggles, default-deny on the four optional tiers, with the
+   strictly-necessary tier shown as always-on and disabled. */
+.consent-page { max-width: 48rem; margin: 0 auto; padding: var(--space-7) var(--gutter, 1.5rem); }
+.consent-page__lede { color: var(--mute); margin-bottom: var(--space-5); }
+.consent-page__notice {
+  border: 1px solid var(--accent);
+  background: var(--accent-l);
+  color: var(--ink);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.consent-cat {
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-bottom: var(--space-3);
+  background: var(--paper);
+}
+.consent-cat__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.consent-cat__name { font-family: var(--font-display); font-weight: 600; margin: 0; }
+.consent-cat__desc { color: var(--mute); font-size: var(--text-sm); margin: var(--space-2) 0 0; }
+.consent-cat__always { color: var(--mute-2); font-size: var(--text-sm); font-weight: 600; }
+.consent-page__actions { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-5); }
+.consent-toggle { position: relative; display: inline-flex; align-items: center; }
+.consent-toggle input { width: 1.15rem; height: 1.15rem; accent-color: var(--accent); }
