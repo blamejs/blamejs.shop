@@ -715,6 +715,78 @@ function _hasSessionCookie(request) {
          Object.prototype.hasOwnProperty.call(parsed.jar, "shop_auth");
 }
 
+// Accept-Language tags in q-sorted order (primary preference first),
+// lower-cased. A garbage / oversized header yields an empty list. Mirrors
+// the container resolver's parser so the edge bypass decision and the
+// container's actual resolution agree on which tag wins.
+function _edgeAcceptLanguageTags(header) {
+  if (typeof header !== "string" || !header.length || header.length > 4096) return [];
+  return header.split(",")
+    .map(function (part, i) {
+      var seg = part.trim();
+      if (!seg) return null;
+      var semi = seg.indexOf(";");
+      var tag = (semi === -1 ? seg : seg.slice(0, semi)).trim().toLowerCase();
+      if (!tag || tag === "*") return null;
+      var q = 1;
+      if (semi !== -1) {
+        var m = /q=([0-9.]+)/.exec(seg.slice(semi + 1));
+        if (m) { var n = parseFloat(m[1]); if (isFinite(n) && n >= 0 && n <= 1) q = n; }
+      }
+      return { tag: tag, q: q, order: i };
+    })
+    .filter(Boolean)
+    .sort(function (a, b) { return a.q !== b.q ? b.q - a.q : a.order - b.order; });
+}
+
+// True when a first-time visitor (no cookie, no `?lang=`) sends an
+// `Accept-Language` whose top supported preference is a NON-default locale.
+// Such a visitor must reach the container resolver (which honors
+// Accept-Language per the documented order) rather than be served — and
+// have cached — the default-locale edge render. The edge can't run the full
+// resolver, but `SHOP_LOCALES` (the supported list) + `SHOP_DEFAULT_LOCALE`
+// are enough to make the bypass decision with the SAME match rule the
+// container uses (direct hit, then primary-subtag). A single-locale shop
+// (no `SHOP_LOCALES`, or only the default) has nothing else to serve, so it
+// never bypasses and keeps full edge caching for every Accept-Language.
+function _acceptLanguageWantsNonDefault(request, env) {
+  var supported = String((env && env.SHOP_LOCALES) || "")
+    .split(",").map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean);
+  if (supported.length < 2) return false;
+  var defPrimary = String((env && env.SHOP_DEFAULT_LOCALE) || "en").toLowerCase().split("-")[0];
+  var tags = _edgeAcceptLanguageTags(request.headers.get("accept-language") || "");
+  for (var i = 0; i < tags.length; i += 1) {
+    var t = tags[i].tag;
+    var matched = supported.indexOf(t) !== -1 ? t : null;
+    if (!matched) { var p = t.split("-")[0]; if (supported.indexOf(p) !== -1) matched = p; }
+    // First supported match wins (the container takes the same one). Bypass
+    // only when it's a different language than the default — an `en-GB`
+    // preference against an `en` default still serves the cached default.
+    if (matched) return matched.split("-")[0] !== defPrimary;
+  }
+  return false;
+}
+
+// A request carries an explicit or implied locale choice when it has a
+// `shop_locale` cookie, a `?lang=` query param, or an `Accept-Language`
+// that resolves to a supported non-default locale. The edge serves only
+// the storefront's DEFAULT locale (the cached output keys on URL, which
+// can't vary by cookie/header); a locale-choosing request is forwarded to
+// the container, which resolves + renders the chosen locale (with operator
+// chrome overrides + the full set of pages). Treating it like a session
+// cookie — bypassing the edge cache + the edge render — keeps the
+// edge/container locale resolution from diverging and prevents one
+// visitor's cached `de` page from leaking to a no-cookie visitor.
+function _hasLocaleChoice(request, url, env) {
+  if (url && url.searchParams && url.searchParams.has("lang")) return true;
+  const cookieHeader = request.headers.get("cookie") || "";
+  if (cookieHeader.length) {
+    const parsed = b.cookies.parseSafe(cookieHeader);
+    if (Object.prototype.hasOwnProperty.call(parsed.jar, "shop_locale")) return true;
+  }
+  return _acceptLanguageWantsNonDefault(request, env);
+}
+
 // Build a cache-key URL by removing tracking parameters from the
 // request URL's query string. Two visitors arriving at `/` with
 // different `utm_source` values now share the same cache entry.
@@ -733,7 +805,11 @@ function _cacheKeyUrl(originalUrl) {
 }
 
 async function _edgeRenderCached(request, env, url, ctx) {
-  if (_hasSessionCookie(request)) {
+  // Session-bound OR locale-choosing requests skip the cache: the cache
+  // keys on URL only, so a per-session or per-locale response must never
+  // be cached (it would leak to other visitors). Locale-choosing
+  // requests additionally fall through `_edgeRender` to the container.
+  if (_hasSessionCookie(request) || _hasLocaleChoice(request, url, env)) {
     return await _edgeRender(request, env, url);
   }
   // A visitor who chose a display currency carries the sealed `shop_ccy`
@@ -790,6 +866,13 @@ async function _edgeRender(request, env, url) {
   const version  = env.WORKER_VERSION || assetManifest.version;
   const shopName = env.SHOP_NAME      || "blamejs.shop";
   const path     = url.pathname;
+
+  // A request that's choosing a locale (cookie or ?lang=) is forwarded
+  // to the container, which renders the chosen locale's chrome (with
+  // operator overrides + the switcher) for every page. The edge only
+  // ever serves the default-locale chrome, so handing these off keeps
+  // the two substrates' resolution from diverging.
+  if (_hasLocaleChoice(request, url, env)) return null;
 
   if (path === "/") {
     return await _edgeHome(request, env, url, version, shopName);
@@ -857,6 +940,7 @@ async function _edgeCartEmpty(request, env, version, shopName) {
       shopName:      shopName,
       cartCount:     0,
       version:       version,
+      defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
     }, _currencyRenderOpts(env, { pathname: "/cart" })));
     // /cart is a session-bound surface even when the guest cart is
     // empty — crawlers indexing it dilute search results with
@@ -955,6 +1039,9 @@ async function _edgeHome(request, env, _url, version, shopName) {
       shopName:  shopName,
       cartCount: 0,
       version:   version,
+      // The edge serves the storefront's default locale; any explicit
+      // locale choice bypasses the edge to the container.
+      defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
     }, _currencyRenderOpts(env, _url)));
     return _html(html, request.method, env);
   } catch (e) {
@@ -1041,6 +1128,7 @@ async function _edgeSearch(request, env, url, version, shopName) {
       shopName:       shopName,
       cartCount:      0,
       version:        version,
+      defaultLocale:  env.SHOP_DEFAULT_LOCALE || "en",
     }, _currencyRenderOpts(env, url)));
     return _html(html, request.method, env);
   } catch (e) {
@@ -1141,6 +1229,7 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
       shopName:      shopName,
       cartCount:     0,
       version:       version,
+      defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
     }, _currencyRenderOpts(env, url)));
     // Hero-image preload — the PDP's LCP element is almost always the
     // first media row's image. Preloading it via Link rel=preload
