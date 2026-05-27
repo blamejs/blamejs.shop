@@ -2079,6 +2079,32 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   color: var(--text); font: inherit; resize: vertical;
 }
 .survey-form__actions { margin-top: var(--space-2); }
+
+/* ---- business-hours page ----------------------------------------- */
+.hours-page { padding: var(--space-9) 0; }
+.hours-page__inner { max-width: 52rem; margin: 0 auto; padding: 0 var(--gutter); }
+.hours-page__inner--msg { text-align: center; max-width: 36rem; }
+.hours-page__title { font-family: var(--font-display); font-size: clamp(1.6rem, 3vw, 2.2rem); margin: var(--space-2) 0 var(--space-6); }
+.hours-page__lede { color: var(--text-muted); margin: 0 0 var(--space-6); }
+.hours-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: var(--space-5); }
+.hours-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  padding: var(--space-5) var(--space-6);
+}
+.hours-card__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-2); }
+.hours-card__head h2 { margin: 0; font-size: var(--text-lg); font-family: var(--font-mono); text-transform: capitalize; }
+.hours-status { font-family: var(--font-mono); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.05em; padding: 0.2rem 0.6rem; border-radius: 999px; border: 1px solid; }
+.hours-status--open { color: var(--success); border-color: rgba(74,208,106,.4); background: rgba(74,208,106,.12); }
+.hours-status--closed { color: var(--text-subtle); border-color: var(--border-strong); }
+.hours-card__next { color: var(--text-muted); font-size: var(--text-sm); margin: 0 0 var(--space-4); }
+.hours-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.hours-table th { text-align: left; font-weight: 500; padding: var(--space-2) 0; color: var(--text-muted); }
+.hours-table td { text-align: right; padding: var(--space-2) 0; font-family: var(--font-mono); }
+.hours-table tr + tr th, .hours-table tr + tr td { border-top: 1px solid var(--border-soft); }
+.hours-table__closed { color: var(--text-subtle); }
+.hours-card__tz { color: var(--text-subtle); font-size: var(--text-xs); margin: var(--space-4) 0 0; }
 .search-empty h2 { font-size: var(--text-xl); margin: 0 0 var(--space-3); }
 .search-empty p  { color: var(--mute); margin: 0 0 var(--space-5); }
 

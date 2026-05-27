@@ -348,6 +348,12 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // and reads the rollup. The invitation token is the access (no login).
       var customerSurveys = (catalog && cart) ? bShop.customerSurveys.create({}) : null;
 
+      // Business hours — operator-defined open/close schedules surfaced on a
+      // public /hours page (week grid + live open/closed) and managed from
+      // the admin console. Timezone-aware; holidays + one-off exceptions
+      // override the weekly base.
+      var businessHours = (catalog && cart) ? bShop.businessHours.create({}) : null;
+
       // Recommendations — operator-curated overrides + co-purchase /
       // category-popular / in-stock signals. Composes the catalog handle;
       // powers the post-purchase "Customers also bought" rail.
@@ -532,6 +538,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           collections:   collections,
           announcementBar: announcementBar,
           customerSurveys: customerSurveys,
+          businessHours:   businessHours,
           // Integration state map for /admin/integrations — "enabled" |
           // "action" (credentials present, a one-time operator action
           // still required) | "off". admin.js never reads process.env.
@@ -664,6 +671,8 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (announcementBar) sfDeps.announcementBar = announcementBar;
         // Customer surveys — the token survey page + response submit.
         if (customerSurveys) sfDeps.customerSurveys = customerSurveys;
+        // Business hours — the public /hours page.
+        if (businessHours) sfDeps.businessHours = businessHours;
         // Bundles + quantity discounts — the PDP "Bundle & save" rail +
         // atomic bundle add, and the quantity-break table + cart/checkout
         // repricing. Both price server-side from the live catalog.
