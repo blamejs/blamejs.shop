@@ -1,13 +1,17 @@
 {
-  "version": "0.1.34",
+  "version": "0.1.35",
   "assets": {
     "css/admin.css": {
       "integrity": "sha384-rvjL1QySBgNJGEUDusbbMCkL3fsjmzcwUvTp9pljo/0Nn/lErxq2AbY8EYvDF9Ch",
       "fingerprinted": "css/admin.4dc78dfc45d0736d.css"
     },
     "css/main.css": {
-      "integrity": "sha384-A2m9cYLHIlIrFvTluTOaZz9r8F90yWIKd3SHOlyNwQwtaOBrzlsn/NDR1vso6dSF",
-      "fingerprinted": "css/main.91c0dfab0198569c.css"
+      "integrity": "sha384-eNBBXiZ+B0S2drwiWoHzw7FzZRNGRO79o9VIwsaujSHTxQLz2zJabp0x74kFxAxq",
+      "fingerprinted": "css/main.0ef22690caec76ea.css"
+    },
+    "js/consent.js": {
+      "integrity": "sha384-hN8Sp92onKxJIEvPHbFvP6RxaFoOeJwq7tq/dTXNhHe9UYgEF2Nxr4snZX3sz6JM",
+      "fingerprinted": "js/consent.feeb3b381ef80034.js"
     },
     "js/passkey-login.js": {
       "integrity": "sha384-65i1wVHIkiS2e0YiOV6oUOF9+tNR7s6QRvpnWaEne43P+B8UvKLTpDgp4MSKNGqX",

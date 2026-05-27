@@ -214,7 +214,16 @@ function _sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 function cmdPrepare(opts) {
   _section("prepare");
   if (!_gitOnMain()) throw new Error("release: prepare must run on main (on " + _gitBranch() + ")");
-  if (!_gitClean())  throw new Error("release: prepare requires a clean working tree");
+  // This repo ships the feature + version bump in ONE release commit, so the
+  // feature changes are expected in the working tree at prepare time. prepare
+  // bumps + regenerates artifacts on top of them; `commit` then commits
+  // everything together on the release branch. (A clean tree is fine too — a
+  // bump-only release.) An accidental re-bump is guarded by the release-notes
+  // precondition below: the next version's notes must exist.
+  if (!_gitClean()) {
+    console.log("working-tree changes to bundle into this release:");
+    _run("git", ["status", "--short"], { allowFail: true });
+  }
 
   var current = _readPackageVersion();
   var next = opts.minor ? _bumpMinor(current) : _bumpPatch(current);

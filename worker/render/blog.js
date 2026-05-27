@@ -5,7 +5,7 @@
 // but it's file-backed; inline-string body needs a separate path).
 // Operators who want markdown formatting compose `b.template`
 // elsewhere and pass the rendered HTML in.
-import { renderTemplate, jsonLdScript, assetUrl, stylesheetIntegrityAttr } from "./_lib.js";
+import { renderTemplate, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag } from "./_lib.js";
 import b from "../b.js";
 
 var LAYOUT =
@@ -47,10 +47,13 @@ var LAYOUT =
   "      <ul>\n" +
   "        <li><a href=\"/privacy\">Privacy</a></li>\n" +
   "        <li><a href=\"/terms\">Terms</a></li>\n" +
+  "        <li><a href=\"/cookies\">Manage cookies</a></li>\n" +
   "        <li><a href=\"/feed.xml\">RSS</a></li>\n" +
   "      </ul>\n" +
   "    </div>\n" +
   "  </footer>\n" +
+  CONSENT_BANNER +
+  "RAW_CONSENT_SCRIPT" +
   "</body>\n" +
   "</html>\n";
 
@@ -71,6 +74,7 @@ function _wrap(opts, bodyHtml) {
     og_image:          opts.ogImage || "/assets/brand/logo.png",
     year:              String(new Date().getUTCFullYear()),
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
+    .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_BODY_PLACEHOLDER", bodyHtml);
 }
 

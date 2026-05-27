@@ -169,6 +169,16 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // Address book — per-customer saved addresses on /account/addresses.
       var addresses = (catalog && cart) ? bShop.addresses.create({}) : null;
 
+      // Cookie consent — backs the GDPR / ePrivacy opt-in banner that
+      // ships in the chrome of every storefront page, plus the /cookies
+      // preference center and the POST /consent handler. The primitive is
+      // the durable per-session audit ledger (hashed session id, per-
+      // category decision, DNT / GPC honored); the storefront writes a
+      // sealed first-party cookie as the runtime gate and records each
+      // decision here for the audit trail. Only the externalDb query
+      // handle is needed.
+      var cookieConsent = (catalog && cart) ? bShop.cookieConsent.create({}) : null;
+
       // Returns — customer self-serve RMA requests (/account/returns) +
       // operator moderation (/admin/returns). Cursor HMAC key like the
       // others. Single instance shared by both surfaces.
@@ -547,6 +557,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (wishlist) sfDeps.wishlist = wishlist;
         if (saveForLater) sfDeps.saveForLater = saveForLater;
         if (addresses) sfDeps.addresses = addresses;
+        if (cookieConsent) sfDeps.cookieConsent = cookieConsent;
         if (returns) sfDeps.returns = returns;
         if (collections) sfDeps.collections = collections;
         if (categoryNavigation) sfDeps.categoryNavigation = categoryNavigation;

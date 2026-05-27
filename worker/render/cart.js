@@ -1,4 +1,4 @@
-import { renderTemplate, escapeAttr, formatPrice, assetUrl, stylesheetIntegrityAttr } from "./_lib.js";
+import { renderTemplate, escapeAttr, formatPrice, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag } from "./_lib.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
@@ -117,9 +117,12 @@ var LAYOUT =
   "        <li><a href=\"/SECURITY.md\">Security</a></li>\n" +
   "        <li><a href=\"/privacy\">Privacy</a></li>\n" +
   "        <li><a href=\"/terms\">Terms</a></li>\n" +
+  "        <li><a href=\"/cookies\">Manage cookies</a></li>\n" +
   "      </ul>\n" +
   "    </div>\n" +
   "  </footer>\n" +
+  CONSENT_BANNER +
+  "RAW_CONSENT_SCRIPT" +
   "</body>\n" +
   "</html>\n";
 
@@ -228,6 +231,7 @@ function _wrap(opts) {
     og_url:         ogUrl,
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
+    .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_BODY_PLACEHOLDER", opts.body);
 }
 

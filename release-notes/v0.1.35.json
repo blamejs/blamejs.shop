@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.1.35",
+  "date": "2026-05-26",
+  "headline": "Cookie-consent banner — GDPR/ePrivacy consent with category opt-in, an audit ledger, and a preferences page",
+  "summary": "Every page now carries a cookie-consent banner until the visitor decides. They can accept all, reject everything non-essential, or open preferences to toggle categories; the choice is stored in a sealed first-party cookie and recorded in a consent ledger for the audit trail. Strictly-necessary cookies (session, CSRF, the consent choice itself) always work; analytics and marketing are opt-in and default-deny, and a Do-Not-Track or Global-Privacy-Control signal collapses them to denied regardless of any stored opt-in. A \"Manage cookies\" footer link reopens the preferences. The banner and its choice form are server-rendered and work with JavaScript off — the small enhancement script only hides the banner once a choice exists — and the banner renders identically from the edge and the container. A consent-gating hook lets future analytics/marketing scripts render only when their category is granted.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Consent banner + preferences page", "body": "A banner shows on every page until a choice is made: Accept all, Reject non-essential, or Manage preferences. `POST /consent` records the decision (validated; safe-redirect back to where the visitor was), and `GET /cookies` is a preferences page to review and change categories later, linked from the footer. The authoritative choice is a sealed, HttpOnly first-party cookie; a tampered or missing cookie simply reshows the banner rather than erroring. Every decision is also written to the consent ledger for the GDPR audit trail, best-effort so a ledger hiccup never blocks the choice from taking effect." },
+        { "title": "Category opt-in with DNT / GPC honored", "body": "Cookies are grouped into strictly-necessary (always on) plus toggleable categories (analytics, marketing, …) that are opt-in and default-deny. A `DNT: 1` or `Sec-GPC: 1` request header forces the non-essential categories to denied regardless of any stored opt-in. A server-side gating hook renders a category's script only when that category is granted, so future analytics/marketing islands are consent-gated by construction." }
+      ]
+    }
+  ]
+}
