@@ -162,7 +162,7 @@ var SEARCH_HEADER =
 var SEARCH_EMPTY =
   "<section class=\"search-empty\">\n" +
   "  <div class=\"search-empty__inner\">\n" +
-  "    <p class=\"search-empty__icon\" aria-hidden=\"true\">⌕</p>\n" +
+  "    <p class=\"search-empty__icon\" aria-hidden=\"true\"><svg class=\"empty-illu\" viewBox=\"0 0 200 132\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"90\" cy=\"58\" r=\"30\"/><path d=\"M112 80 L132 100\"/><path d=\"M80 52 L86 58 L80 64\" stroke=\"currentColor\" stroke-width=\"2.4\"/><path d=\"M92 64 H102\" stroke=\"currentColor\" stroke-width=\"2.4\"/><circle cx=\"46\" cy=\"34\" r=\"2\" fill=\"#732A8D\" stroke=\"none\"/><circle cx=\"146\" cy=\"44\" r=\"2\" fill=\"#732A8D\" stroke=\"none\"/></svg></p>\n" +
   "    <h2>{{heading}}</h2>\n" +
   "    <p>{{copy}}</p>\n" +
   "    {{clear_link}}\n" +
