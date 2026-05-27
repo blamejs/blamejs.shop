@@ -2039,6 +2039,46 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   height: auto;
   margin-inline: auto;
 }
+
+/* ---- customer survey page (token-gated) -------------------------- */
+.survey-page { padding: var(--space-9) 0; }
+.survey-page__inner {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+.survey-page__inner--msg { text-align: center; }
+.survey-page__title { font-family: var(--font-display); font-size: clamp(1.6rem, 3vw, 2.2rem); margin: var(--space-2) 0 var(--space-3); }
+.survey-page__lede { color: var(--text-muted); margin: 0 0 var(--space-6); }
+.survey-form { display: flex; flex-direction: column; gap: var(--space-5); margin-top: var(--space-5); }
+.survey-q {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  padding: var(--space-4) var(--space-5);
+  margin: 0;
+}
+.survey-q legend { font-weight: 600; padding: 0 var(--space-2); }
+.survey-req { color: var(--color-accent); text-decoration: none; }
+.survey-scale { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+.survey-scale__opt {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 2.4rem; padding: var(--space-2);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-md);
+  font-family: var(--font-mono); cursor: pointer;
+}
+.survey-scale__opt input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+.survey-scale__opt:has(input:checked) { border-color: var(--color-accent); background: rgba(173,56,219,0.14); color: var(--white); }
+.survey-opts { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
+.survey-opt { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; }
+.survey-q textarea {
+  width: 100%; margin-top: var(--space-3); min-height: 6rem;
+  padding: var(--space-3); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md); background: var(--surface-sunken);
+  color: var(--text); font: inherit; resize: vertical;
+}
+.survey-form__actions { margin-top: var(--space-2); }
 .search-empty h2 { font-size: var(--text-xl); margin: 0 0 var(--space-3); }
 .search-empty p  { color: var(--mute); margin: 0 0 var(--space-5); }
 
