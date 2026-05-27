@@ -596,9 +596,8 @@ function _wrap(opts) {
 function _buildPdpGallery(product, media, assetPrefix) {
   var prefix = assetPrefix || "/assets/";
   if (!media || media.length === 0) {
-    var initial = (product.title || "?").trim().charAt(0).toUpperCase() || "?";
-    return "<figure class=\"pdp__media\" aria-hidden=\"true\">" +
-             "<span class=\"pdp__media-mark\">" + escapeAttr(initial) + "</span>" +
+    return "<figure class=\"pdp__media pdp__media--placeholder\" aria-hidden=\"true\">" +
+             "<svg class=\"media-ph__svg\" viewBox=\"0 0 240 240\" aria-hidden=\"true\"><rect width=\"240\" height=\"240\" fill=\"none\"/><g stroke=\"currentColor\" stroke-opacity=\"0.10\" stroke-width=\"1\"><path d=\"M0 40 H240 M0 80 H240 M0 120 H240 M0 160 H240 M0 200 H240 M40 0 V240 M80 0 V240 M120 0 V240 M160 0 V240 M200 0 V240\"/></g><g fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M120 64 L162 80 L162 122 C162 152 144 168 120 178 C96 168 78 152 78 122 L78 80 Z\" stroke=\"#732A8D\" stroke-width=\"2.4\"/><path d=\"M120 92 L146 105 L146 134 L120 147 L94 134 L94 105 Z\"/><path d=\"M94 105 L120 118 L146 105 M120 118 V147\" stroke=\"#732A8D\" stroke-width=\"2.4\"/><path d=\"M107 101 L112 105 L107 109\" stroke=\"currentColor\" stroke-width=\"2.4\"/><path d=\"M116 110 H128\" stroke=\"currentColor\" stroke-width=\"2.4\"/></g><text x=\"120\" y=\"208\" text-anchor=\"middle\" font-family=\"ui-monospace,Menlo,Consolas,monospace\" font-size=\"12\" letter-spacing=\"2\" fill=\"#6b6b78\">no image yet</text></svg>" +
            "</figure>" +
            "<ul class=\"pdp__thumbs\" aria-hidden=\"true\">" +
              "<li class=\"is-active\"></li><li></li><li></li><li></li>" +

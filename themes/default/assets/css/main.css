@@ -947,6 +947,16 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
 .collection-card__art--4 { --art-glow: 84% 74%; }
 .collection-card__art--5 { --art-glow: 28% 72%; }
 .collection-card__art--6 { --art-glow: 60% 16%; }
+/* category line-mark centered on the tile; violet primary is baked into
+   the svg, currentColor tints the fine detail strokes */
+.collection-card__icon {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 44%;
+  height: 44%;
+  color: var(--ink-soft);
+}
 .collection-card__meta {
   padding: var(--space-5);
   border-top: 1px solid var(--border);
@@ -1139,6 +1149,17 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
   object-fit: cover;
   display: block;
 }
+/* no-image fallback: bespoke line-art placeholder centered on the tile */
+.product-card__media--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.media-ph__svg {
+  width: 74%;
+  height: auto;
+  color: var(--ink-mute);
+}
 .product-card__meta {
   padding: var(--space-4) var(--space-5) var(--space-5);
   border-top: 1px solid var(--border);
@@ -1248,15 +1269,10 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
   display: block;
   border-radius: inherit;
 }
-.pdp__media-mark {
-  font-family: var(--font-mono);
-  font-size: clamp(6rem, 14vw, 12rem);
-  font-weight: 700;
-  color: var(--violet-light);
-  opacity: 0.35;
-  text-shadow: var(--glow-text);
-  letter-spacing: -0.04em;
-  user-select: none;
+.pdp__media--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .pdp__thumbs {
   display: grid;
@@ -1969,10 +1985,18 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   margin: 0 auto;
 }
 .search-empty__icon {
-  font-size: 3rem;
-  line-height: 1;
+  display: block;
   margin: 0 0 var(--space-4);
-  color: var(--accent);
+  color: var(--ink-mute);
+}
+/* bespoke line-art illustration shared across empty states (cart, search,
+   wishlist + account); violet baked in, currentColor tints the subtle
+   dashed "void" so it adapts to the surface */
+.empty-illu {
+  display: block;
+  width: clamp(7.5rem, 26vw, 10.5rem);
+  height: auto;
+  margin-inline: auto;
 }
 .search-empty h2 { font-size: var(--text-xl); margin: 0 0 var(--space-3); }
 .search-empty p  { color: var(--mute); margin: 0 0 var(--space-5); }
@@ -2002,18 +2026,9 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   align-items: center;
 }
 .cart-empty__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 5rem;
-  height: 5rem;
-  border: 2px dashed var(--mute-3);
-  border-radius: 50%;
-  font-size: 2.25rem;
-  line-height: 1;
-  margin: 0 0 var(--space-5);
-  color: var(--accent);
-  background: var(--bg);
+  display: block;
+  margin: 0 0 var(--space-4);
+  color: var(--ink-mute);
 }
 .cart-empty__eyebrow {
   margin: 0 0 var(--space-2);
@@ -3193,18 +3208,9 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   align-items: center;
 }
 .account-empty__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 5rem;
-  height: 5rem;
-  border: 2px dashed var(--mute-3);
-  border-radius: 50%;
-  font-size: 2.25rem;
-  line-height: 1;
-  margin: 0 0 var(--space-5);
-  color: var(--accent-d);
-  background: var(--bg);
+  display: block;
+  margin: 0 0 var(--space-4);
+  color: var(--ink-mute);
 }
 .account-empty__title {
   font-family: var(--font-display);

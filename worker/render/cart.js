@@ -172,7 +172,7 @@ var CART_EMPTY_PAGE =
   "  </nav>\n" +
   "  <div class=\"cart-empty\">\n" +
   "    <div class=\"cart-empty__card\">\n" +
-  "      <p class=\"cart-empty__icon\" aria-hidden=\"true\">🛒</p>\n" +
+  "      <p class=\"cart-empty__icon\" aria-hidden=\"true\"><svg class=\"empty-illu\" viewBox=\"0 0 200 132\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M52 50 H66 L74 90 H128 L138 58 H72\"/><path d=\"M46 44 H56\" stroke=\"#732A8D\"/><circle cx=\"82\" cy=\"106\" r=\"7\"/><circle cx=\"120\" cy=\"106\" r=\"7\"/><path d=\"M84 72 H122\" stroke=\"currentColor\" stroke-opacity=\"0.45\" stroke-width=\"1.8\" stroke-dasharray=\"2 4\"/><path d=\"M150 38 L150 50 M144 44 L156 44\" stroke=\"#732A8D\" stroke-width=\"2\"/></svg></p>\n" +
   "      <p class=\"eyebrow cart-empty__eyebrow\">Cart</p>\n" +
   "      <h1 class=\"cart-empty__title\">Your cart is empty</h1>\n" +
   "      <p class=\"cart-empty__lede\">Browse the catalog and the products you add show up here. Items hold their price at add-time, not at checkout.</p>\n" +

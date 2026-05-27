@@ -141,11 +141,15 @@ var PRODUCT_CARD_IMAGE =
   "</a>\n";
 
 var PRODUCT_CARD =
-  "<div class=\"card\">\n" +
-  "  <h2>{{title}}</h2>\n" +
-  "  <p class=\"price\">{{price}}</p>\n" +
-  "  <a href=\"/products/{{slug}}\" class=\"card-link\">View product →</a>\n" +
-  "</div>\n";
+  "<a class=\"product-card\" href=\"/products/{{slug}}\">\n" +
+  "  <figure class=\"product-card__media product-card__media--placeholder\">\n" +
+  "    <svg class=\"media-ph__svg\" viewBox=\"0 0 160 120\" aria-hidden=\"true\"><rect width=\"160\" height=\"120\" fill=\"none\"/><g stroke=\"currentColor\" stroke-opacity=\"0.10\" stroke-width=\"1\"><path d=\"M0 30 H160 M0 60 H160 M0 90 H160 M40 0 V120 M80 0 V120 M120 0 V120\"/></g><g fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M80 38 L104 50 L104 76 L80 88 L56 76 L56 50 Z\"/><path d=\"M56 50 L80 62 L104 50 M80 62 V88\" stroke=\"#732A8D\"/><path d=\"M70 47 L74 50 L70 53\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M77 54 H86\" stroke=\"currentColor\" stroke-width=\"2\"/></g><text x=\"80\" y=\"106\" text-anchor=\"middle\" font-family=\"ui-monospace,Menlo,Consolas,monospace\" font-size=\"9\" letter-spacing=\"1.5\" fill=\"#6b6b78\">no image yet</text></svg>\n" +
+  "  </figure>\n" +
+  "  <div class=\"product-card__meta\">\n" +
+  "    <h3 class=\"product-card__title\">{{title}}</h3>\n" +
+  "    <p class=\"product-card__price\">{{price}}</p>\n" +
+  "  </div>\n" +
+  "</a>\n";
 
 function _buildProductCard(p) {
   if (p.image_url) {
@@ -250,42 +254,42 @@ function _buildHomeHero(version) {
     "  </header>\n" +
     "  <div class=\"collections__grid\">\n" +
     "    <a class=\"collection-card\" href=\"/search?q=tee\">\n" +
-    "      <div class=\"collection-card__art collection-card__art--1\" aria-hidden=\"true\"></div>\n" +
+    "      <div class=\"collection-card__art collection-card__art--1\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M70 38 C74 44 86 44 90 38 L104 44 L112 58 L100 64 L96 58 L96 92 L64 92 L64 58 L60 64 L48 58 L56 44 Z\"/><path d=\"M71 40 C75 47 85 47 89 40\" stroke=\"#732A8D\" stroke-width=\"2\"/><path d=\"M73 76 H87\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-dasharray=\"2 3\"/></svg></div>\n" +
     "      <div class=\"collection-card__meta\">\n" +
     "        <h3>Apparel</h3>\n" +
     "        <p>Sized, colored, inventoried.</p>\n" +
     "      </div>\n" +
     "    </a>\n" +
     "    <a class=\"collection-card\" href=\"/search?q=edge\">\n" +
-    "      <div class=\"collection-card__art collection-card__art--2\" aria-hidden=\"true\"></div>\n" +
+    "      <div class=\"collection-card__art collection-card__art--2\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"58\" y=\"38\" width=\"44\" height=\"44\" rx=\"4\"/><rect x=\"70\" y=\"50\" width=\"20\" height=\"20\" rx=\"2\" stroke=\"#732A8D\"/><circle cx=\"80\" cy=\"60\" r=\"3\" fill=\"#AD38DB\" stroke=\"none\"/><path d=\"M66 38 V30 M76 38 V30 M86 38 V30 M96 38 V30\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M66 82 V90 M76 82 V90 M86 82 V90 M96 82 V90\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M58 48 H50 M58 60 H50 M58 72 H50\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M102 48 H110 M102 60 H110 M102 72 H110\" stroke=\"currentColor\" stroke-width=\"2\"/></svg></div>\n" +
     "      <div class=\"collection-card__meta\">\n" +
     "        <h3>Hardware</h3>\n" +
     "        <p>Serialized, warranty-tracked.</p>\n" +
     "      </div>\n" +
     "    </a>\n" +
     "    <a class=\"collection-card\" href=\"/search?q=license\">\n" +
-    "      <div class=\"collection-card__art collection-card__art--3\" aria-hidden=\"true\"></div>\n" +
+    "      <div class=\"collection-card__art collection-card__art--3\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M60 74 C50 74 48 62 57 59 C56 47 73 43 79 53 C88 47 100 54 97 64 C107 65 107 74 99 74 Z\" stroke=\"#732A8D\"/><path d=\"M78 60 V86\"/><path d=\"M70 78 L78 88 L86 78\"/><path d=\"M64 98 H92\" stroke=\"currentColor\" stroke-width=\"2\"/></svg></div>\n" +
     "      <div class=\"collection-card__meta\">\n" +
     "        <h3>Digital</h3>\n" +
     "        <p>License-key fulfillment.</p>\n" +
     "      </div>\n" +
     "    </a>\n" +
     "    <a class=\"collection-card\" href=\"/search?q=subscription\">\n" +
-    "      <div class=\"collection-card__art collection-card__art--4\" aria-hidden=\"true\"></div>\n" +
+    "      <div class=\"collection-card__art collection-card__art--4\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M56 50 A26 26 0 0 1 104 56\"/><path d=\"M104 70 A26 26 0 0 1 56 64\"/><path d=\"M104 42 L106 57 L91 55\" stroke=\"#AD38DB\"/><path d=\"M56 78 L54 63 L69 65\" stroke=\"#AD38DB\"/><circle cx=\"80\" cy=\"60\" r=\"6\" stroke=\"#732A8D\"/><circle cx=\"80\" cy=\"60\" r=\"1.6\" fill=\"currentColor\" stroke=\"none\"/></svg></div>\n" +
     "      <div class=\"collection-card__meta\">\n" +
     "        <h3>Subscriptions</h3>\n" +
     "        <p>Stripe-backed recurring.</p>\n" +
     "      </div>\n" +
     "    </a>\n" +
     "    <a class=\"collection-card\" href=\"/search?q=bundle\">\n" +
-    "      <div class=\"collection-card__art collection-card__art--5\" aria-hidden=\"true\"></div>\n" +
+    "      <div class=\"collection-card__art collection-card__art--5\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M86 36 L106 44 L106 64 L86 72 L66 64 L66 44 Z\" stroke=\"#732A8D\"/><path d=\"M66 44 L86 52 L106 44 M86 52 V72\" stroke=\"#732A8D\"/><path d=\"M70 56 L90 64 L90 88 L70 96 L50 88 L50 64 Z\"/><path d=\"M50 64 L70 72 L90 64 M70 72 V96\"/><path d=\"M70 72 V96\" stroke=\"currentColor\" stroke-width=\"2\"/></svg></div>\n" +
     "      <div class=\"collection-card__meta\">\n" +
     "        <h3>Bundles</h3>\n" +
     "        <p>Composite SKUs, atomic stock.</p>\n" +
     "      </div>\n" +
     "    </a>\n" +
     "    <a class=\"collection-card\" href=\"/search?q=gift\">\n" +
-    "      <div class=\"collection-card__art collection-card__art--6\" aria-hidden=\"true\"></div>\n" +
+    "      <div class=\"collection-card__art collection-card__art--6\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"48\" y=\"48\" width=\"64\" height=\"42\" rx=\"6\"/><path d=\"M80 48 V90\" stroke=\"#732A8D\"/><path d=\"M80 48 C71 36 56 39 62 49 C57 52 61 57 71 53 C76 51 80 50 80 48 Z\"/><path d=\"M80 48 C89 36 104 39 98 49 C103 52 99 57 89 53 C84 51 80 50 80 48 Z\"/><circle cx=\"80\" cy=\"48\" r=\"2.4\" fill=\"#AD38DB\" stroke=\"none\"/><rect x=\"56\" y=\"70\" width=\"11\" height=\"8\" rx=\"1.6\" stroke=\"currentColor\" stroke-width=\"1.8\"/></svg></div>\n" +
     "      <div class=\"collection-card__meta\">\n" +
     "        <h3>Gift cards</h3>\n" +
     "        <p>PQC-signed redemption codes.</p>\n" +
