@@ -39,7 +39,17 @@
     return null;
   }
 
-  var DECIDED = readFlag("shop_consent_set") !== null;
+  // The active consent policy version is stamped on this script's tag by
+  // the server (container) / edge worker. A decision counts as current only
+  // when the flag cookie's value matches it. A missing flag, a legacy
+  // unversioned flag, or one captured under a superseded policy version all
+  // fall through to leaving the banner visible, so the visitor re-confirms
+  // under the policy now in force — mirroring the server-side gate, which
+  // stops honoring a sealed decision whose policy_version has lagged.
+  var island = document.getElementById("consent-island");
+  var activePolicy = island ? island.getAttribute("data-consent-policy") : null;
+  var flag = readFlag("shop_consent_set");
+  var DECIDED = flag !== null && activePolicy !== null && flag === activePolicy;
 
   if (DECIDED) {
     // CSS keys off this attribute to hide #consent-banner. Hiding via a

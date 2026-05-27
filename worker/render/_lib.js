@@ -162,14 +162,19 @@ export var CONSENT_BANNER =
   "  </div>\n";
 
 // `<script>` tag for the consent island, resolved to its content-
-// fingerprinted URL + SRI from the shared manifest — byte-identical to
-// the container's `_islandScript("consent.js")`. The strict
-// `script-src 'self'` CSP allows this same-origin external script
-// (inline scripts are blocked). `defer` keeps it off the critical path.
+// fingerprinted URL + SRI from the shared manifest — byte-identical to the
+// container's `_islandScript("consent.js", { id, policy })`. The strict
+// `script-src 'self'` CSP allows this same-origin external script (inline
+// scripts are blocked). `defer` keeps it off the critical path. The
+// `data-consent-policy` value is the active consent policy version the
+// island compares against the flag cookie to decide whether to re-prompt;
+// edge-rendered (cookie-less, cached) pages stamp the initial "v1" — bump
+// it in lockstep with the container's policy version when the cookie policy
+// materially changes.
 export function consentScriptTag() {
   var sri = assetSri("js/consent.js");
-  return "<script src=\"" + assetUrl("js/consent.js") + "\"" +
-    (sri ? " integrity=\"" + sri + "\"" : "") + " defer></script>";
+  return "<script id=\"consent-island\" src=\"" + assetUrl("js/consent.js") + "\"" +
+    (sri ? " integrity=\"" + sri + "\"" : "") + " defer data-consent-policy=\"v1\"></script>";
 }
 
 export function formatPrice(minorUnits, currency) {

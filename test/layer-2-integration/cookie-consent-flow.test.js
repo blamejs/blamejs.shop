@@ -121,7 +121,11 @@ async function _run() {
     check("accept-all 303",                    accept.status === 303);
     check("accept-all returns to return_to",   (accept.headers["location"] || "") === "/cart");
     check("sealed choice cookie set",          jar.get("shop_consent") !== null);
-    check("flag cookie set (JS-readable)",     jar.get("shop_consent_set") === "1");
+    // The flag cookie carries the policy version the decision was captured
+    // under (not a bare "1"), so the island can compare it to the active
+    // version stamped on its <script> tag and re-prompt after a bump.
+    check("flag cookie carries policy version", jar.get("shop_consent_set") === "v1");
+    check("island script stamps active policy", first.body.indexOf("id=\"consent-island\"") !== -1 && first.body.indexOf("data-consent-policy=\"v1\"") !== -1);
     check("ledger row written on accept",      _ledgerCount(db) === ledgerBefore + 1);
 
     // The flag cookie drives the consent island's client-side hide; the
@@ -135,6 +139,27 @@ async function _run() {
     var manageAfter = await helpers.httpRequest({ port: handle.port, path: "/cookies", jar: jar });
     check("manage reflects analytics on",      manageAfter.body.indexOf("name=\"cat_analytics\" value=\"1\" checked") !== -1);
     check("manage reflects marketing on",      manageAfter.body.indexOf("name=\"cat_marketing\" value=\"1\" checked") !== -1);
+
+    // ---- policy bump invalidates the stored decision -------------------
+    // Bumping the active policy version makes consent captured under the
+    // old version no longer authoritative: the manage page reads all-off
+    // (so the gate denies analytics/marketing again) and the island re-
+    // prompts because the flag cookie ("v1") no longer matches the active
+    // version now stamped on the script ("v2").
+    cookieConsent.policyVersion = "v2";
+    var manageStale = await helpers.httpRequest({ port: handle.port, path: "/cookies", jar: jar });
+    check("policy bump resets stored toggles", manageStale.body.indexOf("value=\"1\" checked") === -1);
+    check("policy bump restamps active policy", manageStale.body.indexOf("data-consent-policy=\"v2\"") !== -1);
+    // A fresh decision under the new version is honored again.
+    var reaccept = await helpers.httpRequest({
+      port: handle.port, path: "/consent", method: "POST", jar: jar,
+      form: { choice: "accept_all", return_to: "/" },
+    });
+    check("re-consent under new policy 303",   reaccept.status === 303);
+    check("flag cookie now carries v2",        jar.get("shop_consent_set") === "v2");
+    var manageReaccept = await helpers.httpRequest({ port: handle.port, path: "/cookies", jar: jar });
+    check("v2 decision honored again",         manageReaccept.body.indexOf("name=\"cat_analytics\" value=\"1\" checked") !== -1);
+    cookieConsent.policyVersion = "v1";
 
     // ---- granular round-trip: analytics on, marketing off --------------
     var jar2 = helpers.cookieJar();
