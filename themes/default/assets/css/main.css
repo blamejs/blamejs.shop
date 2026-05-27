@@ -255,6 +255,47 @@ hr { border: 0; border-top: 1px solid var(--border); margin: var(--space-6) 0; }
 .skip-link:focus { left: 0; color: var(--white); }
 
 /* ---- utility bar (top promo) ------------------------------------ */
+/* ---- announcement bar (sitewide operator promo/notice strip) -----
+   Sits above the utility bar; one of four themes (rank urgency > promo >
+   info > success). Hidden client-side by the announcement island when its
+   slug is in the dismissed cookie (native [hidden]). */
+.announcement-bar {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--border-strong);
+}
+.announcement-bar[hidden] { display: none; }
+.announcement-bar__inner {
+  position: relative;
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: var(--space-2) calc(var(--gutter) + 2rem);
+  display: flex; align-items: center; justify-content: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+.announcement-bar__msg { margin: 0; }
+.announcement-bar__link {
+  color: inherit; font-weight: 700;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.announcement-bar__dismiss {
+  position: absolute; right: var(--gutter); top: 50%;
+  transform: translateY(-50%); margin: 0; line-height: 0;
+}
+.announcement-bar__x {
+  background: none; border: 0; color: inherit; cursor: pointer;
+  font-size: 1.15rem; line-height: 1; padding: 0.1rem 0.4rem;
+  border-radius: 4px; opacity: 0.7;
+}
+.announcement-bar__x:hover { opacity: 1; }
+.announcement-bar__x:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+.announcement-bar--urgency { background: var(--danger-deep); color: #ffffff; }
+.announcement-bar--promo   { background: linear-gradient(90deg, var(--violet-deep), var(--violet)); color: var(--white); }
+.announcement-bar--info    { background: var(--surface-raised); color: var(--text-muted); box-shadow: inset 3px 0 0 var(--color-accent); }
+.announcement-bar--success { background: var(--success-deep); color: #eafff0; }
+
 .utility-bar {
   background: linear-gradient(90deg, var(--violet-darkest), var(--violet-deeper));
   color: var(--text-muted);

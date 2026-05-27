@@ -1,4 +1,4 @@
-import { renderTemplate, escapeHtml, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, makeFormatPrice, currencySwitcher } from "./_lib.js";
+import { renderTemplate, escapeHtml, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -24,6 +24,7 @@ var LAYOUT =
   "</head>\n" +
   "<body>\n" +
   "  <a class=\"skip-link\" href=\"#main\">{{skip_to_content}}</a>\n" +
+  "RAW_ANNOUNCEMENT_BAR" +
   "\n" +
   "  <div class=\"utility-bar\" role=\"complementary\">\n" +
   "    <div class=\"utility-bar__inner\">\n" +
@@ -126,6 +127,7 @@ var LAYOUT =
   "  </footer>\n" +
   CONSENT_BANNER +
   "RAW_CONSENT_SCRIPT" +
+  "RAW_ANNOUNCEMENT_SCRIPT" +
   "</body>\n" +
   "</html>\n";
 
@@ -412,7 +414,9 @@ function _wrap(opts) {
     og_url:         ogUrl,
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
+    .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
+    .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "")
     .replace("RAW_CURRENCY_SWITCHER", currencySwitcher({
       currencies:  opts.currency_options,
       selected:    opts.currency_selected,
@@ -525,6 +529,7 @@ export function renderHome(opts) {
     currency_selected:    opts.currencySelected,
     currency_note:        opts.currencyNote,
     currency_redirect_to: opts.currencyRedirectTo,
+    announcement:   opts.announcement,
     body:           body,
   });
 }

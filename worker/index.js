@@ -46,6 +46,7 @@ import {
   rewriteQuery,
 } from "./data/search-faceting.js";
 import { hasCurrencyCookie } from "./data/currency.js";
+import { resolveAnnouncement } from "./data/announcement.js";
 
 // Cloudflare Worker — edge router for blamejs.shop.
 //
@@ -941,6 +942,7 @@ async function _edgeCartEmpty(request, env, version, shopName) {
       cartCount:     0,
       version:       version,
       defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
+      announcement:  await resolveAnnouncement(env.DB, {}),
     }, _currencyRenderOpts(env, { pathname: "/cart" })));
     // /cart is a session-bound surface even when the guest cart is
     // empty — crawlers indexing it dilute search results with
@@ -968,6 +970,7 @@ async function _edgeBlogList(request, env, _url, version, shopName) {
       articles: page.rows,
       shopName: shopName,
       version:  version,
+      announcement: await resolveAnnouncement(env.DB, {}),
     });
     return _html(html, request.method, env);
   } catch (e) {
@@ -996,6 +999,7 @@ async function _edgeBlogArticle(request, env, _url, version, shopName, slug) {
       article:  article,
       shopName: shopName,
       version:  version,
+      announcement: await resolveAnnouncement(env.DB, {}),
     });
     return _html(html, request.method, env);
   } catch (e) {
@@ -1034,11 +1038,13 @@ function _currencyRenderOpts(env, url) {
 async function _edgeHome(request, env, _url, version, shopName) {
   try {
     const page = await listActiveProducts(env.DB, { limit: 24, currency: "USD" });
+    const ann = await resolveAnnouncement(env.DB, {});
     const html = renderHome(Object.assign({
       products:  page.rows,
       shopName:  shopName,
       cartCount: 0,
       version:   version,
+      announcement: ann,
       // The edge serves the storefront's default locale; any explicit
       // locale choice bypasses the edge to the container.
       defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
@@ -1129,6 +1135,7 @@ async function _edgeSearch(request, env, url, version, shopName) {
       cartCount:      0,
       version:        version,
       defaultLocale:  env.SHOP_DEFAULT_LOCALE || "en",
+      announcement:   await resolveAnnouncement(env.DB, {}),
     }, _currencyRenderOpts(env, url)));
     return _html(html, request.method, env);
   } catch (e) {
@@ -1226,6 +1233,7 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
       bundleOffers:  bundleOffers,
       qtyBreaks:     qtyBreaks,
       wishlistCount: wishlistCount,
+      announcement:  await resolveAnnouncement(env.DB, {}),
       shopName:      shopName,
       cartCount:     0,
       version:       version,

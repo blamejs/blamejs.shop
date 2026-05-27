@@ -177,6 +177,51 @@ export function consentScriptTag() {
     (sri ? " integrity=\"" + sri + "\"" : "") + " defer data-consent-policy=\"v1\"></script>";
 }
 
+// Announcement-bar markup for a resolved row — BYTE-IDENTICAL to the
+// container's `_buildAnnouncementBar` (lib/storefront.js) so the edge +
+// container outputs match (the asset-fingerprint parity test guards this).
+// Returns "" for a null row so a no-announcement page renders unchanged.
+var _BAR_THEMES = { urgency: 1, promo: 1, info: 1, success: 1 };
+export function announcementBar(row) {
+  if (!row) return "";
+  var theme = _BAR_THEMES[row.theme] ? row.theme : "info";
+  var slug  = escapeHtml(String(row.slug == null ? "" : row.slug));
+  var link  = "";
+  if (row.link_url && row.link_label) {
+    // Defense-in-depth at the href sink — only https:// or a /-rooted path
+    // (not protocol-relative `//`); mirrors the container's _buildAnnouncementBar
+    // so the markup stays byte-identical. HTML-escaping does not neutralise a
+    // `javascript:`/`data:` scheme, so it's validated, not just escaped.
+    var href = String(row.link_url);
+    if (/^https:\/\//i.test(href) || (href.charAt(0) === "/" && href.charAt(1) !== "/")) {
+      link = " <a class=\"announcement-bar__link\" href=\"" + escapeHtml(href) + "\">" +
+        escapeHtml(String(row.link_label)) + "</a>";
+    }
+  }
+  var dismiss = "";
+  if (row.dismissible) {
+    dismiss =
+      "<form class=\"announcement-bar__dismiss\" method=\"post\" action=\"/announcements/" + slug + "/dismiss\">" +
+        "<input type=\"hidden\" name=\"return_to\" value=\"/\" data-announcement-return>" +
+        "<button type=\"submit\" class=\"announcement-bar__x\" aria-label=\"Dismiss this announcement\">&times;</button>" +
+      "</form>";
+  }
+  return "<aside class=\"announcement-bar announcement-bar--" + theme + "\" role=\"region\" aria-label=\"Store announcement\" data-announcement-slug=\"" + slug + "\">" +
+           "<div class=\"announcement-bar__inner\">" +
+             "<p class=\"announcement-bar__msg\">" + escapeHtml(String(row.message == null ? "" : row.message)) + link + "</p>" +
+             dismiss +
+           "</div>" +
+         "</aside>";
+}
+
+// `<script>` tag for the announcement island — byte-identical to the
+// container's `_islandScript("announcement.js", { id })` (no policy attr).
+export function announcementScriptTag() {
+  var sri = assetSri("js/announcement.js");
+  return "<script id=\"announcement-island\" src=\"" + assetUrl("js/announcement.js") + "\"" +
+    (sri ? " integrity=\"" + sri + "\"" : "") + " defer></script>";
+}
+
 export function formatPrice(minorUnits, currency) {
   if (!Number.isInteger(minorUnits)) {
     throw new TypeError("formatPrice: minorUnits must be an integer, got " + JSON.stringify(minorUnits));
