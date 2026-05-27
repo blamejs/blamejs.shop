@@ -95,7 +95,7 @@ async function _seedOrders(query, count) {
       "VALUES (?1, ?2, ?3, ?4, ?5, 'USD', ?6, 0, 0, 0, ?6, NULL, ?7, ?8, ?8)",
       [
         id, cartId, customerId, sessionId, status, grand,
-        JSON.stringify({ country: "US", state: "CA", postal: "94103" }),
+        JSON.stringify({ line1: "500 Market St", line2: "Suite 5", city: "San Francisco", country: "US", state: "CA", postal: "94103" }),
         baseTs + i,
       ],
     );
@@ -124,10 +124,16 @@ async function _csvBasics() {
   // Each row = one CRLF-terminated line; 3 seeded orders.
   var lines = allBody.split("\r\n").filter(function (s) { return s.length > 0; });
   check("csvForRange yields 3 data rows", lines.length === 3);
-  // Each row has 24 cells (default columns)
+  // Each row has 27 cells (default columns).
   // Count quote-delimited cells via a count of `","` separators + 1.
   var sepCount = (lines[0].match(/","/g) || []).length;
-  check("csvForRange row has 24 columns", sepCount + 1 === 24);
+  check("csvForRange row has 27 columns", sepCount + 1 === 27);
+  check("csvForRange header carries the full shipping address",
+    header.indexOf('"shipping_line1"') !== -1 &&
+    header.indexOf('"shipping_line2"') !== -1 &&
+    header.indexOf('"shipping_city"')  !== -1);
+  check("csvForRange row carries the seeded street + city",
+    allBody.indexOf("500 Market St") !== -1 && allBody.indexOf("San Francisco") !== -1);
 }
 
 async function _rfc4180Quoting() {
@@ -204,8 +210,12 @@ async function _ndjsonShape() {
   var parsed = JSON.parse(lines[0]);
   check("ndjsonForRange line is a JSON object",
     parsed && typeof parsed === "object" && !Array.isArray(parsed));
-  check("ndjsonForRange has 24 keys by default",
-    Object.keys(parsed).length === 24);
+  check("ndjsonForRange has 27 keys by default",
+    Object.keys(parsed).length === 27);
+  check("ndjsonForRange surfaces the full shipping address",
+    parsed.shipping_line1 === "500 Market St" &&
+    parsed.shipping_city  === "San Francisco" &&
+    parsed.shipping_region === "CA");
   check("ndjsonForRange includes order_id",
     typeof parsed.order_id === "string" && parsed.order_id.length === 36);
   check("ndjsonForRange surfaces hashed email field (empty when no email)",

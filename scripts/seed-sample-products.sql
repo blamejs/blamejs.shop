@@ -199,3 +199,22 @@ INSERT OR IGNORE INTO prices (id, variant_id, currency, amount_minor, effective_
    'USD', 900, 1779000000000, NULL, 1779000000000);
 INSERT OR IGNORE INTO inventory (sku, stock_on_hand, stock_held, updated_at) VALUES
   ('STK-PCK-6', 200, 0, 1779000000000);
+
+-- 13. Buy Me a Coffee (support) — $5
+-- A small thank-you tip. Carries a later updated_at than the rest so it
+-- leads the catalog grid (the home + collection listings order by
+-- updated_at DESC). Nothing ships (requires_shipping = 0).
+INSERT OR IGNORE INTO products (id, slug, title, description, status, created_at, updated_at) VALUES
+  ('00000000-0000-7000-8000-00000000000d', 'buy-me-a-coffee',
+   'Buy Me a Coffee',
+   'A five-dollar thank-you. If the framework saved you an afternoon of yak-shaving, this buys the next pot of coffee that keeps it maintained. No shipping, no shirt size — just a receipt and our thanks.',
+   'active', 1779100000000, 1779100000000);
+INSERT OR IGNORE INTO variants (id, product_id, sku, title, options_json, weight_grams, requires_shipping, position, created_at, updated_at) VALUES
+  ('00000000-0000-7000-8000-00000000001d', '00000000-0000-7000-8000-00000000000d',
+   'BUY-COFFEE-5', 'One coffee', '{}',
+   0, 0, 0, 1779100000000, 1779100000000);
+INSERT OR IGNORE INTO prices (id, variant_id, currency, amount_minor, effective_from, effective_until, created_at) VALUES
+  ('00000000-0000-7000-8000-00000000002d', '00000000-0000-7000-8000-00000000001d',
+   'USD', 500, 1779100000000, NULL, 1779100000000);
+INSERT OR IGNORE INTO inventory (sku, stock_on_hand, stock_held, updated_at) VALUES
+  ('BUY-COFFEE-5', 999999, 0, 1779100000000);

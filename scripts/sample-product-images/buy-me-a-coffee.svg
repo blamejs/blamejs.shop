@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" role="img" aria-label="Buy me a coffee" color="#C254E8">
+  <defs>
+    <radialGradient id="cofGlow" cx="50%" cy="52%" r="56%">
+      <stop offset="0%" stop-color="#AD38DB" stop-opacity="0.34"/>
+      <stop offset="58%" stop-color="#732A8D" stop-opacity="0.11"/>
+      <stop offset="100%" stop-color="#AD38DB" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="cofCup" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#C254E8"/>
+      <stop offset="48%" stop-color="#AD38DB"/>
+      <stop offset="100%" stop-color="#6E2887"/>
+    </linearGradient>
+    <linearGradient id="cofLid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8E33B0"/>
+      <stop offset="100%" stop-color="#5C2272"/>
+    </linearGradient>
+    <linearGradient id="cofSleeve" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f0f13"/>
+      <stop offset="100%" stop-color="#08080a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- soft radial glow -->
+  <rect width="300" height="300" fill="url(#cofGlow)"/>
+
+  <!-- faint backdrop grid -->
+  <g stroke="currentColor" stroke-opacity="0.08" stroke-width="1">
+    <path d="M0 50 H300 M0 100 H300 M0 150 H300 M0 200 H300 M0 250 H300 M50 0 V300 M100 0 V300 M150 0 V300 M200 0 V300 M250 0 V300"/>
+  </g>
+
+  <!-- rising steam (fine detail in currentColor) -->
+  <g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-opacity="0.7">
+    <path d="M126 96 C118 84 134 76 126 62 C120 52 130 44 126 34"/>
+    <path d="M150 100 C142 86 158 78 150 62 C144 50 154 42 150 30"/>
+    <path d="M174 96 C166 84 182 76 174 62 C168 52 178 44 174 34"/>
+  </g>
+
+  <!-- takeaway cup -->
+  <g stroke="#5C2272" stroke-width="2.5" stroke-linejoin="round">
+    <!-- lid -->
+    <path d="M104 116 L196 116 L190 104 L110 104 Z" fill="url(#cofLid)"/>
+    <ellipse cx="150" cy="104" rx="40" ry="7" fill="url(#cofLid)"/>
+    <!-- sip spout -->
+    <path d="M138 100 C140 95 160 95 162 100 L160 104 L140 104 Z" fill="#5C2272"/>
+    <!-- cup body (tapered) -->
+    <path d="M108 122 L192 122 L180 246 C179 252 175 256 169 256 L131 256 C125 256 121 252 120 246 Z" fill="url(#cofCup)"/>
+  </g>
+
+  <!-- cup sheen -->
+  <path d="M120 130 L130 130 L122 240 L114 240 Z" fill="#ffffff" fill-opacity="0.12"/>
+
+  <!-- kraft sleeve with emblem -->
+  <g>
+    <path d="M112 162 L188 162 L184 206 L116 206 Z" fill="url(#cofSleeve)" stroke="#08080a" stroke-opacity="0.35" stroke-width="2"/>
+    <!-- heart + terminal mark on sleeve -->
+    <g transform="translate(150 184)">
+      <path d="M0 8 C-9 1 -14 -4 -14 -9 C-14 -14 -9 -16 -5 -13 C-2 -11 0 -8 0 -8 C0 -8 2 -11 5 -13 C9 -16 14 -14 14 -9 C14 -4 9 1 0 8 Z" fill="none" stroke="#C254E8" stroke-width="2.4" stroke-linejoin="round"/>
+      <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.9">
+        <path d="M-5 -9 L-1 -6 L-5 -3"/>
+        <path d="M1 -2 H6"/>
+      </g>
+    </g>
+  </g>
+
+  <!-- glow accent dots -->
+  <circle cx="150" cy="62" r="3.5" fill="#AD38DB"/>
+  <circle cx="216" cy="232" r="3" fill="#C254E8" fill-opacity="0.85"/>
+</svg>

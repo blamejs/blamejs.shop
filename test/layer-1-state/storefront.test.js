@@ -178,8 +178,22 @@ async function _checkoutForm() {
   });
   check("checkout form has email field",    /name=\"email\"/.test(html));
   check("checkout form has country field",   /name=\"country\"/.test(html));
+  check("checkout form has street line1",    /name=\"line1\"/.test(html));
+  check("checkout form has apt/suite line2", /name=\"line2\"/.test(html));
+  check("checkout form has city field",      /name=\"city\"/.test(html));
   check("checkout form shows subtotal",       html.indexOf("$29.99") !== -1);
   check("checkout form POSTs to /checkout",   /action=\"\/checkout\"/.test(html));
+
+  // A signed-in customer's saved address pre-fills the fields (the
+  // value is escaped into the input's value attribute).
+  var prefilled = storefront.renderCheckoutForm({
+    lines:  [{ sku: "X-1", qty: 1, unit_amount_minor: 2999, unit_currency: "USD" }],
+    totals: { subtotal_minor: 2999, currency: "USD" },
+    shop_name: "Acme",
+    prefill: { name: "Ada Lovelace", line1: "500 Market St", city: "San Francisco", country: "US", state: "CA", postal: "94103" },
+  });
+  check("checkout form pre-fills street",    prefilled.indexOf("value=\"500 Market St\"") !== -1);
+  check("checkout form pre-fills city",      prefilled.indexOf("value=\"San Francisco\"") !== -1);
 }
 
 async function _payPage() {

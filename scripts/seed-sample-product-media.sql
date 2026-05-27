@@ -78,3 +78,9 @@ INSERT OR IGNORE INTO media (id, product_id, variant_id, r2_key, content_type, w
   ('00000000-0000-7000-8000-00000000003c', '00000000-0000-7000-8000-00000000000c', NULL,
    'products/sticker-pack.svg', 'image/svg+xml', 800, 800, 0,
    'Sticker Pack — six die-cut weather-rated vinyl decals', 1779000000000);
+
+-- Buy Me a Coffee
+INSERT OR IGNORE INTO media (id, product_id, variant_id, r2_key, content_type, width, height, position, alt_text, created_at) VALUES
+  ('00000000-0000-7000-8000-00000000003d', '00000000-0000-7000-8000-00000000000d', NULL,
+   'products/buy-me-a-coffee.svg', 'image/svg+xml', 800, 800, 0,
+   'Buy Me a Coffee — a takeaway cup with rising steam and a heart-and-prompt emblem', 1779100000000);
