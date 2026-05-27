@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.5",
+  "date": "2026-05-27",
+  "headline": "Customer surveys — token-gated NPS / CSAT / CES feedback with an admin rollup",
+  "summary": "Operators can now collect structured post-experience feedback. Define a survey (NPS, CSAT, CES, or a custom open-ended prompt) from a new Surveys screen in the admin console, then issue a single-use invitation for a customer — the console shows the survey link once for you to send. The customer opens the link and answers without signing in; the token itself is the access. Responses roll up on the survey's detail page with the kind-appropriate score (NPS index, CSAT positive-rate, CES mean) plus a per-question breakdown. Surveys can be archived when a campaign ends; existing invitation links keep working.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Token-gated survey page", "body": "A `/survey/:token` page renders the survey's questions — a rating scale, single-select options, or a free-text box — and accepts one response per invitation. The single-use token is the access (no login), and the page degrades cleanly to a clear notice when a link is already used, expired, closed, or invalid. The required-answer check re-renders the form with a message rather than losing the visitor's work." },
+        { "title": "Admin console: Surveys", "body": "A new Surveys screen (and matching JSON API) to create a survey for the chosen kind (the console seeds the standard question set; fully custom question lists go through the API), issue a single-use invitation for a customer id (the link is revealed exactly once), read the response rollup with the kind's headline score and per-question results, and archive finished surveys. The screen appears only when the surveys primitive is wired." }
+      ]
+    }
+  ]
+}

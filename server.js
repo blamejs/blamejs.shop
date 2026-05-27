@@ -342,6 +342,12 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // until that adapter is wired — segment rows are simply not offered.
       var announcementBar = (catalog && cart) ? bShop.announcementBar.create({}) : null;
 
+      // Customer surveys — token-gated NPS/CSAT/CES/custom feedback. The
+      // storefront serves the token survey page (/survey/:token) + records
+      // responses; the admin console defines surveys, issues invitations,
+      // and reads the rollup. The invitation token is the access (no login).
+      var customerSurveys = (catalog && cart) ? bShop.customerSurveys.create({}) : null;
+
       // Recommendations — operator-curated overrides + co-purchase /
       // category-popular / in-stock signals. Composes the catalog handle;
       // powers the post-purchase "Customers also bought" rail.
@@ -525,6 +531,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           webhooks:      webhooks,
           collections:   collections,
           announcementBar: announcementBar,
+          customerSurveys: customerSurveys,
           // Integration state map for /admin/integrations — "enabled" |
           // "action" (credentials present, a one-time operator action
           // still required) | "off". admin.js never reads process.env.
@@ -655,6 +662,8 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // resolves + renders the active bar per request (page-top) and
         // mounts the dismiss route; the admin console manages the rows.
         if (announcementBar) sfDeps.announcementBar = announcementBar;
+        // Customer surveys — the token survey page + response submit.
+        if (customerSurveys) sfDeps.customerSurveys = customerSurveys;
         // Bundles + quantity discounts — the PDP "Bundle & save" rail +
         // atomic bundle add, and the quantity-break table + cart/checkout
         // repricing. Both price server-side from the live catalog.
