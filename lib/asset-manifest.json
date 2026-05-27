@@ -1,9 +1,9 @@
 {
-  "version": "0.2.2",
+  "version": "0.2.3",
   "assets": {
     "css/admin.css": {
-      "integrity": "sha384-oUi6NkXA0ULSy8+8+LG0FV6jsgr7Y11Xf3VdnwUESnvUPaN7anYEC+QOAUXwgsap",
-      "fingerprinted": "css/admin.7b692a8965624a0c.css"
+      "integrity": "sha384-fZnpLlIlLUesiLgUuhP4A6MVxXDeGltLfYqGsecoEYen4t3nLjLmJbHNOnoFbjyg",
+      "fingerprinted": "css/admin.b71e544152d3c2e0.css"
     },
     "css/main.css": {
       "integrity": "sha384-iKbkn3AR4k733EgN+1Ju51qbKfz9yVmDk8lE2l99asnRGbSo4BJu4Lo+OTxcBME4",
