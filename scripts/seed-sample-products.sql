@@ -184,23 +184,7 @@ INSERT OR IGNORE INTO prices (id, variant_id, currency, amount_minor, effective_
 INSERT OR IGNORE INTO inventory (sku, stock_on_hand, stock_held, updated_at) VALUES
   ('OPR-MUG-11', 80, 0, 1779000000000);
 
--- 12. Sticker Pack (apparel) — $9
-INSERT OR IGNORE INTO products (id, slug, title, description, status, created_at, updated_at) VALUES
-  ('00000000-0000-7000-8000-00000000000c', 'sticker-pack',
-   'Sticker Pack',
-   'Six die-cut vinyl decals — shield, PQC badge, SBOM tag, wordmark, brace-pair, and approved checkmark. Weather-rated for laptops, hardware cases, and the side of a deployed Edge Reader.',
-   'active', 1779000000000, 1779000000000);
-INSERT OR IGNORE INTO variants (id, product_id, sku, title, options_json, weight_grams, requires_shipping, position, created_at, updated_at) VALUES
-  ('00000000-0000-7000-8000-00000000001c', '00000000-0000-7000-8000-00000000000c',
-   'STK-PCK-6', 'Set of 6', '{"count":6}',
-   30, 1, 0, 1779000000000, 1779000000000);
-INSERT OR IGNORE INTO prices (id, variant_id, currency, amount_minor, effective_from, effective_until, created_at) VALUES
-  ('00000000-0000-7000-8000-00000000002c', '00000000-0000-7000-8000-00000000001c',
-   'USD', 900, 1779000000000, NULL, 1779000000000);
-INSERT OR IGNORE INTO inventory (sku, stock_on_hand, stock_held, updated_at) VALUES
-  ('STK-PCK-6', 200, 0, 1779000000000);
-
--- 13. Buy Me a Coffee (support) — $5
+-- 12. Buy Me a Coffee (support) — $5
 -- A small thank-you tip. Carries a later updated_at than the rest so it
 -- leads the catalog grid (the home + collection listings order by
 -- updated_at DESC). Nothing ships (requires_shipping = 0).
