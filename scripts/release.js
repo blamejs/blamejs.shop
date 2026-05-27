@@ -402,16 +402,22 @@ async function cmdDeploy() {
     var st = _capture("gh", ["api", "repos/" + REPO + "/commits/main/check-runs",
       "--jq", "[.check_runs[]? | select(.name|test(\"Workers Builds\";\"i\"))] | last | \"\\(.status)/\\(.conclusion // \"running\")\""]).stdout;
     console.log("[" + (i * 20) + "s] Workers Build: " + (st || "(no check yet)"));
-    if (st.indexOf("/success") !== -1) { conclusion = "success"; break; }
-    if (st.indexOf("/failure") !== -1) { conclusion = "failure"; break; }
+    // Break on ANY terminal conclusion — `completed/<conclusion>` covers
+    // success, failure, cancelled, timed_out, action_required, etc. Only
+    // `success` is a confirmed rollout; every other terminal state must
+    // fail the release rather than fall through to tag/publish.
+    var done = st.match(/^completed\/(.+)$/);
+    if (done) { conclusion = done[1]; break; }
     await _sleep(20000);
   }
-  if (conclusion === "failure") {
-    throw new Error("release: Cloudflare Workers Build FAILED — open the build log in the dashboard. " +
-                    "Worker/container did NOT roll; D1 + R2 already applied. Fix the build, then re-run deploy.");
+  if (conclusion === "") {
+    throw new Error("release: Cloudflare Workers Build did not conclude within the poll window — " +
+                    "rollout unconfirmed. Check the dashboard build status before tagging.");
   }
   if (conclusion !== "success") {
-    console.log("warning: Workers Build did not conclude within the poll window — check the dashboard.");
+    throw new Error("release: Cloudflare Workers Build ended '" + conclusion + "' (not success) — " +
+                    "open the build log in the dashboard. Worker/container did NOT roll; D1 + R2 already " +
+                    "applied. Fix the build, then re-run deploy.");
   } else {
     _ok("Workers Build succeeded");
   }
@@ -460,7 +466,9 @@ function cmdPublish() {
   var runId = _capture("gh", ["run", "list", "--workflow=npm-publish.yml", "--limit", "1",
                               "--json", "databaseId", "--jq", ".[0].databaseId"]).stdout;
   if (runId) {
-    _run("gh", ["run", "watch", runId, "--exit-status"], { allowFail: true });
+    // No allowFail: `--exit-status` makes a failed npm-publish run exit
+    // non-zero, which must fail the release rather than be swallowed.
+    _run("gh", ["run", "watch", runId, "--exit-status"]);
   } else {
     console.log("no npm-publish run found yet (the tag push may still be registering)");
   }
