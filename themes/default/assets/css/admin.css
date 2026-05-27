@@ -48,6 +48,12 @@ body { font-family:var(--font-body); color:var(--ink); font-size:15px; line-heig
 h1, h2, h3, h4 { font-family:var(--font-display); font-weight:700; letter-spacing:-0.011em; margin:0 0 .65rem; }
 a { color:var(--accent-d); }
 
+/* ---- skip link (WCAG 2.4.1) -------------------------------------- */
+/* Off-screen until focused so keyboard users can jump past the header
+   + nav straight to the page content. */
+.skip-link { position:absolute; left:-9999px; top:0; z-index:20; background:var(--ink); color:var(--paper); padding:.6rem 1rem; border-radius:0 0 8px 0; font-family:var(--font-display); font-weight:700; font-size:.8rem; text-decoration:none; }
+.skip-link:focus { left:0; outline:2px solid var(--accent); outline-offset:-2px; }
+
 /* ---- header + nav ------------------------------------------------ */
 .admin-header { background:var(--ink); color:var(--paper); border-bottom:3px solid var(--accent); }
 .admin-header__inner { max-width:80rem; margin:0 auto; padding:1.15rem 1.5rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; }
@@ -79,9 +85,12 @@ section h2 { font-size:1.15rem; letter-spacing:-0.01em; margin-bottom:1.1rem; }
 /* ---- tables ------------------------------------------------------ */
 table { width:100%; border-collapse:collapse; font-size:.9rem; }
 thead th { text-align:left; padding:.7rem .75rem; border-bottom:2px solid var(--ink); font-family:var(--font-display); font-weight:600; font-size:.72rem; letter-spacing:.05em; text-transform:uppercase; color:var(--mute); }
-tbody td { padding:.7rem .75rem; border-bottom:1px solid var(--hair-2); }
-tbody tr:last-child td { border-bottom:none; }
-tbody tr:hover td { background:#fbfaf9; }
+tbody td, tbody th { padding:.7rem .75rem; border-bottom:1px solid var(--hair-2); }
+/* Row-header cells (SKU, gift-card code) carry scope="row" for screen
+   readers but render as ordinary left-aligned data cells, not headers. */
+tbody th { text-align:left; font-weight:400; }
+tbody tr:last-child td, tbody tr:last-child th { border-bottom:none; }
+tbody tr:hover td, tbody tr:hover th { background:#fbfaf9; }
 td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
 tr.row--low td { background:#fff8e1; }
 
@@ -97,13 +106,14 @@ tr.row--low td { background:#fff8e1; }
 .spark svg { display:block; width:100%; height:100%; }
 .empty { color:var(--mute); font-style:italic; padding:1.25rem 0; text-align:center; }
 .meta { color:var(--mute); font-size:.85rem; margin-bottom:1rem; }
-.order-id { font-family:var(--font-mono); font-size:.78rem; color:var(--ink-2); }
+.order-id { font-family:var(--font-mono); font-size:.78rem; color:var(--ink-2); background:none; padding:0; border-radius:0; }
 
 /* ---- forms ------------------------------------------------------- */
 .form-field { display:block; margin-bottom:1.1rem; }
 .form-field span { display:block; font-size:.74rem; text-transform:uppercase; letter-spacing:.05em; color:var(--mute); font-weight:600; margin-bottom:.35rem; }
-.form-field input, .form-field select { width:100%; max-width:28rem; padding:.6rem .75rem; border:1px solid var(--hair); border-radius:8px; font:inherit; background:var(--paper); }
-.form-field input:focus, .form-field select:focus { outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent); }
+.form-field input, .form-field select, .form-field textarea { width:100%; max-width:28rem; padding:.6rem .75rem; border:1px solid var(--hair); border-radius:8px; font:inherit; background:var(--paper); }
+.form-field textarea { max-width:34rem; resize:vertical; min-height:5rem; line-height:1.5; }
+.form-field input:focus, .form-field select:focus, .form-field textarea:focus { outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent); }
 .form-field small { display:block; color:var(--mute); font-size:.78rem; margin-top:.3rem; }
 
 /* ---- buttons ----------------------------------------------------- */
@@ -164,6 +174,18 @@ tr.row--low td { background:#fff8e1; }
 .signin-card .btn { width:100%; justify-content:center; padding:.7rem 1.1rem; }
 .signin-mark { display:inline-flex; align-items:center; gap:.5rem; font-family:var(--font-display); font-weight:700; font-size:.85rem; letter-spacing:.06em; text-transform:uppercase; color:var(--mute); margin-bottom:1.5rem; }
 .signin-mark .dot { width:.55rem; height:.55rem; border-radius:50%; background:var(--accent); }
+
+/* ---- detail grid (definition lists: gift-card detail, etc.) ------ */
+.detail-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(11rem,1fr)); gap:1.1rem 1.5rem; margin:0; }
+.detail-grid > div { min-width:0; }
+.detail-grid dt { font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--mute); font-weight:600; margin-bottom:.2rem; }
+.detail-grid dd { margin:0; font-size:.95rem; color:var(--ink); word-break:break-word; }
+
+/* ---- inline code ------------------------------------------------- */
+/* Bare <code> (event names, key ids). The more-specific .order-id and
+   .code-block classes override this where they apply. */
+code { font-family:var(--font-mono); font-size:.82rem; background:var(--hair-2); padding:.1rem .35rem; border-radius:4px; }
+.code-block code { background:none; padding:0; border-radius:0; }
 
 /* ---- utilities (replace former inline style="" — refused by CSP) - */
 .subhead { font-family:var(--font-display); font-weight:700; font-size:.95rem; margin:0 0 .75rem; }

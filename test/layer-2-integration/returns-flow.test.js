@@ -159,7 +159,7 @@ async function _run() {
     req.reason = "defective";
     req.customer_notes = "stopped working";
     var ok = await helpers.httpRequest({ port: handle.port, path: "/account/orders/" + seeded.orderId + "/return", method: "POST", headers: { cookie: cookie }, form: req });
-    check("valid return then 303 /account/returns", ok.status === 303 && (ok.headers["location"] || "") === "/account/returns");
+    check("valid return then 303 /account/returns", ok.status === 303 && (ok.headers["location"] || "").indexOf("/account/returns?ok=RMA-") === 0);
     var rmas = await returns.listForCustomer(buyer, { limit: 10 });
     check("RMA persisted pending",              rmas.rows.length === 1 && rmas.rows[0].status === "pending");
     check("RMA carries the reason",             rmas.rows[0].reason === "defective");

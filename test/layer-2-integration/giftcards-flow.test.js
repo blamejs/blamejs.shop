@@ -145,15 +145,21 @@ async function _run() {
       port: port, path: "/admin/gift-cards", method: "POST", jar: jarAdmin,
       form: { amount_minor: "5000", currency: "USD" },
     });
-    check("form issue then 303",              formIssue.status === 303);
-    check("form issue redirects with code",   (formIssue.headers.location || "").indexOf("/admin/gift-cards/") === 0 &&
-                                              (formIssue.headers.location || "").indexOf("issued=") !== -1);
-    // The detail page shows the code once.
-    var detailAfterIssue = await helpers.httpRequest({ port: port, path: formIssue.headers.location, jar: jarAdmin });
-    check("detail shows shown-once banner",   detailAfterIssue.body.indexOf("shown once") !== -1);
-    // Recover the $50 plaintext code from the redirect query.
-    var fiftyCode = decodeURIComponent((formIssue.headers.location.split("issued=")[1] || ""));
+    // PRG: a refresh of the detail page can't re-issue. The one-time code
+    // travels in a sealed HttpOnly cookie set on this 303 redirect — never
+    // in the URL / Location header / browser history / access logs.
+    check("form issue then 303 (PRG)",        formIssue.status === 303);
+    check("redirect carries no code in URL",  (formIssue.headers.location || "").indexOf("/admin/gift-cards/") === 0 &&
+                                              (formIssue.headers.location || "").indexOf("issued=") === -1);
+    // Following the redirect reveals the code once (from the sealed cookie).
+    var reveal = await helpers.httpRequest({ port: port, path: formIssue.headers.location, jar: jarAdmin });
+    check("detail reveals code once",         reveal.body.indexOf("shown once") !== -1);
+    var fiftyMatch = reveal.body.match(/Copy the code now[^<]*<code[^>]*>([^<]+)<\/code>/);
+    var fiftyCode = fiftyMatch ? fiftyMatch[1] : "";
     check("recovered $50 code",               fiftyCode.length >= 16);
+    // A reload no longer reveals the code (one-time cookie consumed).
+    var reload = await helpers.httpRequest({ port: port, path: formIssue.headers.location, jar: jarAdmin });
+    check("reload does not re-reveal code",   reload.body.indexOf("shown once") === -1);
 
     // ---- customer balance check ---------------------------------------
     var balPage = await helpers.httpRequest({ port: port, path: "/gift-cards" });

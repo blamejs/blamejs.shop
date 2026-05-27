@@ -119,7 +119,7 @@ async function _run() {
 
     // Add a valid address.
     var add = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", method: "POST", headers: { cookie: cookieA }, form: Object.assign({ is_default_shipping: "1" }, ADDR_FORM) });
-    check("add then 303 /account/addresses",    add.status === 303 && (add.headers["location"] || "") === "/account/addresses");
+    check("add then 303 /account/addresses",    add.status === 303 && (add.headers["location"] || "") === "/account/addresses?ok=added");
     var rowsA = await addresses.listForCustomer(custA, {});
     check("address persisted",                  rowsA.length === 1 && rowsA[0].recipient_name === "Ada Lovelace");
     check("default shipping set on add",        Number(rowsA[0].is_default_shipping) === 1);

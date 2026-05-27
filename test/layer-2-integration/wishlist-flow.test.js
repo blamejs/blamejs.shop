@@ -131,7 +131,7 @@ async function _run() {
     // Toggle again (idempotent remove) → entry gone.
     var remove = await helpers.httpRequest({ port: handle.port, path: "/wishlist/toggle", method: "POST", headers: { cookie: cookie }, form: { product_id: product.id, return_to: "/account/wishlist" } });
     check("toggle remove → 303",                   remove.status === 303);
-    check("toggle remove honors return_to",        (remove.headers["location"] || "") === "/account/wishlist");
+    check("toggle remove honors return_to",        (remove.headers["location"] || "") === "/account/wishlist?ok=removed");
     check("wishlist entry removed",                (await wishlist.isWishlisted({ customer_id: buyerId, product_id: product.id })) === false);
 
     // Empty state after removal.
