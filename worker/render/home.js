@@ -173,12 +173,12 @@ function _buildHomeHero(version) {
     "  </div>\n" +
     "  <div class=\"hero__inner\">\n" +
     "    <div class=\"hero__copy\">\n" +
-    "      <p class=\"eyebrow eyebrow--on-dark\"><span class=\"dot dot--accent\" aria-hidden=\"true\"></span> Open-source ecommerce framework · v" + escapeHtml(version) + "</p>\n" +
-    "      <h1 class=\"hero__title\">Run a shop that owes <span class=\"accent\">nothing</span> to the dependency graph.</h1>\n" +
-    "      <p class=\"hero__lede\">Server-rendered HTML. Post-quantum crypto on by default. Zero npm runtime dependencies. Every primitive is composed from a single vendored framework — no transitive supply chain to audit.</p>\n" +
+    "      <p class=\"eyebrow eyebrow--on-dark\">~/blamejs.shop — secure commerce · v" + escapeHtml(version) + "</p>\n" +
+    "      <h1 class=\"hero__title\">Sell anything.<br>Trust <span class=\"glitch glitch--live\" data-text=\"nothing.\">nothing.</span><span class=\"term-cursor\" aria-hidden=\"true\"></span></h1>\n" +
+    "      <p class=\"hero__lede\">An open-source, server-rendered ecommerce framework with post-quantum cryptography baked into every session, cart, and checkout. No client-side validation theater. No npm runtime dependencies. Just hardened HTML.</p>\n" +
     "      <div class=\"hero__cta\">\n" +
-    "        <a href=\"#catalog\" class=\"btn-primary\">Browse the shop <span aria-hidden=\"true\">→</span></a>\n" +
-    "        <a href=\"https://github.com/blamejs/blamejs.shop\" class=\"btn-ghost btn-ghost--on-dark\" rel=\"noopener\">View on GitHub</a>\n" +
+    "        <a href=\"#catalog\" class=\"btn-primary\">$ npx create-shop</a>\n" +
+    "        <a href=\"https://github.com/blamejs/blamejs.shop\" class=\"btn-ghost btn-ghost--on-dark\" rel=\"noopener\">Read the threat model</a>\n" +
     "      </div>\n" +
     "      <dl class=\"hero__stats\">\n" +
     "        <div><dt>Products live</dt><dd>{{product_count}}</dd></div>\n" +

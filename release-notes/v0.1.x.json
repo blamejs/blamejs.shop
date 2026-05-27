@@ -1,0 +1,991 @@
+{
+  "$schema": "../scripts/release-notes-consolidated-schema.json",
+  "minor": "0.1",
+  "releases": [
+    {
+      "version": "0.1.38",
+      "date": "2026-05-26",
+      "headline": "Security hardening + accessibility and UI completeness across the storefront and admin",
+      "summary": "This release closes two data-exposure gaps, tightens admin input validation, and brings a broad accessibility and visual-completeness pass to both the storefront and the operator console. A freshly issued gift-card code is no longer placed in a redirect URL where it could persist in browser history or server logs — it's now revealed once in the page itself. Signed-in order pages now enforce ownership so a customer can only view their own orders. On accessibility: admin tables carry proper header scope, every admin page has its own title, a skip-to-content link and current-page navigation state are in place, search-filter selection is exposed correctly to assistive technology, status changes are announced, and destructive actions (refunds, plan archival, endpoint deletion, subscription cancellation, address removal) now require a confirmation step. Several surfaces that shipped without styling — the faceted-search sidebar, the subscriptions page, loyalty and referral badges, and the locale switcher — are now fully styled; product cards gain depth, accent-colored text meets contrast requirements, touch targets meet the 44px minimum on mobile, and success messages and empty states are consistent.",
+      "sections": [
+        {
+          "heading": "Security",
+          "items": [
+            {
+              "title": "Gift-card one-time code is no longer exposed in a URL",
+              "body": "Issuing a gift card from the admin console previously redirected to a URL containing the plaintext code, which could persist in browser history, the redirect `Location` header, and access logs. The code is now shown once directly in the response body (the same pattern used for webhook signing secrets) and never placed in a URL."
+            },
+            {
+              "title": "Order pages enforce ownership for signed-in customers",
+              "body": "`GET /orders/:id` now verifies that a signed-in customer owns the order before rendering it (returning 404 otherwise), closing a gap where an order's contents could be viewed by anyone with the order id. The guest post-purchase confirmation path is unchanged."
+            },
+            {
+              "title": "Strict validation on admin money inputs",
+              "body": "Gift-card amounts and subscription-plan amounts/intervals/trials are now parsed with strict integer validation, so malformed input (e.g. `50abc`) is rejected rather than silently coerced."
+            }
+          ]
+        },
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Accessibility across storefront and admin",
+              "body": "Admin data tables now use `scope` on column and row headers; every admin page renders its own document title; a skip-to-content link and `aria-current` navigation state are in place. On the storefront, search-facet links expose their selected state correctly to screen readers (replacing an invalid attribute), and account status changes are announced via live regions. Accent-colored text (prices, labels, links) now uses a darker shade that meets the 4.5:1 contrast minimum, and interactive controls meet the 44px touch-target minimum on small screens."
+            },
+            {
+              "title": "Styling for surfaces that shipped unstyled",
+              "body": "The faceted-search sidebar, the subscriptions management page, loyalty and referral status badges, and the footer locale switcher now render with full styling instead of unstyled browser defaults. Product and collection cards gain a resting elevation, a duplicate button definition was consolidated to one consistent style, and disabled-button and placeholder text now meet contrast requirements."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Confirmation step on destructive actions",
+              "body": "Irreversible or money-moving actions now route through a server-rendered confirmation page that states the consequence before proceeding: order refunds and subscription-plan archival and webhook deletion in the admin, and subscription cancellation (including the immediate-cancel option, which now spells out the forfeited time) and saved-address removal (with an undo link) in the customer account."
+            },
+            {
+              "title": "Success confirmations and consistent empty states",
+              "body": "Account actions — saving or removing an address, toggling the wishlist, moving a saved item, requesting a return (which now echoes the RMA code) — confirm success with an announced status message instead of redirecting silently. Empty states across the account area now share one consistent treatment."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.37",
+      "date": "2026-05-26",
+      "headline": "Localized storefront — the UI chrome renders in the visitor's language, with a locale switcher and right-to-left support",
+      "summary": "The storefront's interface chrome — the navigation, search controls, newsletter band, and footer — now renders in the visitor's language. The locale is resolved the same way at the edge and in the container: an explicit `?lang=` choice first, then a saved preference cookie, then the browser's Accept-Language header, then the operator's default. A locale switcher in the footer lets the visitor change it; the choice persists in a first-party cookie. Right-to-left languages (Arabic, Hebrew, Persian, …) flip the document direction automatically. Strings come from the operator's locale policy and translation rows, and any key without a translation falls back to the English baseline rather than showing a raw placeholder — so a partially translated catalog never renders broken text. The default locale renders at the edge for cookie-less visitors (so cached pages stay fast); a non-default choice is served by the container. Everything works with JavaScript off, and the localized markup is byte-identical across the edge and the container.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Localized UI chrome + footer locale switcher",
+              "body": "Navigation, search labels, the newsletter band, and the footer render in the visitor's locale. A locale switcher in the footer lists the languages the operator has enabled (shown by their own names — \"Deutsch\", \"Français\"); selecting one persists the choice in a first-party cookie and returns the visitor to the page they were on. The locale resolves identically at the edge and in the container — `?lang=`, then the cookie, then `Accept-Language`, then the operator default — and a right-to-left language sets the document's `dir` so the layout mirrors correctly. The switcher and selection work without JavaScript."
+            },
+            {
+              "title": "Operator locale policy with English-baseline fallback",
+              "body": "Enable languages by setting a locale policy (a default locale plus the supported list) and supplying translation rows for the chrome strings; the storefront resolves each string against the active policy, layered over the operator's translations, and falls back to the built-in English baseline for any key still missing — never a raw key or empty label. With no policy seeded the storefront renders the English baseline and shows no switcher, so the feature is opt-in and a fresh install is unaffected. `SHOP_DEFAULT_LOCALE` sets the default the edge serves to cookie-less visitors; set `SHOP_LOCALES` (the supported list) so the edge forwards a first-time visitor whose `Accept-Language` prefers a supported non-default locale to the container instead of caching the default. An explicit cookie or `?lang=` choice is always served by the container so edge caching stays simple."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.36",
+      "date": "2026-05-26",
+      "headline": "Multi-currency display — shoppers browse prices in their own currency while you still charge in your base currency",
+      "summary": "Shoppers can now pick a display currency from a switcher in the footer; every price on the storefront — product pages, the grid, search, and the cart — re-renders in that currency using the foreign-exchange rates you set, formatted with the right symbol, grouping, and decimal places for the locale. Conversion is display-only: the cart line and the eventual charge stay in your base currency, and a \"Prices shown in EUR; you'll be charged in USD\" disclosure makes that explicit whenever a conversion is in effect. The choice rides in a sealed first-party cookie and survives navigation; a per-currency rounding rule can snap converted prices to a tidy increment (for example Swiss 0.05 Rappenrundung). Every failure mode falls back to the base currency rather than showing a broken price: a currency with no rate on file, a rate that has expired, a currency you've removed from the allow-list, or a tampered cookie all render in your base currency. The switcher and all conversions render identically from the edge and the container, and the whole flow works with JavaScript off.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Currency switcher + on-page price conversion",
+              "body": "A currency switcher in the footer lists the currencies you've enabled; choosing one `POST`s to `/currency`, stores the choice in a sealed cookie, and redirects back to the page the shopper was on. From then on product pages, the product grid, search results, and the cart display prices converted into that currency, each formatted for its locale (symbol, thousands separator, decimal places). When a conversion is active a \"Prices shown in <display>; you'll be charged in <base>\" note appears so the shopper always knows the charge currency. The switcher submits without JavaScript — the small enhancement script only auto-submits on change."
+            },
+            {
+              "title": "Operator-set FX rates, display rounding, and a base-currency guarantee",
+              "body": "Set your base currency and the enabled list with `SHOP_BASE_CURRENCY` / `SHOP_CURRENCIES` (or the `shop.base_currency` / `shop.currencies` config keys), and supply foreign-exchange rates yourself from whatever source you trust — the framework never reaches out to a rate feed. Rates are stored as integer basis points and conversion uses banker's rounding; an optional per-currency rounding rule snaps the result to a display increment (e.g. nearest 0.05). Conversion is strictly for display: the cart line's currency and amount, and therefore the amount charged at checkout, always stay in the base currency. Any currency without a usable rate — missing, expired, de-listed, or a tampered cookie — falls back to base-currency display instead of a broken or `NaN` price, so a stale or absent rate feed never breaks a priced page."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.35",
+      "date": "2026-05-26",
+      "headline": "Cookie-consent banner — GDPR/ePrivacy consent with category opt-in, an audit ledger, and a preferences page",
+      "summary": "Every page now carries a cookie-consent banner until the visitor decides. They can accept all, reject everything non-essential, or open preferences to toggle categories; the choice is stored in a sealed first-party cookie and recorded in a consent ledger for the audit trail. Strictly-necessary cookies (session, CSRF, the consent choice itself) always work; analytics and marketing are opt-in and default-deny, and a Do-Not-Track or Global-Privacy-Control signal collapses them to denied regardless of any stored opt-in. A \"Manage cookies\" footer link reopens the preferences. The banner and its choice form are server-rendered and work with JavaScript off — the small enhancement script only hides the banner once a choice exists — and the banner renders identically from the edge and the container. A consent-gating hook lets future analytics/marketing scripts render only when their category is granted.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Consent banner + preferences page",
+              "body": "A banner shows on every page until a choice is made: Accept all, Reject non-essential, or Manage preferences. `POST /consent` records the decision (validated; safe-redirect back to where the visitor was), and `GET /cookies` is a preferences page to review and change categories later, linked from the footer. The authoritative choice is a sealed, HttpOnly first-party cookie; a tampered or missing cookie simply reshows the banner rather than erroring. Every decision is also written to the consent ledger for the GDPR audit trail, best-effort so a ledger hiccup never blocks the choice from taking effect."
+            },
+            {
+              "title": "Category opt-in with DNT / GPC honored",
+              "body": "Cookies are grouped into strictly-necessary (always on) plus toggleable categories (analytics, marketing, …) that are opt-in and default-deny. A `DNT: 1` or `Sec-GPC: 1` request header forces the non-essential categories to denied regardless of any stored opt-in. A server-side gating hook renders a category's script only when that category is granted, so future analytics/marketing islands are consent-gated by construction."
+            },
+            {
+              "title": "Consent is anchored to a policy version",
+              "body": "Each stored decision records the cookie-policy version it was captured under. When an operator bumps the active version (the cookie policy materially changed), decisions taken under the old version stop being honored — the gate falls back to default-deny for the optional categories and the banner re-prompts so consent is re-collected, rather than coasting on opt-ins given under a superseded policy. The banner and preferences page keep working with JavaScript off; the enhancement script only suppresses the banner while the stored version still matches the active one."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.34",
+      "date": "2026-05-26",
+      "headline": "Vendored blamejs refreshed to v0.13.0",
+      "summary": "Refreshes the vendored blamejs stack from v0.12.11 to v0.13.0 — the single source of every security, crypto, and primitive the shop composes. No application API changes; the refresh keeps the shop current with upstream fixes and broadens the primitive surface the shop builds on. The vendored tree is verified against the release tag by the vendor-integrity gate, and the in-image smoke gate runs against the refreshed tree before any image ships.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Vendored blamejs v0.12.11 → v0.13.0",
+              "body": "The committed copy under `lib/vendor/blamejs/` is updated to the v0.13.0 release tag via the vendor-refresh entry point. Composed primitives are unchanged at the call sites the shop already uses; the refresh carries upstream maintenance and expands the available primitive surface for future shop features."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.33",
+      "date": "2026-05-26",
+      "headline": "Search filters and synonyms — narrow results by facet, and match what shoppers mean, not just what they typed",
+      "summary": "Search gains filters and smarter matching. A search result page now shows facet groups — collection, price range, and in-stock — as filter controls; choosing one narrows the results, the counts beside each option reflect the current result set, and choices combine across groups. Active filters show with a one-click clear and carry through pagination rather than dropping on page two. All filtering is server-side from query parameters, so it works with no client JavaScript. Separately, the query is expanded through an operator-curated synonym and typo vocabulary before the catalog is searched, so a search for \"tee\" matches \"t-shirt\" and a near-miss spelling still finds the product, with a \"Showing results for\" note when the query was corrected. Filters and synonym matching work identically whether the page is served from the edge or the container. This release also moves the shipped theme's stylesheets and island scripts to content-fingerprinted filenames so an asset and the page that references it can never fall out of sync.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Faceted search filters",
+              "body": "A search result page shows facet groups — collection, price range, and in-stock availability — as server-rendered filter controls. Selecting a facet narrows the results and is reflected in the URL (for example `/search?q=shirt&collection=summer&in_stock=1`), the count beside each option reflects how many results it would yield against the current query, and facets combine across groups. Active filters render as removable chips with a clear-all path, and the active filters carry through result pagination so page two keeps the filter set. All filtering is server-side from the query string — no client JavaScript — and unknown facet keys, out-of-range price values, and garbage filter values are ignored rather than erroring. With filters applied and no matches, the page shows an empty state with a clear-filters link."
+            },
+            {
+              "title": "Synonym and typo-tolerant query matching",
+              "body": "Before the catalog is searched, the query is expanded through an operator-curated vocabulary: synonym groups (so \"tee\" matches \"t-shirt\"), common typo corrections, and stopword removal. When the query is corrected or expanded, the page shows a \"Showing results for\" note. A query that still matches nothing falls back to the raw terms so search never silently empties on an unknown word."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Search filters and synonyms render identically at the edge and the container",
+              "body": "The faceting and synonym logic runs in both the edge worker and the container search path, producing the same results and the same filter chrome whichever serves the page. The edge path reads the catalog and the facet/synonym vocabulary directly from the database, missing-table-resilient, so a shop without the optional facet configuration still searches normally."
+            },
+            {
+              "title": "Theme stylesheets and scripts use content-fingerprinted filenames",
+              "body": "The shipped default theme's stylesheets and island scripts are now referenced by a content-hashed filename (`main.<hash>.css`) rather than a `?v=` query, emitted identically by the edge and container renderers and served from object storage under the fingerprinted key. Each URL maps to exactly one byte-content, so an asset and the page that references it can never disagree on a Subresource Integrity digest, and previously-served pages keep working across an asset change. The edge stylesheet link now also carries an integrity attribute, matching the container."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.32",
+      "date": "2026-05-26",
+      "headline": "Bundles and quantity discounts — sell products together at a set price, and reward buying more",
+      "summary": "Two merchandising surfaces go live on the product page and in the cart, both priced authoritatively on the server. A product that belongs to a bundle shows a \"Bundle & save\" offer with its member products and the bundle price against the sum of the parts; one action adds the whole bundle to the cart at that price, all-or-nothing, and the discount is split across the member lines so the cart subtotal equals the quoted bundle price. Separately, a product with quantity breaks shows its price tiers (\"1–2 / 3–5 / 6+\") on the page, and the cart applies the right unit price for each line's quantity — recomputed on every cart render and again at checkout, so the line, cart, and order totals all reflect the break. The client never sends a price: it sends a bundle code or a quantity, and the server prices both from the live catalog. A bundle whose member is archived or out of stock is shown unavailable rather than adding a broken line, and a missing offer simply renders nothing.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Bundles on the product page",
+              "body": "A product that is part of one or more bundles shows a \"Bundle & save\" offer listing the bundle's member products, the bundle price, and the saving against buying the parts separately. `POST /cart/bundle` adds the whole bundle to the cart in one action: the bundle price is recomputed from the live catalog and allocated across the member lines (proportional to each member's list price, with the rounding remainder on the last line) so the cart subtotal equals the quoted price. The add is atomic — if any member is archived or out of stock the bundle is shown unavailable and the action adds nothing rather than a partial set. A product in no bundle shows no offer; an unpriceable bundle (a missing member price or a currency mismatch) is shown unavailable, never a server error. The offer renders identically from the edge worker and the container."
+            },
+            {
+              "title": "Quantity discounts on the product page and in the cart",
+              "body": "A product with quantity breaks shows its price tiers on the page (for example 1–2, 3–5, 6+ at descending unit prices). In the cart, each line is priced at the unit price for its quantity — applied server-side on every cart render so changing the quantity re-prices the line, and applied again at checkout so the per-line price and the order total written onto the order reflect the break, not the list price. A quantity below the first tier falls back to the base price; a quantity above the top tier takes the top tier. Stacks with the rest of the cart math. The tier table renders identically from the edge worker and the container."
+            }
+          ]
+        },
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Themed product template carries the compare control",
+              "body": "The file-backed default product template now includes the Add-to-compare slot, matching the built-in render path so the comparison control appears on the product page whichever template is in use."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.31",
+      "date": "2026-05-26",
+      "headline": "Product compare — a side-by-side comparison table any shopper can build from the product pages",
+      "summary": "Shoppers can now line products up against each other. Every product page gains an \"Add to compare\" control; a \"Compare\" link in the footer opens a side-by-side table of the chosen products — image, price, availability, and each product's attributes in aligned rows. No sign-in is required: the comparison basket rides the visitor's existing sealed session cookie, and a signed-in shopper's customer id is carried alongside. The basket holds up to four products (a fifth add is refused with a notice rather than quietly dropping one), the toggle is idempotent, and a product that goes archived or out of stock resolves out of the table with a remove control instead of breaking the page. The control and table render identically from the edge and the container, and the comparison page reuses the catalog grid styling, so no new stylesheet ships.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Add to compare on the product page",
+              "body": "Each product page shows an \"Add to compare\" / \"Remove from compare\" control reflecting whether the product is already in the basket. `POST /compare/toggle` adds or removes it and redirects back to where the shopper was (the redirect target is validated, so a crafted `return_to` can't bounce the visitor off-site). Comparing needs no account — the basket is keyed on the visitor's existing sealed session cookie; a signed-in shopper's customer id is captured alongside. The basket is capped at four products: a fifth add is refused with a notice and the basket is left unchanged."
+            },
+            {
+              "title": "The comparison table",
+              "body": "`GET /compare` renders the selected products side by side — image, title, price, availability, and the per-product attributes resolved through the catalog, in aligned rows. Each column has a remove control, and `POST /compare/clear` empties the whole basket. A product that has since been archived or sold out shows in a gone/out-of-stock state with a remove control rather than failing the render. An empty basket shows a friendly empty state and mints no cookie. A \"Compare\" link sits in the footer on every page."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.30",
+      "date": "2026-05-26",
+      "headline": "Product Q&A — customer questions and seller answers on the product page",
+      "summary": "Products gain a question-and-answer thread alongside reviews. A signed-in shopper asks a question from the product page; it lands pending and surfaces only after an operator approves it. Operators moderate at `/admin/questions`: a status-filtered queue of every question across the catalog, and a per-question detail page where they approve or reject the question, post the authoritative seller answer, approve / reject individual answers, and pin one answer as the definitive 'top answer'. Approved questions and their approved answers render on the product page in both the edge and container render paths, reusing the reviews section's styling so no new CSS ships. As with reviews, a missing Q&A table degrades the product page to an empty Q&A state rather than failing the render.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Ask a question on the product page",
+              "body": "`GET /products/:slug/question` renders an auth-gated question form; `POST /products/:slug/question` submits it. Asking requires a signed-in customer — a logged-out shopper is redirected to sign in. The question is stored pending and is not shown on the product page until an operator approves it. A malformed submission re-renders the form with the reason and a 400; an unknown product is a 404."
+            },
+            {
+              "title": "Published Q&A on the product page",
+              "body": "The product page shows approved questions with their approved answers below the reviews section. Each answer carries a source badge — 'Answered by the seller', 'Customer answer', or 'Automated answer' — and the operator-pinned answer is flagged 'Top answer'. The empty state invites the first question. Rendered identically by the edge worker and the container so the page is the same whichever serves it; the read degrades to the empty state when the Q&A tables aren't present."
+            },
+            {
+              "title": "Q&A moderation console",
+              "body": "`/admin/questions` is the question queue across all products, with pending / approved / rejected status-filter chips. Each question opens a detail page showing its full answer thread (every status), an approve / reject control for the question, a form to post the seller's answer, and per-answer approve / reject / pin controls. Posting an answer leaves it pending; approving it publishes it on the product page. Pinning floats one operator answer to the top of the thread. Every path content-negotiates: a bearer-token client gets a JSON contract, a signed-in browser gets the HTML console. An unknown id or a refused transition redirects back with a notice, never a 500."
+            },
+            {
+              "title": "productQA read APIs for the storefront and console",
+              "body": "`answersForQuestion` returns the approved answers under a question (pinned first) for the product-page thread; `listAnswersForQuestion` returns every answer regardless of status for the moderation detail; `listQuestionsByStatus` and `listAnswersByStatus` return the cross-product moderation queues."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Console nav gains Q&A; product page wires the Q&A primitive",
+              "body": "The signed-in admin nav includes Q&A, shown only when the Q&A primitive is wired so the link never points at an unmounted route. The storefront and admin share one Q&A instance, wired with the customer primitive so an authenticated questioner's id is verified before the row is stored."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.29",
+      "date": "2026-05-26",
+      "headline": "Category navigation goes live — public browse pages for the storefront's category tree, with breadcrumbs and sub-category grids",
+      "summary": "The category tree now has a customer-facing surface. A new /categories index lists the active top-level categories as a card grid, and a new /categories/<slug> page renders a single category: its title and optional description, a breadcrumb chain from the catalog root down to the current category, and a grid of the category's direct child sub-categories. Each page reads fresh against the active tree, so archived or unpublished categories drop out of every surface. An unknown, archived, or malformed slug returns a 404, and a category with no children renders a graceful empty state. The pages are linked from the site footer's Shop column.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Category index at /categories",
+              "body": "A public page listing the active top-level categories as a card grid, each card carrying the category's title, optional description, and optional hero image, and linking into its browse page. Archived and unpublished categories are excluded. Linked from the site footer's Shop column."
+            },
+            {
+              "title": "Category browse page at /categories/<slug>",
+              "body": "A public page for a single category showing its title and optional description, a breadcrumb chain from the catalog root down to the current category (each ancestor linked, the current category shown as plain text), an optional hero image, and a card grid of the category's direct child sub-categories. A category with no children renders a graceful empty state. An unknown, archived, or malformed slug returns a 404."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.28",
+      "date": "2026-05-25",
+      "headline": "Refer-a-friend goes live — a shareable link, attributed signups, and conversions recorded when a referred friend's first order is paid",
+      "summary": "The referrals ledger now has a customer-facing surface. A new /account/referrals page gives the signed-in customer a personal referral code, an absolute shareable link, the list of friends they've referred with each one's funnel stage, and an in-account top-referrer leaderboard. A new /r/<code> landing captures an inbound referral: it sets a short-lived sealed first-party cookie naming the code and sends the visitor home. When that visitor creates an account — by passkey, Google, or Apple — the new customer is attributed to the referrer, first-touch, with a self-referral guard so a code can never refer its own owner. When a referred customer's first order reaches paid, the order primitive marks that referral converted and bumps the referrer's count (the leaderboard key) — automatically, off the request path, and recorded once per order so a re-delivered payment webhook can't double-count. Issuing the actual reward (a gift card, store credit, or loyalty points — operator's choice) stays an explicit operator action through the referrals reward API, so the payout instrument and any fraud review are the operator's to control.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Customer referrals page at /account/referrals",
+              "body": "A login-gated page showing the customer's referral code and an absolute shareable link (derived from the configured shop origin, falling back to the request host), the count of friends invited / joined / converted, the list of referred friends with each one's funnel stage (invited → visited → joined → converted) and dates, and an in-account top-referrer leaderboard. The friend list carries no personal data — referred emails are stored hash-only — and the leaderboard shows rank plus initials only, never names, emails, or account ids, with the signed-in customer's own row marked \"You\". Linked from the account dashboard as \"Refer a friend\". A customer with no code yet sees a one-click create control; a customer with one already gets the same page (creating is idempotent)."
+            },
+            {
+              "title": "Referral attribution landing at /r/<code>",
+              "body": "A public landing that captures an inbound referral: it sets a short-lived (30-day) sealed, first-party cookie naming the code, records the visit, and redirects the visitor to the home page. Attribution is first-touch — the first referral link a visitor follows wins, and a later link doesn't overwrite it. An unknown, malformed, or disabled code is silently ignored: the visitor still lands on the home page with no error and no cookie, so the route is never a code-existence oracle."
+            },
+            {
+              "title": "Signups attributed to the referrer",
+              "body": "When a visitor who arrived through a referral link creates an account — passkey, Sign in with Google, or Sign in with Apple — the new customer is attributed to the referrer named in the referral cookie. A self-referral (the code belongs to the new account) is refused, a customer is attributed only once, and an existing customer signing in through Google or Apple is never attributed (only a genuinely new account is). Attribution is best-effort and never blocks account creation; the referral cookie is cleared after one signup so a stale link can't attribute a later one."
+            },
+            {
+              "title": "Referral conversion recorded when a referred friend's first order is paid",
+              "body": "When a referred customer's first order reaches paid, the order primitive marks that referral converted and bumps the referrer's referral count (the leaderboard key). The update rides every paid path (card, wallet, PayPal, gift-card-covered), runs fire-and-forget off the request path, and is recorded once per order so a re-delivered payment webhook collapses onto a single conversion. Only orders carrying a customer account qualify; a guest order records nothing, and a customer's second and later orders don't re-trigger it. Issuing the payout itself — a gift card, store credit, or loyalty points — is a separate operator action through the referrals reward API, so the operator controls the reward instrument and can review before paying out."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.27",
+      "date": "2026-05-25",
+      "headline": "Loyalty rewards go live — points earned on purchase, viewed in the account, and redeemed at checkout",
+      "summary": "The loyalty points ledger now has a customer-facing surface. A new /account/loyalty page shows the signed-in customer's balance, tier, and earn/redeem activity, explains how points are earned, and lists the reward catalog with a one-click redeem. Paid orders award points automatically: the order primitive fans its paid transition into the earn rules (per-dollar-spent + per-order), fire-and-forget and deduplicated so a re-delivered payment webhook never double-credits. At checkout, a signed-in customer can spend points for a storefront credit against the order total — capped at the order's value and the balance, recorded once, with the same atomic double-spend guard the gift-card credit uses.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Customer rewards page at /account/loyalty",
+              "body": "A login-gated page showing the points balance, current tier, lifetime points, and the cash value of the balance; how points are earned (the active earn rules in plain language); the reward catalog with a Redeem control per reward (disabled when the balance is short); the customer's past redemptions; and the earn/redeem ledger, paginated newest-first. Linked from the account dashboard as \"Rewards\". A redeem that the customer can't complete (not enough points, reward unavailable, per-customer limit reached) re-renders the page with the reason rather than erroring; a malformed history cursor degrades to the first page."
+            },
+            {
+              "title": "Points earned automatically on paid orders",
+              "body": "When an order reaches paid, the configured earn rules award points to the customer's balance — per dollar of order subtotal and a flat per-order bonus, whichever rules the operator has defined. The award rides the order's paid transition (so every paid path — card, PayPal, gift-card-covered, admin — earns), runs fire-and-forget off the request path, and is keyed to the order so a re-delivered payment webhook collapses onto a single award instead of double-crediting. Guest orders (no customer account) earn nothing, by design."
+            },
+            {
+              "title": "Redeem points at checkout as a credit",
+              "body": "A signed-in customer with a balance sees a \"Redeem loyalty points\" field on the checkout form. The points are valued via the ledger's redemption ratio (100 points = $1 by default), capped at the order total so the credit never exceeds what the order is worth, and the credit reduces the amount due. The order still records the full grand total it owed; the points are debited once, after the order row exists, behind the same balance-guarded SQL decrement that prevents a double-spend. Points worth more than the order spend only what the granted credit is worth — the surplus stays in the balance. A request for more points than the balance, or from a guest cart, is refused with a clean re-prompt. A points credit stacks with a gift-card credit; together they can pay an order in full with no card charge."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.26",
+      "date": "2026-05-25",
+      "headline": "Fix the container build gate that rejected a manifest absent from the image",
+      "summary": "The asset-integrity drift gate added last release checked both the container and edge copies of the manifest. The container image excludes the edge worker directory from its build context, so when the gate runs inside the image build it can't see the worker copy and read it as empty — failing the build. The gate now skips a manifest that isn't present in the current build context; its drift is still caught wherever the file exists (the full-tree CI run checks both).",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Asset-manifest drift gate no longer fails the container build",
+              "body": "`generate-asset-manifest.js --check` compared both manifest copies (`lib/` for the container, `worker/` for the edge) against a fresh rebuild. The container image's build context excludes the `worker/` tree, so inside the image the worker copy is absent and the gate read it as empty — reporting false drift and failing `node test/smoke.js`, which is a build gate, so the container image never built. The check now treats a manifest that isn't present in the current context as not-applicable and skips it (requiring at least one copy to be present), so the same drift detection still runs in CI and at the edge build where both files exist, without breaking the container image build."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.25",
+      "date": "2026-05-25",
+      "headline": "Asset integrity and the cache-buster are correct in production now",
+      "summary": "The renderers stamped a Subresource Integrity digest and a `?v=` cache-buster onto the theme stylesheet and island scripts by hashing the files at render time — which silently produced nothing in production, where the container image doesn't ship the theme files and the edge has no filesystem to read them. So the integrity attribute was absent live and edge-rendered pages pinned a `0.0.0` version that never changed between releases (a stylesheet update would render against a browser-cached copy). Both now come from a manifest built at release time and read directly by both runtimes.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Subresource Integrity now applied on server-rendered pages",
+              "body": "The `integrity=\"sha384-…\"` attribute on the default theme's stylesheet and island scripts was computed by reading the asset off disk during the render. That read fails in the deployed container (its image carries the code, not the `themes/` tree) and at the edge (no filesystem), so the attribute was silently dropped — the tamper-evidence it's meant to provide wasn't active. The digests are now computed once at release time into `lib/asset-manifest.json` (bundled for both the container and the edge worker) and read from there, so the browser actually verifies the served bytes against the pinned hash."
+            },
+            {
+              "title": "Edge-rendered pages no longer pin a 0.0.0 cache-buster",
+              "body": "Pages rendered at the edge (home, product, search, the empty cart, blog) appended `?v=0.0.0` to the stylesheet URL because the worker had no release version to stamp — so the cache-buster never changed across deploys and a browser could keep serving an old stylesheet after a CSS update (markup against stale styling). The version now comes from the release manifest, so each release invalidates the cached asset as intended. The drift between the manifest and the on-disk assets is caught by a smoke gate (`generate-asset-manifest.js --check`)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.23",
+      "date": "2026-05-25",
+      "headline": "The admin console renders styled again, and both surfaces now self-host their fonts",
+      "summary": "The admin console shipped its design system as an inline <style> block, inline style=\"\" attributes, and a cross-origin Google Fonts link — all three of which the strict `style-src 'self'` / `font-src 'self'` CSP that governs container-served routes refuses, so the console rendered as an unstyled page in production. Its styling now lives in an external stylesheet served from /assets (like the storefront's), and the typeface is self-hosted, so the console renders as designed under the same CSP that protects it. Both the storefront and the console now serve Inter from /assets rather than naming it and hoping the visitor has it installed.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Admin console renders unstyled in production",
+              "body": "Every `/admin` screen built its design system three ways the strict CSP refuses: an inline `<style>` block, inline `style=\"\"` attributes, and a `<link>` to fonts.googleapis.com. Container-served routes run under `style-src 'self'` / `font-src 'self'`, which drops all three — so the console arrived as unstyled HTML (a plain page) once deployed, even though it looked correct in isolation. The styling now ships as `/assets/themes/default/css/admin.css`, an external file `'self'` allows, linked with a `sha384` Subresource Integrity digest so the browser rejects a tampered or stale object; the inline attributes are gone, folded into that stylesheet. A render-shell test asserts every admin screen links the external stylesheet, carries no inline styles, and pulls no third-party font host, so the regression can't return. Operators redeploy to pick this up — `npm run deploy` uploads the new stylesheet (and the fonts below) to R2 as part of the asset sync."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Inter is self-hosted on both the storefront and the console",
+              "body": "The default theme named Inter / Inter Tight first in its font stack but shipped no font files, so the intended typography only rendered for visitors who happened to have Inter installed locally — everyone else fell back to a system sans-serif. The latin subset of Inter (400/500/600) and Inter Tight (600/700) now ships under `themes/default/assets/fonts` and is referenced via `@font-face`, so the typeface renders for every visitor and loads same-origin under `font-src 'self'` — no cross-origin font CDN on any page. The fonts are SIL OFL 1.1 (license alongside the files); `font-display:swap` paints text immediately in the system fallback and swaps when the file arrives."
+            },
+            {
+              "title": "Admin console visual refresh",
+              "body": "With the stylesheet external it also got a pass: a proper centered sign-in card (replacing the bare form that was the first thing an operator saw), softer surfaces and shadows on cards and panels, a sticky console nav, and consistent spacing. The brand palette (ink + the storefront's accent) and every screen's structure are unchanged — this is presentation only."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.22",
+      "date": "2026-05-25",
+      "headline": "Fix the container boot crash-loop, plus gift cards, subscription self-management, and a customers roster",
+      "summary": "The deployable container could crash-loop on startup, taking every write route (add-to-cart, checkout, account, admin) down while edge-rendered reads kept working — this release fixes that boot path. It also adds gift cards (issue / balance / redeem-at-checkout with an operator ledger), customer subscription self-management at `/account/subscriptions`, and a read-only customers roster in the admin console.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Passkey sign-in / registration no longer blocked by CSP",
+              "body": "The WebAuthn passkey ceremonies on `/account/login` and `/account/register` were inline `<script>` blocks, which the storefront's strict `script-src 'self'` CSP refuses to execute — so on the deploy the sign-in and registration buttons did nothing (accounts are passkey-only, so this blocked all customer auth). The ceremonies now ship as external assets (`/assets/themes/default/js/passkey-login.js` + `passkey-register.js`) that `'self'` allows, served from R2 and uploaded by the deploy's asset sync. Same effect, CSP-clean — and a clearer split between the server-rendered form and its opt-in enhancement."
+            },
+            {
+              "title": "Container no longer crash-loops on startup",
+              "body": "The container boot had three ways to fail before it could serve a request, each of which left edge-rendered reads working while every container-served route (add-to-cart, cart update / remove, checkout, `/account`, `/admin`) was unreachable. (1) The secure-default boot unlocks a wrapped vault **and** a wrapped audit-signing keypair, which the framework reads from `BLAMEJS_VAULT_PASSPHRASE` / `BLAMEJS_AUDIT_SIGNING_PASSPHRASE`, but the deploy contract documents a single `VAULT_PASSPHRASE` the framework never read — so the container had no passphrase source, no TTY to prompt, and exited. The entry point now bridges the documented secret onto the vault passphrase and derives a domain-separated audit-signing passphrase from it. (2) Encrypted-at-rest requires a tmpfs; the image now points it at `/dev/shm` rather than failing to find one. (3) The Docker liveness probe was `wget`, which bot-guard blocks as automation (403), so a healthy container was marked unhealthy and stopped — the probe is now a browser-shaped Node request (`scripts/healthcheck.js`) that passes bot-guard like real traffic, without exempting the health path from the security middleware. A boot gate (`test/layer-2-integration/server-boot.test.js`) spawns the real entry point and asserts it listens, answers the probe, and still blocks header-less clients. Operators must redeploy the container to pick this up."
+            }
+          ]
+        },
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Gift cards — redeem at checkout, balance check, operator ledger",
+              "body": "A gift-card code can be applied at checkout as a credit against the order total: the amount due drops by the available balance (never below zero), the order still records the full total it owed, and the debit is recorded once per order behind an atomic `balance >= amount` guard so concurrent spends can't overdraw — a card that fully covers the order is marked paid with no card charge. Customers check a balance at `GET /gift-cards` (which is not a code-existence oracle — unknown / malformed / expired all return the same generic result). Operators work `/admin/gift-cards`: list issued cards (masked code, original + remaining balance, status, issued date) filtered by lifecycle status, issue a card (the bearer code shown once, right after creation), and open a card to read its full credit / debit / expire ledger. Codes are stored as a `namespaceHash` digest plus a 4-char hint — never in the clear."
+            },
+            {
+              "title": "Customer subscription self-management",
+              "body": "Signed-in customers view and cancel their own subscriptions at `/account/subscriptions` — each row shows the plan summary, status, and renew / end date, with a Cancel control on cancelable subscriptions. Every action is ownership-checked: a subscription that doesn't belong to the signed-in customer is a 404, never another account's row. Cancellation runs through the payment provider, so the cancel control mounts only when the payment handle is wired; without it the list renders read-only. Customer-facing subscription creation — a subscription-checkout flow — remains a separate follow-up; this surface is for managing existing subscriptions."
+            },
+            {
+              "title": "Customers admin roster",
+              "body": "`/admin/customers` renders a read-only account roster (newest first): display name, a short id, the join date, the sign-in method (passkey count plus any linked OAuth providers), and the order count, with cursor pagination in the browser and a JSON list (with `next_cursor`) for a bearer-token client. Account creation and changes stay with the storefront's passkey / OIDC ceremonies. Order counts and sign-in methods are resolved with bounded aggregate queries over each page's ids — no per-row database trips. Raw email is never stored, so it is never shown."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Console nav gains Customers and Gift cards",
+              "body": "The signed-in admin nav now includes Customers and Gift cards alongside the existing screens, each shown when its primitive is wired. All new endpoints content-negotiate like the rest of the console: a bearer-token client gets the JSON API, a signed-in browser gets HTML; a request without the bearer token returns the sign-in form on a GET and redirects on a write. The customers roster, the subscription cancel, and the gift-card balance page all degrade gracefully when an optional dependency (payment, or the primitive itself) isn't configured."
+            },
+            {
+              "title": "Deploy now syncs theme assets to R2",
+              "body": "`npm run deploy` chains `wrangler deploy` with a new `scripts/sync-r2-assets.js` that uploads the repo's theme stylesheets to the R2 bucket the Worker serves `/assets/*` from. `wrangler deploy` alone ships the Worker + container but never touches R2, so a CSS change would silently drift from the deployed HTML — new markup against a stale stylesheet. Run `npm run sync-assets` to push the stylesheets without a full redeploy."
+            },
+            {
+              "title": "Theme stylesheet and island scripts served with Subresource Integrity",
+              "body": "The default theme's stylesheet `<link>` and the externalized passkey island `<script>` tags now carry a `sha384` `integrity` attribute computed from the on-disk asset, so a browser refuses any `/assets/*` response whose bytes don't match — closing the window where a tampered or stale CDN object could execute against the page. The digests are computed once at boot and cached; a missing or unreadable asset degrades to no integrity attribute rather than blocking the render."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.21",
+      "date": "2026-05-25",
+      "headline": "Admin console — a collections screen",
+      "summary": "Collections join the admin console. `/admin/collections` lists manual and smart product collections, creates either kind, edits title / description / sort strategy, archives one, manages a manual collection's members (add / remove / reorder), and builds a smart collection's rules with a live preview of the products they match — all from a signed-in browser. As with the other console screens, the same paths serve the existing JSON API to a bearer-token client unchanged.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Collections management screen",
+              "body": "`/admin/collections` lists the shop's collections (title, slug, type, status, member or match count) with an all / active / archived filter; `/admin/collections/:slug` opens one. For a manual collection it manages members — add a product by id, remove, and reorder. For a smart collection it edits the rule set (field / operator / value rows over the supported fields and operators) and renders a live preview of the products the rules currently match. A form creates either kind; editing updates the title, description, and sort strategy (and rules for smart collections); and a collection can be archived. A bad-shape submit re-renders with the validator's message rather than a 500, and an unknown slug or product is a no-op notice."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Console nav gains Collections",
+              "body": "The signed-in admin nav now includes Collections, shown when the collections primitive is wired. The list, detail, create, edit, archive, and member endpoints content-negotiate like the other screens: a bearer-token client gets the JSON API, a signed-in browser gets HTML. A request without the bearer token returns the sign-in form on a GET and redirects on a write."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.20",
+      "date": "2026-05-25",
+      "headline": "A \"Customers also bought\" rail on the order confirmation",
+      "summary": "The order confirmation page now shows a recommendation rail. After a purchase, `/orders/:id` surfaces up to four products drawn from operator-curated pins first, then co-purchase signals from the order's own items (what other shoppers bought alongside them), then category-popular and in-stock fallbacks — always excluding what was just bought. The rail is best-effort: if the engine isn't wired it simply doesn't render.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Order-confirmation recommendation rail",
+              "body": "The post-purchase page renders a \"Customers also bought\" rail beneath the order summary, anchored on the order's items. Picks come from the recommendations engine: operator-curated overrides first, then a co-purchase signal (products bought in the same orders), then category-popular and in-stock fallbacks to fill the rail; the order's own products are always excluded. Each pick reuses the storefront product-card markup (image, title, price) and links to the product page. The rail renders in both the default and file-backed theme layouts; a store without the recommendations primitive wired renders no rail (and a read failure degrades to none rather than erroring the confirmation page)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.19",
+      "date": "2026-05-25",
+      "headline": "Admin console — a webhooks screen, and order events now fan out",
+      "summary": "Webhooks join the admin console. `/admin/webhooks` registers an endpoint (with a one-time signing-secret reveal), lists endpoints, enables / disables and deletes one, and opens an endpoint's delivery feed to retry a failed delivery. Order lifecycle transitions now fan out to registered endpoints — the order primitive is wired to the webhook dispatcher so a paid / fulfilled / shipped / delivered / cancelled / refunded transition produces a signed delivery.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Webhooks management screen",
+              "body": "`/admin/webhooks` registers an outbound endpoint — an https:// URL plus the events to subscribe (or all) — and shows the HMAC-SHA3-512 signing secret once on creation; the secret is never rendered in the endpoint list afterward. The list shows each endpoint's URL, events, status, and per-minute rate, with actions to enable / disable, delete, and open its deliveries. The delivery feed lists each attempt (event, status, response code, attempt count, last error, time) and retries a failed delivery. The JSON API a bearer-token client already used — create / list / update / delete / deliveries / retry — is unchanged; the browser screen content-negotiates on the same paths."
+            },
+            {
+              "title": "Order events fan out to webhooks",
+              "body": "The order primitive is now wired to the webhook dispatcher, so an order transition (`order.mark_paid`, `order.start_fulfillment`, `order.mark_shipped`, `order.mark_delivered`, `order.cancel`, `order.refund`) produces a signed delivery to every subscribed endpoint. Dispatch is post-persist — a delivery failure can never roll back the transition that landed — and a failed delivery is recorded for retry from the console rather than surfaced to the request that triggered it."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Console nav gains Webhooks",
+              "body": "The signed-in admin nav now includes Webhooks, shown when the webhooks primitive is wired. Endpoint create, list, enable / disable, delete, the delivery feed, and retry content-negotiate like the other console screens: a bearer-token client gets the JSON API, a signed-in browser gets HTML. A request without the bearer token returns the sign-in form on a GET and redirects on a write. An https-only URL or empty event set re-renders the form with the validator's message, and an unknown endpoint or delivery is a no-op notice rather than a 500."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.18",
+      "date": "2026-05-25",
+      "headline": "Admin console — a subscription-plans screen",
+      "summary": "Subscription plans join the admin console. `/admin/subscription-plans` lists the recurring-offer catalog — price, interval, trial, and Stripe price id — with an active / archived filter, creates a plan from a signed-in browser, and archives one. As with the other console screens, the same path serves the existing JSON API to a bearer-token client unchanged.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Subscription-plans management screen",
+              "body": "`/admin/subscription-plans` renders the plan catalog (price and interval, trial length, Stripe price id, linked variant, status) with an active / archived filter, when opened in a signed-in browser; the same path serves the JSON list to a bearer-token client. A form creates a plan — Stripe price id, interval, interval count, currency, amount, trial days, and an optional variant link — and each active row archives in one submit. A bad-shape create re-renders the form with the validator's message rather than a 500, and archiving an unknown plan is a no-op notice. Archiving is terminal from the console: because a plan mirrors a Stripe price id that can go stale, a retired plan is re-offered by creating a new one against a fresh price id."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Console nav gains Subscriptions",
+              "body": "The signed-in admin nav now includes Subscriptions alongside Products, Inventory, Orders, Returns, and Reviews, shown when the subscriptions primitive is wired. The `/admin/subscription-plans` list, create, and archive endpoints content-negotiate like the other screens: a bearer-token client gets the JSON API, a signed-in browser gets HTML. A request without the bearer token returns the sign-in form on a GET and redirects on a write."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.17",
+      "date": "2026-05-25",
+      "headline": "Admin console — an inventory screen",
+      "summary": "Inventory joins the admin console. `/admin/inventory` lists stock per SKU — on hand, held, and available — with a low-stock filter, restocks a SKU, sets or clears its per-SKU low-stock threshold, and tracks a new SKU, all from a signed-in browser. As with the other console screens, the same path serves the existing JSON API to a bearer-token client unchanged.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Inventory management screen",
+              "body": "`/admin/inventory` renders the inventory table (SKU, on-hand, held, available) with a low-stock filter (`?low=1`) that surfaces SKUs at or below their threshold, when opened in a signed-in browser; the same path serves a new JSON list to a bearer-token client. Each row's form restocks (add quantity) and sets the low-stock threshold (blank clears it) in one submit, and a form below tracks a new SKU. The create / restock JSON API is unchanged for tooling; the browser forms post and redirect (PRG), and a bad SKU is a no-op notice rather than a 500."
+            },
+            {
+              "title": "catalog.inventory.list",
+              "body": "`catalog.inventory.list({ limit, low_only })` returns inventory rows (SKU ascending), optionally only those at or below their configured low-stock threshold — the read backing the console list and the JSON endpoint."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Console nav gains Inventory",
+              "body": "The signed-in admin nav now includes Inventory alongside Products, Orders, Returns, and Reviews. The `/admin/inventory` list and the create / restock endpoints content-negotiate like the other screens: a bearer-token client gets the JSON API, a signed-in browser gets HTML. A request without the bearer token on these paths now returns the sign-in form on a GET and redirects on a write, matching the other console screens."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.16",
+      "date": "2026-05-25",
+      "headline": "PayPal express checkout — the on-page button",
+      "summary": "PayPal checkout is now usable from the storefront. When PayPal is configured, the checkout page shows a native PayPal button (distinct from PayPal-through-Stripe): it opens a PayPal order for the current cart, the buyer approves in the PayPal popup, and the order is captured and marked paid. A verified PayPal webhook is the asynchronous backstop. This completes the native PayPal integration on top of the adapter and checkout orchestration shipped in the previous two releases. Card / Stripe checkout is unchanged.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "PayPal button + create/capture routes on the storefront",
+              "body": "The checkout page renders a PayPal button when `PAYPAL_CLIENT_ID` is configured. Its create step posts to `POST /checkout/paypal/create` (prices the cart, opens a PayPal order, persists the local order pending) and its approve step posts to `POST /checkout/paypal/capture` (captures and advances the order to paid, then redirects to the order page). Both validate input and never 500 on a missing cart or id. The buttons collect the same shipping fields as the card form."
+            },
+            {
+              "title": "PayPal webhook endpoint",
+              "body": "`POST /api/webhooks/paypal` is the asynchronous backstop for captures completed or refunded out of band. The container verifies each event server-to-server through PayPal's verify-webhook-signature API (no edge HMAC pre-check, unlike Stripe), then advances the order; re-deliveries are idempotent. Point a PayPal webhook at `/api/webhooks/paypal`."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "PayPal listed as configurable; CSP note",
+              "body": "The integrations status page and README document PayPal as a first-class checkout option once configured. As with the Stripe pay page's `js.stripe.com`, operators must allow `www.paypal.com` in their Content-Security-Policy `script-src` / `frame-src` for the PayPal SDK and approval popup."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.15",
+      "date": "2026-05-25",
+      "headline": "PayPal checkout orchestration",
+      "summary": "Checkout can now run a PayPal order end to end, building on the adapter from the previous release. The orchestrator prices the cart, opens a PayPal order and persists the local order as pending, captures it after the buyer approves and advances the order to paid, and has a webhook backstop for captures completed or refunded out of band. Wired in when a PayPal app's credentials are present, and surfaced on the integrations status page. The storefront button and routes that drive this from the pay page come next; card / Stripe checkout is unchanged.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "checkout PayPal methods",
+              "body": "With a PayPal adapter wired (`paypal` dep), checkout gains three methods. `createPaypalOrder({ cart_id, ship_to, selected_shipping_id, customer, idempotency_key, return_url?, cancel_url? })` prices the cart, opens a PayPal Orders-v2 order, persists the local order in `pending` with the PayPal order id linked, and marks the cart converted. `capturePaypalOrder(paypalOrderId)` captures the approved order and advances the local order to `paid` (idempotent — a retry or a webhook that beat it won't double-transition). `handlePaypalEvent({ headers, rawBody })` is the asynchronous backstop: it verifies the event through PayPal, then maps `PAYMENT.CAPTURE.COMPLETED` → paid and `PAYMENT.CAPTURE.REFUNDED` → refunded, idempotent across re-deliveries."
+            },
+            {
+              "title": "PayPal wired from configuration",
+              "body": "When `PAYPAL_CLIENT_ID` + `PAYPAL_SECRET` are set (with `PAYPAL_ENV` and `PAYPAL_WEBHOOK_ID`), the server builds the PayPal adapter and passes it to checkout; the integrations status page lists PayPal as action-needed once card checkout is also live. Off until configured; the existing checkout flow is untouched."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.14",
+      "date": "2026-05-25",
+      "headline": "PayPal payment adapter (Orders v2)",
+      "summary": "`payment.create({ adapter: \"paypal\", … })` is a new native PayPal adapter alongside the Stripe one — a from-scratch Orders-v2 client over the framework's SSRF-gated HTTP client, with no PayPal SDK dependency. It exchanges an OAuth2 client-credentials token (cached until it nears expiry), creates and captures orders, fetches and refunds them, and verifies inbound webhooks through PayPal's verify-webhook-signature API. This ships the adapter only; wiring it into the checkout flow and a storefront button comes next. Card / Stripe checkout is unchanged.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "PayPal Orders-v2 adapter",
+              "body": "`payment.create({ adapter: \"paypal\", clientId, secret, sandbox?, webhookId?, apiBase? })` returns `{ createOrder, captureOrder, getOrder, refund, verifyWebhook }`. `createOrder({ amount_minor, currency, order_id?, return_url?, cancel_url? })` opens a CAPTURE-intent order (amounts converted to PayPal's decimal-string major units, including 0-decimal currencies); `captureOrder(id)` finalizes it; `refund({ capture_id, amount_minor?, currency? })` refunds full or partial; `getOrder(id)` reads status. Every call carries an OAuth2 bearer token exchanged once and cached until ~2 minutes before expiry, and a `PayPal-Request-Id` for idempotency (plus the shared idempotency cache when a `query` handle is wired). `verifyWebhook(headers, rawBody, { webhookId })` confirms an inbound event through PayPal's verify-webhook-signature API and returns `{ ok, event }`. Outbound HTTP goes through `b.httpClient` — no `paypal` npm dependency. Off until the operator supplies credentials; the Stripe adapter and existing checkout are unchanged."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.13",
+      "date": "2026-05-25",
+      "headline": "Internal: uniform framework access across the library",
+      "summary": "An internal consistency refactor with no API or behavior change. Every library module now captures the framework once at the top — straight from the vendored tree (`var b = require(\"./vendor/blamejs\");`) — and uses `b.*` uniformly, replacing a per-module lazy accessor and its scattered call sites. Capturing the framework directly (rather than via the composing entry point) also avoids a circular-load edge case on leaf-first imports. Two source files that embedded a raw NUL byte as a map-key separator now use the `\\u0000` escape, so the whole library is plain text. New lint rules lock all of this in place. Public APIs, runtime behavior, and the published surface are unchanged.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Framework handle captured once per module",
+              "body": "Library modules previously reached the vendored framework through a lazy `_b()` accessor invoked at every call site. They now capture it once at module top — `var b = require(\"./vendor/blamejs\");`, the same object the entry point re-exports as `.framework` — and reference `b.*` directly, matching how the edge worker already accesses it. Capturing it directly from the vendored tree (instead of through the composing entry point) keeps leaf-first module imports working — requiring a single module no longer pulls the entry point's whole assembly mid-initialization. No public API or runtime behavior changes."
+            }
+          ]
+        },
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Lint detectors for accessor uniformity and source hygiene",
+              "body": "Three repository lint rules now prevent drift: one rejects the reintroduction of the per-module lazy framework accessor (capture the framework once at module top); one rejects requiring the composing entry point from a leaf module (require the vendored framework directly — entry-point requires from a leaf create a circular-load hazard); and one rejects raw C0 control bytes in source files (write `\\u0000` and friends as escapes so files stay plain text — grep / diff / editors handle them correctly)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.12",
+      "date": "2026-05-25",
+      "headline": "Card payments now finalize the order — the Stripe webhook is handled end to end",
+      "summary": "A confirmed Stripe payment now advances the order from pending to paid. The container now serves the `POST /api/webhooks/stripe` route the edge worker forwards to: it re-verifies the event signature over the exact raw bytes, maps the event to the order's FSM transition, and is idempotent across Stripe's re-deliveries. Previously the edge verified the webhook but nothing consumed it on the container, so a paid PaymentIntent (card, Apple Pay, or Google Pay) left the order stuck in pending — no fulfillment, no paid status. Operators running checkout should upgrade and confirm their Stripe webhook points at `/api/webhooks/stripe`.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Stripe webhook completes the order",
+              "body": "`POST /api/webhooks/stripe` is now handled on the container: the event signature is re-verified against `STRIPE_WEBHOOK_SECRET` over the raw request body (a tampered or unsigned event is rejected with 400), then `payment_intent.succeeded` / `.canceled` / `charge.refunded` drive the order FSM (`mark_paid` / `cancel` / `refund`). Re-deliveries are idempotent — an event for an order already in the target state is acknowledged with 200 and skipped. A delivery for an unknown PaymentIntent is acknowledged without effect. This closes the gap where a confirmed payment never moved the order out of `pending`."
+            }
+          ]
+        },
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Raw-body capture for payment webhooks",
+              "body": "A small middleware preserves the exact request bytes for the webhook path before the JSON body-parser runs, so signature verification (which is computed over the raw body) is reliable. It is scoped to the webhook routes and leaves every other request untouched."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.11",
+      "date": "2026-05-25",
+      "headline": "Sign in with Apple",
+      "summary": "Customers can now sign in with Apple, alongside passkeys and Google. A “Continue with Apple” button appears on the account login page once the operator wires the Apple credentials; the callback turns the verified Apple identity into a shop session, adopts the guest cart, and claims prior guest orders placed under the same verified email — the same way Google sign-in does. Apple's OAuth client secret is itself an ES256 JWT, which the shop mints from the team's Sign-in-with-Apple key. Sign in with Apple is off until the credentials are set, like every other integration.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Sign in with Apple (OIDC)",
+              "body": "`GET /account/login/apple` starts the flow (sealed in-flight state cookie, PKCE, nonce); Apple posts the result back to `POST /account/auth/apple/callback` (response_mode=form_post). The callback verifies the state, exchanges the code, signs the customer in on `(provider=apple, subject)`, adopts the guest cart, and — when Apple reports the email as verified — claims prior guest orders under that email. The display name is captured from Apple's first-authorization `user` field (Apple sends it only once and never in the ID token). The button appears on `/account/login` only when the credentials are configured, and is listed on `/admin/integrations`."
+            },
+            {
+              "title": "customers.mintAppleClientSecret",
+              "body": "Mints Apple's required ES256 client-secret JWT from a Services-ID `.p8` key (team id, key id, client id). This is the one signature the protocol forces to be classical ECDSA P-256 rather than the framework's post-quantum default — an external identity provider's wire format, not an application default. The secret is minted at boot with a 150-day life (inside Apple's six-month ceiling) and re-minted on each deploy."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Account login offers Apple when configured",
+              "body": "The login page shows Continue-with-Google and Continue-with-Apple buttons independently, each gated on its own credentials. Set `APPLE_TEAM_ID`, `APPLE_KEY_ID`, `APPLE_CLIENT_ID` (your Services ID), `APPLE_PRIVATE_KEY` (the `.p8` contents), and `SHOP_ORIGIN`, and add `<SHOP_ORIGIN>/account/auth/apple/callback` as a Return URL on the Services ID. Requires an Apple Developer Program membership. See the README “Optional integrations” section."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.10",
+      "date": "2026-05-25",
+      "headline": "Admin console — a review moderation screen",
+      "summary": "Reviews join the admin console, completing the set of management screens. `/admin/reviews` is the moderation queue: filter by status (pending, published, rejected) and act on each submission inline — publish it, reject it with a reason, or take a published one back down. Reviews are short, so the queue shows each one in full (rating, title, body, verified-purchase flag) with its actions, no separate detail page. As with the other screens, every path content-negotiates: a bearer-token client gets the JSON API unchanged, a signed-in browser gets the HTML console.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Review moderation screen",
+              "body": "`/admin/reviews` renders the review queue as inline cards (rating stars, title, body, verified-purchase flag, product, date) with status-filter chips, when opened in a signed-in browser; the same path serves the existing JSON list to a bearer-token client. Each card offers the actions that fit its status — a pending review can be published or rejected, a published one taken down, a rejected one published — with Reject taking a reason. Publish and reject post to their endpoints and redirect (PRG); a missing id is a no-op notice, never a 500."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Console nav gains Reviews; the reviews API content-negotiates",
+              "body": "The signed-in admin nav now includes Reviews — shown, like Returns, only when the reviews primitive is wired. The `/admin/reviews` list and the publish / reject endpoints serve the HTML console to a signed-in browser while continuing to serve the JSON API to a bearer-token client unchanged. A request without the bearer token is no longer answered with a 401 on the list path — a browser GET receives the sign-in form — matching the other console screens."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.9",
+      "date": "2026-05-25",
+      "headline": "Admin console — a returns moderation screen",
+      "summary": "Returns join the admin console. `/admin/returns` is the RMA moderation queue: filter by status (pending, approved, received, refunded, rejected), and open a request to see its items, reason, customer notes, and linked order. From the detail page an operator works the return through its lifecycle — approve with a refund amount, mark the goods received, record the refund, or reject with a reason shown to the customer — with only the moves legal from the current status offered. An illegal move or a bad id is refused with a notice rather than an error. As with Products and Orders, every path content-negotiates: a bearer-token client gets the JSON API unchanged, a signed-in browser gets the HTML console.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Returns moderation screen",
+              "body": "`/admin/returns` renders the RMA queue as a table (RMA code, order, reason, status, item count, refund amount, requested date) with status-filter chips, when opened in a signed-in browser; the same path serves the existing JSON list to a bearer-token client. Each return links to a detail page showing its line items, reason and customer notes, linked order, and refund details, with the legal next actions as forms — Approve takes a refund amount and currency, Reject takes a reason, Mark received and Refund are single-click. Each posts to its own endpoint and redirects (PRG); an unknown id renders a 404 page and an illegal or refused action redirects back with a notice, never a 500."
+            },
+            {
+              "title": "returns.transitionsFrom",
+              "body": "`returns.transitionsFrom(status)` returns the moderation events legal from a given status as `{ on, to }`, derived from the same transition table the setters use — so the console's action buttons stay in lockstep with the return state machine."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Console nav gains Returns; the returns API content-negotiates",
+              "body": "The signed-in admin nav now includes Returns alongside Home, Dashboard, Products, Orders, Integrations, and Setup — shown only when the returns primitive is wired, so the link never points at an unmounted route. The `/admin/returns` list, detail, and approve / received / refund / reject endpoints now serve the HTML console to a signed-in browser while continuing to serve the JSON API to a bearer-token client unchanged. A request without the bearer token is no longer answered with a 401 on these paths — a browser GET receives the sign-in form and a write redirects to the console, matching the other console screens."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.8",
+      "date": "2026-05-25",
+      "headline": "Admin console — an orders screen with full lifecycle control",
+      "summary": "Orders join the admin console. `/admin/orders` lists recent orders newest-first with one-click status filters, and each order opens to its line items, totals, shipping address, and payment reference. From the detail page an operator drives the order through its lifecycle — mark paid, start fulfilment, mark shipped, mark delivered, cancel, refund — with only the moves that are legal from the current status offered as buttons; an illegal move is refused with a notice rather than an error. Refund moves money, so the console Refund button issues a real payment-provider refund (and only appears when a provider is wired and the order has a captured intent) before the order advances to refunded. As with Products, every path content-negotiates: a bearer-token client gets the JSON API unchanged, a signed-in browser gets the HTML console.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Orders management screen",
+              "body": "`/admin/orders` renders recent orders as a table (order, status, item count, total, placed date) with status-filter chips, when opened in a signed-in browser; the same path serves a new JSON list to a bearer-token client. Each order links to a detail page showing its line items, subtotal / tax / shipping / total, shipping address, and linked payment intent, with the order's legal next transitions as action buttons that post back and redirect (PRG). The Refund button posts to the payment-refund flow — it issues the provider refund and then advances the order, so a console refund never marks an order refunded without moving the money; it appears only when a payment provider is wired and the order has a captured intent (partial refunds remain on the JSON API). A bad or unknown order id renders a 404 page, never a 500; an illegal or failed action redirects back with a notice and leaves the order unchanged."
+            },
+            {
+              "title": "order.listRecent + order.transitionsFrom",
+              "body": "`order.listRecent({ limit, status })` returns recent orders across all customers (guest orders included), newest-first, optionally filtered to one status, with line items and shipping hydrated. `order.transitionsFrom(status)` returns the lifecycle moves legal from a given status as `{ on, to, label }` — both derived from a single order-FSM edge list, so the console actions stay in lockstep with the state machine."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Console nav gains Orders; dashboard orders link through",
+              "body": "The signed-in admin nav now includes Orders alongside Home, Dashboard, Products, Integrations, and Setup. The dashboard's recent-orders list links each row to its order detail."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.7",
+      "date": "2026-05-25",
+      "headline": "Admin console — persistent navigation and a products screen",
+      "summary": "The admin is now a cohesive, navigable web console rather than a set of disconnected pages. A persistent nav (Home, Dashboard, Products, Integrations, Setup) runs across every signed-in page, and Products is the first full management screen: browse the catalog, create a product, and archive or restore one — all from the browser. The JSON API is unchanged: an endpoint serves the HTML console to a signed-in browser and JSON to a bearer-token client, so tooling keeps working exactly as before.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Console navigation",
+              "body": "Every signed-in admin page shares a top nav with the current section highlighted, so the dashboard, products, integrations, and setup wizard are one console. The shell is the same brand-matched layout as the dashboard."
+            },
+            {
+              "title": "Products management screen",
+              "body": "`/admin/products` renders the catalog as a table (title, slug, status) with Archive / Restore actions and a New-product form, when opened in a signed-in browser. The same path returns the existing JSON list to a bearer-token client; create, archive, and restore content-negotiate the same way (browser form → redirect; bad input re-renders with a notice, never a 500). The product create / archive / restore JSON API is unchanged."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.6",
+      "date": "2026-05-25",
+      "headline": "Claim past guest orders when a shopper signs in",
+      "summary": "A shopper who checked out as a guest and later signs in with a provider-verified email now finds those past orders attached to their account. Checkout records a hash of the buyer's email on the order; on Google sign-in, orders placed under that same email — and not yet owned by anyone — are claimed into the account. Linking happens only on an email the identity provider verified, never on an unverified one, so it can't be used to steal another shopper's order history.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Guest-order reconciliation on sign-in",
+              "body": "Orders now carry a `customer_email_hash` (migration 0206), written at checkout from the buyer's email with the same key the customers table uses. On a verified Google sign-in, `order.linkGuestOrdersByEmailHash` claims every ownerless order under that email into the account — so prior guest purchases appear in /account and satisfy customer-scoped checks (e.g. verified-buyer reviews). Only ownerless orders are touched (an order already attached to a customer is never reassigned), and only a provider-verified email triggers a link."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.5",
+      "date": "2026-05-25",
+      "headline": "Tell operators how to turn each integration on",
+      "summary": "Every third-party integration (Stripe card checkout, Apple/Google Pay, Sign in with Google) is off by default and only activates when you supply its credentials. This release documents exactly what to set for each — in the README, in a new .env.example, and in the admin console itself. A signed-in operator opens /admin/integrations to see, at a glance, which integrations are live and the precise environment variables (or one-time action) needed to enable the rest. Nothing is enabled without your keys.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Admin integrations status page",
+              "body": "`/admin/integrations` lists each integration with a live Enabled / Not configured status and the exact variables or action to turn it on — Stripe keys, the payment-method-domain registration for wallets, the Google OAuth client + redirect URI. Read-only; secrets are never rendered. Linked from the admin landing."
+            },
+            {
+              "title": "Operator setup docs",
+              "body": "A README \"Optional integrations\" section and a top-level `.env.example` enumerate every environment variable, what capability it unlocks, and the external setup (e.g. the Google OAuth redirect URI, the Stripe webhook path). Both note that Apple sign-in + PayPal are planned and that Shop Pay / \"Sign in with Shop\" isn't available to a self-hosted store."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.4",
+      "date": "2026-05-25",
+      "headline": "Sign in with Google",
+      "summary": "Customers can sign in with Google alongside passkeys. The account login page gains a Continue with Google button; the OIDC authorization-code flow (PKCE, state, nonce, ID-token verification) runs through the framework's OAuth adapter, and the verified identity becomes a shop session. Accounts are keyed on the provider's stable subject, and an existing account is only ever linked on an email the provider has verified — an unverified email that collides with an existing account is refused rather than linked. A cart built before signing in is adopted into the account, so checkout attaches the order to the customer.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Google sign-in",
+              "body": "Mounts `/account/login/google` + `/account/auth/google/callback` when the operator sets `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and `SHOP_ORIGIN`. The in-flight state (CSRF state + nonce + PKCE verifier) rides a sealed, /account-scoped, SameSite=Lax cookie; the callback verifies the state before exchanging the code. A forged or stale callback is dropped to the login page. On success the guest session cart is adopted into the account (`cart.setCustomer`), matching the passkey path."
+            },
+            {
+              "title": "Federated identity model + safe account linking",
+              "body": "`customers.signInWithOIDC` resolves a verified sign-in to a customer: an existing `(provider, subject)` link, else — only on a provider-verified email — an existing account with that email, else a new account. It never links to an existing account on an unverified email (account-takeover defense). New `customer_oauth_identities` table (migration 0205) + `customers.byOAuthIdentity`."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.2",
+      "date": "2026-05-25",
+      "headline": "Apple Pay and Google Pay express checkout",
+      "summary": "The pay page now offers one-tap wallet checkout. Stripe's Express Checkout Element renders Apple Pay and Google Pay buttons above the card form on eligible devices, confirming the same PaymentIntent as the card path — so the webhook and order flow are unchanged. To turn the wallets on, the operator registers the shop's web domain with Stripe once via the admin API; Stripe performs Apple merchant validation and hosts the domain-association file, so no Apple Developer account is needed.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Wallet buttons on the pay page",
+              "body": "The Stripe Express Checkout Element mounts above the card form and auto-renders Apple Pay / Google Pay (and Link) when the device and the shop's registered domain make them available. It stays hidden until Stripe reports an available wallet, and confirms the existing per-order PaymentIntent — the payment-completion path (webhook → order FSM) is identical to the card flow."
+            },
+            {
+              "title": "Payment-method domain registration",
+              "body": "`POST /admin/payment-method-domains` (with `{ \"domain_name\": \"shop.example.com\" }`) registers a domain with Stripe to enable the wallets; `GET /admin/payment-method-domains` lists registered domains and their per-method status. The payment adapter gains `registerPaymentMethodDomain` + `listPaymentMethodDomains`. Apex, www, and each subdomain register separately; a live-mode registration also covers sandbox."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.1",
+      "date": "2026-05-25",
+      "headline": "Admin setup wizard + a browser-accessible admin console",
+      "summary": "The admin is now reachable from a browser, not just the bearer-token JSON API. Sign in once at /admin by pasting the ADMIN_API_KEY and a sealed, /admin-scoped session cookie carries you through the guided setup wizard (shop name, contact email, default currency, support URL — saved to shop config) and the analytics dashboard. The shop name set in the wizard drives the storefront header, page titles, and the admin header.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Browser admin sign-in",
+              "body": "`/admin` renders a sign-in form; pasting the ADMIN_API_KEY sets a sealed `shop_admin` session cookie (SameSite=Strict, scoped to /admin) so the rendered admin pages are reachable from a browser. The JSON API stays bearer-only; the dashboard accepts either the cookie or the bearer token."
+            },
+            {
+              "title": "Setup wizard",
+              "body": "`/admin/setup` is a guided form for the shop's core identity — name, contact email, default currency, support URL — validated (ISO-4217 currency, RFC-shaped email, http(s) support URL) and saved to shop config. The landing nags until setup is complete; the shop name then drives the storefront and admin headers."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "date": "2026-05-25",
+      "headline": "Responsive cart + storefront cookie handling moved onto the framework primitive",
+      "summary": "A storefront polish pass. The cart, order-confirmation, and account-history tables now reflow into stacked, labelled cards on phones and fit their column on wider screens — no more inner horizontal scroll. The quantity field reads clearly and accepts up to 99,999. The line actions (Update / Save for later / Remove) are compact with a clear hierarchy. Under the hood, all storefront cookie handling now composes the framework's cookie primitive (RFC 6265 parse/serialize plus vault-sealed read/write) instead of hand-built headers, and a malformed session cookie can no longer turn the cart — or any page that shows the cart count — into a 500.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Cart tables no longer scroll sideways",
+              "body": "The cart, order-confirmation, and account order-history tables reflow into one labelled card per row below 48rem and are sized to fit their column on wider layouts, so content is never trapped behind an inner horizontal scrollbar."
+            },
+            {
+              "title": "Malformed session cookie no longer 500s the storefront",
+              "body": "A `shop_sid` cookie carrying a value that isn't a well-formed session id now reads as \"no session\" instead of reaching the cart lookup (which rejected it and surfaced a 500 on every page that renders the cart count)."
+            },
+            {
+              "title": "Account dashboard controls wrap on narrow screens",
+              "body": "The row of account actions (Wishlist / Saved for later / Recently viewed / Addresses / Returns / Sign out) now wraps instead of overflowing the viewport on a phone."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Quantity field is readable and accepts up to 99,999",
+              "body": "The cart quantity input is wide enough to read a five-digit quantity, and the per-line maximum is raised to 99,999 (enforced on the server)."
+            },
+            {
+              "title": "Compact, clearly-ranked line actions",
+              "body": "Update is a small accent button, Save for later a quiet secondary, Remove a danger-tinted secondary — so the primary checkout call stays dominant."
+            },
+            {
+              "title": "Cookie handling composes the framework primitive",
+              "body": "Session, authentication, WebAuthn-challenge, and payment cookies are all parsed and written through the framework cookie primitive (sealed read/write for the authenticated-session cookie), replacing hand-built Set-Cookie strings and manual header parsing. Cookie lifetimes are expressed through the framework's duration constants."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
