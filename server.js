@@ -166,6 +166,19 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.saveForLater.create({ cursorSecret: saveForLaterCursorSecret, catalog: catalog })
         : null;
 
+      // Multi-currency display — converts the catalog's base-currency
+      // prices into the visitor's chosen currency for DISPLAY ONLY (the
+      // cart / order / payment currency is unchanged). The FX-rate cache +
+      // the per-currency display-rounding rule are read from D1 via the
+      // externalDb handle this deploy already binds. Both primitives stay
+      // resilient when their tables aren't migrated (degrade to base
+      // display), so wiring them on a fresh deploy never breaks a priced
+      // page. The operator's allow-list of display currencies (base first)
+      // comes from `shop.currencies` config; absent it, no switcher
+      // renders and every price stays in the base currency.
+      var currencyDisplay  = (catalog && cart) ? bShop.currencyDisplay.create({}) : null;
+      var currencyRounding = (catalog && cart) ? bShop.currencyRounding.create({}) : null;
+
       // Address book — per-customer saved addresses on /account/addresses.
       var addresses = (catalog && cart) ? bShop.addresses.create({}) : null;
 
@@ -667,6 +680,40 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
             return await config.get("shipping.default_id", DEFAULT_SHIPPING_ID);
           };
           sfDeps.stripe_publishable_key = process.env.STRIPE_PUBLISHABLE_KEY || "";
+        }
+        // Multi-currency display wiring. The operator's display-currency
+        // allow-list lives in `shop.currencies` config (base first); the
+        // base settlement currency in `shop.base_currency` (default USD).
+        // Resolved per request from the config primitive (30s read cache),
+        // so an operator config change takes effect without a restart. The
+        // switcher + display conversion only render when the allow-list
+        // names >1 currency. SHOP_BASE_CURRENCY / SHOP_CURRENCIES env vars
+        // seed the defaults when the operator hasn't written config rows.
+        if (currencyDisplay) {
+          var envBase = (process.env.SHOP_BASE_CURRENCY || "USD").toUpperCase();
+          var envList = (process.env.SHOP_CURRENCIES || envBase)
+            .split(",").map(function (s) { return s.trim().toUpperCase(); })
+            .filter(function (s) { return /^[A-Z]{3}$/.test(s); });
+          if (!envList.length) envList = [envBase];
+          sfDeps.currencyDisplay          = currencyDisplay;
+          sfDeps.currencyRounding         = currencyRounding;
+          sfDeps.currency_base            = envBase;
+          sfDeps.currency_display_options = envList;
+          // Override per request from config rows when present (falls back
+          // to the env-seeded defaults on a read miss / failure).
+          sfDeps.currency_config = async function () {
+            try {
+              var base = await config.get("shop.base_currency", envBase);
+              var list = await config.get("shop.currencies", envList);
+              return {
+                base:    (base || envBase).toUpperCase(),
+                options: (Array.isArray(list) && list.length ? list : envList)
+                  .map(function (c) { return String(c).toUpperCase(); }),
+              };
+            } catch (_e) {
+              return { base: envBase, options: envList };
+            }
+          };
         }
         bShop.storefront.mount(r, sfDeps);
       } else {

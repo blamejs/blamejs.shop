@@ -1,4 +1,4 @@
-import { renderTemplate, escapeAttr, formatPrice, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag } from "./_lib.js";
+import { renderTemplate, escapeAttr, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, makeFormatPrice, currencySwitcher } from "./_lib.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
@@ -111,6 +111,7 @@ var LAYOUT =
   "        </ul>\n" +
   "      </div>\n" +
   "    </div>\n" +
+  "    RAW_CURRENCY_SWITCHER\n" +
   "    <div class=\"site-footer__copy\">\n" +
   "      <p>&copy; {{year}} {{shop_name}} — built on blamejs · Apache 2.0 licensed.</p>\n" +
   "      <ul>\n" +
@@ -232,6 +233,12 @@ function _wrap(opts) {
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
+    .replace("RAW_CURRENCY_SWITCHER", currencySwitcher({
+      currencies:  opts.currency_options,
+      selected:    opts.currency_selected,
+      note:        opts.currency_note,
+      redirect_to: opts.currency_redirect_to,
+    }))
     .replace("RAW_BODY_PLACEHOLDER", opts.body);
 }
 
@@ -247,9 +254,11 @@ export function renderCart(opts) {
   var assetPrefix = opts.assetPrefix || "/assets/";
   var version     = opts.version;
   var themeCss    = opts.themeCss;
+  // Display-currency formatter — converts base → display when active.
+  var fmt = makeFormatPrice(opts.currencyContext);
 
-  var subtotal = formatPrice(totals.subtotal_minor, totals.currency);
-  var total    = formatPrice(totals.grand_total_minor, totals.currency);
+  var subtotal = fmt(totals.subtotal_minor, totals.currency);
+  var total    = fmt(totals.grand_total_minor, totals.currency);
 
   var body;
   if (lines.length === 0) {
@@ -283,8 +292,8 @@ export function renderCart(opts) {
 
       var sku = l.sku || l.variant_title || "";
       var currency = l.currency || totals.currency;
-      var unit = formatPrice(l.unit_price_minor, currency);
-      var lineTotal = formatPrice(l.line_total_minor, currency);
+      var unit = fmt(l.unit_price_minor, currency);
+      var lineTotal = fmt(l.line_total_minor, currency);
 
       return renderTemplate(CART_LINE_EDITABLE, {
         sku:           sku,
@@ -313,5 +322,9 @@ export function renderCart(opts) {
     version:    version,
     og_title:   "Cart — " + shopName,
     body:       body,
+    currency_options:     opts.currencyOptions,
+    currency_selected:    opts.currencySelected,
+    currency_note:        opts.currencyNote,
+    currency_redirect_to: opts.currencyRedirectTo,
   });
 }

@@ -2110,6 +2110,48 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
 }
 .site-footer__copy a:hover { color: var(--accent); }
 
+/* Display-currency switcher — footer band above the copyright line.
+   Display-only: the visitor's chosen currency changes the rendered
+   price strings; the charge currency is unchanged (the disclosure
+   note says so). */
+.currency-switcher {
+  max-width: var(--container);
+  margin: var(--space-6) auto 0;
+  padding: 0 var(--gutter);
+}
+.currency-switcher__form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.currency-switcher__label {
+  color: rgba(255,255,255,0.65);
+  font-size: var(--text-sm);
+}
+.currency-switcher__select {
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: var(--radius-sm, 6px);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+}
+.currency-switcher__btn {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.currency-switcher__note {
+  margin: var(--space-3) 0 0;
+  color: rgba(255,255,255,0.5);
+  font-size: var(--text-xs);
+}
+
 /* =================================================================
    RESPONSIVE
    ================================================================= */
