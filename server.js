@@ -92,6 +92,57 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
     catch (_e) { /* unconfigured — default */ }
   }
 
+  // i18n / locale routing — localises the storefront UI chrome (nav,
+  // footer, search controls, newsletter band) + mounts the footer locale
+  // switcher. The locale-router owns resolution (cookie / ?lang= /
+  // Accept-Language / policy default); the translations primitive supplies
+  // the chrome strings via b.i18n. Resolved here (before createApp, where
+  // top-level await is available) and threaded into the storefront deps.
+  // Wired only when the operator has seeded an active locale policy
+  // (localeRouter.setActivePolicy) — absent that the storefront renders
+  // the English baseline with no switcher, so a fresh deploy keeps working
+  // with no extra configuration. Every read is best-effort: an unmigrated
+  // locale / translations table degrades to English rather than blocking
+  // boot. Resolution order matches the edge Worker (cookie → ?lang= →
+  // Accept-Language → default) so both substrates agree.
+  var localeWiring = null;
+  if (catalog && cart) {
+    try {
+      var localeRouter = bShop.localeRouter.create({});
+      var activePolicy = await localeRouter.activePolicy();
+      if (activePolicy) {
+        var defaultLocale = activePolicy.default_locale;
+        var supportedLocales = activePolicy.supported_locales || [defaultLocale];
+        // The switcher options: each supported tag + its display label
+        // (the locale's autonym via Intl.DisplayNames, falling back to
+        // the tag itself for an unrecognised tag).
+        var localeList = supportedLocales.map(function (tag) {
+          var label = tag;
+          try {
+            var dn = new Intl.DisplayNames([tag], { type: "language" });
+            label = dn.of(tag) || tag;
+          } catch (_e) { /* unknown tag — keep the tag as the label */ }
+          return { tag: tag, label: label };
+        });
+        // Operator `ui`/`chrome` overrides for every supported locale,
+        // layered over the shipped English baseline by b.i18n.
+        var chromeOverrides = await bShop.translations.readChromeOverrides(
+          function (sql, params) { return b.externalDb.query(sql, params); },
+          supportedLocales
+        );
+        localeWiring = {
+          localeRouter: localeRouter,
+          chromeI18n:   bShop.translations.createChromeI18n({
+            defaultLocale: defaultLocale,
+            locales:       supportedLocales,
+            overrides:     chromeOverrides,
+          }),
+          localeOptions: { defaultLocale: defaultLocale, locales: localeList },
+        };
+      }
+    } catch (_e) { /* no locale policy / unmigrated table — English baseline */ }
+  }
+
   var app = await b.createApp({
     dataDir: DATA_DIR,
     routes: function (r) {
@@ -561,6 +612,17 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // primitive only needs the externalDb query handle (which
         // ships with this deploy via D1_BRIDGE_URL).
         sfDeps.newsletter = bShop.newsletter.create({});
+
+        // i18n / locale routing — wired from the boot-time resolution
+        // (`localeWiring`, built before createApp where `await` is
+        // allowed). Present only when the operator has seeded an active
+        // locale policy; absent that, the storefront renders the English
+        // baseline with no switcher.
+        if (localeWiring) {
+          sfDeps.chromeI18n    = localeWiring.chromeI18n;
+          sfDeps.localeRouter  = localeWiring.localeRouter;
+          sfDeps.localeOptions = localeWiring.localeOptions;
+        }
         // Reviews display + submit. The submit route gates on a verified
         // purchase, which needs order reads — wire an order handle here
         // regardless of Stripe (order reads don't touch the payment SDK).
