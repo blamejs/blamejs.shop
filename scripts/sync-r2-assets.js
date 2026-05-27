@@ -17,8 +17,10 @@
  * in the repo, and the Worker serves them at `/assets/themes/<name>/…`
  * (assetPrefix `/assets/` + the R2 key). So the R2 key drops the per-theme
  * `assets/` segment: `themes/default/assets/css/main.css` →
- * `themes/default/css/main.css`. Brand images / media are operator-managed
- * in R2 directly and are not repo-sourced, so they're left untouched.
+ * `themes/default/css/main.css`. The default theme's `brand/` subdir is the
+ * exception: the chrome references the logo / favicon at the GLOBAL
+ * `/assets/brand/*` (not theme-scoped), so those files upload to the
+ * `brand/*` key (`themes/default/assets/brand/logo.png` → `brand/logo.png`).
  *
  * Content-fingerprinted keys: the renderers reference SRI-bearing assets
  * (`.css` / `.js` / `.mjs`) by a content-fingerprinted name
@@ -81,6 +83,15 @@ function _collectJobs() {
     if (!nodeFs.existsSync(assetsDir)) return;
     var isDefault = ent.name === "default";
     _walk(assetsDir, [], []).forEach(function (f) {
+      // Brand assets (logo / favicon) are GLOBAL, not theme-scoped: the
+      // chrome references them at `/assets/brand/*` (R2 key `brand/*`), so
+      // the default theme's `brand/` subdir uploads to the global `brand/`
+      // key rather than `themes/default/brand/`. (The default theme owns the
+      // canonical brand; a non-default theme's brand/ stays theme-scoped.)
+      if (isDefault && f.rel.indexOf("brand/") === 0) {
+        jobs.push({ file: f.file, key: f.rel });
+        return;
+      }
       // Always upload under the plain key.
       jobs.push({ file: f.file, key: "themes/" + ent.name + "/" + f.rel });
       // For the default theme's SRI-bearing assets, also upload the SAME

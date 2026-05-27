@@ -370,7 +370,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: var(--space-6) 0; }
   overflow: hidden;
 }
 .brand img {
-  height: 2.75rem; width: auto;
+  height: 3.5rem; width: auto;
   display: block; object-fit: contain;
 }
 .brand:hover { opacity: 0.85; }
@@ -2380,7 +2380,7 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
 }
 .site-footer__brand-col { max-width: 22rem; }
 .site-footer__logo {
-  height: 3rem;
+  height: 3.75rem;
   width: auto;
   margin-bottom: var(--space-4);
 }
