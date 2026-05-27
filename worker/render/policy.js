@@ -13,6 +13,9 @@ var LAYOUT =
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{description}}\">\n" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
+  "  <link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/favicon.png\">\n" +
+  "  <link rel=\"apple-touch-icon\" href=\"/assets/brand/favicon.png\">\n" +
+  "  <meta name=\"theme-color\" content=\"#08080a\">\n" +
   "  <link rel=\"stylesheet\" href=\"{{theme_css}}\"RAW_CSS_INTEGRITY>\n" +
   "  <meta name=\"robots\" content=\"index, follow\">\n" +
   "</head>\n" +
