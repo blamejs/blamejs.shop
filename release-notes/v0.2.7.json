@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.7",
+  "date": "2026-05-27",
+  "headline": "Default-theme brand polish — broader favicon support and a larger logo",
+  "summary": "Small refinements to the bundled default theme's branding. Every page head now advertises a PNG favicon and an Apple touch icon alongside the existing SVG favicon, so the site icon renders correctly on Safari / iOS home screens and on browsers that don't support SVG favicons, plus a theme-color so the mobile browser chrome matches the dark canvas. The header and footer logo are rendered larger for more presence. These affect the default theme only; a custom theme passed via the theme primitive is unchanged.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Fuller favicon + icon metadata", "body": "The page head now includes a PNG favicon and an `apple-touch-icon` (Apple home-screen icons require PNG — SVG favicons aren't used there) in addition to the SVG favicon, plus a `theme-color` meta for the mobile browser UI. Emitted on every page across both the edge and container render paths." },
+        { "title": "Larger header and footer logo", "body": "The default theme renders the brand logo at a larger size in the header and footer for clearer presence." }
+      ]
+    }
+  ]
+}
