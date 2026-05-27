@@ -1,4 +1,4 @@
-import { renderTemplate, escapeHtml, escapeAttr, formatPrice, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag } from "./_lib.js";
+import { renderTemplate, escapeHtml, escapeAttr, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, makeFormatPrice, currencySwitcher } from "./_lib.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
@@ -111,6 +111,7 @@ var LAYOUT =
   "        </ul>\n" +
   "      </div>\n" +
   "    </div>\n" +
+  "    RAW_CURRENCY_SWITCHER\n" +
   "    <div class=\"site-footer__copy\">\n" +
   "      <p>&copy; {{year}} {{shop_name}} — built on blamejs · Apache 2.0 licensed.</p>\n" +
   "      <ul>\n" +
@@ -486,6 +487,12 @@ function _wrap(opts) {
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(opts.themeCss))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
+    .replace("RAW_CURRENCY_SWITCHER", currencySwitcher({
+      currencies:  opts.currencyOptions,
+      selected:    opts.currencySelected,
+      note:        opts.currencyNote,
+      redirect_to: opts.currencyRedirectTo,
+    }))
     .replace("RAW_BODY_PLACEHOLDER", opts.body);
 }
 
@@ -535,20 +542,25 @@ export function renderProduct(opts) {
   // edge data layer; format them into the same display-string shape the
   // container builds before handing to the shared markup assemblers, so
   // the two render paths emit byte-identical HTML.
+  // Display-currency formatter — converts base → display when a currency
+  // context is active, otherwise base-currency `formatPrice`. The JSON-LD
+  // block below intentionally stays in the base currency (it's the
+  // machine-readable offer tied to the charge), so it bypasses `fmt`.
+  var fmt = makeFormatPrice(opts.currencyContext);
   var bundleOffers  = (opts.bundleOffers || []).map(function (o) {
     return {
       bundle_sku:         o.bundle_sku,
       title:              o.title,
       components:         o.components,
-      list_total_str:     formatPrice(o.list_total_minor, o.currency),
-      amount_str:         formatPrice(o.amount_minor, o.currency),
-      discount_str:       o.discount_minor > 0 ? formatPrice(o.discount_minor, o.currency) : null,
+      list_total_str:     fmt(o.list_total_minor, o.currency),
+      amount_str:         fmt(o.amount_minor, o.currency),
+      discount_str:       o.discount_minor > 0 ? fmt(o.discount_minor, o.currency) : null,
       available:          o.available,
       unavailable_reason: o.unavailable_reason,
     };
   });
   var qtyBreaks     = (opts.qtyBreaks || []).map(function (br) {
-    return { label: br.label, unit_str: formatPrice(br.unit_minor, br.currency) };
+    return { label: br.label, unit_str: fmt(br.unit_minor, br.currency) };
   });
   var wishlistCount = opts.wishlistCount == null ? 0 : opts.wishlistCount;
   var shopName    = opts.shopName || "blamejs.shop";
@@ -562,7 +574,7 @@ export function renderProduct(opts) {
 
   var rendered = variants.map(function (v) {
     var price = prices[v.id];
-    var priceStr = price ? formatPrice(price.amount_minor, price.currency) : "—";
+    var priceStr = price ? fmt(price.amount_minor, price.currency) : "—";
     var vTitle = v.title || (Object.keys(v.options || {}).map(function (k) { return v.options[k]; }).join(" / ") || "Default");
     return { id: v.id, sku: v.sku, title: vTitle, price: priceStr };
   });
@@ -669,5 +681,9 @@ export function renderProduct(opts) {
     ogImage:       ogImage,
     ogUrl:         "",
     body:          body + (jsonLd || ""),
+    currencyOptions:     opts.currencyOptions,
+    currencySelected:    opts.currencySelected,
+    currencyNote:        opts.currencyNote,
+    currencyRedirectTo:  opts.currencyRedirectTo,
   });
 }

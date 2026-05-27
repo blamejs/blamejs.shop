@@ -45,6 +45,7 @@ import {
   applyFilters,
   rewriteQuery,
 } from "./data/search-faceting.js";
+import { hasCurrencyCookie } from "./data/currency.js";
 
 // Cloudflare Worker — edge router for blamejs.shop.
 //
@@ -735,6 +736,15 @@ async function _edgeRenderCached(request, env, url, ctx) {
   if (_hasSessionCookie(request)) {
     return await _edgeRender(request, env, url);
   }
+  // A visitor who chose a display currency carries the sealed `shop_ccy`
+  // cookie. The edge can't unseal it (the vault keychain lives in the
+  // container), so a converted page must come from the container — AND the
+  // page must never land in the URL-keyed shared cache, or a EUR visitor's
+  // page would be served to the next USD visitor at the same URL. Treat the
+  // cookie as cache-disqualifying + fall through to the container.
+  if (hasCurrencyCookie(request)) {
+    return null;
+  }
   const cache = caches.default;
   const cacheKey = new Request(_cacheKeyUrl(request.url), { method: "GET", headers: request.headers });
   const cached = await cache.match(cacheKey);
@@ -840,14 +850,14 @@ function _edgeError(route, e, request, env, version, shopName) {
 
 async function _edgeCartEmpty(request, env, version, shopName) {
   try {
-    const html = renderCart({
+    const html = renderCart(Object.assign({
       lines:         [],
       totals:        { subtotal_minor: 0, grand_total_minor: 0, currency: "USD" },
       productLookup: {},
       shopName:      shopName,
       cartCount:     0,
       version:       version,
-    });
+    }, _currencyRenderOpts(env, { pathname: "/cart" })));
     // /cart is a session-bound surface even when the guest cart is
     // empty — crawlers indexing it dilute search results with
     // empty-state pages and produce stale "Your cart is empty"
@@ -909,15 +919,43 @@ async function _edgeBlogArticle(request, env, _url, version, shopName, slug) {
   }
 }
 
+// Operator's display-currency allow-list for the footer switcher, read
+// from SHOP_CURRENCIES (comma-separated, base first). The edge serves the
+// switcher in its base state to anonymous cache-eligible visitors — the
+// converted display itself comes from the container once the visitor has
+// chosen a currency (the sealed `shop_ccy` cookie disqualifies the edge
+// cache + falls through). `currencyRenderOpts` returns the markup fields
+// the renderers thread into their footer; an empty list (single-currency
+// store) yields no switcher.
+function _currencyOptions(env) {
+  var base = (env.SHOP_BASE_CURRENCY || "USD").toUpperCase();
+  var raw  = (env.SHOP_CURRENCIES || base);
+  var list = String(raw).split(",")
+    .map(function (s) { return s.trim().toUpperCase(); })
+    .filter(function (s) { return /^[A-Z]{3}$/.test(s); });
+  if (list.indexOf(base) === -1) list.unshift(base);
+  return { base: base, options: list };
+}
+
+function _currencyRenderOpts(env, url) {
+  var c = _currencyOptions(env);
+  if (c.options.length < 2) return {};
+  return {
+    currencyOptions:    c.options,
+    currencySelected:   c.base,
+    currencyRedirectTo: (url && url.pathname) || "/",
+  };
+}
+
 async function _edgeHome(request, env, _url, version, shopName) {
   try {
     const page = await listActiveProducts(env.DB, { limit: 24, currency: "USD" });
-    const html = renderHome({
+    const html = renderHome(Object.assign({
       products:  page.rows,
       shopName:  shopName,
       cartCount: 0,
       version:   version,
-    });
+    }, _currencyRenderOpts(env, _url)));
     return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/", e, request, env, version, shopName);
@@ -994,7 +1032,7 @@ async function _edgeSearch(request, env, url, version, shopName) {
       facets   = computeFacets(facetDefs, universe.rows, filters);
       products = applyFilters(facetDefs, universe.rows, filters).slice(0, 24);
     }
-    const html = renderSearch({
+    const html = renderSearch(Object.assign({
       q:              q,
       products:       products,
       facets:         facets,
@@ -1003,14 +1041,14 @@ async function _edgeSearch(request, env, url, version, shopName) {
       shopName:       shopName,
       cartCount:      0,
       version:        version,
-    });
+    }, _currencyRenderOpts(env, url)));
     return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/search", e, request, env, version, shopName);
   }
 }
 
-async function _edgeProduct(request, env, _url, version, shopName, slug) {
+async function _edgeProduct(request, env, url, version, shopName, slug) {
   try {
     const product = await getProductBySlug(env.DB, slug);
     if (!product) {
@@ -1087,7 +1125,7 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
         ? getQtyBreaksForSku(env.DB, firstVariant.sku, firstPrice.amount_minor, firstPrice.currency, b.money)
         : Promise.resolve([]),
     ]);
-    const html = renderProduct({
+    const html = renderProduct(Object.assign({
       product:       product,
       variants:      variants,
       prices:        prices,
@@ -1103,7 +1141,7 @@ async function _edgeProduct(request, env, _url, version, shopName, slug) {
       shopName:      shopName,
       cartCount:     0,
       version:       version,
-    });
+    }, _currencyRenderOpts(env, url)));
     // Hero-image preload — the PDP's LCP element is almost always the
     // first media row's image. Preloading it via Link rel=preload
     // tells Cloudflare's Early Hints to include the asset URL in the

@@ -53,6 +53,15 @@ HEALTH_PATH         = "/_/health"
 # deploy is verified.
 EDGE_RENDER         = "on"
 SHOP_NAME           = "blamejs.shop"
+# Multi-currency display. SHOP_BASE_CURRENCY is the settlement currency
+# (the currency every cart / order / payment is charged in). SHOP_CURRENCIES
+# is a comma-separated allow-list of DISPLAY currencies the storefront's
+# footer switcher offers, base first; visitors browse prices converted from
+# the base via the operator-supplied FX rates while the charge stays in the
+# base currency. Leave SHOP_CURRENCIES at the base alone (or unset) to ship
+# a single-currency store with no switcher.
+SHOP_BASE_CURRENCY  = "USD"
+SHOP_CURRENCIES     = "USD"
 
 # --- Container ------------------------------------------------------
 # Cloudflare Containers boots from the Dockerfile in the repo root.

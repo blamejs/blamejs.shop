@@ -1,4 +1,4 @@
-import { renderTemplate, escapeHtml, formatPrice, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag } from "./_lib.js";
+import { renderTemplate, escapeHtml, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, makeFormatPrice, currencySwitcher } from "./_lib.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
@@ -111,6 +111,7 @@ var LAYOUT =
   "        </ul>\n" +
   "      </div>\n" +
   "    </div>\n" +
+  "    RAW_CURRENCY_SWITCHER\n" +
   "    <div class=\"site-footer__copy\">\n" +
   "      <p>&copy; {{year}} {{shop_name}} — built on blamejs · Apache 2.0 licensed.</p>\n" +
   "      <ul>\n" +
@@ -385,6 +386,12 @@ function _wrap(opts) {
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
+    .replace("RAW_CURRENCY_SWITCHER", currencySwitcher({
+      currencies:  opts.currency_options,
+      selected:    opts.currency_selected,
+      note:        opts.currency_note,
+      redirect_to: opts.currency_redirect_to,
+    }))
     .replace("RAW_BODY_PLACEHOLDER", opts.body);
 }
 
@@ -397,10 +404,13 @@ export function renderHome(opts) {
   var assetPrefix = opts.assetPrefix || "/assets/";
   var searchQ     = opts.searchQ == null ? "" : opts.searchQ;
   var themeCss    = opts.themeCss;
+  // Display-currency formatter — converts base → display when a currency
+  // context is active, otherwise base-currency `formatPrice`.
+  var fmt = makeFormatPrice(opts.currencyContext);
 
   var products = opts.products.map(function (p) {
     var priceStr = p.starting_price_minor != null
-      ? formatPrice(p.starting_price_minor, p.starting_price_currency || "USD")
+      ? fmt(p.starting_price_minor, p.starting_price_currency || "USD")
       : "—";
     var imageUrl = p.hero_media ? assetPrefix + p.hero_media.r2_key : null;
     var imageAlt = p.hero_media ? (p.hero_media.alt_text || p.title) : null;
@@ -482,5 +492,9 @@ export function renderHome(opts) {
     theme_css:  themeCss,
     version:    version,
     body:       body,
+    currency_options:     opts.currencyOptions,
+    currency_selected:    opts.currencySelected,
+    currency_note:        opts.currencyNote,
+    currency_redirect_to: opts.currencyRedirectTo,
   });
 }

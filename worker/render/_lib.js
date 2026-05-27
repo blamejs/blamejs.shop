@@ -184,5 +184,138 @@ export function formatPrice(minorUnits, currency) {
   if (typeof currency !== "string") {
     throw new TypeError("formatPrice: currency must be a string, got " + (currency === null ? "null" : typeof currency));
   }
-  return b.money.of(BigInt(minorUnits), currency).format("en-US");
+  return b.money.of(BigInt(minorUnits), currency).format(_localeFor(currency, "en-US"));
+}
+
+// ---- multi-currency display (edge) --------------------------------------
+//
+// The edge renders DISPLAY-ONLY converted prices: the catalog's base
+// price is shown in the visitor's chosen currency, but the cart / order /
+// payment currency is unchanged (the container owns the charge path). The
+// conversion math + the switcher markup are byte-identical to the
+// container's lib/currency-display.js + lib/storefront.js so a page served
+// from the edge and the same page served from the container render the
+// same converted price string. The edge reads the FX rate + rounding rule
+// from its direct D1 binding (see worker/data/currency.js); this module
+// holds only the pure transforms.
+
+var BPS_SCALE = 10000;
+
+// Per-currency default BCP 47 locale — mirrors lib/currency-display.js's
+// DEFAULT_LOCALE_BY_CURRENCY so "27,59 €" / "¥3,200" render identically
+// across substrates.
+var DEFAULT_LOCALE_BY_CURRENCY = {
+  USD: "en-US", CAD: "en-CA", AUD: "en-AU", NZD: "en-NZ", SGD: "en-SG",
+  HKD: "en-HK", INR: "en-IN", GBP: "en-GB", EUR: "de-DE", CHF: "de-CH",
+  SEK: "sv-SE", NOK: "nb-NO", DKK: "da-DK", JPY: "ja-JP", KRW: "ko-KR",
+  BRL: "pt-BR", MXN: "es-MX",
+};
+
+function _localeFor(currency, fallback) {
+  return DEFAULT_LOCALE_BY_CURRENCY[currency] || fallback || "en-US";
+}
+
+// Integer basis-points → the decimal-shaped string b.money.convert's rate
+// provider expects (9200 → "0.9200"). Mirrors lib/currency-display.js.
+function _bpsToDecimal(bps) {
+  var whole = Math.floor(bps / BPS_SCALE);
+  var frac  = bps % BPS_SCALE;
+  var fracStr = String(frac);
+  while (fracStr.length < 4) fracStr = "0" + fracStr;
+  return whole + "." + fracStr;
+}
+
+// Round `amount` (integer minor units) to the nearest multiple of `step`
+// under `mode`. Byte-identical to lib/currency-rounding.js's `_round` so
+// the display-increment rule (CHF 0.05, SEK 0.10) snaps the same way on
+// both substrates. Pure integer math.
+function _roundStep(amount, step, mode) {
+  if (step === 1) return amount;
+  var quot = Math.trunc(amount / step);
+  var rem  = amount - quot * step;
+  if (rem < 0) { quot -= 1; rem += step; }
+  var lower = quot * step;
+  var upper = lower + step;
+  if (rem === 0) return amount;
+  if (mode === "floor")   return lower;
+  if (mode === "ceiling") return upper;
+  var doubled = rem * 2;
+  if (doubled < step) return lower;
+  if (doubled > step) return upper;
+  if (mode === "half_up")   return amount >= 0 ? upper : lower;
+  if (mode === "half_down") return amount >= 0 ? lower : upper;
+  if (quot % 2 === 0) return lower;
+  return upper;
+}
+
+// Build the edge price formatter for one request. `ctx` is the resolved
+// currency context (from worker/data/currency.js): { base, display,
+// rateBps, rule, locale } — or null when no display conversion applies.
+// The returned function has the same (minorUnits, currency) signature as
+// `formatPrice`, so a renderer swaps `formatPrice` for it transparently.
+// When `ctx` is null / inactive, it IS `formatPrice` (base-currency
+// display). A price stored in a non-base currency is formatted as-is, not
+// re-converted (no base→that rate is resolved this request).
+export function makeFormatPrice(ctx) {
+  if (!ctx || !ctx.active) return formatPrice;
+  var base = ctx.base;
+  var display = ctx.display;
+  var rateBps = ctx.rateBps;
+  var rule = ctx.rule || null;
+  var locale = ctx.locale || _localeFor(display);
+  return function (minorUnits, currency) {
+    var cur = currency == null ? base : currency;
+    if (!Number.isInteger(minorUnits)) {
+      throw new TypeError("formatPrice: minorUnits must be an integer, got " + JSON.stringify(minorUnits));
+    }
+    if (cur !== base) {
+      return b.money.of(BigInt(minorUnits), cur).format(_localeFor(cur, "en-US"));
+    }
+    var displayMinor;
+    if (rateBps === BPS_SCALE) {
+      displayMinor = minorUnits;
+    } else {
+      var money    = b.money.fromMinorUnits(BigInt(minorUnits), base);
+      var rateStr  = _bpsToDecimal(rateBps);
+      var provider = { rate: function () { return rateStr; } };
+      displayMinor = Number(b.money.convert(money, display, provider).toMinorUnits());
+    }
+    if (rule && rule.increment_minor > 1 &&
+        (rule.applies_to === "all" || rule.applies_to === "display_only")) {
+      displayMinor = _roundStep(displayMinor, rule.increment_minor, rule.mode);
+    }
+    return b.money.fromMinorUnits(BigInt(displayMinor), display).format(locale);
+  };
+}
+
+// The "charged in <base>" disclosure — byte-identical to the container's.
+export function currencyDisclosure(displayCurrency, baseCurrency) {
+  return "Prices shown in " + displayCurrency + "; you'll be charged in " + baseCurrency + ".";
+}
+
+// Currency-switcher footer block — byte-identical markup to the
+// container's lib/storefront.js `_buildCurrencySwitcher`. `opts.currencies`
+// is the operator's allow-list (>=2 to render); `opts.selected` the active
+// display currency; `opts.note` the disclosure (when converting);
+// `opts.redirect_to` the path the switcher returns the visitor to.
+export function currencySwitcher(opts) {
+  if (!opts || !Array.isArray(opts.currencies) || opts.currencies.length < 2) return "";
+  var esc = function (s) { return b.template.escapeHtml(String(s)); };
+  var selected = opts.selected || opts.currencies[0];
+  var options = opts.currencies.map(function (c) {
+    var sel = c === selected ? " selected" : "";
+    return "<option value=\"" + esc(c) + "\"" + sel + ">" + esc(c) + "</option>";
+  }).join("");
+  var noteHtml = opts.note
+    ? "<p class=\"currency-switcher__note\">" + esc(opts.note) + "</p>"
+    : "";
+  return "<div class=\"currency-switcher\">\n" +
+    "      <form class=\"currency-switcher__form\" method=\"post\" action=\"/currency\">\n" +
+    "        <input type=\"hidden\" name=\"redirect_to\" value=\"" + esc(opts.redirect_to || "/") + "\">\n" +
+    "        <label class=\"currency-switcher__label\" for=\"currency-select\">Display currency</label>\n" +
+    "        <select id=\"currency-select\" name=\"currency\" class=\"currency-switcher__select\" data-currency-switcher>" + options + "</select>\n" +
+    "        <button type=\"submit\" class=\"currency-switcher__btn\">Set</button>\n" +
+    "      </form>\n" +
+    "      " + noteHtml + "\n" +
+    "    </div>";
 }
