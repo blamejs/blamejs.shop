@@ -79,15 +79,15 @@ first deploy:
 npx wrangler d1 migrations apply blamejs-shop --remote
 ```
 
-After the first deploy this is automated: Cloudflare's git-integration
-"Workers Builds" rolls the Worker + container on every push to `main`,
-and the `Cloudflare data sync` GitHub Actions workflow applies any
-pending migrations and syncs the R2 theme assets on the same push (the
-two steps the native build doesn't cover). The apply is idempotent —
-already-recorded migrations are skipped — so the command above stays
-valid for a manual run. Migrations are additive-only, so a container
-rolled out before the sync finishes degrades to the feature's empty
-state and self-heals once the migration lands.
+After the first deploy this is part of the release flow. Cloudflare's
+git-integration "Workers Builds" rolls the Worker + container on every
+push to `main`; the two steps it doesn't cover — applying pending D1
+migrations and syncing the R2 theme assets — are the `deploy` phase of
+`scripts/release.js` (run after the release merge). The apply is
+idempotent (already-recorded migrations are skipped), so the command
+above stays valid for a manual run, and migrations are additive-only,
+so a container rolled out before the sync finishes degrades to the
+feature's empty state and self-heals once the migration lands.
 
 The shipped migration set:
 
@@ -142,20 +142,34 @@ the operator sets the bridge secret + any application-level secrets:
 
 ## Deploy
 
-```bash
-npm run deploy
-```
+Deployment is split between Cloudflare's native build and the release
+script — never run `wrangler deploy` by hand against production (a second
+Worker/container roll races the native build):
 
-This runs `wrangler deploy` — which builds the Dockerfile, pushes the
-container image to Cloudflare's registry, and updates the Worker — and
-then `scripts/sync-r2-assets.js`, which uploads the theme stylesheets to
-the R2 bucket the Worker serves `/assets/*` from. **Both steps matter:**
-`wrangler deploy` ships the Worker + container but does *not* touch R2, so
-running it alone leaves the freshly-deployed HTML pointing at a stale
-stylesheet (new markup, old CSS — an "old UI" that's really a missing
-asset sync). `npm run deploy` keeps them in lockstep. The first deploy
-can take a few minutes for the image build; subsequent deploys are fast
-because Cloudflare caches the vendored layer.
+- **Worker + container** roll automatically via Cloudflare's
+  git-integration **Workers Builds** on every push to `main`. It builds
+  the Dockerfile (running the in-image smoke gate), pushes the image, and
+  updates the Worker. The first build takes a few minutes; later builds
+  reuse the cached vendored layer.
+- **D1 migrations + R2 theme assets** — the two steps Workers Builds
+  doesn't cover — are the `deploy` phase of `scripts/release.js`, run as
+  part of the release flow after the merge:
+
+  ```bash
+  node scripts/release.js deploy
+  ```
+
+  It applies pending migrations (`wrangler d1 migrations apply … --remote`,
+  idempotent), syncs the theme stylesheets / scripts to the R2 bucket the
+  Worker serves `/assets/*` from, then watches the Workers Build to
+  completion and verifies a live route. Theme assets ship under
+  content-fingerprinted names, so a Worker that rolls before the sync
+  finishes 404s the new asset briefly rather than serving a stale one —
+  it self-heals once the sync lands, and already-served pages keep working.
+
+The whole release (version bump → gates → commit → PR → merge → deploy →
+tag → npm publish) is orchestrated by `scripts/release.js` — see
+`node scripts/release.js help`.
 
 > Brand images and product media live in R2 directly (operator-uploaded /
 > written by the container's R2 bridge) and aren't repo-sourced, so the
