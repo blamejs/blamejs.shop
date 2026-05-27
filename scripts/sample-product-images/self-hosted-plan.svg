@@ -1,58 +1,79 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="Self-Hosted Plan — annual support license for self-hosted blamejs deployments">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" role="img" aria-label="Self-Hosted Plan" color="#C254E8">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#2a0f5c"/>
-      <stop offset="100%" stop-color="#0a1f44"/>
-    </linearGradient>
-    <linearGradient id="server" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#1a1a1a"/>
-      <stop offset="100%" stop-color="#0d0d0d"/>
-    </linearGradient>
-    <radialGradient id="led" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0%" stop-color="#2c8a3f" stop-opacity="1"/>
-      <stop offset="100%" stop-color="#2c8a3f" stop-opacity="0"/>
+    <radialGradient id="shGlow" cx="50%" cy="52%" r="56%">
+      <stop offset="0%" stop-color="#AD38DB" stop-opacity="0.34"/>
+      <stop offset="58%" stop-color="#732A8D" stop-opacity="0.11"/>
+      <stop offset="100%" stop-color="#AD38DB" stop-opacity="0"/>
     </radialGradient>
-    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
-      <path d="M48 0H0V48" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
-    </pattern>
+    <linearGradient id="shTower" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8E33B0"/><stop offset="100%" stop-color="#5C2272"/>
+    </linearGradient>
+    <linearGradient id="shTowerSide" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#6E2887"/><stop offset="100%" stop-color="#5C2272"/>
+    </linearGradient>
+    <linearGradient id="shShield" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#C254E8"/><stop offset="48%" stop-color="#AD38DB"/><stop offset="100%" stop-color="#6E2887"/>
+    </linearGradient>
+    <linearGradient id="shPager" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#AD38DB"/><stop offset="100%" stop-color="#5C2272"/>
+    </linearGradient>
   </defs>
-  <rect width="800" height="800" fill="url(#g)"/>
-  <rect width="800" height="800" fill="url(#grid)"/>
-
-  <!-- 3-unit server rack silhouette -->
-  <g transform="translate(400,470)">
-    <!-- rack frame -->
-    <rect x="-220" y="-180" width="440" height="360" rx="14" fill="url(#server)" stroke="rgba(255,255,255,0.22)" stroke-width="2"/>
-    <!-- U1 -->
-    <g transform="translate(0,-110)">
-      <rect x="-200" y="-40" width="400" height="80" rx="6" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
-      <circle cx="-170" cy="0" r="9" fill="url(#led)"/>
-      <circle cx="-170" cy="0" r="5" fill="#2c8a3f"/>
-      <rect x="-140" y="-16" width="120" height="32" rx="3" fill="rgba(255,255,255,0.08)"/>
-      <rect x="0" y="-16" width="80" height="32" rx="3" fill="rgba(255,255,255,0.08)"/>
-      <text x="160" y="6" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="14" font-weight="700" fill="rgba(255,255,255,0.55)" text-anchor="end">node-01</text>
-    </g>
-    <!-- U2 (accent) -->
-    <g transform="translate(0,0)">
-      <rect x="-200" y="-40" width="400" height="80" rx="6" fill="#fa4f09" opacity="0.92" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
-      <circle cx="-170" cy="0" r="9" fill="rgba(255,255,255,0.9)"/>
-      <text x="0" y="8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="24" font-weight="800" letter-spacing="0.18em" fill="#ffffff" text-anchor="middle">SELF-HOSTED</text>
-    </g>
-    <!-- U3 -->
-    <g transform="translate(0,110)">
-      <rect x="-200" y="-40" width="400" height="80" rx="6" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
-      <circle cx="-170" cy="0" r="9" fill="url(#led)"/>
-      <circle cx="-170" cy="0" r="5" fill="#2c8a3f"/>
-      <rect x="-140" y="-16" width="120" height="32" rx="3" fill="rgba(255,255,255,0.08)"/>
-      <rect x="0" y="-16" width="80" height="32" rx="3" fill="rgba(255,255,255,0.08)"/>
-      <text x="160" y="6" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="14" font-weight="700" fill="rgba(255,255,255,0.55)" text-anchor="end">node-03</text>
-    </g>
+  <rect width="300" height="300" fill="url(#shGlow)"/>
+  <g stroke="currentColor" stroke-opacity="0.08" stroke-width="1">
+    <path d="M0 50 H300 M0 100 H300 M0 150 H300 M0 200 H300 M0 250 H300 M50 0 V300 M100 0 V300 M150 0 V300 M200 0 V300 M250 0 V300"/>
   </g>
-
-  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" fill="#ffffff">
-    <text x="60" y="92" font-size="22" font-weight="700" letter-spacing="0.24em" fill="#b67aff">CATALOG · DIGITAL</text>
-    <text x="60" y="148" font-size="64" font-weight="800" letter-spacing="-0.02em">Self-Hosted Plan</text>
-    <text x="60" y="194" font-size="22" font-weight="500" fill="rgba(255,255,255,0.7)">Annual support license · your servers, your keys</text>
-    <text x="60" y="752" font-size="18" font-weight="600" letter-spacing="0.16em" fill="rgba(255,255,255,0.45)">SHP-SUP-1Y</text>
+  <!-- slim server tower: front + side faces -->
+  <g stroke="#5C2272" stroke-width="2.5" stroke-linejoin="round">
+    <!-- right side face -->
+    <path d="M150 56 L176 66 L176 244 L150 252 Z" fill="url(#shTowerSide)"/>
+    <!-- front face -->
+    <path d="M70 52 L150 56 L150 252 L70 256 Z" fill="url(#shTower)"/>
+    <!-- top face -->
+    <path d="M70 52 L96 42 L176 46 L150 56 Z" fill="#3d1a4d" fill-opacity="0.6"/>
   </g>
+  <!-- vent slits along the top of the front face -->
+  <g stroke="currentColor" stroke-opacity="0.55" stroke-width="2" stroke-linecap="round">
+    <path d="M80 72 H140 M80 80 H140 M80 88 H140 M80 96 H140"/>
+  </g>
+  <!-- status LED row -->
+  <g>
+    <circle cx="84" cy="116" r="3.5" fill="#C254E8"/>
+    <circle cx="98" cy="116" r="3.5" fill="#AD38DB"/>
+    <circle cx="112" cy="116" r="3.5" fill="#8E33B0"/>
+    <circle cx="126" cy="116" r="3.5" fill="#6E2887"/>
+  </g>
+  <!-- shield emblem on the front -->
+  <g stroke="#5C2272" stroke-width="2.5" stroke-linejoin="round">
+    <path d="M110 142 L142 150 L142 188 Q142 212 110 226 Q78 208 78 184 L78 150 Z" fill="url(#shShield)"/>
+    <path d="M94 182 L106 196 L128 164" fill="none" stroke="#ffffff" stroke-opacity="0.85" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <!-- lower vent slits -->
+  <g stroke="currentColor" stroke-opacity="0.45" stroke-width="2" stroke-linecap="round">
+    <path d="M80 240 H140 M80 232 H120"/>
+  </g>
+  <!-- pager / alert glyph beside the tower -->
+  <g stroke="#5C2272" stroke-width="2.5" stroke-linejoin="round">
+    <rect x="196" y="168" width="56" height="74" rx="9" fill="url(#shPager)"/>
+    <rect x="206" y="180" width="36" height="22" rx="4" fill="#3d1a4d" fill-opacity="0.7" stroke="#5C2272" stroke-width="1.6"/>
+  </g>
+  <!-- pager screen alert text lines -->
+  <g stroke="currentColor" stroke-opacity="0.7" stroke-width="1.8" stroke-linecap="round">
+    <path d="M211 188 H237 M211 195 H229"/>
+  </g>
+  <!-- pager buttons -->
+  <g>
+    <circle cx="213" cy="218" r="4.5" fill="#C254E8"/>
+    <circle cx="232" cy="218" r="4.5" fill="none" stroke="currentColor" stroke-opacity="0.6" stroke-width="2"/>
+    <path d="M205 232 H243" stroke="currentColor" stroke-opacity="0.5" stroke-width="2" stroke-linecap="round"/>
+  </g>
+  <!-- alert signal arcs radiating from the pager -->
+  <g fill="none" stroke="#AD38DB" stroke-width="2.4" stroke-linecap="round">
+    <path d="M252 150 Q264 158 264 172" stroke-opacity="0.75"/>
+    <path d="M258 140 Q278 152 278 174" stroke-opacity="0.45"/>
+  </g>
+  <!-- white sheen down the front face -->
+  <path d="M70 52 L92 53 L84 256 L70 256 Z" fill="#ffffff" fill-opacity="0.12"/>
+  <!-- glow accent dots -->
+  <circle cx="150" cy="62" r="3.5" fill="#AD38DB"/>
+  <circle cx="216" cy="232" r="3" fill="#C254E8" fill-opacity="0.85"/>
 </svg>

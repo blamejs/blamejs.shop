@@ -1,43 +1,66 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="Starter Bundle — Operator Tee + Edge Reader v1 + Operator License">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" role="img" aria-label="Starter Bundle" color="#C254E8">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#c93b00"/>
-      <stop offset="100%" stop-color="#ffae5e"/>
+    <radialGradient id="sbGlow" cx="50%" cy="52%" r="56%">
+      <stop offset="0%" stop-color="#AD38DB" stop-opacity="0.34"/>
+      <stop offset="58%" stop-color="#732A8D" stop-opacity="0.11"/>
+      <stop offset="100%" stop-color="#AD38DB" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sbBoxFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8E33B0"/><stop offset="100%" stop-color="#5C2272"/>
     </linearGradient>
-    <linearGradient id="box" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="rgba(0,0,0,0.65)"/>
-      <stop offset="100%" stop-color="rgba(0,0,0,0.4)"/>
+    <linearGradient id="sbBoxSide" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#6E2887"/><stop offset="100%" stop-color="#5C2272"/>
     </linearGradient>
-    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
-      <path d="M48 0H0V48" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
-    </pattern>
+    <linearGradient id="sbFlap" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#C254E8"/><stop offset="48%" stop-color="#AD38DB"/><stop offset="100%" stop-color="#732A8D"/>
+    </linearGradient>
+    <linearGradient id="sbTee" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#C254E8"/><stop offset="100%" stop-color="#8E33B0"/>
+    </linearGradient>
+    <linearGradient id="sbStick" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#AD38DB"/><stop offset="100%" stop-color="#6E2887"/>
+    </linearGradient>
+    <linearGradient id="sbCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#C254E8"/><stop offset="100%" stop-color="#732A8D"/>
+    </linearGradient>
   </defs>
-  <rect width="800" height="800" fill="url(#g)"/>
-  <rect width="800" height="800" fill="url(#grid)"/>
-
-  <!-- Three stacked boxes representing tee + reader + license -->
-  <g transform="translate(400,500)">
-    <!-- License (top) -->
-    <g transform="translate(-40,-180) rotate(6)">
-      <rect x="-110" y="-30" width="220" height="60" rx="8" fill="url(#box)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-      <text x="0" y="6" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="0.12em" fill="#ffffff" text-anchor="middle">OPERATOR LICENSE</text>
-    </g>
-    <!-- Edge Reader (middle) -->
-    <g transform="translate(20,-90) rotate(-3)">
-      <rect x="-140" y="-40" width="280" height="80" rx="10" fill="url(#box)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-      <text x="0" y="8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="700" letter-spacing="0.1em" fill="#ffffff" text-anchor="middle">EDGE READER v1</text>
-    </g>
-    <!-- Tee (bottom) -->
-    <g transform="translate(-20,30) rotate(4)">
-      <rect x="-160" y="-60" width="320" height="120" rx="12" fill="url(#box)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-      <text x="0" y="12" font-family="ui-sans-serif, system-ui, sans-serif" font-size="28" font-weight="800" letter-spacing="0.08em" fill="#ffffff" text-anchor="middle">OPERATOR TEE</text>
-    </g>
+  <rect width="300" height="300" fill="url(#sbGlow)"/>
+  <g stroke="currentColor" stroke-opacity="0.08" stroke-width="1">
+    <path d="M0 50 H300 M0 100 H300 M0 150 H300 M0 200 H300 M0 250 H300 M50 0 V300 M100 0 V300 M150 0 V300 M200 0 V300 M250 0 V300"/>
   </g>
-
-  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" fill="#ffffff">
-    <text x="60" y="92" font-size="22" font-weight="700" letter-spacing="0.24em" fill="#ffffff">CATALOG · BUNDLE</text>
-    <text x="60" y="148" font-size="64" font-weight="800" letter-spacing="-0.02em">Starter Bundle</text>
-    <text x="60" y="194" font-size="22" font-weight="500" fill="rgba(255,255,255,0.78)">Tee + Reader + License · single SKU</text>
-    <text x="60" y="752" font-size="18" font-weight="600" letter-spacing="0.16em" fill="rgba(255,255,255,0.55)">STR-BND-A</text>
+  <!-- box base: isometric 3/4 view -->
+  <g stroke="#5C2272" stroke-width="2.5" stroke-linejoin="round">
+    <!-- front face -->
+    <path d="M70 168 L150 200 L150 268 L70 232 Z" fill="url(#sbBoxFront)"/>
+    <!-- right side face -->
+    <path d="M150 200 L232 166 L232 232 L150 268 Z" fill="url(#sbBoxSide)"/>
+    <!-- box top rim (open mouth) -->
+    <path d="M70 168 L150 138 L232 166 L150 200 Z" fill="#3d1a4d" fill-opacity="0.55"/>
+    <!-- open lid flaps -->
+    <path d="M70 168 L150 138 L120 96 L46 122 Z" fill="url(#sbFlap)" fill-opacity="0.9"/>
+    <path d="M150 138 L232 166 L256 122 L182 100 Z" fill="url(#sbFlap)" fill-opacity="0.75"/>
   </g>
+  <!-- items peeking out of the open box -->
+  <!-- folded tee -->
+  <g stroke="#5C2272" stroke-width="2" stroke-linejoin="round">
+    <path d="M96 150 L132 138 L150 150 L150 178 L114 190 L96 178 Z" fill="url(#sbTee)"/>
+    <path d="M118 142 L126 148 L132 142" fill="none" stroke="currentColor" stroke-opacity="0.7" stroke-width="2"/>
+  </g>
+  <!-- hardware stick / device -->
+  <g stroke="#5C2272" stroke-width="2" stroke-linejoin="round">
+    <path d="M156 128 L176 121 L188 128 L188 162 L168 169 L156 162 Z" fill="url(#sbStick)"/>
+    <path d="M162 152 L182 145 M162 158 L182 151" stroke="currentColor" stroke-opacity="0.6" stroke-width="1.6"/>
+    <circle cx="170" cy="135" r="3" fill="#C254E8"/>
+  </g>
+  <!-- license card -->
+  <g stroke="#5C2272" stroke-width="2" stroke-linejoin="round">
+    <path d="M196 134 L224 124 L240 132 L240 158 L212 168 L196 160 Z" fill="url(#sbCard)"/>
+    <path d="M204 146 L226 138 M204 152 L220 146" stroke="currentColor" stroke-opacity="0.7" stroke-width="1.6"/>
+    <circle cx="231" cy="138" r="3.5" fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="1.4"/>
+  </g>
+  <!-- white sheen across the front face -->
+  <path d="M70 168 L150 200 L150 222 L70 190 Z" fill="#ffffff" fill-opacity="0.12"/>
+  <!-- glow accent dots -->
+  <circle cx="150" cy="62" r="3.5" fill="#AD38DB"/>
+  <circle cx="216" cy="232" r="3" fill="#C254E8" fill-opacity="0.85"/>
 </svg>

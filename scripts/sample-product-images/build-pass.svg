@@ -1,48 +1,58 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="Build Pass — annual CI license for blamejs build infrastructure">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" role="img" aria-label="Build pass" color="#C254E8">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#2a0f5c"/>
-      <stop offset="100%" stop-color="#6a1bff"/>
+    <radialGradient id="bpGlow" cx="50%" cy="50%" r="58%">
+      <stop offset="0%" stop-color="#AD38DB" stop-opacity="0.34"/>
+      <stop offset="58%" stop-color="#732A8D" stop-opacity="0.11"/>
+      <stop offset="100%" stop-color="#AD38DB" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bpCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#C254E8"/>
+      <stop offset="48%" stop-color="#AD38DB"/>
+      <stop offset="100%" stop-color="#6E2887"/>
     </linearGradient>
-    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0d0d0d"/>
-      <stop offset="100%" stop-color="#2a2a2a"/>
+    <linearGradient id="bpLanyard" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8E33B0"/>
+      <stop offset="100%" stop-color="#5C2272"/>
     </linearGradient>
-    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
-      <path d="M48 0H0V48" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
-    </pattern>
+    <linearGradient id="bpSeal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#C254E8"/>
+      <stop offset="100%" stop-color="#732A8D"/>
+    </linearGradient>
   </defs>
-  <rect width="800" height="800" fill="url(#g)"/>
-  <rect width="800" height="800" fill="url(#grid)"/>
-
-  <!-- Build pass — ticket style with perforation -->
-  <g transform="translate(400,450) rotate(3)">
-    <!-- ticket body -->
-    <path d="M-280 -120 L260 -120 L260 -40 A8 8 0 0 0 260 -24 L260 60 A8 8 0 0 0 260 76 L260 120 L-280 120 L-280 76 A8 8 0 0 0 -280 60 L-280 -24 A8 8 0 0 0 -280 -40 Z"
-          fill="url(#card)" stroke="rgba(255,255,255,0.2)" stroke-width="2"/>
-    <!-- perforation -->
-    <line x1="140" y1="-110" x2="140" y2="110" stroke="rgba(255,255,255,0.25)" stroke-width="2" stroke-dasharray="4 6"/>
-    <!-- accent stripe -->
-    <rect x="-280" y="-120" width="60" height="240" fill="#fa4f09"/>
-    <text x="-250" y="0" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="22" font-weight="800" letter-spacing="0.4em" fill="#ffffff" transform="rotate(-90 -250 0)" text-anchor="middle">BUILD PASS</text>
-
-    <!-- main pass content -->
-    <text x="-200" y="-70" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="14" font-weight="700" letter-spacing="0.22em" fill="rgba(255,255,255,0.5)">ADMIT ONE · 12 MONTHS</text>
-    <text x="-200" y="-20" font-family="ui-sans-serif, system-ui, sans-serif" font-size="42" font-weight="800" fill="#ffffff">Annual CI</text>
-    <text x="-200" y="22" font-family="ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="500" fill="rgba(255,255,255,0.65)">Unlimited build minutes</text>
-    <text x="-200" y="78" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="14" fill="rgba(255,255,255,0.5)">2026-05-22 → 2027-05-22</text>
-
-    <!-- right stub with PQC seal -->
-    <text x="200" y="-70" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="12" font-weight="700" letter-spacing="0.22em" fill="rgba(255,255,255,0.5)" text-anchor="middle">STUB</text>
-    <circle cx="200" cy="0" r="38" fill="none" stroke="#fa4f09" stroke-width="3"/>
-    <text x="200" y="8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="800" fill="#fa4f09" text-anchor="middle">PASS</text>
-    <text x="200" y="78" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="11" fill="rgba(255,255,255,0.5)" text-anchor="middle">ML-DSA · CI</text>
+  <rect width="300" height="300" fill="url(#bpGlow)"/>
+  <g stroke="currentColor" stroke-opacity="0.08" stroke-width="1">
+    <path d="M0 50 H300 M0 100 H300 M0 150 H300 M0 200 H300 M0 250 H300 M50 0 V300 M100 0 V300 M150 0 V300 M200 0 V300 M250 0 V300"/>
   </g>
-
-  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" fill="#ffffff">
-    <text x="60" y="92" font-size="22" font-weight="700" letter-spacing="0.24em" fill="#b67aff">CATALOG · DIGITAL</text>
-    <text x="60" y="148" font-size="64" font-weight="800" letter-spacing="-0.02em">Build Pass</text>
-    <text x="60" y="194" font-size="22" font-weight="500" fill="rgba(255,255,255,0.7)">Annual CI license · signed receipt</text>
-    <text x="60" y="752" font-size="18" font-weight="600" letter-spacing="0.16em" fill="rgba(255,255,255,0.45)">BLD-PSS-1Y</text>
+  <g transform="rotate(-13 150 158)">
+    <!-- lanyard straps to the clip -->
+    <path d="M126 30 L142 96" fill="none" stroke="url(#bpLanyard)" stroke-width="11" stroke-linecap="round"/>
+    <path d="M174 30 L158 96" fill="none" stroke="url(#bpLanyard)" stroke-width="11" stroke-linecap="round"/>
+    <path d="M126 30 L142 96" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2.4" stroke-linecap="round"/>
+    <!-- metal clip -->
+    <rect x="140" y="92" width="20" height="16" rx="4" fill="#6E2887"/>
+    <rect x="145" y="106" width="10" height="9" rx="3" fill="#5C2272"/>
+    <!-- access card body -->
+    <rect x="96" y="112" width="108" height="150" rx="16" fill="#5C2272"/>
+    <rect x="100" y="116" width="100" height="142" rx="13" fill="url(#bpCard)"/>
+    <rect x="100" y="116" width="100" height="60" rx="13" fill="#ffffff" fill-opacity="0.12"/>
+    <!-- punch slot at top of the card -->
+    <rect x="136" y="124" width="28" height="7" rx="3.5" fill="#5C2272"/>
+    <!-- terminal mark >_ -->
+    <path d="M118 150 L128 158 L118 166" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M134 168 H150" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+    <!-- header text lines -->
+    <rect x="118" y="186" width="64" height="6" rx="3" fill="#ffffff" fill-opacity="0.12"/>
+    <rect x="118" y="198" width="44" height="5" rx="2.5" fill="currentColor" fill-opacity="0.45"/>
+    <!-- checkmark seal -->
+    <circle cx="150" cy="228" r="24" fill="url(#bpSeal)" stroke="#5C2272" stroke-width="3"/>
+    <circle cx="150" cy="228" r="24" fill="#ffffff" fill-opacity="0.12"/>
+    <path d="M139 228 L147 236 L162 219" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
+  <!-- signed receipt ribbon trailing from behind the card -->
+  <path d="M196 236 L236 252 L230 262 L240 272 L230 280 L240 290 L196 270 Z"
+        fill="url(#bpLanyard)" stroke="#5C2272" stroke-width="2.4" stroke-linejoin="round"/>
+  <path d="M204 248 H224 M204 258 H220 M204 268 H222" stroke="currentColor" stroke-opacity="0.5" stroke-width="2" stroke-linecap="round"/>
+  <!-- glow accent dots -->
+  <circle cx="150" cy="62" r="3.5" fill="#AD38DB"/>
+  <circle cx="216" cy="232" r="3" fill="#C254E8" fill-opacity="0.85"/>
 </svg>

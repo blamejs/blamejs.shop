@@ -1,51 +1,63 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="Operator Mug — branded ceramic mug with shield wordmark">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" role="img" aria-label="Operator mug" color="#C254E8">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#c93b00"/>
-      <stop offset="100%" stop-color="#fa4f09"/>
-    </linearGradient>
-    <linearGradient id="mug" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#f4f1e8"/>
-      <stop offset="50%" stop-color="#ffffff"/>
-      <stop offset="100%" stop-color="#dcd6c0"/>
-    </linearGradient>
-    <radialGradient id="coffee" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0%" stop-color="#3a1d05"/>
-      <stop offset="100%" stop-color="#1a0d02"/>
+    <radialGradient id="mugGlow" cx="50%" cy="52%" r="56%">
+      <stop offset="0%" stop-color="#AD38DB" stop-opacity="0.34"/>
+      <stop offset="58%" stop-color="#732A8D" stop-opacity="0.11"/>
+      <stop offset="100%" stop-color="#AD38DB" stop-opacity="0"/>
     </radialGradient>
-    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
-      <path d="M48 0H0V48" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
-    </pattern>
+    <linearGradient id="mugBody" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#C254E8"/>
+      <stop offset="48%" stop-color="#AD38DB"/>
+      <stop offset="100%" stop-color="#6E2887"/>
+    </linearGradient>
+    <linearGradient id="mugRim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8E33B0"/>
+      <stop offset="100%" stop-color="#5C2272"/>
+    </linearGradient>
+    <radialGradient id="mugCoffee" cx="50%" cy="42%" r="62%">
+      <stop offset="0%" stop-color="#5C2272"/>
+      <stop offset="100%" stop-color="#08080a"/>
+    </radialGradient>
   </defs>
-  <rect width="800" height="800" fill="url(#g)"/>
-  <rect width="800" height="800" fill="url(#grid)"/>
 
-  <!-- Mug silhouette -->
-  <g transform="translate(400,470)">
+  <rect width="300" height="300" fill="url(#mugGlow)"/>
+
+  <g stroke="currentColor" stroke-opacity="0.08" stroke-width="1">
+    <path d="M0 50 H300 M0 100 H300 M0 150 H300 M0 200 H300 M0 250 H300 M50 0 V300 M100 0 V300 M150 0 V300 M200 0 V300 M250 0 V300"/>
+  </g>
+
+  <!-- subject: 11oz stoneware mug, side 3/4 view -->
+  <g stroke="#5C2272" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
     <!-- handle -->
-    <path d="M150 -90 C 250 -90 250 90 150 90"
-          fill="none" stroke="url(#mug)" stroke-width="28" stroke-linecap="round"/>
-    <path d="M150 -90 C 250 -90 250 90 150 90"
-          fill="none" stroke="rgba(0,0,0,0.18)" stroke-width="28" stroke-linecap="round" opacity="0.3"/>
-    <!-- body -->
-    <rect x="-180" y="-140" width="340" height="280" rx="22" fill="url(#mug)" stroke="rgba(0,0,0,0.18)" stroke-width="2"/>
-    <!-- coffee surface (top ellipse) -->
-    <ellipse cx="-10" cy="-138" rx="170" ry="22" fill="url(#coffee)" stroke="rgba(0,0,0,0.25)" stroke-width="2"/>
-    <!-- inner rim shadow -->
-    <ellipse cx="-10" cy="-138" rx="158" ry="14" fill="none" stroke="rgba(0,0,0,0.35)" stroke-width="1.5"/>
+    <path d="M196 134 Q244 130 244 176 Q244 222 196 218 L196 204 Q224 208 224 176 Q224 144 196 148 Z" fill="url(#mugBody)"/>
+    <!-- mug body -->
+    <path d="M84 124 L196 124 L190 232 Q150 244 90 232 Z" fill="url(#mugBody)"/>
+    <!-- rim band -->
+    <path d="M84 124 Q140 138 196 124 L196 112 Q140 126 84 112 Z" fill="url(#mugRim)"/>
+    <!-- coffee surface inside the rim -->
+    <ellipse cx="140" cy="120" rx="54" ry="11" fill="url(#mugCoffee)"/>
+  </g>
 
-    <!-- printed shield wordmark on mug -->
-    <g transform="translate(-10,15)">
-      <path d="M-70 -50 L-40 -75 L-15 -65 L0 -70 L15 -65 L40 -75 L70 -50 L55 -10 L40 -15 L40 50 L-40 50 L-40 -15 L-55 -10 Z"
-            fill="#fa4f09"/>
-      <text x="0" y="85" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="800" letter-spacing="0.18em" fill="#191919" text-anchor="middle">OPERATOR</text>
+  <!-- shield emblem on the mug body -->
+  <g>
+    <path d="M118 152 L162 152 L162 184 Q162 206 140 218 Q118 206 118 184 Z" fill="url(#mugRim)" stroke="#5C2272" stroke-width="2" stroke-linejoin="round"/>
+    <g stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M129 174 L137 182 L129 190"/>
+      <path d="M143 192 L151 192"/>
     </g>
   </g>
 
-  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" fill="#ffffff">
-    <text x="60" y="92" font-size="22" font-weight="700" letter-spacing="0.24em" fill="#ffffff">CATALOG · APPAREL</text>
-    <text x="60" y="148" font-size="64" font-weight="800" letter-spacing="-0.02em">Operator Mug</text>
-    <text x="60" y="194" font-size="22" font-weight="500" fill="rgba(255,255,255,0.78)">11oz ceramic · dishwasher safe · shield mark</text>
-    <text x="60" y="752" font-size="18" font-weight="600" letter-spacing="0.16em" fill="rgba(255,255,255,0.55)">OPR-MUG-11</text>
+  <!-- rising steam curls (currentColor) -->
+  <g stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none" stroke-opacity="0.85">
+    <path d="M118 104 Q108 88 118 72 Q128 56 118 40"/>
+    <path d="M142 102 Q132 84 142 66 Q152 48 142 30"/>
+    <path d="M166 104 Q156 88 166 72 Q176 56 166 42"/>
   </g>
+
+  <!-- white sheen highlight -->
+  <path d="M94 128 L100 226 Q110 230 112 226 L106 130 Z" fill="#ffffff" fill-opacity="0.12"/>
+
+  <!-- glow accent dots -->
+  <circle cx="150" cy="62" r="3.5" fill="#AD38DB"/>
+  <circle cx="210" cy="238" r="3" fill="#C254E8" fill-opacity="0.85"/>
 </svg>

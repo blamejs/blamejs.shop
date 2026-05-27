@@ -1,41 +1,82 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-label="Edge Reader v1 — single-purpose serial console reader">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" role="img" aria-label="Edge Node Dev Kit" color="#C254E8">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0a1f44"/>
-      <stop offset="100%" stop-color="#2c4d8a"/>
-    </linearGradient>
-    <linearGradient id="hwBody" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#1a1a1a"/>
-      <stop offset="100%" stop-color="#0d0d0d"/>
-    </linearGradient>
-    <radialGradient id="led" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0%" stop-color="#fa4f09" stop-opacity="1"/>
-      <stop offset="100%" stop-color="#fa4f09" stop-opacity="0"/>
+    <radialGradient id="ek-glow" cx="50%" cy="44%" r="56%">
+      <stop offset="0%" stop-color="#AD38DB" stop-opacity="0.40"/>
+      <stop offset="55%" stop-color="#732A8D" stop-opacity="0.13"/>
+      <stop offset="100%" stop-color="#08080a" stop-opacity="0"/>
     </radialGradient>
-    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
-      <path d="M48 0H0V48" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
-    </pattern>
+    <linearGradient id="ek-box" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1422"/>
+      <stop offset="100%" stop-color="#0b0910"/>
+    </linearGradient>
+    <linearGradient id="ek-boxtop" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#241a30"/>
+      <stop offset="100%" stop-color="#150f1d"/>
+    </linearGradient>
+    <linearGradient id="ek-board" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#23163a"/>
+      <stop offset="100%" stop-color="#120b1d"/>
+    </linearGradient>
+    <linearGradient id="ek-edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#AD38DB"/>
+      <stop offset="100%" stop-color="#732A8D"/>
+    </linearGradient>
+    <radialGradient id="ek-chip" cx="50%" cy="38%" r="65%">
+      <stop offset="0%" stop-color="#C357E8"/>
+      <stop offset="100%" stop-color="#732A8D"/>
+    </radialGradient>
   </defs>
-  <rect width="800" height="800" fill="url(#g)"/>
-  <rect width="800" height="800" fill="url(#grid)"/>
 
-  <!-- hardware silhouette -->
-  <g transform="translate(400,460)">
-    <rect x="-220" y="-100" width="440" height="200" rx="16" fill="url(#hwBody)" stroke="rgba(255,255,255,0.18)" stroke-width="2"/>
-    <rect x="-180" y="-60" width="120" height="40" rx="4" fill="rgba(255,255,255,0.08)"/>
-    <rect x="-50" y="-60" width="140" height="40" rx="4" fill="rgba(255,255,255,0.08)"/>
-    <rect x="100" y="-60" width="80" height="40" rx="4" fill="rgba(255,255,255,0.08)"/>
-    <circle cx="-180" cy="40" r="10" fill="url(#led)"/>
-    <circle cx="-180" cy="40" r="6" fill="#fa4f09"/>
-    <circle cx="-150" cy="40" r="6" fill="rgba(255,255,255,0.25)"/>
-    <circle cx="-120" cy="40" r="6" fill="rgba(255,255,255,0.25)"/>
-    <text x="180" y="48" font-family="ui-monospace, SF Mono, Consolas, monospace" font-size="20" font-weight="700" fill="rgba(255,255,255,0.6)" text-anchor="end">EDGE v1</text>
+  <!-- soft glow behind subject -->
+  <rect width="300" height="300" fill="url(#ek-glow)"/>
+
+  <!-- faint backdrop grid -->
+  <g stroke="currentColor" stroke-opacity="0.08" stroke-width="1">
+    <path d="M0 50 H300 M0 100 H300 M0 150 H300 M0 200 H300 M0 250 H300 M50 0 V300 M100 0 V300 M150 0 V300 M200 0 V300 M250 0 V300"/>
   </g>
 
-  <g font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" fill="#ffffff">
-    <text x="60" y="92" font-size="22" font-weight="700" letter-spacing="0.24em" fill="#7fb1ff">CATALOG · HARDWARE</text>
-    <text x="60" y="148" font-size="64" font-weight="800" letter-spacing="-0.02em">Edge Reader v1</text>
-    <text x="60" y="194" font-size="22" font-weight="500" fill="rgba(255,255,255,0.65)">USB-C · serial console · hardware RNG</text>
-    <text x="60" y="752" font-size="18" font-weight="600" letter-spacing="0.16em" fill="rgba(255,255,255,0.45)">EDG-RDR-V1</text>
+  <!-- kit box (isometric, open) -->
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <!-- box body -->
+    <path d="M58 168 L150 198 L150 252 L58 222 Z" fill="url(#ek-box)" stroke="url(#ek-edge)" stroke-width="2.6"/>
+    <path d="M242 168 L150 198 L150 252 L242 222 Z" fill="#0d0a14" stroke="#732A8D" stroke-width="2.6"/>
+    <!-- open lid flaps -->
+    <path d="M58 168 L150 198 L150 150 L58 120 Z" fill="url(#ek-boxtop)" stroke="#732A8D" stroke-width="2.4" opacity="0.92"/>
+    <path d="M242 168 L150 198 L150 150 L242 120 Z" fill="#100b18" stroke="#732A8D" stroke-width="2.4" opacity="0.92"/>
   </g>
+
+  <!-- edge-node circuit board lifting out of the box -->
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <rect x="106" y="64" width="88" height="78" rx="7" fill="url(#ek-board)" stroke="url(#ek-edge)" stroke-width="3"/>
+
+    <!-- main SoC chip -->
+    <rect x="128" y="84" width="34" height="34" rx="4" fill="url(#ek-chip)" stroke="#C357E8" stroke-width="2"/>
+    <rect x="136" y="92" width="18" height="18" rx="2" fill="none" stroke="#08080a" stroke-opacity="0.45" stroke-width="2"/>
+    <circle cx="145" cy="101" r="2.6" fill="#08080a" fill-opacity="0.55"/>
+
+    <!-- chip pins -->
+    <g stroke="currentColor" stroke-width="2" stroke-opacity="0.7">
+      <path d="M133 84 V78 M141 84 V78 M149 84 V78 M157 84 V78"/>
+      <path d="M133 118 V124 M141 118 V124 M149 118 V124 M157 118 V124"/>
+      <path d="M128 90 H122 M128 98 H122 M128 106 H122 M128 114 H122"/>
+      <path d="M162 90 H168 M162 98 H168 M162 106 H168 M162 114 H168"/>
+    </g>
+
+    <!-- secondary component + header pins -->
+    <rect x="114" y="74" width="12" height="9" rx="1.5" fill="#732A8D"/>
+    <g fill="#AD38DB">
+      <rect x="172" y="124" width="3.4" height="3.4" rx="0.8"/>
+      <rect x="179" y="124" width="3.4" height="3.4" rx="0.8"/>
+      <rect x="186" y="124" width="3.4" height="3.4" rx="0.8"/>
+    </g>
+
+    <!-- copper trace + terminal >_ mark -->
+    <path d="M114 128 L122 128 L122 134 L138 134" fill="none" stroke="currentColor" stroke-width="2" stroke-opacity="0.45"/>
+    <path d="M114 92 L120 96 L114 100" fill="none" stroke="currentColor" stroke-width="2.4"/>
+    <path d="M126 100 H136" stroke="currentColor" stroke-width="2.4"/>
+  </g>
+
+  <!-- glow accent dots -->
+  <circle cx="210" cy="76" r="4.5" fill="#AD38DB"/>
+  <circle cx="68" cy="206" r="3.2" fill="#C357E8" fill-opacity="0.85"/>
 </svg>
