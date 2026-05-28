@@ -1,4 +1,4 @@
-import { Container, getContainer } from "@cloudflare/containers";
+import { Container } from "@cloudflare/containers";
 import b from "./b.js";
 // Asset integrity + version manifest (built by scripts/generate-asset-manifest.js,
 // bundled into the Worker). The edge renders read the release version + the
@@ -253,7 +253,7 @@ export class InventoryLock {
         },
         body: JSON.stringify({ sku, available, threshold }),
       });
-      const container = getContainer(this.env.SHOP, "singleton");
+      const container = _shopContainer(this.env);
       // Don't await — the decrement caller already got its response.
       container.fetch(req).catch(() => { /* drop-silent — alert delivery is best-effort */ });
     } catch (_e) { /* drop-silent — alert delivery is best-effort */ }
@@ -1416,6 +1416,21 @@ function _staticHtml(body, method, env, request) {
 }
 
 
+// Resolve the single container instance, pinned to a region via the
+// Durable Object `locationHint` so the container co-locates with the D1
+// primary (US-East / `enam`). The boot's secure-boot runs a per-row audit
+// verify over the D1 bridge; if the container is placed far from D1 every
+// round-trip crosses the continent and the cold-start blows CF's port
+// readiness window. A DO is created in the colo of first access and never
+// moves, so the region is baked into the name — changing `SHOP_CONTAINER_REGION`
+// mints a fresh DO in the new colo. The container is stateless (D1/R2/KV are
+// external), so re-placing it loses no data. `getContainer()` from the SDK
+// does not accept a locationHint, hence the explicit idFromName + get.
+function _shopContainer(env) {
+  var region = (env && env.SHOP_CONTAINER_REGION) || "enam";
+  return env.SHOP.get(env.SHOP.idFromName("singleton-" + region), { locationHint: region });
+}
+
 async function _forwardToContainer(request, env) {
   // Single logical container instance for now ("singleton"). The
   // Container base class' getContainer() handles routing, auto-start,
@@ -1430,7 +1445,7 @@ async function _forwardToContainer(request, env) {
   // instead of the raw SDK error string. POST bodies buffer once
   // and re-serve on each retry; GET / HEAD have no body and clone
   // cheaply.
-  const container = getContainer(env.SHOP, "singleton");
+  const container = _shopContainer(env);
   const method = request.method.toUpperCase();
   const hasBody = method !== "GET" && method !== "HEAD";
   const buffered = hasBody ? await request.arrayBuffer() : null;
