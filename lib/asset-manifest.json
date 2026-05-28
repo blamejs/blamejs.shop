@@ -1,13 +1,13 @@
 {
-  "version": "0.2.12",
+  "version": "0.2.13",
   "assets": {
     "css/admin.css": {
       "integrity": "sha384-FgqvXcZygYkJjjOtXAeu9xi6AtYqkchPnJKcS0OeHm8lynhd9r4RfdpoT7P7j7/l",
       "fingerprinted": "css/admin.afd7b964c1f6fe1b.css"
     },
     "css/main.css": {
-      "integrity": "sha384-4n7LcnY4MZQmhe0dlnwm50HaOyzJ0QMqtb7b70N9qO20B4LJ858lMOxXuua7aFYz",
-      "fingerprinted": "css/main.666c51fd74364739.css"
+      "integrity": "sha384-E56XcvNC5nbTWyHJJcepF6sVA1KjRNo/MWFL5F5w2PDN10JNaHdzIAP9a46m2Md8",
+      "fingerprinted": "css/main.a76d36ac566703d6.css"
     },
     "js/announcement.js": {
       "integrity": "sha384-z4zcEMn+tScoVnYRE4nEf8N/oyvpxdpaxTNrT4QO/jURChid4+qjAvWkzatCaAPq",

@@ -1221,10 +1221,19 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
   margin: 0;
   aspect-ratio: 1 / 1;
   background:
-    radial-gradient(120% 120% at 70% 20%, rgba(173,56,219,.30), transparent 60%),
+    radial-gradient(120% 120% at var(--card-glow, 70% 20%), rgba(173,56,219,.30), transparent 60%),
     linear-gradient(160deg, var(--surface-hover), var(--surface-card));
   overflow: hidden;
 }
+/* Rotate the glow origin per grid position so a wall of tiles reads as a
+   designed set rather than one stamp repeated — same approach the
+   collection cards use, applied across a six-step cycle. */
+.product-card:nth-child(6n + 1) .product-card__media { --card-glow: 72% 18%; }
+.product-card:nth-child(6n + 2) .product-card__media { --card-glow: 26% 24%; }
+.product-card:nth-child(6n + 3) .product-card__media { --card-glow: 50% 14%; }
+.product-card:nth-child(6n + 4) .product-card__media { --card-glow: 82% 30%; }
+.product-card:nth-child(6n + 5) .product-card__media { --card-glow: 18% 32%; }
+.product-card:nth-child(6n + 6) .product-card__media { --card-glow: 60% 22%; }
 .product-card__media img {
   width: 100%; height: 100%;
   object-fit: cover;
@@ -1239,7 +1248,7 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
 .media-ph__svg {
   width: 74%;
   height: auto;
-  color: var(--ink-mute);
+  color: var(--ink-soft);
 }
 .product-card__meta {
   padding: var(--space-4) var(--space-5) var(--space-5);
@@ -1699,8 +1708,9 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   display: flex; flex-direction: column; gap: var(--space-3);
   padding: var(--space-5);
   background: var(--surface-card);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
   margin: var(--space-5) 0 var(--space-4);
 }
 .pdp__buybox .featured-product__price { margin: 0; line-height: 1; }
