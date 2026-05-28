@@ -56,6 +56,28 @@
     // class on <html> (rather than removing the node) keeps the manage
     // page's own re-open affordance intact and avoids a layout jump.
     document.documentElement.setAttribute("data-consent-decided", "1");
+  } else {
+    // Banner is showing. It's a role="dialog" that sits last in the DOM,
+    // so a keyboard visitor would tab through the whole page before
+    // reaching Accept / Reject — yet the bar visually overlays the fold.
+    // Move focus to its first actionable control on load so the decision
+    // is reachable immediately. Focus only, no scroll-jacking: the bar is
+    // fixed at the viewport bottom and already in view. The banner stays
+    // dismissible by keyboard (Tab/Shift+Tab reach every control; the
+    // form submits on Enter).
+    var banner = document.getElementById("consent-banner");
+    if (banner && typeof banner.querySelector === "function") {
+      var firstControl = banner.querySelector("button, a[href]");
+      if (firstControl && typeof firstControl.focus === "function") {
+        try {
+          firstControl.focus({ preventScroll: true });
+        } catch (_e) {
+          // Older engines reject the options object — fall back to a
+          // bare focus() call.
+          firstControl.focus();
+        }
+      }
+    }
   }
 
   // Narrow the form's return_to to the current path so the POST 303

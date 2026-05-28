@@ -1,0 +1,24 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.10",
+  "date": "2026-05-27",
+  "headline": "Accessibility and mobile polish — the cookie bar stops covering the page, and forms behave on phones",
+  "summary": "A round of default-theme refinements focused on the cookie consent bar, mobile ergonomics, and accessibility. The consent bar previously floated over page content — on a product page or checkout it could sit on top of the price, variant picker, and the add-to-cart / continue-to-payment button on a first visit. It is now a compact bottom bar that reserves its own space (so nothing important is ever hidden under it), scrolls within itself if the text is long, and receives keyboard focus when it appears. Alongside it: mobile form inputs no longer trigger iOS zoom-on-focus, the header touch targets meet the 44px minimum, inline text links are underlined, and a consistency pass tightened button shapes, table-label typography, and small-screen layout.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Cookie consent bar no longer covers page content", "body": "On a first visit the consent bar could overlap the product buy box and the checkout form (the price, variant selector, and primary button). It is now a compact bottom-docked bar that reserves matching space at the foot of the page until a choice is made, caps its height and scrolls internally for long text, and moves keyboard focus to its first control when shown — so the page's primary action is never hidden and the bar is reachable without tabbing the whole page." },
+        { "title": "Mobile form inputs no longer zoom on iOS", "body": "Text inputs, selects, and textareas render at a 16px minimum on touch devices, so mobile Safari no longer zooms the viewport when a field is focused (which previously left the page zoomed-in and pannable mid-checkout)." },
+        { "title": "Header touch targets meet the 44px minimum on mobile", "body": "The account and cart controls in the header — the two primary controls on a phone — are now at least 44×44px." },
+        { "title": "Clearer link and prompt-glyph affordances", "body": "Inline text links in body copy are underlined (no longer distinguished by color alone), and the terminal prompt glyph on the dark accent bands renders in full contrast." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Visual consistency pass", "body": "Action buttons share a single corner radius (primary and secondary no longer differ in shape), uppercase micro-labels use the monospace face consistently across tables and forms, the catalog grid shows two columns on small phones instead of one, the hero stat row breathes on narrow screens, and a few dark-theme borders/placeholders that read muddy were moved onto the semantic token palette." }
+      ]
+    }
+  ]
+}
