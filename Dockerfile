@@ -3,6 +3,10 @@
 # blamejs.shop container image — runs the Node application server
 # behind a Cloudflare Worker on Cloudflare Containers.
 #
+# At start the app runs a secure boot (vault unlock + audit-chain
+# verify + D1 bridge connect), so the first request after a
+# scale-to-zero idle pays a cold-start; the worker fronts the routes.
+#
 # Multi-stage layout:
 #   1. base    — pinned Node LTS, security updates applied
 #   2. vendor  — copies the committed vendored tree from the repo.
