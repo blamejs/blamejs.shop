@@ -1772,6 +1772,77 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
 }
 .form-actions { margin-top: var(--space-4); }
 
+/* ---- checkout two-column (mirrors the cart shell) -------------------
+   The shipping form sits in the left column, a sticky order-summary rail
+   on the right — reusing .cart-page__grid + .cart-page__summary so the
+   layout, sticky behaviour, and mobile stacking match the cart. */
+.checkout-page__form-col .form-stack { max-width: 100%; }
+.checkout-page__summary-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: var(--space-3); margin-bottom: var(--space-4);
+}
+.checkout-page__summary-head .pdp__variants-title { margin: 0; }
+.checkout-page__edit-cart {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  white-space: nowrap;
+}
+.checkout-page__lines { list-style: none; margin: 0 0 var(--space-4); padding: 0; }
+.checkout-line {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--hair);
+}
+.checkout-line:first-child { padding-top: 0; }
+.checkout-line__thumb {
+  flex-shrink: 0;
+  width: 3rem; height: 3rem;
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+  overflow: hidden; display: block;
+}
+.checkout-line__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.checkout-line__thumb--empty {
+  border: 1px dashed var(--border-strong);
+  background:
+    repeating-linear-gradient(135deg,
+      var(--bg-2) 0 6px,
+      var(--bg) 6px 12px);
+}
+.checkout-line__meta { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; flex: 1; }
+.checkout-line__title {
+  font-weight: 600; color: var(--ink); font-size: var(--text-sm);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.checkout-line__qty { color: var(--mute); font-size: var(--text-xs); }
+.checkout-line__total { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* "Continue shopping" link under the cart/checkout items column */
+.cart-page__continue { display: inline-flex; margin-top: var(--space-5); }
+
+/* "Added to cart" status banner (post-add redirect) */
+.cart-page__added {
+  display: flex; align-items: baseline; gap: var(--space-3);
+  margin: 0 0 var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+.cart-page__added a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  font-size: var(--text-xs);
+}
+
 /* ---- pay -------------------------------------------------------- */
 .pay-card {
   max-width: 36rem;

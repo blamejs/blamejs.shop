@@ -172,17 +172,49 @@ async function _xssEscape() {
 
 async function _checkoutForm() {
   var html = storefront.renderCheckoutForm({
-    lines:  [{ sku: "X-1", qty: 1, unit_amount_minor: 2999, unit_currency: "USD" }],
-    totals: { subtotal_minor: 2999, currency: "USD" },
+    lines:  [{ variant_id: "v1", sku: "X-1", qty: 2, unit_amount_minor: 2999, unit_currency: "USD", line_total_minor: 5998 }],
+    totals: { subtotal_minor: 5998, currency: "USD" },
     shop_name: "Acme",
+    product_lookup: { v1: { product: { title: "Test Widget", slug: "widget" }, hero_media: null } },
   });
   check("checkout form has email field",    /name=\"email\"/.test(html));
   check("checkout form has country field",   /name=\"country\"/.test(html));
   check("checkout form has street line1",    /name=\"line1\"/.test(html));
   check("checkout form has apt/suite line2", /name=\"line2\"/.test(html));
   check("checkout form has city field",      /name=\"city\"/.test(html));
-  check("checkout form shows subtotal",       html.indexOf("$29.99") !== -1);
+  check("checkout form shows subtotal",       html.indexOf("$59.98") !== -1);
   check("checkout form POSTs to /checkout",   /action=\"\/checkout\"/.test(html));
+
+  // Two-column shell + sticky summary rail (reuses the cart's classes).
+  check("checkout uses the cart grid shell",  html.indexOf("cart-page__grid") !== -1);
+  check("checkout has a sticky summary rail",  html.indexOf("cart-page__summary") !== -1);
+
+  // Order-summary line items are rendered (title + qty + line total).
+  check("checkout summary lists the item title", html.indexOf("Test Widget") !== -1);
+  check("checkout summary shows the line qty",    html.indexOf("Qty 2") !== -1);
+  check("checkout summary shows the line total",  html.indexOf("checkout-line__total") !== -1);
+
+  // Honest microcopy — NO fabricated "Total (plus tax + shipping)" line.
+  check("checkout drops the fabricated Total line", html.indexOf("plus tax + shipping") === -1);
+  check("checkout shows the honest tax/shipping note",
+    html.indexOf("Tax and shipping are calculated on the next step") !== -1);
+
+  // Edit-cart link back to /cart.
+  check("checkout has an Edit cart link",  /href=\"\/cart\"[^>]*class=\"checkout-page__edit-cart\"|class=\"checkout-page__edit-cart\"[^>]*href=\"\/cart\"|<a href=\"\/cart\" class=\"checkout-page__edit-cart\">/.test(html));
+
+  // Required-field accessible cue — the color-only `*` is paired with a
+  // visually-hidden "(required)" so a screen reader announces it.
+  check("required fields carry an sr-only (required) cue", html.indexOf("<span class=\"sr-only\">(required)</span>") !== -1);
+
+  // A coded gift-card/loyalty error re-renders the form with the message inline.
+  var withErr = storefront.renderCheckoutForm({
+    lines:  [{ variant_id: "v1", sku: "X-1", qty: 1, unit_amount_minor: 2999, unit_currency: "USD" }],
+    totals: { subtotal_minor: 2999, currency: "USD" },
+    shop_name: "Acme",
+    inline_error: "That gift card code was not recognized.",
+  });
+  check("checkout surfaces an inline error", withErr.indexOf("That gift card code was not recognized.") !== -1);
+  check("inline error uses role=alert",       withErr.indexOf("role=\"alert\"") !== -1);
 
   // A signed-in customer's saved address pre-fills the fields (the
   // value is escaped into the input's value attribute).

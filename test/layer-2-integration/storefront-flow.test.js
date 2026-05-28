@@ -167,16 +167,19 @@ async function _run() {
       jar:  jar,
     });
     check("add-to-cart returns 303",                add.status === 303);
-    check("add-to-cart redirects to /cart",         (add.headers["location"] || "") === "/cart");
+    check("add-to-cart redirects to /cart?added=1", (add.headers["location"] || "") === "/cart?added=1");
     check("add-to-cart sets shop_sid cookie",       !!jar.get("shop_sid"));
 
-    // GET /cart — line + total visible, cart count = 1
-    var cartPage = await helpers.httpRequest({ port: handle.port, path: "/cart", jar: jar });
+    // GET /cart?added=1 — the post-add confirmation banner shows, plus
+    // line + total visible, cart count = 1.
+    var cartPage = await helpers.httpRequest({ port: handle.port, path: "/cart?added=1", jar: jar });
     check("cart returns 200",                       cartPage.status === 200);
+    check("cart shows added-to-cart banner",        cartPage.body.indexOf("cart-page__added") !== -1);
     check("cart lists SKU",                         cartPage.body.indexOf("WDG-PRO-BLK-L") !== -1);
     check("cart shows qty=2 line",                  /value=\"2\"/.test(cartPage.body));
     check("cart shows line total $59.98",           cartPage.body.indexOf("$59.98") !== -1);
     check("cart pill shows count 1",                cartPage.body.indexOf("Cart, 1 items") !== -1);
+    check("cart has a Continue shopping link",      cartPage.body.indexOf("cart-page__continue") !== -1);
 
     // Extract the cart-line id from the embedded update form's action
     // path: /cart/lines/<line_id>/update. The HTML form is the only
