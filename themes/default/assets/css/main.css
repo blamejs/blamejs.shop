@@ -620,13 +620,19 @@ a.btn-secondary.btn-secondary--on-dark:hover {
 
 /* ---- form fields ------------------------------------------------ */
 input[type="text"], input[type="email"], input[type="number"],
-input[type="search"], select, textarea {
+input[type="search"], input[type="tel"], input[type="url"],
+input[type="password"], select, textarea {
+  width: 100%;
+  box-sizing: border-box;
   font-family: var(--font-body);
   font-size: var(--text-sm);
   padding: 0.85rem 1rem;
-  border: 1px solid var(--border);
+  /* On the near-black canvas a 10% hairline disappears — form fields
+     read as voids. A stronger outline + a lifted fill make each field
+     a clearly-bounded control. */
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: var(--surface-card);
+  background: var(--surface-raised);
   color: var(--text);
   transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
