@@ -23,6 +23,8 @@ async function _home() {
     ],
     shop_name:  "Acme Shop",
     cart_count: 2,
+    canonical_url: "https://acme.example/",
+    og_url:        "https://acme.example/",
   });
   check("home includes shop name",      html.indexOf("Acme Shop") !== -1);
   check("home lists both products",      html.indexOf("Widget Pro") !== -1 && html.indexOf("Widget Lite") !== -1);
@@ -30,6 +32,13 @@ async function _home() {
   check("home renders cart count",        html.indexOf("Cart, 2 items") !== -1);
   check("home has product links",         html.indexOf("/products/widget-pro") !== -1);
   check("home is full HTML doc",          html.indexOf("<!DOCTYPE html>") === 0);
+  // Canonical + og:url carry the absolute request URL the route threads.
+  check("home emits canonical link",      html.indexOf("<link rel=\"canonical\" href=\"https://acme.example/\">") !== -1);
+  check("home og:url is the absolute URL", html.indexOf("property=\"og:url\" content=\"https://acme.example/\"") !== -1);
+  // Organization + WebSite JSON-LD is present on the container home page
+  // (ported from the edge so both substrates emit it identically).
+  check("home emits Organization JSON-LD", html.indexOf("\"@type\":\"Organization\"") !== -1);
+  check("home emits WebSite SearchAction",  html.indexOf("\"SearchAction\"") !== -1);
 }
 
 async function _homeEmpty() {
@@ -62,11 +71,58 @@ async function _product() {
       v2: { amount_minor: 2999, currency: "USD" },
     },
     shop_name: "Acme",
+    canonical_url: "https://acme.example/products/widget-pro",
+    og_url:        "https://acme.example/products/widget-pro",
   });
   check("product page shows title",       html.indexOf("Widget Pro") !== -1);
   check("product page shows description",  html.indexOf("The pro variant") !== -1);
   check("product page lists variant SKUs", html.indexOf("WDG-PRO-BLK-L") !== -1 && html.indexOf("WDG-PRO-BLK-M") !== -1);
   check("product page shows prices",       html.indexOf("$29.99") !== -1);
+  // Canonical link + absolute breadcrumb JSON-LD URLs.
+  check("PDP emits canonical link",        html.indexOf("<link rel=\"canonical\" href=\"https://acme.example/products/widget-pro\">") !== -1);
+  check("PDP breadcrumb item is absolute", html.indexOf("\"item\":\"https://acme.example/products/widget-pro\"") !== -1);
+  // No inventory threaded → never-block stance: in stock + InStock LD.
+  check("PDP defaults to In stock badge",  html.indexOf("pdp__badge--ok") !== -1);
+  check("PDP JSON-LD is InStock by default", html.indexOf("schema.org/InStock") !== -1);
+  // Shipping/returns line links the policy page.
+  check("PDP shows shipping/returns note", html.indexOf("class=\"pdp__shipping-note\"") !== -1 &&
+                                           html.indexOf("href=\"/terms\"") !== -1);
+}
+
+// Truthful availability: a sold-out variant drives the Out-of-stock badge
+// AND the JSON-LD `availability` to OutOfStock; a digital variant
+// (requires_shipping = 0) suppresses the "Ships in 1–2 business days" line.
+async function _productAvailability() {
+  var soldOut = storefront.renderProduct({
+    product:  { slug: "widget-pro", title: "Widget Pro", description: "" },
+    variants: [{ id: "v1", sku: "WDG-PRO-BLK-L", title: "Black / Large", requires_shipping: 1 }],
+    prices:   { v1: { amount_minor: 2999, currency: "USD" } },
+    inventory: { "WDG-PRO-BLK-L": { stock_on_hand: 5, stock_held: 5 } },
+    shop_name: "Acme",
+  });
+  check("sold-out PDP shows Out of stock badge",  soldOut.indexOf("pdp__badge--out") !== -1);
+  check("sold-out PDP omits In stock badge",      soldOut.indexOf("pdp__badge--ok") === -1);
+  check("sold-out PDP JSON-LD is OutOfStock",     soldOut.indexOf("schema.org/OutOfStock") !== -1);
+
+  var inStock = storefront.renderProduct({
+    product:  { slug: "widget-pro", title: "Widget Pro", description: "" },
+    variants: [{ id: "v1", sku: "WDG-PRO-BLK-L", title: "Black / Large", requires_shipping: 1 }],
+    prices:   { v1: { amount_minor: 2999, currency: "USD" } },
+    inventory: { "WDG-PRO-BLK-L": { stock_on_hand: 10, stock_held: 2 } },
+    shop_name: "Acme",
+  });
+  check("in-stock PDP shows In stock badge",      inStock.indexOf("pdp__badge--ok") !== -1);
+  check("in-stock PDP JSON-LD is InStock",        inStock.indexOf("schema.org/InStock") !== -1);
+  check("physical PDP keeps the ships-in line",   inStock.indexOf("Ships in 1–2 business days") !== -1);
+
+  var digital = storefront.renderProduct({
+    product:  { slug: "license", title: "License Key", description: "" },
+    variants: [{ id: "v1", sku: "LIC-1", title: "Single seat", requires_shipping: 0 }],
+    prices:   { v1: { amount_minor: 4900, currency: "USD" } },
+    shop_name: "Acme",
+  });
+  check("digital PDP suppresses ships-in line",   digital.indexOf("Ships in 1–2 business days") === -1);
+  check("digital PDP shows delivered-on-purchase", digital.indexOf("Digital — delivered on purchase") !== -1);
 }
 
 async function _productNoVariants() {
@@ -311,7 +367,13 @@ async function _layoutTokens() {
   check("footer is rendered",                         html.indexOf("class=\"site-footer\"") !== -1);
   check("footer has Shop column",                      html.indexOf(">Shop</h4>") !== -1);
   check("footer has Framework column",                html.indexOf(">Framework</h4>") !== -1);
-  check("footer has Operators column",                html.indexOf(">Operators</h4>") !== -1);
+  check("footer has Your account column",             html.indexOf(">Your account</h4>") !== -1);
+  // The footer's account column must not expose /admin to shoppers. Scope
+  // the assertion to the footer block (the empty-catalog body still has an
+  // operator "Open admin" CTA, which is intentional).
+  var footerBlock = html.slice(html.indexOf("class=\"site-footer\""));
+  check("footer drops the public Admin link",         footerBlock.indexOf("href=\"/admin\"") === -1);
+  check("footer surfaces Shipping & returns",         html.indexOf(">Shipping &amp; returns</a>") !== -1);
   check("footer references blamejs",                  html.indexOf("built on blamejs") !== -1);
   check("footer shows copyright year",                 /&copy; \d{4}/.test(html));
 
@@ -358,6 +420,7 @@ async function run() {
   await _home();
   await _homeEmpty();
   await _product();
+  await _productAvailability();
   await _productNoVariants();
   await _cart();
   await _cartEmpty();

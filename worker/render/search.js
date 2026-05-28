@@ -9,6 +9,7 @@ var LAYOUT =
   "  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n" +
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{og_description}}\">\n" +
+  "  <link rel=\"canonical\" href=\"{{canonical_url}}\">\n" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
   "  <link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/favicon.png\">\n" +
   "  <link rel=\"apple-touch-icon\" href=\"/assets/brand/favicon.png\">\n" +
@@ -95,6 +96,7 @@ var LAYOUT =
   "          <li><a href=\"/?sort=sale\">{{footer_shop_sale}}</a></li>\n" +
   "          <li><a href=\"/compare\">{{footer_shop_compare}}</a></li>\n" +
   "          <li><a href=\"/cart\">{{footer_shop_cart}}</a></li>\n" +
+  "          <li><a href=\"/terms\">{{footer_shop_shipping}}</a></li>\n" +
   "        </ul>\n" +
   "      </div>\n" +
   "      <div class=\"site-footer__col\">\n" +
@@ -111,7 +113,6 @@ var LAYOUT =
   "        <ul>\n" +
   "          <li><a href=\"/account\">{{footer_operators_account}}</a></li>\n" +
   "          <li><a href=\"/orders\">{{footer_operators_orders}}</a></li>\n" +
-  "          <li><a href=\"/admin\">{{footer_operators_admin}}</a></li>\n" +
   "          <li><a href=\"mailto:hello@blamejs.shop\">{{footer_operators_contact}}</a></li>\n" +
   "        </ul>\n" +
   "      </div>\n" +
@@ -350,7 +351,8 @@ function _wrap(opts) {
   var ogTitle       = opts.og_title       || (opts.title ? opts.title + " — " + shopName : shopName);
   var ogDescription = opts.og_description || "Open-source ecommerce framework built on blamejs. Server-rendered HTML, post-quantum crypto, zero npm runtime dependencies.";
   var ogImage       = opts.og_image       || "/assets/brand/logo.png";
-  var ogUrl         = opts.og_url         || "";
+  var canonicalUrl  = opts.canonical_url   || "";
+  var ogUrl         = opts.og_url          || canonicalUrl;
   var localized = _localizeLayout(opts);
   return renderTemplate(localized, {
     title:          opts.title,
@@ -364,6 +366,7 @@ function _wrap(opts) {
     og_description: ogDescription,
     og_image:       ogImage,
     og_url:         ogUrl,
+    canonical_url:  canonicalUrl,
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
     .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
@@ -466,6 +469,11 @@ export function renderSearch(opts) {
     body = header + correctionHtml + chipsHtml + resultsInner;
   }
   var shopName = opts.shopName || "blamejs.shop";
+  // Per-page meta description: a query echoes "Results for 'q'…", a blank
+  // search box gets a browse prompt. Mirrors the container renderer.
+  var metaDescription = qTrim.length > 0
+    ? ("Results for “" + qTrim + "” in the " + shopName + " catalog.")
+    : ("Search the " + shopName + " catalog by title, SKU, or description.");
   return _wrap({
     title:      "Search",
     shop_name:  shopName,
@@ -473,6 +481,9 @@ export function renderSearch(opts) {
     search_q:   opts.q,
     theme_css:  opts.themeCss,
     og_title:   "Search — " + shopName,
+    og_description: metaDescription,
+    canonical_url:  opts.canonicalUrl,
+    og_url:         opts.ogUrl,
     version:    opts.version,
     locale:           opts.locale,
     default_locale:   opts.defaultLocale,

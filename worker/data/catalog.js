@@ -621,6 +621,32 @@ async function _skuPriceMinor(DB, sku, currency) {
     : null;
 }
 
+// Per-SKU inventory rows for a product's variants, keyed by SKU. Drives
+// the PDP's truthful availability badge + JSON-LD `availability` at the
+// edge — the mirror of the container's per-SKU `inventory.get` loop. A
+// SKU with no inventory row is simply absent from the map (the renderer
+// treats absence as available — the never-block stance). Missing-table-
+// resilient: returns {} so the PDP renders without availability tracking.
+export async function listInventoryForSkus(DB, skus) {
+  if (!Array.isArray(skus) || skus.length === 0) return {};
+  var out = {};
+  try {
+    var placeholders = skus.map(function (_s, i) { return "?" + (i + 1); }).join(", ");
+    var res = await DB
+      .prepare("SELECT sku, stock_on_hand, stock_held FROM inventory WHERE sku IN (" + placeholders + ")")
+      .bind(...skus)
+      .all();
+    var rows = (res && res.results) ? res.results : [];
+    for (var i = 0; i < rows.length; i += 1) {
+      out[rows[i].sku] = { stock_on_hand: rows[i].stock_on_hand, stock_held: rows[i].stock_held };
+    }
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return {};
+    throw e;
+  }
+  return out;
+}
+
 // Is a SKU buyable at the edge — a real variant that isn't sold out?
 // A SKU with no inventory row is treated as available (the operator
 // hasn't opted into stock tracking), matching the container.

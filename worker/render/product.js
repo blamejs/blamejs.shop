@@ -9,6 +9,7 @@ var LAYOUT =
   "  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n" +
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{og_description}}\">\n" +
+  "  <link rel=\"canonical\" href=\"{{canonical_url}}\">\n" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
   "  <link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/favicon.png\">\n" +
   "  <link rel=\"apple-touch-icon\" href=\"/assets/brand/favicon.png\">\n" +
@@ -95,6 +96,7 @@ var LAYOUT =
   "          <li><a href=\"/?sort=sale\">{{footer_shop_sale}}</a></li>\n" +
   "          <li><a href=\"/compare\">{{footer_shop_compare}}</a></li>\n" +
   "          <li><a href=\"/cart\">{{footer_shop_cart}}</a></li>\n" +
+  "          <li><a href=\"/terms\">{{footer_shop_shipping}}</a></li>\n" +
   "        </ul>\n" +
   "      </div>\n" +
   "      <div class=\"site-footer__col\">\n" +
@@ -111,7 +113,6 @@ var LAYOUT =
   "        <ul>\n" +
   "          <li><a href=\"/account\">{{footer_operators_account}}</a></li>\n" +
   "          <li><a href=\"/orders\">{{footer_operators_orders}}</a></li>\n" +
-  "          <li><a href=\"/admin\">{{footer_operators_admin}}</a></li>\n" +
   "          <li><a href=\"mailto:hello@blamejs.shop\">{{footer_operators_contact}}</a></li>\n" +
   "        </ul>\n" +
   "      </div>\n" +
@@ -248,12 +249,9 @@ var PRODUCT_PAGE =
   "      <p class=\"eyebrow\">Catalog product</p>\n" +
   "      <h1 class=\"pdp__title\">{{title}}</h1>\n" +
   "      <p class=\"pdp__description\">{{description}}</p>\n" +
-  "      <div class=\"pdp__meta\">\n" +
-  "        <span class=\"pdp__badge pdp__badge--ok\"><span class=\"dot dot--live\" aria-hidden=\"true\"></span> In stock</span>\n" +
-  "        <span class=\"pdp__badge\">Ships in 1–2 business days</span>\n" +
-  "        <span class=\"pdp__badge\">Stripe-secured checkout</span>\n" +
-  "      </div>\n" +
+  "      RAW_AVAILABILITY_PLACEHOLDER\n" +
   "      RAW_BUYBOX_PLACEHOLDER\n" +
+  "      RAW_SHIPPING_NOTE_PLACEHOLDER\n" +
   "      RAW_QTYBREAK_PLACEHOLDER\n" +
   "      RAW_WISHLIST_PLACEHOLDER\n" +
   "      RAW_COMPARE_PLACEHOLDER\n" +
@@ -573,7 +571,8 @@ function _wrap(opts) {
   var ogTitle       = opts.ogTitle       || (opts.title ? opts.title + " — " + shopName : shopName);
   var ogDescription = opts.ogDescription || "Open-source ecommerce framework built on blamejs. Server-rendered HTML, post-quantum crypto, zero npm runtime dependencies.";
   var ogImage       = opts.ogImage       || "/assets/brand/logo.png";
-  var ogUrl         = opts.ogUrl         || "";
+  var canonicalUrl  = opts.canonicalUrl   || "";
+  var ogUrl         = opts.ogUrl          || canonicalUrl;
   var localized = _localizeLayout(opts);
   return renderTemplate(localized, {
     title:          opts.title,
@@ -587,6 +586,7 @@ function _wrap(opts) {
     og_description: ogDescription,
     og_image:       ogImage,
     og_url:         ogUrl,
+    canonical_url:  canonicalUrl,
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(opts.themeCss))
     .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
@@ -628,6 +628,78 @@ function _buildPdpGallery(product, media, assetPrefix) {
   }
   while (thumbs.length < 4) thumbs.push("<li></li>");
   return heroImg + "<ul class=\"pdp__thumbs\" aria-hidden=\"true\">" + thumbs.join("") + "</ul>";
+}
+
+// Resolve a product's availability + shipping shape from the variant list
+// + (optional) inventory map. Mirrors the container
+// (`lib/storefront.js#_resolveAvailability`) so both render paths drive
+// the badge + JSON-LD from the same shape. `in_stock` is true if ANY
+// variant is buyable (a SKU with no inventory row counts as available —
+// the never-block stance); `requires_shipping` is true if ANY variant
+// ships physically.
+function _resolveAvailability(variants, inventoryBySku) {
+  variants = Array.isArray(variants) ? variants : [];
+  var inv = (inventoryBySku && typeof inventoryBySku === "object") ? inventoryBySku : null;
+  var anyTracked = false;
+  var anyInStock = false;
+  var requiresShipping = false;
+  for (var i = 0; i < variants.length; i += 1) {
+    var v = variants[i] || {};
+    if (v.requires_shipping === undefined || v.requires_shipping === null ||
+        Number(v.requires_shipping) !== 0) {
+      requiresShipping = true;
+    }
+    if (inv && Object.prototype.hasOwnProperty.call(inv, v.sku)) {
+      anyTracked = true;
+      var row = inv[v.sku];
+      var available = row ? (Number(row.stock_on_hand) - Number(row.stock_held)) : 0;
+      if (available > 0) anyInStock = true;
+    }
+  }
+  return {
+    in_stock:          anyTracked ? anyInStock : true,
+    requires_shipping: variants.length === 0 ? true : requiresShipping,
+  };
+}
+
+// PDP availability badges. Mirrors the container
+// (`lib/storefront.js#_buildAvailability`) byte-for-byte.
+function _buildAvailability(availability) {
+  var a = availability || { in_stock: true, requires_shipping: true };
+  var stockBadge = a.in_stock
+    ? "<span class=\"pdp__badge pdp__badge--ok\"><span class=\"dot dot--live\" aria-hidden=\"true\"></span> In stock</span>"
+    : "<span class=\"pdp__badge pdp__badge--out\">Out of stock</span>";
+  var shipBadge = a.requires_shipping
+    ? "<span class=\"pdp__badge\">Ships in 1–2 business days</span>"
+    : "<span class=\"pdp__badge\">Digital — delivered on purchase</span>";
+  return "<div class=\"pdp__meta\">\n" +
+         "        " + stockBadge + "\n" +
+         "        " + shipBadge + "\n" +
+         "        <span class=\"pdp__badge\">Stripe-secured checkout</span>\n" +
+         "      </div>";
+}
+
+// Short shipping/returns line under the buy box. Mirrors the container
+// (`lib/storefront.js#_pdpShippingNote`) byte-for-byte.
+function _pdpShippingNote(availability) {
+  var a = availability || { in_stock: true, requires_shipping: true };
+  var copy = a.requires_shipping
+    ? "Free returns within 30 days. "
+    : "";
+  return "<p class=\"pdp__shipping-note\">" + copy +
+         "See our <a href=\"/terms\">shipping &amp; returns policy</a>.</p>";
+}
+
+// Absolute origin for fully-qualified structured-data URLs. Mirrors the
+// container (`lib/storefront.js#_absoluteBase`): prefers the request
+// canonical URL's origin, falls back to the shop-name host.
+function _absoluteBase(canonicalUrl, shopName) {
+  if (typeof canonicalUrl === "string" && canonicalUrl.length) {
+    try {
+      return new URL(canonicalUrl).origin;
+    } catch (_e) { /* fall through to the shop-name base */ }
+  }
+  return "https://" + String(shopName || "blamejs.shop").replace(/^https?:\/\//, "");
 }
 
 export function renderProduct(opts) {
@@ -684,7 +756,14 @@ export function renderProduct(opts) {
     return { id: v.id, sku: v.sku, title: vTitle, price: priceStr };
   });
 
+  // Truthful availability + shipping shape — drives the on-page badges
+  // AND the JSON-LD `availability` from the same resolved values. The
+  // edge handler threads `opts.inventory` (per-SKU stock map); absent it,
+  // the product reads as in stock (never-block stance).
+  var availability = _resolveAvailability(variants, opts.inventory);
   var buyboxHtml = _buildBuyBox(rendered, escapeHtml);
+  var availabilityHtml = _buildAvailability(availability);
+  var shippingNoteHtml = _pdpShippingNote(availability);
 
   var galleryHtml = _buildPdpGallery(product, media, assetPrefix);
   var reviewsHtml = _buildReviews(reviewSummary, reviews, reviewForm);
@@ -698,7 +777,9 @@ export function renderProduct(opts) {
     description:  description,
   })
     .replace("RAW_GALLERY_PLACEHOLDER", galleryHtml)
+    .replace("RAW_AVAILABILITY_PLACEHOLDER", availabilityHtml)
     .replace("RAW_BUYBOX_PLACEHOLDER", buyboxHtml)
+    .replace("RAW_SHIPPING_NOTE_PLACEHOLDER", shippingNoteHtml)
     .replace("RAW_QTYBREAK_PLACEHOLDER", qtyBreaksHtml)
     .replace("RAW_WISHLIST_PLACEHOLDER", wishlistHtml)
     .replace("RAW_COMPARE_PLACEHOLDER", compareHtml)
@@ -708,6 +789,9 @@ export function renderProduct(opts) {
 
   var heroMedia = media[0] || null;
   var ogImage   = heroMedia ? (assetPrefix + heroMedia.r2_key) : "/assets/brand/logo.png";
+  // Absolute base for the BreadcrumbList `item` URLs — origin of the PDP's
+  // own canonical, falling back to the shop-name host.
+  var absoluteBase = _absoluteBase(opts.canonicalUrl, shopName);
 
   // Schema.org Product JSON-LD. Surfaces in Google's product-result
   // panel (price + availability), Bing Shopping, etc. The aggregate
@@ -751,7 +835,9 @@ export function renderProduct(opts) {
         "lowPrice":      (lowMinor / divisor).toFixed(divisor === 1 ? 0 : 2),
         "highPrice":     (hiMinor  / divisor).toFixed(divisor === 1 ? 0 : 2),
         "offerCount":    variants.length,
-        "availability":  "https://schema.org/InStock",
+        "availability":  availability.in_stock
+          ? "https://schema.org/InStock"
+          : "https://schema.org/OutOfStock",
       },
     });
   }
@@ -764,8 +850,8 @@ export function renderProduct(opts) {
     "@context":        "https://schema.org",
     "@type":           "BreadcrumbList",
     "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Shop", "item": "/" },
-      { "@type": "ListItem", "position": 2, "name": product.title, "item": "/products/" + product.slug },
+      { "@type": "ListItem", "position": 1, "name": "Shop", "item": absoluteBase + "/" },
+      { "@type": "ListItem", "position": 2, "name": product.title, "item": absoluteBase + "/products/" + product.slug },
     ],
   });
   jsonLd = (jsonLd || "") + breadcrumbJsonLd;
@@ -780,7 +866,8 @@ export function renderProduct(opts) {
     ogTitle:       product.title + " — " + shopName,
     ogDescription: description || ("Browse " + product.title + " on " + shopName + "."),
     ogImage:       ogImage,
-    ogUrl:         "",
+    canonicalUrl:  opts.canonicalUrl,
+    ogUrl:         opts.ogUrl,
     locale:           opts.locale,
     defaultLocale:    opts.defaultLocale,
     chromeOverrides:  opts.chromeOverrides,

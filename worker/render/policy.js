@@ -12,6 +12,7 @@ var LAYOUT =
   "  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n" +
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{description}}\">\n" +
+  "  <link rel=\"canonical\" href=\"{{canonical_url}}\">\n" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
   "  <link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/favicon.png\">\n" +
   "  <link rel=\"apple-touch-icon\" href=\"/assets/brand/favicon.png\">\n" +
@@ -71,6 +72,7 @@ function _wrap(opts, bodyHtml) {
     eyebrow:          opts.eyebrow,
     lede:             opts.lede,
     updated:          opts.updated,
+    canonical_url:    opts.canonicalUrl || "",
     year:             String(new Date().getUTCFullYear()),
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
     .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
@@ -115,6 +117,7 @@ export function renderPrivacy(opts) {
     shopName:    opts.shopName,
     themeCss:    opts.themeCss,
     version:     opts.version,
+    canonicalUrl: opts.canonicalUrl,
   }, PRIVACY_BODY);
 }
 
@@ -129,6 +132,7 @@ export function renderTerms(opts) {
     shopName:    opts.shopName,
     themeCss:    opts.themeCss,
     version:     opts.version,
+    canonicalUrl: opts.canonicalUrl,
   }, TERMS_BODY);
 }
 

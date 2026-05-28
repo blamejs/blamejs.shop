@@ -16,6 +16,7 @@ var LAYOUT =
   "  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n" +
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{description}}\">\n" +
+  "  <link rel=\"canonical\" href=\"{{canonical_url}}\">\n" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
   "  <link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/favicon.png\">\n" +
   "  <link rel=\"apple-touch-icon\" href=\"/assets/brand/favicon.png\">\n" +
@@ -26,6 +27,7 @@ var LAYOUT =
   "  <meta property=\"og:title\" content=\"{{og_title}}\">\n" +
   "  <meta property=\"og:description\" content=\"{{og_description}}\">\n" +
   "  <meta property=\"og:image\" content=\"{{og_image}}\">\n" +
+  "  <meta property=\"og:url\" content=\"{{canonical_url}}\">\n" +
   "</head>\n" +
   "<body>\n" +
   "  <a class=\"skip-link\" href=\"#main\">Skip to content</a>\n" +
@@ -78,6 +80,7 @@ function _wrap(opts, bodyHtml) {
     og_title:          (opts.title || shopName) + " — " + shopName,
     og_description:    opts.description,
     og_image:          opts.ogImage || "/assets/brand/logo.png",
+    canonical_url:     opts.canonicalUrl || "",
     year:              String(new Date().getUTCFullYear()),
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
     .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
@@ -138,12 +141,13 @@ export function renderBlogList(opts) {
   }).join("\n");
   var body = heading + (articles.length === 0 ? "" : "<section class=\"blog-list\">" + cards + "</section>");
   return _wrap({
-    title:       "Blog",
-    description: "Editorial posts from " + shopName + ".",
-    ogType:      "website",
-    shopName:    shopName,
-    themeCss:    opts.themeCss,
-    version:     opts.version,
+    title:        "Blog",
+    description:  "Editorial posts from " + shopName + ".",
+    ogType:       "website",
+    shopName:     shopName,
+    themeCss:     opts.themeCss,
+    version:      opts.version,
+    canonicalUrl: opts.canonicalUrl,
   }, body);
 }
 
@@ -192,12 +196,13 @@ export function renderBlogArticle(opts) {
   });
 
   return _wrap({
-    title:       article.title,
-    description: article.meta_description || (String(article.body || "").slice(0, 240)),
-    ogType:      "article",
-    ogImage:     article.hero_image_url || "/assets/brand/logo.png",
-    shopName:    shopName,
-    themeCss:    opts.themeCss,
-    version:     opts.version,
+    title:        article.title,
+    description:  article.meta_description || (String(article.body || "").slice(0, 240)),
+    ogType:       "article",
+    ogImage:      article.hero_image_url || "/assets/brand/logo.png",
+    shopName:     shopName,
+    themeCss:     opts.themeCss,
+    version:      opts.version,
+    canonicalUrl: opts.canonicalUrl,
   }, articleHtml + jsonLd);
 }
