@@ -1,13 +1,13 @@
 {
-  "version": "0.2.9",
+  "version": "0.2.10",
   "assets": {
     "css/admin.css": {
       "integrity": "sha384-FgqvXcZygYkJjjOtXAeu9xi6AtYqkchPnJKcS0OeHm8lynhd9r4RfdpoT7P7j7/l",
       "fingerprinted": "css/admin.afd7b964c1f6fe1b.css"
     },
     "css/main.css": {
-      "integrity": "sha384-6aJfYezHHWR7kgX0foRedjqZg90PP6xrD7oXFim5X2gzV3E3gzZaQTzqgZuCP9eU",
-      "fingerprinted": "css/main.d428a281f9f583d8.css"
+      "integrity": "sha384-989Th+84GsswrtPWc4g7DImIYKE/nUSgpZcQMeYxhPN1tg3lrgBhjQNKHNqwz7kb",
+      "fingerprinted": "css/main.4504ec0c542c3225.css"
     },
     "js/announcement.js": {
       "integrity": "sha384-z4zcEMn+tScoVnYRE4nEf8N/oyvpxdpaxTNrT4QO/jURChid4+qjAvWkzatCaAPq",
@@ -18,8 +18,8 @@
       "fingerprinted": "js/cart-count.bfc2eb434b19c00a.js"
     },
     "js/consent.js": {
-      "integrity": "sha384-KKMQ0og8HPOykRRPpUyxX7dMhTvKySfVtpGX/jGWzZwNaN/c4OykvRvXpqBHcQST",
-      "fingerprinted": "js/consent.517d6ad1fbf106a1.js"
+      "integrity": "sha384-XY3GHA5QDj/Nri03ZO1t7nsr9RGepZuanY45CTpFQnnTorQnygbtAVG4vVGfkNIP",
+      "fingerprinted": "js/consent.59060d7723d050b2.js"
     },
     "js/passkey-login.js": {
       "integrity": "sha384-65i1wVHIkiS2e0YiOV6oUOF9+tNR7s6QRvpnWaEne43P+B8UvKLTpDgp4MSKNGqX",
