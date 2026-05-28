@@ -311,6 +311,21 @@ export class ShopContainer extends Container {
   onStart()  { console.log("ShopContainer started"); }                            // allow:console-direct — Workers have no framework observability sink; console.* auto-routes to wrangler tail / Logpush
   onStop()   { console.log("ShopContainer stopped"); }                            // allow:console-direct — Workers have no framework observability sink; console.* auto-routes to wrangler tail / Logpush
   onError(e) { console.error("ShopContainer error:", _redact(e && e.stack || e)); } // allow:console-direct — Workers have no framework observability sink; console.* auto-routes to wrangler tail / Logpush
+
+  // The container's secure boot (vault unlock + an O(N) audit-chain verify
+  // over the D1-backed chain) routinely exceeds the SDK's ~8s default
+  // port-ready window on a cold start, so CF was killing the container
+  // before it bound :8080 ("crashed while checking for ports") — a
+  // self-inflicted crash-loop on every wake. Widen the window so a
+  // slow-but-valid boot is allowed to finish + bind the port. Applies to
+  // the base containerFetch path too (it calls this.startAndWaitForPorts).
+  startAndWaitForPorts(ports, cancellationOptions, startOptions) {
+    return super.startAndWaitForPorts(
+      ports,
+      Object.assign({ portReadyTimeoutMS: 120000 }, cancellationOptions),
+      startOptions,
+    );
+  }
 }
 
 // ---- Worker entrypoint ----------------------------------------------------
