@@ -27,6 +27,7 @@ import {
   loadSearchFacets,
   loadSearchSynonymVocab,
   listVariantsWithPrices,
+  listInventoryForSkus,
   listMediaForProduct,
   getReviewSummary,
   listPublishedReviews,
@@ -409,12 +410,14 @@ export default {
         return _staticHtml(renderPrivacy({
           shopName: env.SHOP_NAME    || "blamejs.shop",
           version:  env.WORKER_VERSION || "0.0.0",
+          canonicalUrl: url.origin + url.pathname,
         }), request.method, env, request);
       }
       if (pathname === "/terms") {
         return _staticHtml(renderTerms({
           shopName: env.SHOP_NAME    || "blamejs.shop",
           version:  env.WORKER_VERSION || "0.0.0",
+          canonicalUrl: url.origin + url.pathname,
         }), request.method, env, request);
       }
       if (pathname === "/SECURITY.md") {
@@ -973,6 +976,7 @@ async function _edgeBlogList(request, env, _url, version, shopName) {
       articles: page.rows,
       shopName: shopName,
       version:  version,
+      canonicalUrl: _url.origin + _url.pathname,
       announcement: await resolveAnnouncement(env.DB, {}),
     });
     return _html(html, request.method, env);
@@ -1002,6 +1006,7 @@ async function _edgeBlogArticle(request, env, _url, version, shopName, slug) {
       article:  article,
       shopName: shopName,
       version:  version,
+      canonicalUrl: _url.origin + _url.pathname,
       announcement: await resolveAnnouncement(env.DB, {}),
     });
     return _html(html, request.method, env);
@@ -1038,6 +1043,19 @@ function _currencyRenderOpts(env, url) {
   };
 }
 
+// Absolute canonical + og:url for an edge-rendered page. `canonicalUrl`
+// is origin + path (query stripped — the canonical names the page, not a
+// filtered/sorted view); `ogUrl` keeps the query so a share of a filtered
+// listing unfurls to that exact view. Origin comes from the live request
+// URL so the value matches the host the visitor reached.
+function _canonicalRenderOpts(url) {
+  if (!url || typeof url.origin !== "string") return { canonicalUrl: "", ogUrl: "" };
+  return {
+    canonicalUrl: url.origin + url.pathname,
+    ogUrl:        url.origin + url.pathname + (url.search || ""),
+  };
+}
+
 async function _edgeHome(request, env, _url, version, shopName) {
   try {
     const page = await listActiveProducts(env.DB, { limit: 24, currency: "USD" });
@@ -1051,7 +1069,7 @@ async function _edgeHome(request, env, _url, version, shopName) {
       // The edge serves the storefront's default locale; any explicit
       // locale choice bypasses the edge to the container.
       defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
-    }, _currencyRenderOpts(env, _url)));
+    }, _canonicalRenderOpts(_url), _currencyRenderOpts(env, _url)));
     return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/", e, request, env, version, shopName);
@@ -1139,7 +1157,7 @@ async function _edgeSearch(request, env, url, version, shopName) {
       version:        version,
       defaultLocale:  env.SHOP_DEFAULT_LOCALE || "en",
       announcement:   await resolveAnnouncement(env.DB, {}),
-    }, _currencyRenderOpts(env, url)));
+    }, _canonicalRenderOpts(url), _currencyRenderOpts(env, url)));
     return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/search", e, request, env, version, shopName);
@@ -1217,17 +1235,22 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
     const variantSkus = variants.map(function (v) { return v.sku; });
     const firstVariant = variants[0] || null;
     const firstPrice = firstVariant ? prices[firstVariant.id] : null;
-    const [bundleOffers, qtyBreaks] = await Promise.all([
+    // Inventory map for the truthful availability badge + JSON-LD, the
+    // edge mirror of the container's per-SKU `inventory.get` loop. A SKU
+    // with no row is absent → the renderer reads it as available.
+    const [bundleOffers, qtyBreaks, inventory] = await Promise.all([
       getBundlesForProduct(env.DB, variantSkus, "USD"),
       firstVariant && firstPrice
         ? getQtyBreaksForSku(env.DB, firstVariant.sku, firstPrice.amount_minor, firstPrice.currency, b.money)
         : Promise.resolve([]),
+      listInventoryForSkus(env.DB, variantSkus),
     ]);
     const html = renderProduct(Object.assign({
       product:       product,
       variants:      variants,
       prices:        prices,
       media:         media.rows,
+      inventory:     inventory,
       reviewSummary: reviewSummary,
       reviews:       reviewList.rows,
       reviewForm:    reviewForm,
@@ -1241,7 +1264,7 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
       cartCount:     0,
       version:       version,
       defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
-    }, _currencyRenderOpts(env, url)));
+    }, _canonicalRenderOpts(url), _currencyRenderOpts(env, url)));
     // Hero-image preload — the PDP's LCP element is almost always the
     // first media row's image. Preloading it via Link rel=preload
     // tells Cloudflare's Early Hints to include the asset URL in the

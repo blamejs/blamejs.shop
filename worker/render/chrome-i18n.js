@@ -60,6 +60,7 @@ export var CHROME_DEFAULTS = Object.freeze({
   footer_shop_sale:       "On sale",
   footer_shop_compare:    "Compare",
   footer_shop_cart:       "Cart",
+  footer_shop_shipping:   "Shipping & returns",
 
   footer_framework_heading: "Framework",
   footer_framework_source:  "Source on GitHub",
@@ -67,10 +68,9 @@ export var CHROME_DEFAULTS = Object.freeze({
   footer_framework_security: "Security policy",
   footer_framework_changelog: "Changelog",
 
-  footer_operators_heading: "Operators",
+  footer_operators_heading: "Your account",
   footer_operators_account: "Account",
   footer_operators_orders:  "Orders",
-  footer_operators_admin:   "Admin",
   footer_operators_contact: "Contact",
 
   footer_copy_suffix:  "built on blamejs · Apache 2.0 licensed.",

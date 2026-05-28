@@ -620,13 +620,19 @@ a.btn-secondary.btn-secondary--on-dark:hover {
 
 /* ---- form fields ------------------------------------------------ */
 input[type="text"], input[type="email"], input[type="number"],
-input[type="search"], select, textarea {
+input[type="search"], input[type="tel"], input[type="url"],
+input[type="password"], select, textarea {
+  width: 100%;
+  box-sizing: border-box;
   font-family: var(--font-body);
   font-size: var(--text-sm);
   padding: 0.85rem 1rem;
-  border: 1px solid var(--border);
+  /* On the near-black canvas a 10% hairline disappears — form fields
+     read as voids. A stronger outline + a lifted fill make each field
+     a clearly-bounded control. */
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: var(--surface-card);
+  background: var(--surface-raised);
   color: var(--text);
   transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
@@ -1398,6 +1404,16 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
   color: var(--text-muted);
 }
 .pdp__badge--ok { color: var(--success); border-color: rgba(74,208,106,0.4); background: rgba(74,208,106,0.10); }
+.pdp__badge--out { color: var(--danger); border-color: rgba(255,107,107,0.4); background: rgba(255,107,107,0.10); }
+
+/* Short shipping/returns line under the buy box, linking the policy page. */
+.pdp__shipping-note {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.pdp__shipping-note a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.pdp__shipping-note a:hover { color: var(--text); }
 
 /* PDP buy-box variant pill-chips: the chip label carries the selected state
    (the native radio alone is too subtle). The radio is visually hidden but
