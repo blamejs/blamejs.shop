@@ -65,14 +65,18 @@ SHOP_CURRENCIES     = "USD"
 
 # --- Container ------------------------------------------------------
 # Cloudflare Containers boots from the Dockerfile in the repo root.
-# `instance_type` + `max_instances` are operator-tuned; sane defaults
-# for a small shop are below. The Worker reaches the container via
-# the SHOP durable-object binding (also declared below).
+# The Worker reaches the container via the SHOP durable-object binding
+# (also declared below). The app boots in cluster mode (the D1 bridge
+# triggers it), so each instance runs the cluster boot (leader election
+# + fencing). A single instance is trivially the leader with no
+# election contention, which a small shop is well within — so we pin
+# `max_instances = 1`. Scaling out requires the leader/fencing path to
+# converge under concurrent boots before raising this.
 [[containers]]
 class_name     = "ShopContainer"
 image          = "./Dockerfile"
 instance_type  = "standard-2"
-max_instances  = 4
+max_instances  = 1
 name           = "blamejs-shop-container"
 
 # --- Durable Objects ------------------------------------------------
