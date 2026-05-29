@@ -148,11 +148,15 @@ var PRODUCT_CARD_IMAGE =
   "</a>\n";
 
 var PRODUCT_CARD =
-  "<div class=\"card\">\n" +
-  "  <h2>{{title}}</h2>\n" +
-  "  <p class=\"price\">{{price}}</p>\n" +
-  "  <a href=\"/products/{{slug}}\" class=\"card-link\">View product →</a>\n" +
-  "</div>\n";
+  "<a class=\"product-card\" href=\"/products/{{slug}}\">\n" +
+  "  <figure class=\"product-card__media product-card__media--placeholder\">\n" +
+  "    <svg class=\"media-ph__svg\" viewBox=\"0 0 160 120\" aria-hidden=\"true\"><rect width=\"160\" height=\"120\" fill=\"none\"/><g stroke=\"currentColor\" stroke-opacity=\"0.18\" stroke-width=\"1\"><path d=\"M0 30 H160 M0 60 H160 M0 90 H160 M40 0 V120 M80 0 V120 M120 0 V120\"/></g><g fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M80 38 L104 50 L104 76 L80 88 L56 76 L56 50 Z\"/><path d=\"M56 50 L80 62 L104 50 M80 62 V88\" stroke=\"#C75BE8\"/><path d=\"M70 47 L74 50 L70 53\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M77 54 H86\" stroke=\"currentColor\" stroke-width=\"2\"/></g><text x=\"80\" y=\"106\" text-anchor=\"middle\" font-family=\"ui-monospace,Menlo,Consolas,monospace\" font-size=\"9\" letter-spacing=\"1.5\" fill=\"#9b9ba7\">no image yet</text></svg>\n" +
+  "  </figure>\n" +
+  "  <div class=\"product-card__meta\">\n" +
+  "    <h3 class=\"product-card__title\">{{title}}</h3>\n" +
+  "    <p class=\"product-card__price\">{{price}}</p>\n" +
+  "  </div>\n" +
+  "</a>\n";
 
 var SEARCH_HEADER =
   "<section class=\"search-page\">\n" +
