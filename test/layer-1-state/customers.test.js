@@ -15,7 +15,8 @@
  *   - byEmailHash: lookup round-trips
  *   - addPasskey: persists credential row, refuses duplicate credential_id
  *   - listPasskeys: ordered by created_at
- *   - removePasskey: idempotent, FK cascade safe
+ *   - removePasskey: customer-scoped, idempotent, refuses cross-customer
+ *   - update: display_name mutation; email change refused (no verification)
  *   - updatePasskeyCounter: monotonic enforcement, regression refused
  */
 
@@ -161,12 +162,60 @@ async function _removePasskey() {
   var customers = bShop.customers.create({ query: _makeQuery() });
   var c = await customers.register({ email: "rm@example.com", display_name: "RM" });
   var pk = await customers.addPasskey(c.id, { credential_id: "rm-1", public_key: "k" });
-  var removed = await customers.removePasskey(pk.id);
+  var removed = await customers.removePasskey(c.id, pk.id);
   check("removePasskey true on hit",      removed === true);
-  var idempotent = await customers.removePasskey(pk.id);
+  var idempotent = await customers.removePasskey(c.id, pk.id);
   check("removePasskey false on miss",    idempotent === false);
   var list = await customers.listPasskeys(c.id);
   check("listPasskeys empty after remove", list.length === 0);
+}
+
+// The credential id is part of the WHERE clause, not just the lookup: a
+// customer cannot revoke another customer's passkey by passing its id.
+async function _removePasskeyScoped() {
+  var customers = bShop.customers.create({ query: _makeQuery() });
+  var owner   = await customers.register({ email: "owner@example.com", display_name: "Owner" });
+  var other   = await customers.register({ email: "other@example.com", display_name: "Other" });
+  var pk = await customers.addPasskey(owner.id, { credential_id: "scoped-1", public_key: "k" });
+  // The OTHER customer tries to remove the owner's passkey → no-op (false),
+  // and the row survives.
+  var crossAttempt = await customers.removePasskey(other.id, pk.id);
+  check("removePasskey refuses cross-customer", crossAttempt === false);
+  check("cross-customer passkey survives",       (await customers.listPasskeys(owner.id)).length === 1);
+  // The real owner can remove it.
+  check("owner removes own passkey",             (await customers.removePasskey(owner.id, pk.id)) === true);
+}
+
+async function _updateDisplayName() {
+  var customers = bShop.customers.create({ query: _makeQuery() });
+  var c = await customers.register({ email: "edit@example.com", display_name: "Old Name" });
+  var beforeHash = c.email_hash;
+  var updated = await customers.update(c.id, { display_name: "New Name" });
+  check("update returns the row",            updated && updated.id === c.id);
+  check("update changes display_name",       updated.display_name === "New Name");
+  check("update leaves email_hash intact",   updated.email_hash === beforeHash);
+  check("update bumps updated_at",           updated.updated_at >= c.updated_at);
+  var refetched = await customers.get(c.id);
+  check("update persists",                   refetched.display_name === "New Name");
+}
+
+async function _updateValidation() {
+  var customers = bShop.customers.create({ query: _makeQuery() });
+  var c = await customers.register({ email: "uv@example.com", display_name: "UV" });
+  await assert.rejects(customers.update(c.id),                              /patch object required/);
+  await assert.rejects(customers.update(c.id, {}),                          /nothing to update/);
+  await assert.rejects(customers.update(c.id, { display_name: "" }),         /display_name/);
+  await assert.rejects(customers.update(c.id, { display_name: "x\r\ny" }),   /control bytes/);
+  // Email change is deliberately refused — it needs a verification ceremony.
+  await assert.rejects(
+    customers.update(c.id, { email: "new@example.com" }),
+    /email cannot be changed|EMAIL_CHANGE_UNSUPPORTED/i,
+  );
+  // Unknown customer.
+  await assert.rejects(
+    customers.update(bShop.framework.uuid.v7(), { display_name: "Ghost" }),
+    /not found/,
+  );
 }
 
 async function _counterMonotonic() {
@@ -308,6 +357,9 @@ async function run() {
   await _addAndListPasskeys();
   await _duplicateCredentialRefused();
   await _removePasskey();
+  await _removePasskeyScoped();
+  await _updateDisplayName();
+  await _updateValidation();
   await _counterMonotonic();
   await _addPasskeyValidation();
   await _oidcNewAccount();
