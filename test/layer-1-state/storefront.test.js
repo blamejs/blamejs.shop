@@ -134,6 +134,116 @@ async function _productNoVariants() {
   check("no-variant product shows empty row", html.indexOf("No variants available") !== -1);
 }
 
+// Inputs shared by the container-side "You may also like" test and the
+// edge/container byte-identical parity test below.
+var _RELATED_OPTS = {
+  product: {
+    slug:        "widget-pro",
+    title:       "Widget Pro",
+    description: "The pro variant of the widget.",
+  },
+  variants: [{ id: "v1", sku: "WDG-PRO-BLK-L", title: "Black / Large" }],
+  prices:   { v1: { amount_minor: 2999, currency: "USD" } },
+  related: [
+    { slug: "widget-lite", title: "Widget Lite", hero_r2_key: "products/widget-lite.svg", hero_alt_text: "Widget Lite art", price_minor: 1999, price_currency: "USD" },
+    { slug: "widget-max",  title: "Widget Max",  hero_r2_key: null,                       hero_alt_text: null,             price_minor: 4999, price_currency: "USD" },
+  ],
+  shop_name: "Acme",
+};
+
+// The "You may also like" rail renders the decorated picks as product
+// cards (image-bearing + placeholder fallback) and is hidden entirely
+// when there are no picks.
+async function _productRelated() {
+  var html = storefront.renderProduct(Object.assign({}, _RELATED_OPTS));
+  check("PDP renders the related section",        html.indexOf("pdp-recommendations") !== -1);
+  check("PDP related heading is 'You may also like'", html.indexOf("You may also like") !== -1);
+  check("PDP related lists both picks",            html.indexOf("Widget Lite") !== -1 && html.indexOf("Widget Max") !== -1);
+  check("PDP related links each pick",             html.indexOf("/products/widget-lite") !== -1 && html.indexOf("/products/widget-max") !== -1);
+  check("PDP related shows formatted prices",      html.indexOf("$19.99") !== -1 && html.indexOf("$49.99") !== -1);
+  check("PDP related image pick uses hero r2 key", html.indexOf("/assets/products/widget-lite.svg") !== -1);
+  check("PDP related no-image pick uses placeholder card", html.indexOf("product-card__media--placeholder") !== -1);
+  check("PDP related reuses the catalog grid",     html.indexOf("class=\"grid\"") !== -1);
+
+  // Hidden when there are no picks — no empty rail, no heading.
+  var none = storefront.renderProduct(Object.assign({}, _RELATED_OPTS, { related: [] }));
+  check("PDP hides related section when empty",    none.indexOf("pdp-recommendations") === -1);
+  check("PDP omits related heading when empty",     none.indexOf("You may also like") === -1);
+
+  // Omitting `related` entirely behaves like an empty list.
+  var omitted = storefront.renderProduct({
+    product:  _RELATED_OPTS.product,
+    variants: _RELATED_OPTS.variants,
+    prices:   _RELATED_OPTS.prices,
+    shop_name: "Acme",
+  });
+  check("PDP without related opt hides the section", omitted.indexOf("pdp-recommendations") === -1);
+}
+
+// Dual-render parity: the PDP markup the container emits and the markup
+// the edge Worker emits for the SAME inputs must be byte-identical, so a
+// page served from either substrate renders the same "You may also like"
+// rail (the asset-fingerprint test enforces the same for the chrome).
+// Loads the edge ESM the same way asset-fingerprint.test.js does.
+async function _productRelatedParity() {
+  var fs       = require("fs");
+  var path     = require("path");
+  var nodeModule = require("node:module");
+  var nodeUrl    = require("node:url");
+
+  var edgeProductPath = path.join(__dirname, "..", "..", "worker", "render", "product.js");
+  // worker/ is excluded from the container build context, so the in-image
+  // smoke gate doesn't ship the edge modules — skip the parity assertions
+  // there (the full-tree CI run, where worker/ IS present, covers them).
+  if (!fs.existsSync(edgeProductPath)) return;
+
+  // The edge modules import asset-manifest.json with esbuild's bundler
+  // syntax; supply the `type: "json"` import attribute Node's native
+  // loader requires so the unbundled source loads here. Idempotent.
+  nodeModule.registerHooks({
+    resolve: function (spec, ctx, next) {
+      var r = next(spec, ctx);
+      if (r.url && r.url.slice(-5) === ".json") r.importAttributes = { type: "json" };
+      return r;
+    },
+  });
+  var edgeProduct = await import(nodeUrl.pathToFileURL(edgeProductPath).href);
+
+  // Container + edge renderers take slightly different opt key casing
+  // (snake_case vs camelCase) — feed each its own shape with the SAME
+  // product / variants / prices / related data + the same asset prefix.
+  var related = _RELATED_OPTS.related;
+  var containerHtml = storefront.renderProduct({
+    product:      _RELATED_OPTS.product,
+    variants:     _RELATED_OPTS.variants,
+    prices:       _RELATED_OPTS.prices,
+    related:      related,
+    shop_name:    "Acme",
+    canonical_url: "https://acme.example/products/widget-pro",
+  });
+  var edgeHtml = edgeProduct.renderProduct({
+    product:      _RELATED_OPTS.product,
+    variants:     _RELATED_OPTS.variants,
+    prices:       _RELATED_OPTS.prices,
+    related:      related,
+    shopName:     "Acme",
+    canonicalUrl: "https://acme.example/products/widget-pro",
+    version:      "test",
+  });
+
+  function _relatedBlock(html) {
+    var start = html.indexOf("<section class=\"catalog-section pdp-recommendations\"");
+    if (start === -1) return null;
+    var end = html.indexOf("</section>", start);
+    return end === -1 ? null : html.slice(start, end + "</section>".length);
+  }
+  var cBlock = _relatedBlock(containerHtml);
+  var eBlock = _relatedBlock(edgeHtml);
+  check("container PDP emits the related section",  cBlock !== null);
+  check("edge PDP emits the related section",       eBlock !== null);
+  check("edge + container related section is byte-identical", cBlock === eBlock);
+}
+
 async function _cart() {
   var html = storefront.renderCart({
     lines: [
@@ -643,6 +753,8 @@ async function run() {
   await _product();
   await _productAvailability();
   await _productNoVariants();
+  await _productRelated();
+  await _productRelatedParity();
   await _cart();
   await _cartEmpty();
   await _checkoutForm();

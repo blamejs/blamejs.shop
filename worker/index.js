@@ -40,6 +40,7 @@ import {
   getBlogArticleBySlug,
   getBundlesForProduct,
   getQtyBreaksForSku,
+  listRelatedProducts,
 } from "./data/catalog.js";
 import {
   computeFacets,
@@ -1253,12 +1254,19 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
     // Inventory map for the truthful availability badge + JSON-LD, the
     // edge mirror of the container's per-SKU `inventory.get` loop. A SKU
     // with no row is absent → the renderer reads it as available.
-    const [bundleOffers, qtyBreaks, inventory] = await Promise.all([
+    // "You may also like" picks — same-collection siblings in a
+    // deterministic order, the edge mirror of the container's
+    // lib/storefront.js#_relatedProductsFor. Priced in base USD here; the
+    // renderer's `fmt` applies any active display-currency conversion, so
+    // the rail tracks the visitor's chosen currency identically to the
+    // buy-box prices.
+    const [bundleOffers, qtyBreaks, inventory, related] = await Promise.all([
       getBundlesForProduct(env.DB, variantSkus, "USD"),
       firstVariant && firstPrice
         ? getQtyBreaksForSku(env.DB, firstVariant.sku, firstPrice.amount_minor, firstPrice.currency, b.money)
         : Promise.resolve([]),
       listInventoryForSkus(env.DB, variantSkus),
+      listRelatedProducts(env.DB, product.id, "USD", 4),
     ]);
     const html = renderProduct(Object.assign({
       product:       product,
@@ -1274,6 +1282,7 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
       bundleOffers:  bundleOffers,
       qtyBreaks:     qtyBreaks,
       wishlistCount: wishlistCount,
+      related:       related.rows,
       announcement:  await resolveAnnouncement(env.DB, {}),
       shopName:      shopName,
       cartCount:     0,

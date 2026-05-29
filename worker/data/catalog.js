@@ -352,6 +352,82 @@ export async function listVariantsWithPrices(DB, productId, currency) {
   return { rows: rows };
 }
 
+// PDP "You may also like" picks — the edge mirror of the container's
+// lib/storefront.js#_relatedProductsFor. Deterministic same-collection
+// query so both substrates produce the SAME ordered list and the rail
+// renders byte-identically: the source product's primary collection
+// (lowest membership position), then the other active members of that
+// collection ordered by membership position then product id, self
+// excluded, capped at `limit`. The signal-based recommendations engine
+// (co-purchase + RANDOM filler) is intentionally NOT mirrored here — its
+// order isn't reproducible at the edge. Each pick carries its first
+// variant's current price (minor units, by membership/position order)
+// + first media row; the renderer formats the price string. Returns
+// rows shaped { slug, title, hero_r2_key, hero_alt_text, price_minor,
+// price_currency }. Missing-table-resilient: a `collection_members`
+// read failure returns [] so the PDP renders without the rail (see
+// `getReviewSummary`).
+export async function listRelatedProducts(DB, productId, currency, limit) {
+  if (typeof productId !== "string" || productId.length === 0) return { rows: [] };
+  var cur = (typeof currency === "string" && currency.length === 3) ? currency : "USD";
+  var n   = (Number.isInteger(limit) && limit > 0) ? limit : 4;
+  try {
+    var primaryRes = await DB
+      .prepare(
+        "SELECT collection_slug FROM collection_members WHERE product_id = ?1 " +
+        "ORDER BY position ASC, id ASC LIMIT 1"
+      )
+      .bind(productId)
+      .first();
+    if (!primaryRes || !primaryRes.collection_slug) return { rows: [] };
+    // Sibling product ids in stable membership order (the same key the
+    // container uses). The decorated columns (price + hero media) are
+    // joined per the catalog's first-variant / first-media window so the
+    // card data matches the home + search grids.
+    var res = await DB
+      .prepare(
+        "SELECT p.id AS id, p.slug AS slug, p.title AS title, " +
+        "       pr.amount_minor AS price_amount_minor, " +
+        "       pr.currency     AS price_currency, " +
+        "       m.r2_key        AS hero_r2_key, " +
+        "       m.alt_text      AS hero_alt_text " +
+        "FROM collection_members cm " +
+        "JOIN products p ON p.id = cm.product_id " +
+        "LEFT JOIN ( " +
+        "  SELECT iv.*, " +
+        "         ROW_NUMBER() OVER (PARTITION BY iv.product_id ORDER BY iv.position ASC, iv.created_at ASC) AS rn " +
+        "  FROM variants iv " +
+        ") v ON v.product_id = p.id AND v.rn = 1 " +
+        "LEFT JOIN prices pr ON pr.variant_id = v.id AND pr.currency = ?1 AND pr.effective_until IS NULL " +
+        "LEFT JOIN ( " +
+        "  SELECT im.*, " +
+        "         ROW_NUMBER() OVER (PARTITION BY im.product_id ORDER BY im.position ASC, im.created_at ASC) AS rn " +
+        "  FROM media im " +
+        "  WHERE im.product_id IS NOT NULL " +
+        ") m ON m.product_id = p.id AND m.rn = 1 " +
+        "WHERE cm.collection_slug = ?2 AND cm.product_id != ?3 AND p.status = 'active' " +
+        "ORDER BY cm.position ASC, cm.product_id ASC LIMIT ?4"
+      )
+      .bind(cur, primaryRes.collection_slug, productId, n)
+      .all();
+    var raw = (res && res.results) ? res.results : [];
+    var rows = raw.map(function (r) {
+      return {
+        slug:           r.slug,
+        title:          r.title,
+        hero_r2_key:    r.hero_r2_key != null ? r.hero_r2_key : null,
+        hero_alt_text:  r.hero_r2_key != null ? (r.hero_alt_text || r.title) : null,
+        price_minor:    r.price_amount_minor != null ? r.price_amount_minor : null,
+        price_currency: r.price_currency || "USD",
+      };
+    });
+    return { rows: rows };
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return { rows: [] };
+    throw e;
+  }
+}
+
 // Every active product slug + its last-modified epoch (for sitemap
 // `<lastmod>` derivation). Streamed straight off the products table;
 // no JOIN. The sitemap protocol caps a single sitemap at 50,000 URLs
