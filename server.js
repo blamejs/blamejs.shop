@@ -145,6 +145,16 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
 
   var app = await b.createApp({
     dataDir: DATA_DIR,
+    // Generous GLOBAL per-client-IP rate limit — the backstop against
+    // credential / passkey spraying, gift-card balance brute-force,
+    // checkout hammering, and unauthenticated row-flood writes. Keyed on
+    // the real client IP (Cloudflare's cf-connecting-ip behind the
+    // Worker, socket address for direct dev connections), NOT the socket
+    // peer — behind the fabric every visitor shares the fabric's address,
+    // so a socket-keyed global limit would throttle the whole store. The
+    // tight per-route limiters + fetch-metadata gate mount inside routes()
+    // below. createApp mounts this at the app level, ahead of routes().
+    middleware: { rateLimit: bShop.securityMiddleware.globalRateLimitOpts() },
     routes: function (r) {
       // Capture the raw body for payment webhooks BEFORE the JSON parser
       // consumes it — Stripe (and PayPal) verify the signature over the
@@ -165,6 +175,18 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           contentTypes: ["text/plain", "text/csv"],
         },
       }));
+
+      // Request-lifecycle security guards — fetch-metadata (refuses
+      // cross-site state-changing requests via Sec-Fetch-* without a
+      // per-form token, the CSRF defense-in-depth on top of the
+      // storefront's SameSite session cookie) + the tight per-client-IP
+      // rate limiters on the abusable auth / POST endpoints (login,
+      // passkey register, checkout, gift-card balance, register,
+      // newsletter, review / question submit, survey). Both exempt the
+      // payment webhook paths (cross-site by nature, HMAC-authenticated).
+      // Mounted after bodyParser so the gate reads a fully-shaped request
+      // and before any storefront / admin route.
+      bShop.securityMiddleware.mountRouteGuards(r);
 
       // Liveness + readiness — the Worker short-circuits /_/health
       // at the edge, but the container also responds so the

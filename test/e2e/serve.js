@@ -57,14 +57,20 @@ function _makeQuery() {
   await catalog.inventory.create("E2E-1", { stock_on_hand: 100 });
 
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-e2e-"));
-  // NOTE: production middleware defaults — bot-guard, rate-limit, origin,
-  // fetch-metadata, CSRF, sealed cookies are ALL on. This is the point.
+  // NOTE: production middleware defaults — bot-guard (createApp default),
+  // the global per-client-IP rate limit, fetch-metadata cross-site
+  // isolation + origin guard, the tight per-route limiters, and sealed
+  // cookies are ALL on, wired through the same lib/security-middleware
+  // composition server.js uses. This is the point: a real browser
+  // exercises the same security stack a deploy runs.
   var app = await b.createApp({
     dataDir: dataDir,
     vault: { mode: "plaintext" },
     db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
+    middleware: { rateLimit: bShop.securityMiddleware.globalRateLimitOpts() },
     routes: function (r) {
       r.use(b.middleware.bodyParser());
+      bShop.securityMiddleware.mountRouteGuards(r);
       bShop.storefront.mount(r, { catalog: catalog, cart: cart, order: order });
     },
   });
