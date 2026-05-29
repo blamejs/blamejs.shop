@@ -78,12 +78,6 @@ image          = "./Dockerfile"
 instance_type  = "standard-2"
 max_instances  = 1
 name           = "blamejs-shop-container"
-# Temporary: authorize `wrangler containers ssh` to attach to a running
-# instance for boot-hang diagnosis. SSH is account-authenticated and exposes
-# no public port. Revert once the boot issue is resolved.
-[[containers.authorized_keys]]
-name       = "robert"
-public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPiE/PETpyiVPd8aMygJ+S9CsSVolp4HQZaAuiYVwbBa RobertLeeLW@gmail.com"
 
 # --- Durable Objects ------------------------------------------------
 [[durable_objects.bindings]]

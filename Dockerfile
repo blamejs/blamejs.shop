@@ -54,15 +54,18 @@ ENV NODE_ENV=production
 ENV PORT=8080
 ENV DATA_DIR=/app/data
 # Encrypted-at-rest (createApp's secure default) keeps decrypted scratch
-# off persistent disk and so requires a tmpfs. /dev/shm is a real tmpfs
-# in OCI runtimes — point the framework at it rather than relaxing to
-# atRest:'plain'. Bump the container's shm size if a large local working
-# set ever needs it.
-ENV BLAMEJS_TMPDIR=/dev/shm
-# Hand `/app` + `/app/data` to the non-root `node` user before
-# dropping privileges so `b.createApp` can create the vault + db
+# off persistent disk. /dev/shm is the standard tmpfs in many OCI runtimes,
+# but Cloudflare Containers (Firecracker) doesn't grant the non-root `node`
+# user write access there — `mkdir '/dev/shm'` fails EACCES and the boot
+# throws before binding :8080. The framework accepts any writable
+# directory in BLAMEJS_TMPDIR (it doesn't have to be a tmpfs mount), so
+# point it at a node-owned path under /app instead of relaxing to
+# atRest:'plain'.
+ENV BLAMEJS_TMPDIR=/app/tmp
+# Hand `/app` + `/app/data` + `/app/tmp` to the non-root `node` user
+# before dropping privileges so `b.createApp` can create the vault + db
 # directory tree at boot without root.
-RUN mkdir -p /app/data \
+RUN mkdir -p /app/data /app/tmp \
  && chown -R node:node /app
 USER node
 WORKDIR /app
