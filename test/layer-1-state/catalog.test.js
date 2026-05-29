@@ -256,6 +256,11 @@ async function _prices() {
   var eurNow = await catalog.prices.current(v.id, "EUR");
   check("price.current isolates currency", usdNow.amount_minor === 2499 && eurNow.amount_minor === 2799);
 
+  var curs = await catalog.prices.currencies(v.id);
+  check("price.currencies lists both, sorted", curs.length === 2 && curs[0] === "EUR" && curs[1] === "USD");
+  var none = await catalog.prices.currencies(bShop.framework.uuid.v7());
+  check("price.currencies empty for unpriced variant", none.length === 0);
+
   await assert.rejects(catalog.prices.set(v.id, { currency: "usd", amount_minor: 1 }),   /ISO 4217/);
   await assert.rejects(catalog.prices.set(v.id, { currency: "USD", amount_minor: -1 }),  /amount_minor must be a non-negative/);
   await assert.rejects(catalog.prices.set(v.id, { currency: "USD", amount_minor: 1.5 }), /amount_minor must be a non-negative/);
@@ -314,6 +319,11 @@ async function _media() {
 
   var varMedia = await catalog.media.listForVariant(v.id);
   check("media.listForVariant returns variant-scoped", varMedia.length === 1 && varMedia[0].id === m2.id);
+
+  var gotMedia = await catalog.media.get(m1.id);
+  check("media.get returns the row", gotMedia && gotMedia.id === m1.id && gotMedia.product_id === p.id);
+  var missMedia = await catalog.media.get(bShop.framework.uuid.v7());
+  check("media.get returns null for unknown id", missMedia === null);
 
   var deleted = await catalog.media.delete(m1.id);
   check("media.delete returns true", deleted === true);
