@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.22",
+  "date": "2026-05-29",
+  "headline": "See your full order history, track shipments, reorder, and request returns",
+  "summary": "The customer order surface is now complete end-to-end. A new order-history list shows every order (cursor-paginated), and each order page gains a status timeline, a carrier tracking panel (tracking number + the carrier's public tracking link), a one-click Reorder that rebuilds a cart from the order, and a Request-a-return button for eligible orders — the same Reorder/Return actions also appear per row on the account dashboard and the history list. On the operator side, the admin order screen gets a shipment panel to attach a carrier + tracking number and record shipment events, and the returns console's Refund now issues the payment-provider refund first (then records the RMA) whenever the order has a captured charge, so a return can't be marked refunded while the customer is left un-refunded; manual/guest orders with no charge fall back to an explicit record-only step.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Order history + tracking + reorder + returns (customer)", "body": "`/account/orders` lists all your orders with pagination; each order page shows a status timeline and carrier tracking, plus Reorder (`POST /orders/:id/reorder` rebuilds a cart from the order's lines at current prices) and Request-a-return for eligible orders. The dashboard and history rows carry the same actions." },
+        { "title": "Shipment + tracking panel (admin)", "body": "The admin order detail screen can attach a shipment (carrier + tracking number) and record shipment events; marking delivered advances the order's lifecycle. Tracking the order surfaces the carrier's public tracking link to the customer." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Return refunds move the money", "body": "The returns console Refund action now issues the payment-provider refund first and records the RMA only on success when the order has a captured charge, so an approved return is never marked refunded without the customer actually being refunded. Orders with no captured charge use an explicit record-only step that points to the order." }
+      ]
+    }
+  ]
+}

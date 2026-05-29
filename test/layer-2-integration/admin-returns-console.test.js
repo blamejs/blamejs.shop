@@ -190,4 +190,118 @@ async function _run() {
   }
 }
 
-module.exports = { run: _run };
+// Seed a paid order WITH a captured payment intent + an approved-then-
+// received RMA so the next legal RMA action is refund. Returns the ids.
+async function _seedRefundableReturn(query, returns) {
+  var now = Date.now();
+  var cartId = b.uuid.v7(), orderId = b.uuid.v7(), lineId = b.uuid.v7();
+  var intent = "pi_test_" + orderId.slice(0, 12);
+  await query(
+    "INSERT INTO carts (id, session_id, customer_id, currency, status, created_at, updated_at, expires_at) " +
+    "VALUES (?1, ?2, NULL, 'USD', 'converted', ?3, ?3, ?4)",
+    [cartId, b.uuid.v7(), now, now + 86400000],
+  );
+  await query(
+    "INSERT INTO orders (id, cart_id, customer_id, session_id, status, currency, subtotal_minor, " +
+    "discount_minor, tax_minor, shipping_minor, grand_total_minor, payment_intent_id, ship_to_json, " +
+    "customer_email_hash, created_at, updated_at) " +
+    "VALUES (?1, ?2, NULL, ?3, 'paid', 'USD', 5998, 0, 0, 0, 5998, ?4, '{}', NULL, ?5, ?5)",
+    [orderId, cartId, b.uuid.v7(), intent, now],
+  );
+  await query(
+    "INSERT INTO order_lines (id, order_id, variant_id, sku, qty, unit_amount_minor, unit_currency, line_total_minor) " +
+    "VALUES (?1, ?2, ?3, 'WIDGET-1', 1, 5998, 'USD', 5998)",
+    [lineId, orderId, b.uuid.v7()],
+  );
+  var rma = await returns.request({
+    order_id: orderId, reason: "defective",
+    customer_notes: "Cracked.", lines: [{ sku: "WIDGET-1", qty: 1, order_line_id: lineId }],
+  });
+  await returns.approve(rma.id, { refund_amount_minor: 5998, refund_currency: "USD" });
+  await returns.markReceived(rma.id, {});
+  return { orderId: orderId, rmaId: rma.id, rmaCode: rma.rma_code, intent: intent };
+}
+
+// The RMA refund money-gap fix: when a payment provider is wired AND the
+// linked order has a captured intent, the console's Refund action issues
+// the provider refund (via a confirm interstitial) THEN records the RMA
+// refund — never a bare state change with the customer un-refunded. A fake
+// payment exposes refund() so the flow runs without a network call.
+async function _runProviderRefund() {
+  var query   = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query });
+  var order   = bShop.order.create({ query: query, cursorSecret: "ret-prov" });
+  var config  = bShop.config.create({ query: query });
+  var returns = bShop.returns.create({ query: query, cursorSecret: "ret-prov-rma" });
+
+  var refundCalls = [];
+  var payment = {
+    refund: async function (input, idem) {
+      refundCalls.push({ input: input, idem: idem });
+      return { id: "re_test_1", amount: input.amount_minor || 5998 };
+    },
+  };
+
+  var seeded = await _seedRefundableReturn(query, returns);
+
+  var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-retp-"));
+  var app = await b.createApp({
+    dataDir: dataDir, vault: { mode: "plaintext" },
+    db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
+    middleware: { botGuard: false, rateLimit: false },
+    routes: function (r) {
+      r.use(b.middleware.bodyParser());
+      bShop.admin.mount(r, {
+        token: TOKEN, catalog: catalog, order: order, config: config,
+        returns: returns, payment: payment, shop_name: "Test Shop",
+      });
+    },
+  });
+  var bound = await app.listen({ port: 0, host: "127.0.0.1" });
+  var port = bound.port;
+  var rid = seeded.rmaId;
+
+  try {
+    var jar = helpers.cookieJar();
+    await helpers.httpRequest({ port: port, path: "/admin/login", method: "POST", form: { token: TOKEN }, jar: jar });
+
+    // The received RMA's detail now offers a provider-backed Refund — it
+    // posts to the confirm interstitial, not the bare record endpoint.
+    var detail = await helpers.httpRequest({ port: port, path: "/admin/returns/" + rid, jar: jar });
+    check("provider refund button shown",        detail.body.indexOf("Refund through provider") !== -1);
+    check("refund posts to confirm interstitial", detail.body.indexOf("/admin/returns/" + rid + "/refund/confirm") !== -1);
+    check("detail is not record-only",            detail.body.indexOf("Record-only") === -1);
+
+    // The confirm interstitial states the amount + warns it's irreversible.
+    var confirm = await helpers.httpRequest({ port: port, path: "/admin/returns/" + rid + "/refund/confirm", method: "POST", jar: jar, form: {} });
+    check("confirm interstitial then 200",       confirm.status === 200);
+    check("interstitial states the amount",       confirm.body.indexOf("$59.98") !== -1);
+    check("interstitial warns irreversible",      confirm.body.indexOf("cannot be undone") !== -1);
+
+    // Confirming issues the provider refund THEN records the RMA refund.
+    var doRefund = await helpers.httpRequest({ port: port, path: "/admin/returns/" + rid + "/refund", method: "POST", jar: jar, form: {} });
+    check("provider refund then 303 moved",      doRefund.status === 303 && (doRefund.headers.location || "").indexOf("moved=1") !== -1);
+    check("provider.refund was called",          refundCalls.length === 1);
+    check("refund used the order's intent",       refundCalls[0].input.payment_intent === seeded.intent);
+    check("refund used the RMA amount",           refundCalls[0].input.amount_minor === 5998);
+    check("RMA now refunded",                    (await returns.get(rid)).status === "refunded");
+
+    // JSON API path: a second RMA on a refundable order refunds via the
+    // canonical endpoint with a bearer token (no interstitial).
+    var seeded2 = await _seedRefundableReturn(query, returns);
+    var apiRefund = await helpers.httpRequest({ port: port, path: "/admin/returns/" + seeded2.rmaId + "/refund", method: "POST", headers: { authorization: "Bearer " + TOKEN }, form: {} });
+    check("API refund then 200 JSON",            apiRefund.status === 200 && (apiRefund.headers["content-type"] || "").indexOf("application/json") === 0);
+    check("API RMA now refunded",                (await returns.get(seeded2.rmaId)).status === "refunded");
+    check("provider.refund called for API too",   refundCalls.length === 2);
+  } finally {
+    try { await app.shutdown(); } catch (_e) { /* */ }
+    try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
+  }
+}
+
+async function run() {
+  await _run();
+  await _runProviderRefund();
+}
+
+module.exports = { run: run };
