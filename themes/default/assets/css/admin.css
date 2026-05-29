@@ -241,3 +241,14 @@ code { font-family:var(--font-mono); font-size:.82rem; color:var(--ink-2); backg
 fieldset.box legend { font-family:var(--font-display); font-weight:600; color:var(--ink); }
 .box { border:1px solid var(--hair); border-radius:.5rem; padding:.75rem 1rem; margin:1rem 0; }
 .code-block { white-space:pre-wrap; word-break:break-all; color:var(--ink-2); background:var(--sunken); border:1px solid var(--hair); border-radius:.5rem; padding:.75rem; }
+.mt-0 { margin-top:0; }
+.mb-0 { margin-bottom:0; }
+
+/* Product detail — per-variant price sub-panel + media gallery. */
+.panel-sub { margin-top:1rem; padding-top:1rem; border-top:1px solid var(--hair); }
+.price-set-form { margin-top:.5rem; }
+.media-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(11rem,1fr)); gap:1rem; margin-bottom:1.5rem; }
+.media-card { display:flex; flex-direction:column; gap:.4rem; padding:.75rem; background:var(--paper); border:1px solid var(--hair); border-radius:var(--radius); }
+.media-card .order-id { word-break:break-all; }
+.media-thumb { width:100%; height:8rem; object-fit:cover; border-radius:8px; background:var(--sunken); border:1px solid var(--hair); }
+.media-thumb--file { display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--mute); }
