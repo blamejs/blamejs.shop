@@ -578,6 +578,65 @@ async function _layoutTokens() {
   }
 }
 
+// Subscription self-management renderer — the controls (pause / resume /
+// skip / change-qty / change-freq / reactivate) are state-gated off the
+// local control columns the subscriptionControls primitive owns, and the
+// ?ok / ?error notices map to fixed copy (no reflected strings).
+async function _subscriptionSelfManage() {
+  var plan = { interval: "month", interval_count: 1, currency: "usd", amount_minor: 1999 };
+
+  // Active row → pause + skip + quantity + frequency controls, no resume /
+  // reactivate. Self-manage off → none of them render.
+  var active = storefront.renderAccountSubscriptions({
+    subscriptions: [{ id: "11111111-1111-7111-8111-111111111111", status: "active", plan: plan, quantity: 2, current_period_end: Date.now() + 2592000000 }],
+    self_manage:   true,
+    shop_name:     "Acme",
+  });
+  check("active offers pause control",       active.indexOf("/account/subscriptions/11111111-1111-7111-8111-111111111111/pause") !== -1);
+  check("active offers skip control",        active.indexOf("/account/subscriptions/11111111-1111-7111-8111-111111111111/skip") !== -1);
+  check("active offers quantity control",    active.indexOf("/account/subscriptions/11111111-1111-7111-8111-111111111111/quantity") !== -1);
+  check("active offers frequency control",   active.indexOf("/account/subscriptions/11111111-1111-7111-8111-111111111111/frequency") !== -1);
+  check("active prefills current quantity",  active.indexOf("name=\"quantity\" min=\"1\" step=\"1\" value=\"2\"") !== -1);
+  check("active hides resume control",       active.indexOf("/11111111-1111-7111-8111-111111111111/resume") === -1);
+
+  var noManage = storefront.renderAccountSubscriptions({
+    subscriptions: [{ id: "11111111-1111-7111-8111-111111111111", status: "active", plan: plan }],
+    shop_name:     "Acme",
+  });
+  check("self-manage off hides controls",    noManage.indexOf("/11111111-1111-7111-8111-111111111111/pause") === -1);
+
+  // Paused row → resume only (no pause / skip).
+  var paused = storefront.renderAccountSubscriptions({
+    subscriptions: [{ id: "22222222-2222-7222-8222-222222222222", status: "active", plan: plan, paused_at: Date.now(), paused_until: Date.now() + 604800000 }],
+    self_manage:   true,
+    shop_name:     "Acme",
+  });
+  check("paused offers resume control",      paused.indexOf("/account/subscriptions/22222222-2222-7222-8222-222222222222/resume") !== -1);
+  check("paused hides pause control",        paused.indexOf("/22222222-2222-7222-8222-222222222222/pause") === -1);
+  check("paused shows paused-until note",    paused.indexOf("subscription-card__state") !== -1 && paused.indexOf("Paused until") !== -1);
+
+  // Cancelled within grace → reactivate; cancelled past grace → no control.
+  var cancelledFresh = storefront.renderAccountSubscriptions({
+    subscriptions: [{ id: "33333333-3333-7333-8333-333333333333", status: "canceled", plan: plan, cancelled_at: Date.now() - 86400000 }],
+    self_manage:   true,
+    shop_name:     "Acme",
+  });
+  check("fresh cancel offers reactivate",    cancelledFresh.indexOf("/account/subscriptions/33333333-3333-7333-8333-333333333333/reactivate") !== -1);
+
+  var cancelledStale = storefront.renderAccountSubscriptions({
+    subscriptions: [{ id: "44444444-4444-7444-8444-444444444444", status: "canceled", plan: plan, cancelled_at: Date.now() - (120 * 24 * 60 * 60 * 1000) }],
+    self_manage:   true,
+    shop_name:     "Acme",
+  });
+  check("stale cancel hides reactivate",     cancelledStale.indexOf("/44444444-4444-7444-8444-444444444444/reactivate") === -1);
+
+  // ?ok / ?error notice copy is fixed (no reflected strings).
+  var okPage = storefront.renderAccountSubscriptions({ subscriptions: [], self_manage: true, notice: "Your next shipment has been skipped.", shop_name: "Acme" });
+  check("ok notice renders role=status",     okPage.indexOf("role=\"status\"") !== -1 && okPage.indexOf("Your next shipment has been skipped.") !== -1);
+  var errPage = storefront.renderAccountSubscriptions({ subscriptions: [], self_manage: true, error: "Enter a quantity of 1 or more.", shop_name: "Acme" });
+  check("error notice renders role=alert",    errPage.indexOf("role=\"alert\"") !== -1 && errPage.indexOf("Enter a quantity of 1 or more.") !== -1);
+}
+
 async function run() {
   await _home();
   await _homeEmpty();
@@ -600,6 +659,7 @@ async function run() {
   await _searchCorrection();
   await _xssEscape();
   await _validation();
+  await _subscriptionSelfManage();
   await _layoutTokens();
 }
 

@@ -479,6 +479,15 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       var subscriptions = (catalog && cart)
         ? bShop.subscriptions.create({ payment: payment })
         : null;
+      // Customer + operator subscription lifecycle (pause / resume / skip /
+      // change-quantity / change-frequency / reactivate) layered on the
+      // shared `subscriptions` instance via its `.subscriptions` handle.
+      // Self-management routes mount on /account/subscriptions; a missing /
+      // unmigrated control table only surfaces when a route runs (degrades
+      // to a notice), never at boot.
+      var subscriptionControls = subscriptions
+        ? bShop.subscriptionControls.create({ subscriptions: subscriptions.subscriptions })
+        : null;
 
       // Tax + shipping default tables — kick in when the operator
       // hasn't seeded `tax.rules` / `shipping.services` in config.
@@ -705,6 +714,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         // the cancel route mounts only when `sfDeps.payment` is wired
         // (set in the Stripe block below).
         if (subscriptions) sfDeps.subscriptions = subscriptions;
+        if (subscriptionControls) sfDeps.subscriptionControls = subscriptionControls;
         // Gift cards — the customer balance-check page (/gift-cards) and
         // the redeem-at-checkout credit. Wired regardless of Stripe; the
         // balance page needs only the card primitive.

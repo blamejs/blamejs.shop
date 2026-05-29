@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.20",
+  "date": "2026-05-29",
+  "headline": "Manage a subscription yourself — pause, skip, change, or reactivate",
+  "summary": "The subscriptions account screen previously only let a customer cancel. It now exposes the full self-service set: pause and resume, skip the next shipment, change the quantity, change the delivery frequency, and reactivate a recently-cancelled subscription within its grace window. Each action is state-gated (only the controls that apply to a subscription's current state are shown), confirm-aware where it changes billing, and reports back with a status notice. No more cancelling just to make a change.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Subscription self-management", "body": "`/account/subscriptions` gains Pause / Resume, Skip next shipment, Change quantity, Change frequency, and Reactivate (within the grace window) alongside Cancel. Controls are shown only when valid for the subscription's state; quantity and frequency are validated server-side; pause and cancel go through a confirmation step." }
+      ]
+    }
+  ]
+}
