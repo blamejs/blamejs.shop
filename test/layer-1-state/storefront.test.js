@@ -316,6 +316,77 @@ async function _orderPage() {
   check("order page shows total",          html.indexOf("$72.18") !== -1);
 }
 
+async function _passkeysPage() {
+  // List with two credentials → revoke is offered on each (more than one
+  // sign-in method, so removing one never locks the customer out).
+  var html = storefront.renderPasskeys({
+    passkeys: [
+      { id: "11111111-1111-1111-1111-111111111111", credential_id: "credAAAAAAAAAAAAAAAA", transports: "internal", created_at: Date.UTC(2026, 0, 2) },
+      { id: "22222222-2222-2222-2222-222222222222", credential_id: "credBBBBBBBBBBBBBBBB", transports: "usb,nfc",  created_at: Date.UTC(2026, 0, 3) },
+    ],
+    has_oauth: false,
+    shop_name: "Acme",
+  });
+  check("passkeys page is full HTML doc",      html.indexOf("<!DOCTYPE html>") === 0);
+  check("passkeys page titled Passkeys",       html.indexOf("account-passkeys") !== -1);
+  check("passkeys list shows both fingerprints", html.indexOf("credAAAAAAAA") !== -1 && html.indexOf("credBBBBBBBB") !== -1);
+  check("passkeys list maps transports to labels", html.indexOf("This device") !== -1 && html.indexOf("Security key (USB)") !== -1);
+  check("passkeys list shows the added date",     html.indexOf("2026-01-02") !== -1);
+  check("passkeys offer per-credential revoke",   html.indexOf("/account/passkeys/11111111-1111-1111-1111-111111111111/remove") !== -1);
+  check("passkeys add-another island present",    html.indexOf("id=\"passkey-add-btn\"") !== -1);
+  check("passkeys add-another loads the island",  /\/assets\/themes\/default\/js\/passkey-add\.[a-f0-9]{8,}\.js/.test(html));
+
+  // Last credential + NO oauth fallback → revoke is withheld, replaced by
+  // a clear "only sign-in method" note so the customer can't lock out.
+  var last = storefront.renderPasskeys({
+    passkeys: [{ id: "33333333-3333-3333-3333-333333333333", credential_id: "soloCred", created_at: Date.UTC(2026, 0, 4) }],
+    has_oauth: false,
+    shop_name: "Acme",
+  });
+  check("last-credential withholds revoke",       last.indexOf("/account/passkeys/33333333-3333-3333-3333-333333333333/remove") === -1);
+  check("last-credential surfaces a clear note",  last.indexOf("Only sign-in method") !== -1);
+
+  // Last passkey but a linked OAuth identity → revoke IS offered (the
+  // federated login is the fallback).
+  var lastWithOauth = storefront.renderPasskeys({
+    passkeys: [{ id: "44444444-4444-4444-4444-444444444444", credential_id: "soloCred2", created_at: Date.UTC(2026, 0, 5) }],
+    has_oauth: true,
+    shop_name: "Acme",
+  });
+  check("oauth fallback re-enables last revoke",   lastWithOauth.indexOf("/account/passkeys/44444444-4444-4444-4444-444444444444/remove") !== -1);
+
+  // Empty state.
+  var empty = storefront.renderPasskeys({ passkeys: [], has_oauth: false, shop_name: "Acme" });
+  check("passkeys empty-state shown",             empty.indexOf("No passkeys enrolled") !== -1);
+}
+
+async function _passkeyRemoveConfirm() {
+  var html = storefront.renderPasskeyRemoveConfirm({
+    passkey: { id: "55555555-5555-5555-5555-555555555555", credential_id: "credToRevoke", created_at: Date.UTC(2026, 0, 6) },
+    shop_name: "Acme",
+  });
+  check("confirm page asks before revoking",      html.indexOf("Revoke this passkey?") !== -1);
+  check("confirm page POSTs to the revoke route",  html.indexOf("action=\"/account/passkeys/55555555-5555-5555-5555-555555555555/revoke\"") !== -1);
+  check("confirm page offers a Cancel link",       html.indexOf("href=\"/account/passkeys\"") !== -1);
+}
+
+async function _profilePage() {
+  var html = storefront.renderProfile({
+    customer:  { id: "c1", display_name: "Ada Lovelace" },
+    shop_name: "Acme",
+  });
+  check("profile page is full HTML doc",          html.indexOf("<!DOCTYPE html>") === 0);
+  check("profile pre-fills the display name",      html.indexOf("value=\"Ada Lovelace\"") !== -1);
+  check("profile posts to /account/profile",       html.indexOf("action=\"/account/profile\"") !== -1);
+  check("profile email field is disabled",          html.indexOf("disabled") !== -1);
+  check("profile explains hash-only email",         html.indexOf("never stored in readable form") !== -1);
+  check("profile success notice via role=status",   storefront.renderProfile({ customer: { display_name: "x" }, success: "Profile updated.", shop_name: "Acme" }).indexOf("role=\"status\"") !== -1);
+
+  // XSS: a display name with a script tag is escaped into the value attr.
+  var xss = storefront.renderProfile({ customer: { display_name: "<script>alert(1)</script>" }, shop_name: "Acme" });
+  check("profile escapes display name in value",    xss.indexOf("<script>alert(1)") === -1 && xss.indexOf("&lt;script&gt;") !== -1);
+}
+
 async function _validation() {
   assert.throws(function () { storefront.renderHome();             }, /products required/);
   assert.throws(function () { storefront.renderHome({});             }, /products required/);
@@ -427,6 +498,9 @@ async function run() {
   await _checkoutForm();
   await _payPage();
   await _orderPage();
+  await _passkeysPage();
+  await _passkeyRemoveConfirm();
+  await _profilePage();
   await _search();
   await _searchEmpty();
   await _searchXss();

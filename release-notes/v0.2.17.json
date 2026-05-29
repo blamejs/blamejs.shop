@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.17",
+  "date": "2026-05-29",
+  "headline": "Manage your passkeys and edit your profile from your account",
+  "summary": "Signed-in customers can now manage their own passkeys and edit their profile, instead of only being able to enrol a passkey at registration. A new account screen lists each enrolled passkey (device transport + when it was added) with an add-another flow and a confirm-gated revoke; revocation is scoped to the signed-in account and refuses to remove your last sign-in method when no other (OAuth) method is linked, so you can't lock yourself out. A separate profile screen edits the display name.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Passkey management", "body": "`/account/passkeys` lists your enrolled passkeys, lets you register an additional one, and revoke one you no longer use (behind a confirmation step). Revocation only ever affects your own credentials, and the last remaining sign-in method is protected against removal." },
+        { "title": "Profile editing", "body": "`/account/profile` edits your display name with a confirmation notice. Account links for both screens were added to the account dashboard." }
+      ]
+    }
+  ]
+}
