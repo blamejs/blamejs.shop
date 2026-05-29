@@ -292,6 +292,47 @@ async function _run() {
     var miss = await helpers.httpRequest({ port: port, path: "/admin/gift-cards/00000000-0000-7000-8000-000000000000", headers: bearer });
     check("unknown card detail → 404",        miss.status === 404);
 
+    // ---- void a mis-issued card --------------------------------------
+    // The $20 card is still active + unused — the operator can revoke it.
+    // The detail page offers a "Void card" button only while active; a
+    // fully-redeemed card (the $5 one) must NOT offer it.
+    var activeDetail = await helpers.httpRequest({ port: port, path: "/admin/gift-cards/" + twentyIssue.id, jar: jarA2 });
+    check("active card shows Void button",     activeDetail.body.indexOf("Void card") !== -1 &&
+                                               activeDetail.body.indexOf("/admin/gift-cards/" + twentyIssue.id + "/void/confirm") !== -1);
+    var redeemedDetail = await helpers.httpRequest({ port: port, path: "/admin/gift-cards/" + fiveCard.id, jar: jarA2 });
+    check("redeemed card hides Void button",   redeemedDetail.body.indexOf("Void card") === -1);
+
+    // Browser confirm interstitial → real POST → PRG to the detail.
+    var confirm = await helpers.httpRequest({ port: port, path: "/admin/gift-cards/" + twentyIssue.id + "/void/confirm", method: "POST", jar: jarA2, form: {} });
+    check("void confirm then 200",            confirm.status === 200);
+    check("confirm warns it's permanent",     confirm.body.indexOf("Void this gift card?") !== -1 && confirm.body.indexOf("can no longer be redeemed") !== -1);
+    check("confirm posts to the void action",  confirm.body.indexOf("action=\"/admin/gift-cards/" + twentyIssue.id + "/void\"") !== -1);
+
+    var doVoid = await helpers.httpRequest({ port: port, path: "/admin/gift-cards/" + twentyIssue.id + "/void", method: "POST", jar: jarA2, form: { reason: "mis-issued" } });
+    check("void then 303 (PRG)",              doVoid.status === 303);
+    check("void redirects to detail w/ flag",  (doVoid.headers.location || "").indexOf("/admin/gift-cards/" + twentyIssue.id + "?voided=1") === 0);
+    var afterVoid = await giftcards.getById(twentyIssue.id);
+    check("card status now voided",           afterVoid && afterVoid.status === "voided");
+    var voidedView = await helpers.httpRequest({ port: port, path: doVoid.headers.location, jar: jarA2 });
+    check("detail shows voided banner",       voidedView.body.indexOf("Gift card voided") !== -1);
+    check("voided card hides Void button",    voidedView.body.indexOf("Void card") === -1);
+
+    // The confirm interstitial refuses a non-active card (redirects, no 500).
+    var confirmRedeemed = await helpers.httpRequest({ port: port, path: "/admin/gift-cards/" + fiveCard.id + "/void/confirm", method: "POST", jar: jarA2, form: {} });
+    check("confirm on redeemed → 303 err",    confirmRedeemed.status === 303 && (confirmRedeemed.headers.location || "").indexOf("err=1") !== -1);
+
+    // Bearer JSON void path: voiding a fully-redeemed card → 409, not 500;
+    // and voiding the (now already-voided) $20 card is idempotent → 200.
+    var jsonVoidRedeemed = await helpers.httpRequest({ port: port, path: "/admin/gift-cards/" + fiveCard.id + "/void", method: "POST", headers: bearer });
+    check("bearer void redeemed → 409",       jsonVoidRedeemed.status === 409);
+    var jsonVoidAgain = await helpers.httpRequest({ port: port, path: "/admin/gift-cards/" + twentyIssue.id + "/void", method: "POST", headers: bearer });
+    check("bearer void already-voided → 200",  jsonVoidAgain.status === 200 &&
+                                               (jsonVoidAgain.headers["content-type"] || "").indexOf("application/json") === 0);
+    check("bearer void returns voided row",    JSON.parse(jsonVoidAgain.body).status === "voided");
+    // Bearer void of an unknown id → 404, not 500.
+    var jsonVoidMiss = await helpers.httpRequest({ port: port, path: "/admin/gift-cards/00000000-0000-7000-8000-000000000000/void", method: "POST", headers: bearer });
+    check("bearer void unknown id → 404",     jsonVoidMiss.status === 404);
+
     // Anon → sign-in form, not card data.
     var anon = await helpers.httpRequest({ port: port, path: "/admin/gift-cards" });
     check("anon gift-cards → login form",     anon.body.indexOf("Admin API key") !== -1);

@@ -133,6 +133,9 @@ async function _run() {
     check("landing then 200",                  landing.status === 200);
     check("landing shows nav",                 landing.body.indexOf("Setup wizard") !== -1);
     check("landing setup banner gone",          landing.body.indexOf("isn't set up yet") === -1);
+    // This mount has Stripe "enabled", so the payments-not-live banner is
+    // hidden — checkout works, no nag.
+    check("payments banner hidden when live",   landing.body.indexOf("Payments aren't live yet") === -1);
 
     // Dashboard reachable by the cookie (browser) ...
     var dashCookie = await helpers.httpRequest({ port: port, path: "/admin/dashboard", jar: jar });
@@ -281,4 +284,57 @@ async function _run() {
   }
 }
 
-module.exports = { run: _run };
+// The landing's "payments aren't live" banner keys off the live Stripe
+// status from the entry-point integration map — NOT the identity-only
+// setup step. A shop can "finish setup" with Stripe still unconfigured,
+// and checkout would 404/503; the banner must surface that regardless of
+// `setup.completed`. This boots a second console with Stripe "off" and a
+// COMPLETED setup to prove the two are independent.
+async function _runPaymentsBanner() {
+  var query     = _makeQuery();
+  var catalog   = bShop.catalog.create({ query: query });
+  var order     = bShop.order.create({ query: query, cursorSecret: "pay-banner" });
+  var config    = bShop.config.create({ query: query });
+  await config.put("setup.completed", true); // identity step done…
+
+  var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-pay-banner-"));
+  var app = await b.createApp({
+    dataDir:    dataDir,
+    vault:      { mode: "plaintext" },
+    db:         { atRest: "plain", auditSigning: { mode: "plaintext" } },
+    middleware: { botGuard: false, rateLimit: false },
+    routes: function (r) {
+      r.use(b.middleware.bodyParser());
+      bShop.admin.mount(r, {
+        token: TOKEN, catalog: catalog, order: order, config: config,
+        shop_name: "Test Shop",
+        // …but Stripe is NOT live (no STRIPE_* secrets in this deployment).
+        integrations: { stripe: "off", express_checkout: "off", google_signin: "off" },
+      });
+    },
+  });
+  var bound = await app.listen({ port: 0, host: "127.0.0.1" });
+  var port = bound.port;
+
+  try {
+    var jar = helpers.cookieJar();
+    await helpers.httpRequest({ port: port, path: "/admin/login", method: "POST", form: { token: TOKEN }, jar: jar });
+    var landing = await helpers.httpRequest({ port: port, path: "/admin", jar: jar });
+    check("payments-off landing then 200",        landing.status === 200);
+    // Setup is complete → the identity banner is gone…
+    check("setup-complete hides the setup nag",   landing.body.indexOf("isn't set up yet") === -1);
+    // …but Stripe is off → the payments banner shows, INDEPENDENT of setup.
+    check("payments banner shows when Stripe off", landing.body.indexOf("Payments aren't live yet") !== -1);
+    check("payments banner links to integrations", landing.body.indexOf("/admin/integrations") !== -1);
+  } finally {
+    try { await app.shutdown(); } catch (_e) { /* */ }
+    try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
+  }
+}
+
+async function _runAll() {
+  await _run();
+  await _runPaymentsBanner();
+}
+
+module.exports = { run: _runAll };

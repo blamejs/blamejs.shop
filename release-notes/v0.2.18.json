@@ -1,0 +1,21 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.18",
+  "date": "2026-05-29",
+  "headline": "Admin: a clear \"payments aren't live\" warning, and void a gift card",
+  "summary": "Two admin-console fixes. The landing page now warns that payments aren't live whenever Stripe isn't configured — independently of the setup wizard — so an operator who finishes the identity wizard isn't misled into thinking customers can check out when they still can't. And gift cards can now be voided from the console: the card detail screen gets a confirm-gated Void action for active cards, composing the existing void capability.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Gift-card void", "body": "The gift-card detail screen shows a confirm-gated \"Void card\" action for active cards. Voiding goes through a confirmation step and is content-negotiated like the rest of the console (a bearer-token client gets the voided card as JSON; already-redeemed cards are refused)." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Payment-readiness banner on the admin landing", "body": "The admin landing shows a \"Payments aren't live yet — customers can't check out. See Integrations\" banner whenever Stripe isn't enabled, gated on live payment readiness rather than on whether the setup wizard was marked complete. The existing not-set-up identity banner is unchanged; both can appear together." }
+      ]
+    }
+  ]
+}
