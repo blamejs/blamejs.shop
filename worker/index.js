@@ -309,7 +309,7 @@ export class ShopContainer extends Container {
   }
 
   onStart()  { console.log("ShopContainer started"); }                            // allow:console-direct — Workers have no framework observability sink; console.* auto-routes to wrangler tail / Logpush
-  onStop()   { console.log("ShopContainer stopped"); }                            // allow:console-direct — Workers have no framework observability sink; console.* auto-routes to wrangler tail / Logpush
+  onStop(p)  { console.log("ShopContainer stopped", JSON.stringify({ exitCode: p && p.exitCode, reason: p && p.reason })); } // allow:console-direct — surfaces the container's exit code/reason (137=OOM-kill, 1=throw, 0=clean) into wrangler tail for boot-crash diagnosis
   onError(e) { console.error("ShopContainer error:", _redact(e && e.stack || e)); } // allow:console-direct — Workers have no framework observability sink; console.* auto-routes to wrangler tail / Logpush
 
   // The container's secure boot (vault unlock + an O(N) audit-chain verify
