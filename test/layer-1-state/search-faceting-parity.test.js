@@ -15,14 +15,55 @@
  * and same vocabulary → identical rewrite canonical/expansions. Pure
  * functions only — no DB, no HTTP. The ESM mirror is loaded via dynamic
  * `import()`.
+ *
+ * It ALSO pins the rendered search markup: the container's
+ * `lib/storefront.js#renderSearch` and the edge's
+ * `worker/render/search.js#renderSearch` must emit a byte-identical
+ * `<main>` region (the facet sidebar, active-filter chips, correction
+ * notice, and result grid) for the same facet groups + applied filters +
+ * products. The data parity above guarantees the two compute the same
+ * facet counts; this guarantees they then PAINT them identically, so a
+ * shopper sees the same filter chrome whether the page came off the edge
+ * cache or the container.
  */
 
-var path   = require("node:path");
-var assert = require("node:assert");
+var path       = require("node:path");
+var assert     = require("node:assert");
+var nodeModule = require("node:module");
+var nodeUrl    = require("node:url");
 
 var bShop   = require("../../lib");
 var helpers = require("../helpers");
 var check   = helpers.check;
+
+var manifest = require("../../lib/asset-manifest.json");
+
+// The edge render modules import `asset-manifest.json` with the bare
+// `import x from "./asset-manifest.json"` esbuild bundles at build time;
+// Node's native loader needs the `type: "json"` import attribute the
+// bundler injects. Register a one-shot resolve hook that supplies it so
+// the same source runs unbundled here. Mirrors asset-fingerprint.test.js.
+var _jsonHookRegistered = false;
+function _registerJsonHook() {
+  if (_jsonHookRegistered) return;
+  nodeModule.registerHooks({
+    resolve: function (spec, ctx, next) {
+      var r = next(spec, ctx);
+      if (r.url && r.url.slice(-5) === ".json") r.importAttributes = { type: "json" };
+      return r;
+    },
+  });
+  _jsonHookRegistered = true;
+}
+
+// Pull the `<main id="main">…</main>` region out of a full HTML document.
+// The chrome outside it (head asset URLs, currency switcher, copyright
+// year) is exercised by asset-fingerprint.test.js; this comparison is
+// scoped to the search body the faceting feature owns.
+function _mainRegion(html) {
+  var m = html.match(/<main id="main">([\s\S]*?)<\/main>/);
+  return m ? m[1] : null;
+}
 
 // In-memory query stub backed by a plain object store, so the lib
 // primitives (which expect a `{ rows, rowCount }` async query) run
@@ -195,6 +236,101 @@ async function _run() {
     assert.deepStrictEqual(edgeR.expansions.slice().sort(), libR.expansions.slice().sort(),
       "rewrite expansions parity: " + JSON.stringify(queries[q]));
     check("rewrite parity " + JSON.stringify(queries[q]), true);
+  }
+
+  // ---- rendered-markup parity (container ↔ edge) ----
+  // The container and the edge run two separate `renderSearch`
+  // implementations against the SAME facet groups / applied filters /
+  // products. The painted `<main>` (facet sidebar + active chips +
+  // correction notice + result grid) must be byte-identical so a shopper
+  // gets the same filter chrome whether the page came from the edge cache
+  // or the container. The edge module is loaded via dynamic import like
+  // the faceting mirror above; absent (in-image smoke where worker/ is
+  // excluded), the data parity above still covers the contract.
+  var edgeSearchPath = path.resolve(__dirname, "..", "..", "worker", "render", "search.js");
+  var fsRender = require("node:fs");
+  if (fsRender.existsSync(edgeSearchPath)) {
+    _registerJsonHook();
+    var edgeRender = await import(nodeUrl.pathToFileURL(edgeSearchPath).href);
+
+    // Two facet groups computed off a small product set, so the markup
+    // carries multi-group sidebar + a selected option + zero-count hiding.
+    var renderRows = [
+      { slug: "alpha", title: "Alpha Tee",  starting_price_minor: 1999, starting_price_currency: "USD", collection: ["summer"],           price_minor: 1999, in_stock: true,  hero_media: null },
+      { slug: "bravo", title: "Bravo Shirt", starting_price_minor: 4999, starting_price_currency: "USD", collection: ["summer", "winter"], price_minor: 4999, in_stock: true,  hero_media: null },
+      { slug: "delta", title: "Delta Shirt", starting_price_minor: 8999, starting_price_currency: "USD", collection: ["winter"],           price_minor: 8999, in_stock: false, hero_media: null },
+    ];
+    var renderDefs = [
+      { key: "collection",   field: "collection",  kind: "categorical",  buckets: null, display_limit: null },
+      { key: "availability", field: "in_stock",    kind: "boolean",      buckets: null, display_limit: null },
+      { key: "price",        field: "price_minor", kind: "numeric_range",
+        buckets: [
+          { label: "Under $25", min: null, max: 2500 },
+          { label: "$25–$75",   min: 2500, max: 7500 },
+          { label: "$75+",      min: 7500, max: null },
+        ], display_limit: null },
+    ];
+
+    // Each case shares one facet-group computation across both renderers
+    // so only the PAINT differs. `q` carries an XSS probe + a Unicode
+    // value to exercise the shared escape + URL-build path on both sides.
+    var renderCases = [
+      { label: "facets, no filters",          q: "tee",            filters: {} },
+      { label: "single categorical selected", q: "tee",            filters: { collection: ["winter"] } },
+      { label: "multi-group AND",             q: "tee",            filters: { collection: ["winter"], availability: ["true"] } },
+      { label: "numeric_range selected",      q: "tee",            filters: { price: ["$25–$75"] } },
+      { label: "garbage value → empty grid",  q: "tee",            filters: { collection: ["does-not-exist"] } },
+      { label: "xss query reflected",         q: "<script>x</script>", filters: { collection: ["summer"] } },
+    ];
+
+    for (var rc = 0; rc < renderCases.length; rc += 1) {
+      var cse = renderCases[rc];
+      var groups   = edge.computeFacets(renderDefs, renderRows, cse.filters);
+      var narrowed = edge.applyFilters(renderDefs, renderRows, cse.filters);
+
+      var containerHtml = bShop.storefront.renderSearch({
+        q:               cse.q,
+        products:        narrowed,
+        facets:          groups,
+        filters:         cse.filters,
+        corrected_query: "",
+        shop_name:       "Acme",
+        cart_count:      0,
+      });
+      var edgeHtml = edgeRender.renderSearch({
+        q:              cse.q,
+        products:       narrowed,
+        facets:         groups,
+        filters:        cse.filters,
+        correctedQuery: "",
+        shopName:       "Acme",
+        cartCount:      0,
+        version:        manifest.version,
+      });
+
+      var containerMain = _mainRegion(containerHtml);
+      var edgeMain      = _mainRegion(edgeHtml);
+      check("render parity (" + cse.label + "): container <main> present", containerMain !== null);
+      check("render parity (" + cse.label + "): edge <main> present",      edgeMain !== null);
+      assert.strictEqual(edgeMain, containerMain, "render <main> parity: " + cse.label);
+      check("render <main> byte-identical (" + cse.label + ")", true);
+    }
+
+    // Correction-notice parity — a typo rewrite changes the canonical
+    // query, so both renderers must paint the "Showing results for …"
+    // notice identically (and escape the corrected term).
+    var corrGroups = edge.computeFacets(renderDefs, renderRows, {});
+    var corrContainer = _mainRegion(bShop.storefront.renderSearch({
+      q: "tshrit", products: renderRows, facets: corrGroups, filters: {},
+      corrected_query: "t-shirt", shop_name: "Acme", cart_count: 0,
+    }));
+    var corrEdge = _mainRegion(edgeRender.renderSearch({
+      q: "tshrit", products: renderRows, facets: corrGroups, filters: {},
+      correctedQuery: "t-shirt", shopName: "Acme", cartCount: 0, version: manifest.version,
+    }));
+    check("render parity (correction): notice rendered", corrContainer.indexOf("Showing results for") !== -1);
+    assert.strictEqual(corrEdge, corrContainer, "render <main> parity: correction notice");
+    check("render <main> byte-identical (correction notice)", true);
   }
 }
 

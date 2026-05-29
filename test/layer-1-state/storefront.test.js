@@ -188,6 +188,97 @@ async function _search() {
   check("search pluralizes 'matches'", pluralHtml.indexOf("Showing 2 matches") !== -1);
 }
 
+// Facet sidebar + active-filter chips + correction notice. The facet
+// groups + applied filters arrive pre-computed (the route runs the
+// searchFacets primitive); the renderer paints them. Filter links must
+// round-trip the query + the toggled facet value through the query
+// string, and every facet/value must be HTML-escaped at the href + label
+// sink.
+async function _searchFacets() {
+  var facets = [
+    { key: "collection", label: "collection", kind: "categorical", options: [
+      { value: "summer", label: "summer", count: 2, selected: true },
+      { value: "winter", label: "winter", count: 1, selected: false },
+      { value: "gone",   label: "gone",   count: 0, selected: false },
+    ] },
+    { key: "availability", label: "availability", kind: "boolean", options: [
+      { value: "true",  label: "Yes", count: 3, selected: false },
+      { value: "false", label: "No",  count: 0, selected: false },
+    ] },
+  ];
+  var html = storefront.renderSearch({
+    q:         "tee",
+    products:  [{ slug: "p1", title: "Summer Tee", starting_price_minor: 1999 }],
+    facets:    facets,
+    filters:   { collection: ["summer"] },
+    shop_name: "Acme",
+  });
+  check("facets: renders the sidebar",            html.indexOf("class=\"search-facets\"") !== -1);
+  check("facets: renders a facet group",          html.indexOf("class=\"facet-group\"") !== -1);
+  check("facets: surfaces option counts",          html.indexOf("class=\"facet-option__count\">2<") !== -1);
+  check("facets: hides zero-count unselected opt", html.indexOf(">gone<") === -1);
+  check("facets: hides the all-zero boolean group", html.indexOf(">Yes<") !== -1 && html.indexOf(">No<") === -1);
+  check("facets: wraps results in the two-col layout", html.indexOf("class=\"search-layout\"") !== -1);
+  // Selected option carries the selection cue + a link that toggles it OFF
+  // (removes the value), which for a sole filter clears back to `/search?q=tee`.
+  check("facets: selected option marked",          html.indexOf("facet-option__link is-selected") !== -1);
+  check("facets: selected option aria-current",    html.indexOf("aria-current=\"true\"") !== -1);
+  // Toggle-on link for winter carries BOTH the query and the active filter
+  // (q first, then the sorted facet values), HTML-escaped at the href sink.
+  check("facets: winter link keeps q + active filter",
+    html.indexOf("/search?q=tee&amp;collection=summer&amp;collection=winter") !== -1);
+  // Active-filter chip + clear-all.
+  check("facets: renders an active-filter chip",   html.indexOf("class=\"search-active-filters\"") !== -1);
+  check("facets: chip labels group + value",        html.indexOf("collection: summer") !== -1);
+  check("facets: offers clear-all",                html.indexOf("Clear all filters") !== -1);
+}
+
+// A facet value carrying an XSS / quote-breaking payload must be escaped
+// at BOTH the href (query-string built via URLSearchParams, then HTML-
+// escaped) and the visible chip/label, so a hostile facet value can't
+// break out of the attribute or inject markup.
+async function _searchFacetXss() {
+  var facets = [
+    { key: "collection", label: "collection", kind: "categorical", options: [
+      { value: "\"><img src=x onerror=alert(1)>", label: "\"><img src=x onerror=alert(1)>", count: 1, selected: true },
+    ] },
+  ];
+  var html = storefront.renderSearch({
+    q:         "tee",
+    products:  [],
+    facets:    facets,
+    filters:   { collection: ["\"><img src=x onerror=alert(1)>"] },
+    shop_name: "Acme",
+  });
+  check("facet XSS: no raw <img onerror in output", html.indexOf("<img src=x onerror=alert(1)>") === -1);
+  check("facet XSS: payload escaped in chip label", html.indexOf("&lt;img src=x onerror=alert(1)&gt;") !== -1);
+  check("facet XSS: no unescaped quote in any href", /href="[^"]*"><img/.test(html) === false);
+}
+
+// "Showing results for <correction>" — surfaced when a typo / stopword
+// rewrite changed the canonical query and there are matches. The
+// corrected term is escaped.
+async function _searchCorrection() {
+  var html = storefront.renderSearch({
+    q:               "tshrit",
+    products:        [{ slug: "p1", title: "Wool T-Shirt", starting_price_minor: 4999 }],
+    corrected_query: "t-shirt",
+    shop_name:       "Acme",
+  });
+  check("correction: surfaces the notice",   html.indexOf("Showing results for") !== -1);
+  check("correction: shows the corrected term", html.indexOf("<strong>t-shirt</strong>") !== -1);
+
+  // No notice when the canonical equals the typed query (pure synonym
+  // expansion that didn't rewrite the displayed text).
+  var same = storefront.renderSearch({
+    q:               "tee",
+    products:        [{ slug: "p1", title: "Cotton Tee", starting_price_minor: 1999 }],
+    corrected_query: "tee",
+    shop_name:       "Acme",
+  });
+  check("correction: no notice when canonical == query", same.indexOf("Showing results for") === -1);
+}
+
 async function _searchEmpty() {
   var html = storefront.renderSearch({ q: "nothing-matches", products: [], shop_name: "Acme" });
   check("empty search shows no-match copy",  html.indexOf("Nothing in the catalog matched") !== -1);
@@ -504,6 +595,9 @@ async function run() {
   await _search();
   await _searchEmpty();
   await _searchXss();
+  await _searchFacets();
+  await _searchFacetXss();
+  await _searchCorrection();
   await _xssEscape();
   await _validation();
   await _layoutTokens();
