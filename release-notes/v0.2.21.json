@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.21",
+  "date": "2026-05-29",
+  "headline": "Related products (\"You may also like\") on the product page",
+  "summary": "Product pages now show a related-products rail. The picks are the other products in the product's primary collection, ordered deterministically and capped at four, rendered with the same product-card markup the home and search grids use — identical on the edge and origin paths. The rail is hidden when a product has no related items. This surfaces existing catalog relationships to shoppers without any new data or configuration.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Related-products rail on the PDP", "body": "A \"You may also like\" section on each product page lists other active products from the same primary collection (deterministic order, up to four), using the standard product-card markup byte-identically across the edge and origin renders. Hidden when there are no related products." }
+      ]
+    }
+  ]
+}

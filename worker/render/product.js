@@ -260,7 +260,68 @@ var PRODUCT_PAGE =
   "  RAW_BUNDLES_PLACEHOLDER\n" +
   "  RAW_REVIEWS_PLACEHOLDER\n" +
   "  RAW_QA_PLACEHOLDER\n" +
-  "</section>\n";
+  "</section>\n" +
+  "RAW_RELATED_PLACEHOLDER";
+
+// Product-card markup + builder — byte-identical to the container
+// (lib/storefront.js#PRODUCT_CARD_IMAGE / #PRODUCT_CARD / #_buildProductCard)
+// and the edge home/search card builders, so the "You may also like"
+// rail renders the same tiles wherever the PDP is served.
+var PRODUCT_CARD_IMAGE =
+  "<a class=\"product-card\" href=\"/products/{{slug}}\">\n" +
+  "  <figure class=\"product-card__media\">\n" +
+  "    <img src=\"{{image_url}}\" alt=\"{{image_alt}}\" loading=\"lazy\">\n" +
+  "  </figure>\n" +
+  "  <div class=\"product-card__meta\">\n" +
+  "    <h3 class=\"product-card__title\">{{title}}</h3>\n" +
+  "    <p class=\"product-card__price\">{{price}}</p>\n" +
+  "  </div>\n" +
+  "</a>\n";
+
+var PRODUCT_CARD =
+  "<a class=\"product-card\" href=\"/products/{{slug}}\">\n" +
+  "  <figure class=\"product-card__media product-card__media--placeholder\">\n" +
+  "    <svg class=\"media-ph__svg\" viewBox=\"0 0 160 120\" aria-hidden=\"true\"><rect width=\"160\" height=\"120\" fill=\"none\"/><g stroke=\"currentColor\" stroke-opacity=\"0.18\" stroke-width=\"1\"><path d=\"M0 30 H160 M0 60 H160 M0 90 H160 M40 0 V120 M80 0 V120 M120 0 V120\"/></g><g fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M80 38 L104 50 L104 76 L80 88 L56 76 L56 50 Z\"/><path d=\"M56 50 L80 62 L104 50 M80 62 V88\" stroke=\"#C75BE8\"/><path d=\"M70 47 L74 50 L70 53\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M77 54 H86\" stroke=\"currentColor\" stroke-width=\"2\"/></g><text x=\"80\" y=\"106\" text-anchor=\"middle\" font-family=\"ui-monospace,Menlo,Consolas,monospace\" font-size=\"9\" letter-spacing=\"1.5\" fill=\"#9b9ba7\">no image yet</text></svg>\n" +
+  "  </figure>\n" +
+  "  <div class=\"product-card__meta\">\n" +
+  "    <h3 class=\"product-card__title\">{{title}}</h3>\n" +
+  "    <p class=\"product-card__price\">{{price}}</p>\n" +
+  "  </div>\n" +
+  "</a>\n";
+
+function _buildProductCard(p) {
+  if (p.image_url) {
+    return renderTemplate(PRODUCT_CARD_IMAGE, {
+      title:     p.title,
+      price:     p.price,
+      slug:      p.slug,
+      image_url: p.image_url,
+      image_alt: p.image_alt || p.title,
+    });
+  }
+  return renderTemplate(PRODUCT_CARD, {
+    title: p.title,
+    price: p.price,
+    slug:  p.slug,
+  });
+}
+
+// PDP "You may also like" rail. `related` is the pre-decorated card
+// list [{ slug, title, price, image_url, image_alt }] the renderer
+// builds from the same-collection picks. Reuses the catalog grid +
+// product-card markup so it inherits the storefront's card styling.
+// Returns "" when there's nothing to show so the PDP renders no empty
+// rail. Mirrors the container (lib/storefront.js#_buildRelatedProducts)
+// byte-for-byte.
+function _buildRelatedProducts(related) {
+  related = related || [];
+  if (related.length === 0) return "";
+  var cards = related.map(function (p) { return _buildProductCard(p); }).join("");
+  return "<section class=\"catalog-section pdp-recommendations\" aria-labelledby=\"pdp-related-title\">" +
+           "<header class=\"section-head\"><h2 id=\"pdp-related-title\" class=\"section-head__title\">You may also like</h2></header>" +
+           "<div class=\"grid\">" + cards + "</div>" +
+         "</section>";
+}
 
 // Product-level "Save to wishlist" control + social-proof count. The
 // toggle is a plain form POST to the container route (the edge can't
@@ -772,6 +833,27 @@ export function renderProduct(opts) {
   var qtyBreaksHtml = _buildQtyBreaks(qtyBreaks);
   var wishlistHtml = _buildWishlist(product.id, wishlistCount);
   var compareHtml = _buildCompare(product.id);
+  // "You may also like" rail — same-collection picks the edge handler
+  // decorated with each card's hero media + first-variant price (minor
+  // units). The price string is formatted here with the page's own `fmt`
+  // so it tracks the active currency context exactly as the buy-box
+  // prices do. Mirrors the container renderer
+  // (`lib/storefront.js#renderProduct`) so the section is byte-identical
+  // across substrates.
+  var relatedAssetPrefix = opts.asset_prefix || "/assets/";
+  var relatedCards = (opts.related || []).map(function (r) {
+    var priceStr = Number.isInteger(r.price_minor)
+      ? fmt(r.price_minor, r.price_currency || "USD")
+      : "—";
+    return {
+      slug:      r.slug,
+      title:     r.title,
+      price:     priceStr,
+      image_url: r.hero_r2_key ? (relatedAssetPrefix + r.hero_r2_key) : null,
+      image_alt: r.hero_r2_key ? (r.hero_alt_text || r.title) : null,
+    };
+  });
+  var relatedHtml = _buildRelatedProducts(relatedCards);
   var body = renderTemplate(PRODUCT_PAGE, {
     title:        product.title,
     description:  description,
@@ -785,7 +867,8 @@ export function renderProduct(opts) {
     .replace("RAW_COMPARE_PLACEHOLDER", compareHtml)
     .replace("RAW_BUNDLES_PLACEHOLDER", bundlesHtml)
     .replace("RAW_REVIEWS_PLACEHOLDER", reviewsHtml)
-    .replace("RAW_QA_PLACEHOLDER", qaHtml);
+    .replace("RAW_QA_PLACEHOLDER", qaHtml)
+    .replace("RAW_RELATED_PLACEHOLDER", relatedHtml);
 
   var heroMedia = media[0] || null;
   var ogImage   = heroMedia ? (assetPrefix + heroMedia.r2_key) : "/assets/brand/logo.png";
