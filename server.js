@@ -490,6 +490,19 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       ];
       var DEFAULT_SHIPPING_ID = "std";
 
+      // Commerce-config primitives surfaced through the admin console:
+      // the per-jurisdiction tax rate table, operator-defined shipping
+      // zones, automatic (no-code) cart discounts, and the coupon-
+      // stacking policies that gate code combination. All four compose
+      // the default externalDb query handle (no cursor secret) and back
+      // their own migrated tables; a missing / unmigrated table only
+      // surfaces when the console route reads it (degrades to an empty
+      // list / notice), never at boot.
+      var taxRates       = (catalog && cart) ? bShop.taxRates.create({})       : null;
+      var shippingZones  = (catalog && cart) ? bShop.shippingZones.create({})  : null;
+      var autoDiscount   = (catalog && cart) ? bShop.autoDiscount.create({})   : null;
+      var couponStacking = (catalog && cart) ? bShop.couponStacking.create({}) : null;
+
       // Admin API — bearer-token-gated CRUD over catalog + orders +
       // refunds. Only mounts when ADMIN_API_KEY is present (operator
       // opts in by setting the secret). Stripe-backed refund routes
@@ -539,6 +552,10 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           announcementBar: announcementBar,
           customerSurveys: customerSurveys,
           businessHours:   businessHours,
+          taxRates:        taxRates,
+          shippingZones:   shippingZones,
+          autoDiscount:    autoDiscount,
+          couponStacking:  couponStacking,
           // Integration state map for /admin/integrations — "enabled" |
           // "action" (credentials present, a one-time operator action
           // still required) | "off". admin.js never reads process.env.
