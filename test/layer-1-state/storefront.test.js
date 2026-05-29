@@ -515,6 +515,66 @@ async function _orderPage() {
   check("order page lists line",           html.indexOf("X-1") !== -1);
   check("order page shows tax",            html.indexOf("$5.25") !== -1);
   check("order page shows total",          html.indexOf("$72.18") !== -1);
+  // Status timeline + the Request-a-return / Reorder affordances (a paid
+  // order is eligible for both).
+  check("order page renders status timeline", html.indexOf("order-timeline") !== -1);
+  check("paid order offers Request a return", html.indexOf("/account/orders/ord_test/return") !== -1);
+  check("paid order offers Reorder",          html.indexOf("/orders/ord_test/reorder") !== -1);
+}
+
+// Shipment + carrier tracking panel: a shipment with a known carrier links
+// the carrier's public tracking URL; the latest carrier event surfaces.
+async function _orderTracking() {
+  var html = storefront.renderOrder({
+    order: { id: "ord_trk", status: "shipped", currency: "USD",
+      subtotal_minor: 2999, tax_minor: 0, shipping_minor: 0, grand_total_minor: 2999,
+      lines: [{ sku: "T-1", qty: 1, unit_amount_minor: 2999, unit_currency: "USD", line_total_minor: 2999 }] },
+    shipments: [{
+      id: "s1", carrier: "ups", status: "in-transit", tracking_number: "1Z999AA10123456784",
+      tracking_url: "https://www.ups.com/track?tracknum=1Z999AA10123456784",
+      events: [{ status: "in-transit", location: "Louisville, KY" }],
+    }],
+    shop_name: "Acme",
+  });
+  check("order page renders tracking panel",  html.indexOf("order-tracking-panel") !== -1);
+  check("tracking shows the carrier",          html.indexOf("ups") !== -1);
+  check("tracking links the carrier URL",      html.indexOf("ups.com/track") !== -1);
+  check("tracking shows the latest event",     html.indexOf("Louisville, KY") !== -1);
+
+  // A cancelled order collapses the timeline + drops the return affordance
+  // (a cancelled order can't be returned) but still offers Reorder.
+  var cancelled = storefront.renderOrder({
+    order: { id: "ord_x", status: "cancelled", currency: "USD",
+      subtotal_minor: 1000, tax_minor: 0, shipping_minor: 0, grand_total_minor: 1000,
+      lines: [{ sku: "C-1", qty: 1, unit_amount_minor: 1000, unit_currency: "USD", line_total_minor: 1000 }] },
+    shop_name: "Acme",
+  });
+  check("cancelled order shows terminal timeline", cancelled.indexOf("order-timeline--terminal") !== -1);
+  check("cancelled order drops return CTA",         cancelled.indexOf("/account/orders/ord_x/return") === -1);
+  check("cancelled order keeps Reorder",            cancelled.indexOf("/orders/ord_x/reorder") !== -1);
+}
+
+// Order-history list: rows link to each order + carry the per-row Reorder /
+// Return affordances; a next-cursor renders a Load-more link.
+async function _orderList() {
+  var html = storefront.renderOrderList({
+    orders: [
+      { id: "1111aaaa2222bbbb", status: "delivered", currency: "USD", grand_total_minor: 4999, created_at: 1700000000000 },
+      { id: "3333cccc4444dddd", status: "pending",   currency: "USD", grand_total_minor: 1500, created_at: 1700000100000 },
+    ],
+    next_cursor: "OPAQUE_CURSOR",
+    shop_name: "Acme",
+  });
+  check("order list titled",                  html.indexOf("Your orders") !== -1);
+  check("order list links each order",         html.indexOf("/orders/1111aaaa2222bbbb") !== -1);
+  check("order list shows totals",             html.indexOf("$49.99") !== -1 && html.indexOf("$15.00") !== -1);
+  check("delivered row offers Return",         html.indexOf("/account/orders/1111aaaa2222bbbb/return") !== -1);
+  check("delivered row offers Reorder",        html.indexOf("/orders/1111aaaa2222bbbb/reorder") !== -1);
+  check("pending row omits Reorder",           html.indexOf("/orders/3333cccc4444dddd/reorder") === -1);
+  check("order list renders Load-more pager",  html.indexOf("/account/orders?cursor=OPAQUE_CURSOR") !== -1);
+
+  var empty = storefront.renderOrderList({ orders: [], shop_name: "Acme" });
+  check("empty order list shows empty state",  empty.indexOf("No orders yet") !== -1);
 }
 
 async function _passkeysPage() {
@@ -763,6 +823,8 @@ async function run() {
   await _passkeysPage();
   await _passkeyRemoveConfirm();
   await _profilePage();
+  await _orderTracking();
+  await _orderList();
   await _search();
   await _searchEmpty();
   await _searchXss();

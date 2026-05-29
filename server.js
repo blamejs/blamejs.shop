@@ -323,6 +323,30 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // signing secret is generated per endpoint on create.
       var webhooks = (catalog && cart) ? bShop.webhooks.create({}) : null;
 
+      // Order — the FSM-driven post-checkout record. ONE shared instance
+      // drives the storefront account/order pages, the storefront checkout
+      // confirm, and the admin console — so a transition fired from one
+      // surface fans webhooks + loyalty + referrals identically regardless
+      // of which surface triggered it. Built here (after webhooks /
+      // loyaltyEarnRules / referrals exist) so both the admin block and the
+      // storefront block reuse it instead of each standing up its own.
+      var order = (catalog && cart)
+        ? bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals })
+        : null;
+
+      // Order tracking — the post-handoff shipment + carrier-event ledger.
+      // Wired with the shared `order` instance so marking a shipment
+      // delivered also drives the parent order's FSM to `delivered` without a
+      // second operator call. Surfaced read-only on the customer order page
+      // (status timeline + tracking link) and managed from the admin order
+      // detail (attach a shipment, record carrier events). Boot stays
+      // resilient: the instance is constructed unconditionally here, but
+      // every route that reads it degrades to "no tracking yet" if the
+      // shipments table hasn't been migrated.
+      var orderTracking = (catalog && cart)
+        ? bShop.orderTracking.create({ order: order })
+        : null;
+
       // Gift cards — prepaid bearer balance redeemable at checkout, plus
       // the append-only ledger of credit/debit/expire events. The card
       // primitive owns the code + the balance snapshot; the ledger is
@@ -517,7 +541,9 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       // opts in by setting the secret). Stripe-backed refund routes
       // only mount when STRIPE_API_KEY is also present.
       if (catalog && cart && process.env.ADMIN_API_KEY) {
-        var order   = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals });
+        // `order` is the shared FSM-driven record built at the top of the
+        // routes function — reused here so an admin transition fans the same
+        // webhooks / loyalty / referrals as a storefront-driven one.
         // `payment` is the shared Stripe handle built at the top of the
         // routes function (null when Stripe isn't configured) — the
         // admin refund + subscription-cancel routes gate on it.
@@ -545,6 +571,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           shop_name:     bootShopName,
           catalog:       catalog,
           order:         order,
+          orderTracking: orderTracking,
           payment:       payment,
           config:        config,
           r2_bridge:     r2_bridge,
@@ -738,7 +765,13 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         if (referrals) sfDeps.referrals = referrals;
         if (referralLeaderboard) sfDeps.referralLeaderboard = referralLeaderboard;
         if (process.env.SHOP_ORIGIN) sfDeps.shop_origin = process.env.SHOP_ORIGIN;
-        sfDeps.order = bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals });
+        // Reuse the shared order instance (also wired into the admin console)
+        // so a transition fans webhooks / loyalty / referrals once, not twice.
+        sfDeps.order = order;
+        // Order tracking — the customer order page reads it for the shipment
+        // status timeline + carrier tracking link. Optional: absent it (or
+        // its table unmigrated), the order page renders without the panel.
+        if (orderTracking) sfDeps.orderTracking = orderTracking;
         if (process.env.STRIPE_API_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
           var sfOrder = sfDeps.order;
           // Reuse the shared Stripe handle (built at the top of the routes
