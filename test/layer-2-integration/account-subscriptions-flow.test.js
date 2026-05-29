@@ -29,7 +29,7 @@ var check   = helpers.check;
 
 var b = bShop.framework;
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql", "0006_customers.sql", "0009_subscriptions.sql"]
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql", "0006_customers.sql", "0009_subscriptions.sql", "0045_subscription_controls.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
@@ -135,6 +135,10 @@ async function _run() {
   var stubState = { canceled: [] };
   var payment   = _stubPayment(stubState);
   var subscriptions = bShop.subscriptions.create({ query: query, payment: payment });
+  var subscriptionControls = bShop.subscriptionControls.create({
+    query:         query,
+    subscriptions: subscriptions.subscriptions,
+  });
 
   var product = await catalog.products.create({ slug: "coffee-box", title: "Coffee Box", description: "x", status: "active" });
   var variant = await catalog.variants.create(product.id, { sku: "CFE-BOX", options: { size: "M" } });
@@ -145,13 +149,14 @@ async function _run() {
   var foreign  = await _seedSubscription(query, stranger, variant.id, "active");
 
   var handle = await _bootApp({
-    catalog:       catalog,
-    cart:          cart,
-    order:         order,
-    customers:     customers,
-    subscriptions: subscriptions,
-    payment:       payment,
-    config:        { shop_name: "blamejs.shop" },
+    catalog:              catalog,
+    cart:                 cart,
+    order:                order,
+    customers:            customers,
+    subscriptions:        subscriptions,
+    subscriptionControls: subscriptionControls,
+    payment:              payment,
+    config:               { shop_name: "blamejs.shop" },
   });
 
   try {
@@ -168,6 +173,89 @@ async function _run() {
     check("list shows the plan price",            list.body.indexOf("$19.99") !== -1);
     check("list shows a cancel control",          list.body.indexOf("/account/subscriptions/" + owned.subId + "/cancel") !== -1);
     check("list hides the foreign subscription",  list.body.indexOf("/account/subscriptions/" + foreign.subId + "/cancel") === -1);
+
+    // ---- self-manage controls (pause / resume / skip / qty / freq /
+    // reactivate) — exercised on a dedicated subscription so the cancel
+    // flow below stays independent. The list offers each state-gated
+    // control; each POST composes the matching subscriptionControls
+    // method, writes the audit ledger, and PRG-redirects with ?ok / ?error.
+    var mgmt = await _seedSubscription(query, buyer, variant.id, "active");
+
+    // Active row exposes pause + skip + quantity + frequency controls.
+    var mgmtList = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", headers: { cookie: cookie } });
+    check("list offers pause control",            mgmtList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/pause") !== -1);
+    check("list offers skip control",             mgmtList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/skip") !== -1);
+    check("list offers quantity control",         mgmtList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/quantity") !== -1);
+    check("list offers frequency control",        mgmtList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/frequency") !== -1);
+
+    function _post(suffix, form) {
+      return helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + mgmt.subId + suffix, method: "POST", headers: { cookie: cookie }, form: form || {} });
+    }
+
+    // Skip next shipment → 303 ?ok=skipped + a ledger row.
+    var skipRes = await _post("/skip");
+    check("skip then 303 ?ok=skipped",            skipRes.status === 303 && (skipRes.headers["location"] || "").indexOf("?ok=skipped") !== -1);
+
+    // Change quantity (happy path) → 303 ?ok=quantity + the row updates.
+    var qtyRes = await _post("/quantity", { quantity: "3" });
+    check("quantity then 303 ?ok=quantity",       qtyRes.status === 303 && (qtyRes.headers["location"] || "").indexOf("?ok=quantity") !== -1);
+    var qtyRow = await subscriptions.subscriptions.get(mgmt.subId);
+    check("quantity persisted on the row",        qtyRow && Number(qtyRow.quantity) === 3);
+
+    // Rejected bad input — quantity 0 → 303 ?error=quantity, row unchanged.
+    var badQty = await _post("/quantity", { quantity: "0" });
+    check("bad quantity then 303 ?error=quantity", badQty.status === 303 && (badQty.headers["location"] || "").indexOf("?error=quantity") !== -1);
+    var badQtyRow = await subscriptions.subscriptions.get(mgmt.subId);
+    check("bad quantity left the row untouched",   badQtyRow && Number(badQtyRow.quantity) === 3);
+
+    // Rejected bad input — frequency outside the enum → 303 ?error=frequency.
+    var badFreq = await _post("/frequency", { frequency: "fortnightly" });
+    check("bad frequency then 303 ?error=frequency", badFreq.status === 303 && (badFreq.headers["location"] || "").indexOf("?error=frequency") !== -1);
+
+    // Change frequency (happy path) → 303 ?ok=frequency + the row updates.
+    var freqRes = await _post("/frequency", { frequency: "quarterly" });
+    check("frequency then 303 ?ok=frequency",     freqRes.status === 303 && (freqRes.headers["location"] || "").indexOf("?ok=frequency") !== -1);
+    var freqRow = await subscriptions.subscriptions.get(mgmt.subId);
+    check("frequency persisted on the row",       freqRow && freqRow.frequency === "quarterly");
+
+    // Pause is confirm-gated: GET renders the confirm page, POST pauses.
+    var pauseConfirm = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + mgmt.subId + "/pause", headers: { cookie: cookie } });
+    check("pause confirm page then 200",          pauseConfirm.status === 200 && pauseConfirm.body.indexOf("Pause subscription") !== -1);
+    var pauseRes = await _post("/pause");
+    check("pause then 303 ?ok=paused",            pauseRes.status === 303 && (pauseRes.headers["location"] || "").indexOf("?ok=paused") !== -1);
+    var pausedRow = await subscriptions.subscriptions.get(mgmt.subId);
+    check("pause stamped paused_at",              pausedRow && pausedRow.paused_at != null);
+
+    // Paused row swaps the pause control for a resume control.
+    var pausedList = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", headers: { cookie: cookie } });
+    check("paused list offers resume control",    pausedList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/resume") !== -1);
+    check("paused list hides pause control",       pausedList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/pause") === -1);
+
+    // Resume → 303 ?ok=resumed + the row clears paused_at.
+    var resumeRes = await _post("/resume");
+    check("resume then 303 ?ok=resumed",          resumeRes.status === 303 && (resumeRes.headers["location"] || "").indexOf("?ok=resumed") !== -1);
+    var resumedRow = await subscriptions.subscriptions.get(mgmt.subId);
+    check("resume cleared paused_at",             resumedRow && resumedRow.paused_at == null);
+
+    // Reactivate path — cancel the mgmt row through the controls primitive
+    // (immediate, so cancelled_at lands now, inside the grace window), then
+    // reactivate it via the self-manage route.
+    await subscriptionControls.cancel({ subscription_id: mgmt.subId, reason: "test cancel for reactivate", actor: { actor_type: "operator", actor_id: null }, immediate: true });
+    var cancelledList = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", headers: { cookie: cookie } });
+    check("cancelled list offers reactivate control", cancelledList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/reactivate") !== -1);
+    var reactRes = await _post("/reactivate");
+    check("reactivate then 303 ?ok=reactivated",  reactRes.status === 303 && (reactRes.headers["location"] || "").indexOf("?ok=reactivated") !== -1);
+    var reactRow = await subscriptions.subscriptions.get(mgmt.subId);
+    check("reactivate cleared cancelled_at",      reactRow && reactRow.cancelled_at == null);
+
+    // The self-manage ledger captured the customer-initiated events.
+    var ledger = await subscriptionControls.historyForSubscription(mgmt.subId);
+    check("self-manage ledger recorded events",   ledger.length >= 6);
+    check("ledger newest event is reactivate",    ledger[0].event === "reactivate");
+
+    // IDOR guard on a self-manage route — pausing the stranger's row 404s.
+    var foreignPause = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + foreign.subId + "/pause", method: "POST", headers: { cookie: cookie }, form: {} });
+    check("foreign pause then 404 (IDOR guard)",  foreignPause.status === 404);
 
     // IDOR guard — cancel of the stranger's subscription is refused (404)
     // and the stub's cancel is NEVER reached for the foreign stripe id.
