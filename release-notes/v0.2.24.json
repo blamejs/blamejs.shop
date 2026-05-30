@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.24",
+  "date": "2026-05-29",
+  "headline": "Scope cart-line edits to your own cart, harden structured data, and redact auth errors",
+  "summary": "A set of request-path hardening fixes. Cart line edit and remove are now scoped to your own session cart, so a cart-line id belonging to another shopper can no longer be used to change quantities on or delete their item — a mismatched id is a no-op, not a mutation. The product structured-data (JSON-LD) embedded in page heads now neutralizes every `</script` close-tag variant (with trailing space, slash, or newline), not just the exact `</script>`, closing a markup-injection path from admin-entered product fields. Account sign-in, registration, and passkey error responses now return a generic message plus a request id instead of the raw internal error string, with the full error logged server-side for the operator. And the worker DB/R2 bridge secret is checked at boot: a secret shorter than 32 characters logs a loud warning so a weak secret is visible in the boot log (the documented generator produces 43 characters, so a by-the-docs deploy stays quiet).",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        { "title": "Cart-line edits are scoped to your cart", "body": "`POST /cart/lines/:id/update` and `/remove` now resolve the requester's session cart and scope the change to it (`WHERE id = ? AND cart_id = ?`), so a cart-line id from another shopper's cart can't be used to alter or delete their line — it resolves to a no-op rather than a cross-cart mutation. Legitimate edits to your own cart are unchanged." },
+        { "title": "Structured-data close-tag escaping hardened", "body": "JSON-LD embedded in page heads (edge and origin, byte-identical) now escapes every `</script` sequence the HTML parser treats as a tag-closer — including `</script `, `</script/`, and `</script` followed by a newline — not only the exact `</script>`. This removes a markup-injection vector from admin-entered product fields that flow into structured data." },
+        { "title": "Account auth errors no longer leak internals", "body": "The sign-in, registration, and passkey ceremony endpoints now return a generic message and a request id on an unexpected server error instead of the raw error string; the real error is logged server-side, correlated by that request id. Client-shape (400) and other expected responses are unchanged." },
+        { "title": "Bridge-secret entropy warning at boot", "body": "The worker DB/R2 bridge secret (`D1_BRIDGE_SECRET`) authorizes the database and object-storage bridge, so a weak value is high-impact. The container now logs a loud boot warning in production when it is shorter than 32 characters. The documented generator produces 43 characters; if you see the warning, regenerate the secret with the command it prints." }
+      ]
+    }
+  ]
+}
