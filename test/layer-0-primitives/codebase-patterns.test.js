@@ -1817,6 +1817,93 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason:    "Codex P1 on v0.11.5 PR #110 — websocket _inflateMessage routed through safeDecompress without maxCompressedBytes; operators with maxMessageBytes > 4 MiB saw legitimate large permessage-deflate traffic refused at the input cap before decompression. Detector requires every safeDecompress call to ALSO name maxCompressedBytes (companion-check) so future call sites inherit the alignment discipline. Ported from blamejs's catalog.",
   },
+
+  // ---- admin error-state hardening (lib/admin.js + outbound webhooks) -----
+
+  {
+    // A handler that JSON.parses an operator-supplied request-body field
+    // (`JSON.parse(body.X)` / `JSON.parse(req.body...)`) without a try/catch
+    // throws a SyntaxError whose message echoes the parser position
+    // ("...JSON at position 1"). On the admin surface that escapes as a 500
+    // that leaks the parser internals (the _wrap catch only mapped
+    // TypeError → 400). Every such parse must be wrapped so the bad paste
+    // degrades to a clean 400 with a generic message (the shipping-zone
+    // regions_json / rates_json edit was the live reproducer).
+    id:        "admin-unguarded-json-parse-request-field",
+    primitive: "wrap any JSON.parse of an operator-supplied request-body field in try/catch and throw a TypeError (→ clean 400 via _wrap), e.g. `try { patch.regions = JSON.parse(body.regions_json); } catch (_e) { throw new TypeError(\"...must be valid JSON\"); }`",
+    regex:     /(?<!try\s*\{[\s\S]{0,80})JSON\.parse\s*\(\s*(?:body|req\s*\.\s*body)\b/,
+    scanScope: "lib",
+    multiline: true,
+    allowlist: [],
+    reason:    "An unguarded `JSON.parse(body.X)` inside an admin handler raises a SyntaxError whose message names the parser position; the admin _wrap catch routed everything non-TypeError to a 500 that echoed the raw message, leaking parser internals to the client. The shipping-zone edit (regions_json / rates_json) shipped this shape and returned `500 ...Expected property name...JSON at position 1`. Wrap the parse in try/catch and throw a TypeError with a generic message so both the bearer (_wrap) and cookie (htmlHandler) surfaces degrade to a clean 400. The lookbehind exempts a parse already inside a `try { ... }` block (same-line or up to a few lines above).",
+  },
+  {
+    // A module that validates an OUTBOUND webhook endpoint URL (composing
+    // b.safeUrl.parse on the operator-supplied `url`) MUST also compose the
+    // SSRF guard — without it, an endpoint pointed at 169.254.169.254 /
+    // 127.0.0.1 / localhost / *.internal registers ACTIVE and turns the
+    // delivery dial into a probe of the host's own network + the
+    // instance-credential metadata service.
+    id:        "outbound-webhook-url-without-ssrf-guard",
+    primitive: "compose b.ssrfGuard.classify(host) (literal-IP loopback/private/link-local/reserved/cloud-metadata) + a localhost / metadata.google.internal / *.internal name denylist when validating an outbound webhook endpoint URL — never accept an operator/customer-supplied webhook URL on b.safeUrl.parse alone",
+    // Scoped to the webhook endpoint-URL validators by their canonical
+    // throw-string shape (`webhooks: url must be ...` /
+    // `webhookSubscriptions: endpoint_url must be ...`) so it locks the two
+    // outbound webhook-delivery URL gates without flagging content/canonical
+    // URL validators (blog / cms / pages) or the operator-set SMS provider
+    // endpoint — none of which are attacker-supplied fan-out targets.
+    regex:     /["'](?:webhooks: url|webhookSubscriptions: endpoint_url) must be /,
+    scanScope: "lib",
+    requires:  /ssrfGuard\.classify|ssrfGuard\.checkUrl|host is not allowed \(internal\/loopback\/metadata/,
+    allowlist: [],
+    reason:    "The webhook subscription/create URL guard enforced https + blocked user:pass@ userinfo but accepted internal/loopback/link-local/cloud-metadata destinations — `https://169.254.169.254/...`, `https://127.0.0.1/x`, `https://localhost/x`, `https://metadata.google.internal/x` all registered ACTIVE (confirmed against the live harness). Any lib module that validates an outbound webhook endpoint URL MUST also compose the framework's SSRF guard (`b.ssrfGuard.classify` for literal-IP hosts + a known-name denylist). DNS-rebinding is out of scope at registration time by design; the resolving guard belongs on the delivery dial. The `requires` check exonerates a file that names the ssrfGuard composition or the canonical refusal message; the regex is tied to the webhook validators' throw strings so content-URL validators and the operator-set SMS provider URL aren't flagged.",
+  },
+  {
+    // An admin handler whose catch branch passes the caught error's raw
+    // message straight into a 5xx problem-details body leaks storage-engine
+    // / parser internals (e.g. "UNIQUE constraint failed: products.slug").
+    // 5xx responses carry NO error-derived detail; the message is recorded
+    // server-side (audit) and the client sees a generic code.
+    id:        "admin-5xx-echoes-raw-error-message",
+    primitive: "for a 5xx problem-details response, pass NO error-derived detail — record `e.message` server-side via b.audit.safeEmit(outcome:\"failure\") and return `_problem(res, 5xx, \"<code>\")` with no fourth argument; only 4xx (client-shape) errors may surface their message",
+    regex:     /_problem\s*\(\s*res\s*,\s*5\d\d\s*,\s*["'][^"']+["']\s*,\s*(?:\(?\s*e\s*&&\s*e\.message|e\.message|String\s*\(\s*e\s*\))/,
+    scanScope: "lib",
+    allowlist: [],
+    reason:    "The admin _wrap fallthrough returned `_problem(res, 500, \"internal-error\", e.message)`, echoing the raw error to the client. A DB constraint violation (`UNIQUE constraint failed: products.slug`, `FOREIGN KEY constraint failed`) or any unexpected throw then leaked SQLite internals. 5xx bodies must carry no error-derived detail: record the message via the framework audit (drop-silent, outcome:\"failure\") and return a generic code. Known 4xx mappings (TypeError → 400, constraint → 409/400) surface a generic operator-facing message instead. Detector flags any `_problem(res, 5xx, code, e.message / e && e.message / String(e))` shape.",
+  },
+  {
+    // Issuing a gift card binds a money balance to a currency. The
+    // giftcards primitive only shape-checks the code (/^[A-Z]{3}$/), so a
+    // well-formed-but-nonexistent code like "ZZZ" used to issue a card in a
+    // currency the rest of the shop can't price. Any file that issues a
+    // card MUST first validate the currency against the framework's ISO
+    // 4217 catalog (b.money.CURRENCIES) — the same surface currency-
+    // rounding + display compose.
+    id:        "giftcard-issue-without-iso4217-currency-check",
+    primitive: "validate the gift-card currency against b.money.CURRENCIES (ISO 4217 catalog membership) before giftcards.issue(...) — a /^[A-Z]{3}$/ shape check alone issues cards in non-existent currencies",
+    regex:     /giftcards\.issue\s*\(/,
+    scanScope: "lib",
+    requires:  /money\.CURRENCIES/,
+    allowlist: [],
+    reason:    "POST /admin/gift-cards with `currency=ZZZ` returned 201 and issued a card in a non-existent currency — the only gate was the giftcards primitive's `/^[A-Z]{3}$/` shape check. Any lib file that calls `giftcards.issue(...)` MUST first validate the currency against the framework's ISO 4217 catalog (`b.money.CURRENCIES`, the catalog the currency-rounding + currency-display primitives already compose) and refuse unknown codes with a clean 400. The `requires` check exonerates a file that composes `money.CURRENCIES`.",
+  },
+  {
+    // The returns refund MUTATION (POST) must classify a malformed rma id
+    // as a 400 bad-request like its approve/received/reject siblings — NOT
+    // map the guardUuid TypeError from `returns.get(...)` to a 404
+    // return-not-found (whose body was the self-contradictory "not a valid
+    // UUID" message). Only a well-formed-but-missing id is a genuine 404.
+    // (The GET detail reader legitimately 404s a bad id — it's a defensive
+    // request-shape reader, a different tier — so this detector is scoped
+    // tightly to the W("return.refund") mutation.)
+    id:        "returns-refund-typeerror-mapped-to-404",
+    primitive: "let the malformed-id TypeError from returns.get(...) surface as a clean 400 via _wrap (matching approve/received/reject); only a well-formed id that resolves to null is a 404 return-not-found",
+    regex:     /W\(\s*["']return\.refund["'][\s\S]{0,400}?returns\.get\([\s\S]{0,200}?TypeError[\s\S]{0,80}?return-not-found/,
+    scanScope: "lib",
+    multiline: true,
+    allowlist: [],
+    reason:    "POST /admin/returns/<malformed-id>/refund returned 404 return-not-found while the three sibling actions (approve/received/reject) returned 400 for the same id — and the 404 body was actually a guardUuid \"not a valid UUID\" message (self-contradictory). The refund handler caught the TypeError from `returns.get(...)` and mapped it to 404 instead of letting it surface as 400. A malformed id is a bad request, not a missing record; only a well-formed id resolving to null is a 404. Detector locks the W(\"return.refund\") mutation so the TypeError → return-not-found mapping can't return. The GET detail reader's bad-id-to-404 is a separate, intentional defensive-reader tier and is not matched.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
