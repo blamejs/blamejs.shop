@@ -735,6 +735,18 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
       var autoDiscount   = (catalog && cart) ? bShop.autoDiscount.create({})   : null;
       var couponStacking = (catalog && cart) ? bShop.couponStacking.create({}) : null;
 
+      // Sales tax filings — periodic remittance bookkeeping over completed
+      // orders. Post-checkout reporting only: it reads orders that landed in
+      // a filing window and re-derives the per-rate breakdown from the same
+      // `taxRates` table the checkout reads, so the operator can reconcile
+      // collected vs. owed tax and record the submission + payment to each
+      // authority. Composes `taxRates` for the per-rate breakdown; a missing
+      // sales_tax_filings table only surfaces when a console route reads it
+      // (degrades to an empty list / notice), never at boot.
+      var salesTaxFilings = (catalog && cart)
+        ? bShop.salesTaxFilings.create({ taxRates: taxRates })
+        : null;
+
       // Admin API — bearer-token-gated CRUD over catalog + orders +
       // refunds. Only mounts when ADMIN_API_KEY is present (operator
       // opts in by setting the secret). Stripe-backed refund routes
@@ -797,6 +809,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           shippingZones:   shippingZones,
           autoDiscount:    autoDiscount,
           couponStacking:  couponStacking,
+          salesTaxFilings: salesTaxFilings,
           quantityDiscounts: quantityDiscounts,
           // Integration state map for /admin/integrations — "enabled" |
           // "action" (credentials present, a one-time operator action
