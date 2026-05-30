@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.31",
+  "date": "2026-05-29",
+  "headline": "Abandoned-cart recovery",
+  "summary": "A scheduled pass now finds carts left idle with items and no order and emails the shopper a link back — composed from the cart-abandonment scanner and a multi-step recovery sequence, gated on marketing consent (anyone who has withdrawn marketing consent is skipped) and idempotent (one email per abandonment, no double-sends across ticks). It stays completely inert until an SMTP mailer and an email resolver are configured, so a store without them is unaffected; the existing once-a-minute cron drives it.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Abandoned-cart recovery", "body": "A scheduled pass detects carts that have items, no paid order, and have been idle past a configurable threshold (`shop.cart_recovery_after_hours`, default 4h), then emails a recovery link to shoppers whose address is known. Enrolment is gated on the marketing-consent ledger and the send path honors the suppression list, so a withdrawn or unsubscribed shopper is never contacted; sends are idempotent. The pass no-ops cleanly until an SMTP mailer (`SMTP_HOST` / `MAIL_FROM`) and an email resolver are wired, so deploying it changes nothing until you opt in." }
+      ]
+    }
+  ]
+}
