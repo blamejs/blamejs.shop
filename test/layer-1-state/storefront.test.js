@@ -244,6 +244,109 @@ async function _productRelatedParity() {
   check("edge + container related section is byte-identical", cBlock === eBlock);
 }
 
+// JSON-LD `</script>` breakout neutralization — both render paths.
+// Admin-controlled product fields (title / description) flow into the
+// Product + BreadcrumbList JSON-LD. The HTML tokenizer ends a <script>
+// on `</script` followed by whitespace, `/`, or `>`, so rewriting only
+// the exact `</script>` byte sequence would let `</script `, `</script/`,
+// `</script\n` break out of the inline JSON-LD block. The renderer
+// rewrites every `</script` (any trailing byte) to `<\/script`. Strict
+// CSP blocks script execution, so a breakout is markup-injection, not
+// XSS — still neutralized. Verified in BOTH substrates (the JSON-LD is
+// dual-rendered; the two must agree byte-for-byte).
+async function _jsonLdScriptBreakout() {
+  var fs       = require("fs");
+  var path     = require("path");
+  var nodeModule = require("node:module");
+  var nodeUrl    = require("node:url");
+
+  // The three breakout variants the old exact-`</script>` rewrite missed,
+  // plus the plain closing tag (which both old + new rewrites catch).
+  var payloads = [
+    "Widget </script ><img src=x>",   // whitespace after the tag name
+    "Widget </script/><img src=x>",   // `/` after the tag name
+    "Widget </script\n><img src=x>",  // newline after the tag name
+    "Widget </script><img src=x>",    // the exact sequence (regression guard)
+  ];
+
+  function _jsonLdBlocks(html) {
+    // Every <script type="application/ld+json"> … </script> block.
+    var re = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/g;
+    var blocks = [];
+    var m;
+    while ((m = re.exec(html)) !== null) blocks.push(m[1]);
+    return blocks;
+  }
+
+  function _assertNeutralized(label, html) {
+    var blocks = _jsonLdBlocks(html);
+    check(label + ": emits at least one JSON-LD block", blocks.length > 0);
+    blocks.forEach(function (inner, i) {
+      // No raw closing-tag sequence survives inside the JSON-LD payload:
+      // `</script` followed by whitespace / `/` / `>` would re-open the
+      // tokenizer. The rewrite turns every one into `<\/script`.
+      check(label + " block " + i + ": no live </script breakout",
+        /<\/script[\s/>]/i.test(inner) === false);
+      // The neutralized escape is present where a payload carried one.
+      check(label + " block " + i + ": escaped form present when injected",
+        inner.indexOf("Widget") === -1 || inner.indexOf("<\\/script") !== -1);
+    });
+  }
+
+  // Container path.
+  payloads.forEach(function (payload) {
+    var containerHtml = storefront.renderProduct({
+      product:  { slug: "widget-pro", title: payload, description: payload },
+      variants: _RELATED_OPTS.variants,
+      prices:   _RELATED_OPTS.prices,
+      shop_name: "Acme",
+      canonical_url: "https://acme.example/products/widget-pro",
+    });
+    _assertNeutralized("container", containerHtml);
+  });
+
+  // Edge path — loaded the same way the related-parity test does. Skipped
+  // when worker/ isn't in the build context (in-image smoke); the full
+  // tree covers it.
+  var edgeProductPath = path.join(__dirname, "..", "..", "worker", "render", "product.js");
+  if (!fs.existsSync(edgeProductPath)) return;
+  nodeModule.registerHooks({
+    resolve: function (spec, ctx, next) {
+      var r = next(spec, ctx);
+      if (r.url && r.url.slice(-5) === ".json") r.importAttributes = { type: "json" };
+      return r;
+    },
+  });
+  var edgeProduct = await import(nodeUrl.pathToFileURL(edgeProductPath).href);
+
+  payloads.forEach(function (payload) {
+    var edgeHtml = edgeProduct.renderProduct({
+      product:  { slug: "widget-pro", title: payload, description: payload },
+      variants: _RELATED_OPTS.variants,
+      prices:   _RELATED_OPTS.prices,
+      shopName: "Acme",
+      canonicalUrl: "https://acme.example/products/widget-pro",
+      version:  "test",
+    });
+    _assertNeutralized("edge", edgeHtml);
+
+    // Byte-identical JSON-LD across substrates for the same payload.
+    var containerHtml = storefront.renderProduct({
+      product:  { slug: "widget-pro", title: payload, description: payload },
+      variants: _RELATED_OPTS.variants,
+      prices:   _RELATED_OPTS.prices,
+      shop_name: "Acme",
+      canonical_url: "https://acme.example/products/widget-pro",
+    });
+    var cBlocks = _jsonLdBlocks(containerHtml);
+    var eBlocks = _jsonLdBlocks(edgeHtml);
+    check("edge + container emit the same JSON-LD block count", cBlocks.length === eBlocks.length);
+    for (var i = 0; i < cBlocks.length && i < eBlocks.length; i += 1) {
+      check("edge + container JSON-LD block " + i + " is byte-identical", cBlocks[i] === eBlocks[i]);
+    }
+  });
+}
+
 async function _cart() {
   var html = storefront.renderCart({
     lines: [
@@ -815,6 +918,7 @@ async function run() {
   await _productNoVariants();
   await _productRelated();
   await _productRelatedParity();
+  await _jsonLdScriptBreakout();
   await _cart();
   await _cartEmpty();
   await _checkoutForm();

@@ -222,6 +222,62 @@ async function _run() {
     check("cart after remove renders empty card",   cartEmpty.body.indexOf("cart-empty__card") !== -1);
     check("cart pill shows count 0",                cartEmpty.body.indexOf("Cart, 0 items") !== -1);
 
+    // Cart-line IDOR — a second visitor (own cookie jar) must not be
+    // able to mutate or delete a line that belongs to the first
+    // visitor's session cart, even knowing its line id. The line id is
+    // rendered in the owner's own cart HTML as the form action, so
+    // "knowing" it is realistic. Set up an owner cart with a line, then
+    // drive update + remove from a fresh session and confirm the
+    // owner's line is untouched.
+    var ownerJar = helpers.cookieJar();
+    await helpers.httpRequest({
+      port: handle.port, path: "/cart/lines", method: "POST",
+      form: { variant_id: seeded.variant.id, qty: 2 }, jar: ownerJar,
+    });
+    var ownerCart = await helpers.httpRequest({ port: handle.port, path: "/cart", jar: ownerJar });
+    var ownerLineMatch = /\/cart\/lines\/([0-9a-f-]{36})\/update/.exec(ownerCart.body);
+    check("IDOR setup: owner cart embeds a line id", ownerLineMatch !== null);
+    var ownerLineId = ownerLineMatch[1];
+
+    // Attacker session: its own cart (so the route resolves a cart for
+    // it) but the line id belongs to the owner.
+    var attackerJar = helpers.cookieJar();
+    await helpers.httpRequest({
+      port: handle.port, path: "/cart/lines", method: "POST",
+      form: { variant_id: seeded.variant.id, qty: 1 }, jar: attackerJar,
+    });
+
+    // Attacker POSTs an update to the owner's line id → must be a 404
+    // (line not in attacker's cart), and the owner's qty must be unchanged.
+    var idorUpd = await helpers.httpRequest({
+      port: handle.port, path: "/cart/lines/" + ownerLineId + "/update",
+      method: "POST", form: { qty: 99 }, jar: attackerJar,
+    });
+    check("IDOR update on foreign line is 404",      idorUpd.status === 404);
+    var ownerAfterIdorUpd = await helpers.httpRequest({ port: handle.port, path: "/cart", jar: ownerJar });
+    check("IDOR update leaves owner line qty=2",     /value=\"2\"/.test(ownerAfterIdorUpd.body));
+    check("IDOR update did not bump owner to qty=99", ownerAfterIdorUpd.body.indexOf("value=\"99\"") === -1);
+
+    // Attacker POSTs a remove of the owner's line → redirects (no-op for
+    // the attacker), and the owner's line is still present.
+    var idorRem = await helpers.httpRequest({
+      port: handle.port, path: "/cart/lines/" + ownerLineId + "/remove",
+      method: "POST", jar: attackerJar,
+    });
+    check("IDOR remove on foreign line redirects",   idorRem.status === 303);
+    var ownerAfterIdorRem = await helpers.httpRequest({ port: handle.port, path: "/cart", jar: ownerJar });
+    check("IDOR remove leaves owner line present",   ownerAfterIdorRem.body.indexOf("WDG-PRO-BLK-L") !== -1);
+    check("IDOR remove leaves owner count 1",        ownerAfterIdorRem.body.indexOf("Cart, 1 items") !== -1);
+
+    // The owner can still update + remove their own line normally.
+    var ownerUpd = await helpers.httpRequest({
+      port: handle.port, path: "/cart/lines/" + ownerLineId + "/update",
+      method: "POST", form: { qty: 3 }, jar: ownerJar,
+    });
+    check("owner update own line returns 303",       ownerUpd.status === 303);
+    var ownerAfterOwnUpd = await helpers.httpRequest({ port: handle.port, path: "/cart", jar: ownerJar });
+    check("owner update own line takes effect",      /value=\"3\"/.test(ownerAfterOwnUpd.body));
+
     // Round-trip the assert module to keep the layer-2 surface in
     // the same accounting bucket as the layer-1 tests above.
     assert.strictEqual(home.status, 200);
