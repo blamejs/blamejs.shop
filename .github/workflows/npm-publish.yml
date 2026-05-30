@@ -88,12 +88,12 @@ jobs:
       - name: ESLint
         run: npx eslint@latest --max-warnings 0 .
 
-      - name: Vendor blamejs
-        # Validate runs the vendor refresh + smoke against the latest
-        # blamejs release. If smoke fails because the upstream broke
-        # something, the publish blocks here — the existing release
-        # never ships against a broken vendor.
-        run: bash scripts/vendor-update.sh blamejs latest
+      - name: Verify the committed vendored blamejs is present
+        # Validate runs smoke against the COMMITTED lib/vendor/ tree so the
+        # published npm tarball, the SBOM / provenance subjects, and the
+        # deployed container all describe the same vendored blamejs. The
+        # `vendor-drift` CI job keeps the committed-vs-latest warning.
+        run: test -f lib/vendor/blamejs/lib/app.js || { echo "::error::lib/vendor/blamejs missing from checkout"; exit 1; }
 
       - name: Smoke
         env:
@@ -265,13 +265,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.0
         with: { path: src }
 
-      - name: Vendor blamejs (signer scripts require the vendored framework)
+      - name: Verify the committed vendored blamejs is present (signer scripts need it)
         # `sign-release-artifact.js` calls into the vendored
-        # `b.pqcSoftware.ml_dsa_65`. Refresh at the same tag the
-        # validate job pulled.
-        run: |
-          cd src
-          bash scripts/vendor-update.sh blamejs latest
+        # `b.pqcSoftware.ml_dsa_65`. The committed src/lib/vendor tree
+        # carries it — no re-fetch, which would drift the signed artifact
+        # off the deployed + published tree.
+        run: test -f src/lib/vendor/blamejs/lib/app.js || { echo "::error::src/lib/vendor/blamejs missing"; exit 1; }
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
