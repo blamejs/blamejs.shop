@@ -677,6 +677,37 @@ export default {
   // content stays correct) — only the unauthenticated default
   // fetches get warmed.
   async scheduled(_event, env, ctx) {
+    // Abandoned-cart recovery tick — runs on every cron fire regardless
+    // of EDGE_RENDER. POSTs the container's internal `/_/cart-recovery-tick`
+    // over the SHOP service binding (never leaves the Cloudflare network),
+    // authenticated with the shared D1_BRIDGE_SECRET header — same trust
+    // root as the SQL / R2 bridges. The container handler runs one
+    // bounded, drop-silent pass: scan idle carts, enrol the eligible
+    // ones, dispatch due nurture steps. The pass no-ops cleanly when no
+    // mailer is configured, so this is a cheap call on an unconfigured
+    // deploy. Fire-and-forget under ctx.waitUntil so a slow pass never
+    // blocks the cron; errors surface in the pass's own JSON summary (the
+    // handler never 5xxes).
+    if (env.D1_BRIDGE_SECRET) {
+      ctx.waitUntil((async function () {
+        try {
+          var url = new URL("/_/cart-recovery-tick", "http://shop.container");
+          var req = new Request(url.toString(), {
+            method:  "POST",
+            headers: {
+              "content-type":       "application/json; charset=utf-8",
+              "x-d1-bridge-secret": env.D1_BRIDGE_SECRET || "",
+            },
+            body: "{}",
+          });
+          var container = _shopContainer(env);
+          await container.fetch(req);
+        } catch (e) {
+          console.error("cart-recovery-tick failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        }
+      })());
+    }
+
     if (env.EDGE_RENDER !== "on") return;
     var routes = ["/", "/search"];
     var headers = {

@@ -1022,9 +1022,9 @@ async function _layoutTokens() {
   check("newsletter band rendered",                   html.indexOf("class=\"newsletter-band\"") !== -1);
   check("newsletter form posts email",                 html.indexOf("name=\"email\"") !== -1);
   check("footer is rendered",                         html.indexOf("class=\"site-footer\"") !== -1);
-  check("footer has Shop column",                      html.indexOf(">Shop</h4>") !== -1);
-  check("footer has Framework column",                html.indexOf(">Framework</h4>") !== -1);
-  check("footer has Your account column",             html.indexOf(">Your account</h4>") !== -1);
+  check("footer has Shop column",                      html.indexOf(">Shop</h2>") !== -1);
+  check("footer has Framework column",                html.indexOf(">Framework</h2>") !== -1);
+  check("footer has Your account column",             html.indexOf(">Your account</h2>") !== -1);
   // The footer's account column must not expose /admin to shoppers. Scope
   // the assertion to the footer block (the empty-catalog body still has an
   // operator "Open admin" CTA, which is intentional).
