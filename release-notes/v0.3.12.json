@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.12",
+  "date": "2026-05-30",
+  "headline": "Currency and outbound-host validation consolidated behind one shared check",
+  "summary": "Input validation that was duplicated across the codebase is now a single shared module. Currency codes are validated against the ISO 4217 catalog consistently wherever the admin binds money — the same check the gift-card flow gained last release — and the outbound webhook host guard (refusing loopback, private, link-local, reserved, and cloud-metadata destinations, including trailing-dot forms) is one shared function used by both the delivery and registration paths. The shared module composes the framework's Unicode codepoint catalog so free-text fields can reject control, bidi-override, and zero-width characters when needed. Behavior is equal-or-stricter than before; no operator action is required.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Currency validation is consistently ISO 4217", "body": "Admin paths that bind a currency now validate it against the ISO 4217 catalog in one place, so a code that isn't a real currency is rejected consistently rather than only in some flows." },
+        { "title": "Outbound-host SSRF guard is a single shared check", "body": "The webhook delivery and registration paths now share one host guard — loopback, private (RFC 1918), link-local, reserved, and cloud-metadata addresses (by IP literal or known name, including trailing-dot forms) are refused identically on both, so the two can't drift apart." }
+      ]
+    }
+  ]
+}
