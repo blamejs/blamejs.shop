@@ -797,6 +797,7 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           shippingZones:   shippingZones,
           autoDiscount:    autoDiscount,
           couponStacking:  couponStacking,
+          quantityDiscounts: quantityDiscounts,
           // Integration state map for /admin/integrations — "enabled" |
           // "action" (credentials present, a one-time operator action
           // still required) | "off". admin.js never reads process.env.
