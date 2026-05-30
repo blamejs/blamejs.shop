@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.28",
+  "date": "2026-05-29",
+  "headline": "Sales reports and printable receipts in the admin console",
+  "summary": "The admin console gains a Reports screen and printable order documents. Reports aggregates a sales and revenue summary over a date range you choose — order count, gross and net revenue, refunds, average order value, an order-status funnel, a by-day revenue table, and top products — with a CSV export of the daily series. Every order detail page now offers a printable receipt and a printable packing slip (print-optimized, carrying your shop name and contact), so you can pull a revenue report or print an order without querying the database directly.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Reports screen", "body": "`/admin/reports` aggregates a sales/revenue summary over a selectable date range: order count, gross and net revenue, refunds and refund rate, average order value, an order-status funnel, a by-day revenue table, and top products. The daily series exports to CSV. The screen reads only — it never writes." },
+        { "title": "Printable receipts and packing slips", "body": "`GET /admin/orders/:id/receipt` and `GET /admin/orders/:id/packing-slip` render self-contained, print-optimized order documents (lines, totals, ship-to, tracking barcode) with your shop name and contact in the masthead. Both are linked from a Documents panel on the admin order detail screen." }
+      ]
+    }
+  ]
+}

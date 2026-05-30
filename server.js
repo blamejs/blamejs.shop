@@ -389,6 +389,21 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.orderTracking.create({ order: order })
         : null;
 
+      // Reporting + printable order documents — operator surfaces over the
+      // existing order data. salesReports aggregates pure read-only SQL over
+      // orders/order_lines for the /admin/reports screen; printReceipts +
+      // packingSlips render print-optimized HTML documents for an order.
+      // All three only need the externalDb query handle (+ the shared order
+      // instance for the document renderers). The cursor HMAC key is derived
+      // like the other primitives so production never falls back to the
+      // dev-only placeholder.
+      var salesReportsCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("sales-reports-cursor", process.env.D1_BRIDGE_SECRET)
+        : "sales-reports-cursor-secret-dev-only";
+      var salesReports  = (catalog && cart) ? bShop.salesReports.create({ cursorSecret: salesReportsCursorSecret }) : null;
+      var printReceipts = (catalog && cart) ? bShop.printReceipts.create({ order: order }) : null;
+      var packingSlips  = (catalog && cart) ? bShop.packingSlips.create({ order: order }) : null;
+
       // Gift cards — prepaid bearer balance redeemable at checkout, plus
       // the append-only ledger of credit/debit/expire events. The card
       // primitive owns the code + the balance snapshot; the ledger is
@@ -614,6 +629,9 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           catalog:       catalog,
           order:         order,
           orderTracking: orderTracking,
+          salesReports:  salesReports,
+          printReceipts: printReceipts,
+          packingSlips:  packingSlips,
           payment:       payment,
           config:        config,
           r2_bridge:     r2_bridge,

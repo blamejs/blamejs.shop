@@ -42,6 +42,15 @@ var RETURN_MIGS = [
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
 
+// Orders + shop_config — the print-document masthead reads shop.name /
+// shop.contact_email from shop_config.
+var DOC_CONFIG_MIGS = [
+  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql",
+  "0004_shop_config.sql",
+].map(function (f) {
+  return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
+});
+
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
   return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
@@ -73,6 +82,7 @@ function _fakeRouter() {
   return {
     get:    function (p, h) { _add("GET",    p, h); },
     post:   function (p, h) { _add("POST",   p, h); },
+    put:    function (p, h) { _add("PUT",    p, h); },
     patch:  function (p, h) { _add("PATCH",  p, h); },
     delete: function (p, h) { _add("DELETE", p, h); },
     use:    function () {},
@@ -540,6 +550,221 @@ async function _returnsAbsent() {
   check("returns-absent: calling the route throws (unregistered)", threw);
 }
 
+// Seed one order from a (price, qty) pair so the reporting + document
+// tests have real orders/order_lines rows to aggregate + render. Returns
+// the created order. Reuses the catalog/cart/order primitives the rest of
+// the suite stands up.
+async function _seedOrder(query, opts) {
+  var catalog = bShop.catalog.create({ query: query });
+  var cart    = bShop.cart.create({ query: query, catalog: catalog });
+  var order   = bShop.order.create({ query: query });
+  var slug = opts.slug;
+  var p = await catalog.products.create({ slug: slug, title: slug, status: "active" });
+  var v = await catalog.variants.create(p.id, { sku: opts.sku });
+  await catalog.prices.set(v.id, { currency: "USD", amount_minor: opts.unit });
+  var sid = bShop.framework.uuid.v7();
+  var c = await cart.create(sid, { currency: "USD" });
+  await cart.addLine(c.id, { variant_id: v.id, qty: opts.qty });
+  var lineTotal = opts.unit * opts.qty;
+  var o = await order.createFromCart({
+    cart_id:           c.id,
+    session_id:        sid,
+    currency:          "USD",
+    subtotal_minor:    lineTotal,
+    discount_minor:    0,
+    tax_minor:         0,
+    shipping_minor:    0,
+    grand_total_minor: lineTotal,
+    ship_to:           { country: "US", name: "Pat Buyer", line1: "1 Test St", city: "Townsville", region: "CA", postal_code: "90210" },
+    lines: [{
+      variant_id: v.id, sku: opts.sku, qty: opts.qty,
+      unit_amount_minor: opts.unit, unit_currency: "USD",
+    }],
+  });
+  return o;
+}
+
+async function _salesReport() {
+  var query   = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query });
+  var order   = bShop.order.create({ query: query });
+  var salesReports = bShop.salesReports.create({ query: query });
+  var router  = _fakeRouter();
+  bShop.admin.mount(router, { token: TOKEN, catalog: catalog, order: order, salesReports: salesReports });
+
+  var auth = { authorization: "Bearer " + TOKEN };
+
+  // Reports nav item is always present.
+  check("reports route mounted", !!router._routes["GET /admin/reports"]);
+
+  // Three orders: two stay (paid), one is refunded.
+  //   A: 2 × 1500 = 3000   (kept)
+  //   B: 1 × 4000 = 4000   (kept)
+  //   C: 3 × 1000 = 3000   (refunded)
+  var oA = await _seedOrder(query, { slug: "rep-a", sku: "REP-A", unit: 1500, qty: 2 });
+  var oB = await _seedOrder(query, { slug: "rep-b", sku: "REP-B", unit: 4000, qty: 1 });
+  var oC = await _seedOrder(query, { slug: "rep-c", sku: "REP-C", unit: 1000, qty: 3 });
+  await order.transition(oA.id, "mark_paid");
+  await order.transition(oB.id, "mark_paid");
+  await order.transition(oC.id, "mark_paid");
+  await order.transition(oC.id, "refund");
+
+  // Wide window so every seeded order's updated_at falls inside (the
+  // primitive caps the span at one year, so anchor it on now).
+  var win = "?from=" + (Date.now() - 90 * 86400000) + "&to=" + (Date.now() + 86400000);
+
+  var rRep = await router._call("GET", "/admin/reports", { headers: auth, url: "/admin/reports" + win });
+  check("report returns 200", rRep.status === 200);
+  var report = JSON.parse(rRep.body);
+
+  // Gross counts every non-cancelled order (3000 + 4000 + 3000 = 10000).
+  // Net adds the kept orders and SUBTRACTS the refunded order's grand total
+  // (3000 + 4000 - 3000 = 4000) — the primitive's documented policy.
+  // Refunds total the refunded grand totals (3000).
+  check("report gross revenue", report.gross_revenue_minor === 10000);
+  check("report net revenue",   report.net_revenue_minor === 4000);
+  check("report refunds",       report.refund_total_minor === 3000);
+  check("report order count",   report.order_count === 3);
+
+  // AOV is over the non-cancelled, non-refunded orders (A + B): (3000 +
+  // 4000) / 2 = 3500.
+  check("report AOV", report.aov_minor === 3500);
+
+  // Refund rate: 1 refunded of 3 orders = 3333 bps.
+  check("report refund rate bps", report.refund_rate_bps === 3333);
+
+  // Funnel: all 3 reached paid; 1 refunded; none shipped/delivered.
+  check("report funnel paid",     report.by_status.paid === 3);
+  check("report funnel refunded", report.by_status.refunded === 1);
+  check("report funnel fulfilled", report.by_status.fulfilled === 0);
+
+  // Top products excludes the refunded order's SKU; B leads by revenue.
+  var topSkus = report.top_products.map(function (r) { return r.sku; });
+  check("top products excludes refunded SKU", topSkus.indexOf("REP-C") === -1);
+  check("top products includes kept SKUs", topSkus.indexOf("REP-A") !== -1 && topSkus.indexOf("REP-B") !== -1);
+  check("top products ranks by revenue", report.top_products[0].sku === "REP-B");
+
+  // CSV export — header + one data row per (day, currency) bucket. All
+  // three kept-or-refunded orders land in the same UTC day here, so the
+  // by-day series collapses to a single row.
+  var rCsv = await router._call("GET", "/admin/reports", { headers: auth, url: "/admin/reports" + win + "&format=csv" });
+  check("csv returns 200", rCsv.status === 200);
+  check("csv content-type", /text\/csv/.test(rCsv.headers["content-type"] || ""));
+  var csvLines = rCsv.body.replace(/\n$/, "").split("\n");
+  check("csv has a header row", csvLines[0] === "date,currency,order_count,gross_revenue_minor,net_revenue_minor,refund_total_minor");
+  check("csv has at least one data row", csvLines.length >= 2);
+  check("csv data row carries the gross total", /,10000,/.test(rCsv.body));
+
+  // Empty window (no orders in range) → an empty-but-valid report, never a
+  // crash. Pick a window far in the past.
+  var rEmpty = await router._call("GET", "/admin/reports", { headers: auth, url: "/admin/reports?from=1000&to=2000" });
+  check("empty-window report returns 200", rEmpty.status === 200);
+  var empty = JSON.parse(rEmpty.body);
+  check("empty-window gross is zero", empty.gross_revenue_minor === 0);
+  check("empty-window order count is zero", empty.order_count === 0);
+
+  // Malformed range → 400 problem-details (config/entry tier).
+  var rBad = await router._call("GET", "/admin/reports", { headers: auth, url: "/admin/reports?from=abc" });
+  check("malformed range → 400", rBad.status === 400);
+
+  // Reports route still mounts (and renders an unconfigured notice) when the
+  // salesReports primitive is absent — the nav link is always present.
+  var router2 = _fakeRouter();
+  bShop.admin.mount(router2, { token: TOKEN, catalog: catalog, order: order });
+  check("reports route mounts without salesReports", !!router2._routes["GET /admin/reports"]);
+  var rUnconf = await router2._call("GET", "/admin/reports", { headers: auth });
+  check("unconfigured reports → 503", rUnconf.status === 503);
+}
+
+async function _orderDocuments() {
+  var query   = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query });
+  var order   = bShop.order.create({ query: query });
+  var printReceipts = bShop.printReceipts.create({ order: order });
+  var packingSlips  = bShop.packingSlips.create({ order: order });
+  var router  = _fakeRouter();
+  bShop.admin.mount(router, {
+    token: TOKEN, catalog: catalog, order: order,
+    printReceipts: printReceipts, packingSlips: packingSlips,
+  });
+
+  var auth = { authorization: "Bearer " + TOKEN };
+
+  check("receipt route mounted",      !!router._routes["GET /admin/orders/:id/receipt"]);
+  check("packing-slip route mounted", !!router._routes["GET /admin/orders/:id/packing-slip"]);
+
+  var o = await _seedOrder(query, { slug: "doc-1", sku: "DOC-1", unit: 2500, qty: 2 });
+
+  // Receipt renders the order's line + totals as a complete HTML document.
+  var rRcpt = await router._call("GET", "/admin/orders/" + o.id + "/receipt", {
+    headers: auth, params: { id: o.id },
+  });
+  check("receipt returns 200", rRcpt.status === 200);
+  check("receipt is an HTML document", /<!doctype html>/i.test(rRcpt.body));
+  check("receipt carries the SKU", rRcpt.body.indexOf("DOC-1") !== -1);
+  check("receipt carries the order id", rRcpt.body.indexOf(o.id) !== -1);
+  // Grand total 2 × 2500 = 5000 → "50.00 USD".
+  check("receipt carries the grand total", rRcpt.body.indexOf("50.00 USD") !== -1);
+  check("receipt has print CSS", /@page/.test(rRcpt.body));
+
+  // Packing slip renders the order contents (no payment data) with a
+  // scan-to-verify barcode.
+  var rSlip = await router._call("GET", "/admin/orders/" + o.id + "/packing-slip", {
+    headers: auth, params: { id: o.id },
+  });
+  check("packing-slip returns 200", rSlip.status === 200);
+  check("packing-slip is an HTML document", /<!doctype html>/i.test(rSlip.body));
+  check("packing-slip carries the SKU", rSlip.body.indexOf("DOC-1") !== -1);
+  check("packing-slip carries the ship-to name", rSlip.body.indexOf("Pat Buyer") !== -1);
+  check("packing-slip has a barcode", /<svg/.test(rSlip.body));
+
+  // Unknown (well-formed) order id → 404, not 500.
+  var missingId = bShop.framework.uuid.v7();
+  var rMiss = await router._call("GET", "/admin/orders/" + missingId + "/receipt", {
+    headers: auth, params: { id: missingId },
+  });
+  check("missing-order receipt → 404", rMiss.status === 404);
+
+  // Malformed order id → 404 (swallows only the TypeError from the id
+  // reader), never a 500.
+  var rBadId = await router._call("GET", "/admin/orders/not-a-uuid/receipt", {
+    headers: auth, params: { id: "not-a-uuid" },
+  });
+  check("malformed-id receipt → 404", rBadId.status === 404);
+  var rBadSlip = await router._call("GET", "/admin/orders/not-a-uuid/packing-slip", {
+    headers: auth, params: { id: "not-a-uuid" },
+  });
+  check("malformed-id packing-slip → 404", rBadSlip.status === 404);
+
+  // Document routes stay unmounted when the render primitives are absent.
+  var router2 = _fakeRouter();
+  bShop.admin.mount(router2, { token: TOKEN, catalog: catalog, order: order });
+  check("receipt route unmounted without printReceipts", !router2._routes["GET /admin/orders/:id/receipt"]);
+  check("packing-slip route unmounted without packingSlips", !router2._routes["GET /admin/orders/:id/packing-slip"]);
+
+  // With shop_config wired, the receipt carries the shop name + contact
+  // masthead (read from shop.name / shop.contact_email).
+  var configMigQuery = _makeQuery(DOC_CONFIG_MIGS);
+  var catalog3 = bShop.catalog.create({ query: configMigQuery });
+  var order3   = bShop.order.create({ query: configMigQuery });
+  var config3  = bShop.config.create({ query: configMigQuery });
+  await config3.put("shop.name", "Acme Goods");
+  await config3.put("shop.contact_email", "help@acme.example");
+  var printReceipts3 = bShop.printReceipts.create({ order: order3 });
+  var router3 = _fakeRouter();
+  bShop.admin.mount(router3, {
+    token: TOKEN, catalog: catalog3, order: order3,
+    printReceipts: printReceipts3, config: config3,
+  });
+  var o3 = await _seedOrder(configMigQuery, { slug: "doc-cfg", sku: "DOC-CFG", unit: 1000, qty: 1 });
+  var rCfg = await router3._call("GET", "/admin/orders/" + o3.id + "/receipt", {
+    headers: auth, params: { id: o3.id },
+  });
+  check("receipt with config returns 200", rCfg.status === 200);
+  check("receipt carries the shop name", rCfg.body.indexOf("Acme Goods") !== -1);
+  check("receipt carries the shop contact", rCfg.body.indexOf("help@acme.example") !== -1);
+}
+
 async function _factoryValidation() {
   var query = _makeQuery();
   var catalog = bShop.catalog.create({ query: query });
@@ -667,6 +892,8 @@ async function run() {
   await _returnsAbsent();
   await _mediaFileUpload();
   await _mediaFileUploadAbsent();
+  await _salesReport();
+  await _orderDocuments();
   await _factoryValidation();
 }
 
