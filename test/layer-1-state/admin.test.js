@@ -51,6 +51,18 @@ var DOC_CONFIG_MIGS = [
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
 
+// Orders + shipments + the three fulfillment-ops tables: pick lists,
+// shipping labels, split-shipment plans.
+var FULFILLMENT_MIGS = [
+  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql",
+  "0021_shipments.sql",
+  "0051_shipping_labels.sql",
+  "0096_split_shipments.sql",
+  "0118_pick_lists.sql",
+].map(function (f) {
+  return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
+});
+
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
   return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
@@ -882,6 +894,286 @@ async function _mediaFileUploadAbsent() {
   check("no-bridge: api url route absent",      !router._routes["POST /admin/media/upload"]);
 }
 
+// ---- fulfillment ops (pick lists / shipping labels / split shipments) ----
+
+// Seed a paid order with two lines so the fulfillment primitives have
+// real order_lines + an eligible-state order to fold into a worksheet /
+// split / shipment. Returns the hydrated order.
+async function _seedPaidOrder(query, catalog, cart, order, slug) {
+  var p = await catalog.products.create({ slug: slug, title: slug, status: "active" });
+  var v1 = await catalog.variants.create(p.id, { sku: slug + "-A" });
+  var v2 = await catalog.variants.create(p.id, { sku: slug + "-B" });
+  await catalog.prices.set(v1.id, { currency: "USD", amount_minor: 1000 });
+  await catalog.prices.set(v2.id, { currency: "USD", amount_minor: 2000 });
+  var sid = bShop.framework.uuid.v7();
+  var c = await cart.create(sid, { currency: "USD" });
+  await cart.addLine(c.id, { variant_id: v1.id, qty: 2 });
+  await cart.addLine(c.id, { variant_id: v2.id, qty: 1 });
+  var o = await order.createFromCart({
+    cart_id: c.id, session_id: sid, currency: "USD",
+    subtotal_minor: 4000, discount_minor: 0, tax_minor: 0, shipping_minor: 0,
+    grand_total_minor: 4000, ship_to: { country: "US" },
+    lines: [
+      { variant_id: v1.id, sku: slug + "-A", qty: 2, unit_amount_minor: 1000, unit_currency: "USD" },
+      { variant_id: v2.id, sku: slug + "-B", qty: 1, unit_amount_minor: 2000, unit_currency: "USD" },
+    ],
+  });
+  await order.transition(o.id, "mark_paid", { reason: "test" });
+  return await order.get(o.id);
+}
+
+async function _pickListConsole() {
+  var query   = _makeQuery(FULFILLMENT_MIGS);
+  var catalog = bShop.catalog.create({ query: query });
+  var cart    = bShop.cart.create({ query: query, catalog: catalog });
+  var order   = bShop.order.create({ query: query });
+  var orderTracking = bShop.orderTracking.create({ query: query, order: order });
+  var pickLists = bShop.pickLists.create({ query: query, order: order, orderTracking: orderTracking });
+  var router  = _fakeRouter();
+  bShop.admin.mount(router, { token: TOKEN, catalog: catalog, order: order, orderTracking: orderTracking, pickLists: pickLists });
+  var auth = { authorization: "Bearer " + TOKEN };
+
+  var o = await _seedPaidOrder(query, catalog, cart, order, "pick");
+
+  // Generate a pick list from the one eligible order at a location.
+  var gen = await router._call("POST", "/admin/pick-lists", {
+    headers: auth, body: { location_code: "WH-EAST", order_ids: [o.id], sort_by: "sku" },
+  });
+  check("pick-list generate → 201", gen.status === 201);
+  var list = JSON.parse(gen.body);
+  check("pick-list has both line skus", list.lines.length === 2);
+
+  // Detail page renders the worksheet.
+  var detail = await router._call("GET", "/admin/pick-lists/" + list.id, { headers: auth, params: { id: list.id } });
+  check("pick-list detail → 200", detail.status === 200);
+  check("pick-list detail returns the list", JSON.parse(detail.body).id === list.id);
+
+  // Print view renders an HTML document.
+  var print = await router._call("GET", "/admin/pick-lists/" + list.id + "/print", { headers: auth, params: { id: list.id } });
+  check("pick-list print → 200", print.status === 200);
+  check("pick-list print is a worksheet doc", /pick list/i.test(print.body) && /<table/.test(print.body));
+
+  // Confirm both lines as picked.
+  for (var i = 0; i < list.lines.length; i += 1) {
+    var ln = list.lines[i];
+    var pick = await router._call("POST", "/admin/pick-lists/" + list.id + "/lines/" + ln.id + "/pick", {
+      headers: auth, params: { id: list.id, lineId: ln.id },
+      body: { picker_id: "alice", actual_quantity: String(ln.expected_quantity) },
+    });
+    check("pick-list confirm line → 200", pick.status === 200);
+  }
+  // After both confirms the list is in_progress with every line settled.
+  var after = JSON.parse((await router._call("GET", "/admin/pick-lists/" + list.id, { headers: auth, params: { id: list.id } })).body);
+  check("pick-list line confirmed", after.lines.every(function (l) { return l.actual_quantity != null; }));
+
+  // Complete → fans out one shipment for the parent order.
+  var done = await router._call("POST", "/admin/pick-lists/" + list.id + "/complete", {
+    headers: auth, params: { id: list.id },
+  });
+  check("pick-list complete → 200", done.status === 200);
+  var completed = JSON.parse(done.body);
+  check("pick-list complete creates a shipment", completed.shipments && completed.shipments.length === 1);
+  check("pick-list status is complete", completed.status === "complete");
+
+  // Bad id → 404 (swallow TypeError only).
+  var missing = bShop.framework.uuid.v7();
+  var nf = await router._call("GET", "/admin/pick-lists/" + missing, { headers: auth, params: { id: missing } });
+  check("pick-list missing → 404", nf.status === 404);
+
+  // Empty pick list — generate against an isolated environment with no
+  // eligible orders → 400 (the primitive refuses "no eligible orders").
+  var emptyQuery = _makeQuery(FULFILLMENT_MIGS);
+  var emptyOrder = bShop.order.create({ query: emptyQuery });
+  var emptyOt = bShop.orderTracking.create({ query: emptyQuery, order: emptyOrder });
+  var emptyPick = bShop.pickLists.create({ query: emptyQuery, order: emptyOrder, orderTracking: emptyOt });
+  var emptyRouter = _fakeRouter();
+  bShop.admin.mount(emptyRouter, { token: TOKEN, catalog: bShop.catalog.create({ query: emptyQuery }), order: emptyOrder, orderTracking: emptyOt, pickLists: emptyPick });
+  var empty = await emptyRouter._call("POST", "/admin/pick-lists", {
+    headers: auth, body: { location_code: "WH-WEST" },
+  });
+  check("pick-list empty-batch → 400", empty.status === 400);
+
+  // Missing location_code → 400.
+  var noLoc = await router._call("POST", "/admin/pick-lists", { headers: auth, body: {} });
+  check("pick-list missing location → 400", noLoc.status === 400);
+
+  // Unauthenticated browser GET → sign-in form (content negotiation), not
+  // worksheet data.
+  var unauth = await router._call("GET", "/admin/pick-lists", {});
+  check("pick-lists unauth → sign-in form", unauth.status === 200 && /Admin API key/.test(unauth.body || ""));
+
+  // Route-gating: no pickLists dep → routes absent.
+  var router2 = _fakeRouter();
+  bShop.admin.mount(router2, { token: TOKEN, catalog: catalog, order: order });
+  check("pick-lists absent: list route not mounted", !router2._routes["GET /admin/pick-lists"]);
+  check("pick-lists absent: generate route not mounted", !router2._routes["POST /admin/pick-lists"]);
+}
+
+async function _shippingLabelConsole() {
+  var query   = _makeQuery(FULFILLMENT_MIGS);
+  var catalog = bShop.catalog.create({ query: query });
+  var cart    = bShop.cart.create({ query: query, catalog: catalog });
+  var order   = bShop.order.create({ query: query });
+  var orderTracking = bShop.orderTracking.create({ query: query, order: order });
+  var shippingLabels = bShop.shippingLabels.create({ query: query });
+  var router  = _fakeRouter();
+  bShop.admin.mount(router, { token: TOKEN, catalog: catalog, order: order, orderTracking: orderTracking, shippingLabels: shippingLabels });
+  var auth = { authorization: "Bearer " + TOKEN };
+
+  var o = await _seedPaidOrder(query, catalog, cart, order, "label");
+  var ship = await orderTracking.createShipment({ order_id: o.id, carrier: "ups", tracking_number: "1Z-PRE" });
+
+  // Record a carrier-minted label against the shipment (request + purchase
+  // composed in one POST). Cost is integer minor units.
+  var rec = await router._call("POST", "/admin/orders/" + o.id + "/shipments/" + ship.id + "/labels", {
+    headers: auth, params: { id: o.id, shipmentId: ship.id },
+    body: {
+      carrier: "ups", service_level: "Ground", package_type: "parcel",
+      weight_grams: "500", length_mm: "300", width_mm: "200", height_mm: "100",
+      tracking_number: "1Z999AA10123456784",
+      label_url: "https://labels.example.com/abc.pdf",
+      cost_minor: "650", currency: "usd", purchased_via: "manual",
+    },
+  });
+  check("label record → 201", rec.status === 201);
+  var label = JSON.parse(rec.body);
+  check("label is purchased", label.status === "purchased");
+  check("label currency upcased", label.currency === "USD");
+  check("label cost is integer minor units", label.cost_minor === 650);
+
+  // The recorded label is now retrievable for the shipment — the data the
+  // order-detail label panel reads. (The bearer path returns the order
+  // JSON; the HTML panel renders the same labelsForShipment data, which
+  // is asserted here against the primitive directly.)
+  var onShip = await shippingLabels.labelsForShipment(ship.id);
+  check("label persisted on shipment", onShip.length === 1 && onShip[0].tracking_number === "1Z999AA10123456784");
+
+  // Mark used → purchased → used.
+  var used = await router._call("POST", "/admin/orders/" + o.id + "/labels/" + label.id + "/used", {
+    headers: auth, params: { id: o.id, labelId: label.id },
+  });
+  check("label mark-used → 200", used.status === 200);
+  check("label is used", JSON.parse(used.body).status === "used");
+
+  // Label for a non-numeric cost (parseInt would truncate "6.5abc") → 400.
+  var bad = await router._call("POST", "/admin/orders/" + o.id + "/shipments/" + ship.id + "/labels", {
+    headers: auth, params: { id: o.id, shipmentId: ship.id },
+    body: {
+      carrier: "ups", service_level: "Ground", package_type: "parcel",
+      weight_grams: "500", length_mm: "300", width_mm: "200", height_mm: "100",
+      tracking_number: "1Z-X", label_url: "https://labels.example.com/x.pdf",
+      cost_minor: "6.5abc", currency: "USD", purchased_via: "manual",
+    },
+  });
+  check("label bad cost → 400", bad.status === 400);
+
+  // Label against a missing shipment → 400 (TypeError from the primitive).
+  var missShip = bShop.framework.uuid.v7();
+  var nf = await router._call("POST", "/admin/orders/" + o.id + "/shipments/" + missShip + "/labels", {
+    headers: auth, params: { id: o.id, shipmentId: missShip },
+    body: {
+      carrier: "ups", service_level: "Ground", package_type: "parcel",
+      weight_grams: "500", length_mm: "300", width_mm: "200", height_mm: "100",
+      tracking_number: "1Z-Y", label_url: "https://labels.example.com/y.pdf",
+      cost_minor: "650", currency: "USD", purchased_via: "manual",
+    },
+  });
+  check("label missing shipment → 400", nf.status === 400);
+
+  // Route-gating: no shippingLabels dep → label routes absent.
+  var router2 = _fakeRouter();
+  bShop.admin.mount(router2, { token: TOKEN, catalog: catalog, order: order, orderTracking: orderTracking });
+  check("labels absent: record route not mounted", !router2._routes["POST /admin/orders/:id/shipments/:shipmentId/labels"]);
+}
+
+async function _splitShipmentConsole() {
+  var query   = _makeQuery(FULFILLMENT_MIGS);
+  var catalog = bShop.catalog.create({ query: query });
+  var cart    = bShop.cart.create({ query: query, catalog: catalog });
+  var order   = bShop.order.create({ query: query });
+  var orderTracking = bShop.orderTracking.create({ query: query, order: order });
+  var splitShipments = bShop.splitShipments.create({ query: query, order: order, orderTracking: orderTracking });
+  var router  = _fakeRouter();
+  bShop.admin.mount(router, { token: TOKEN, catalog: catalog, order: order, orderTracking: orderTracking, splitShipments: splitShipments });
+  var auth = { authorization: "Bearer " + TOKEN };
+
+  var o = await _seedPaidOrder(query, catalog, cart, order, "split");
+  var lineA = o.lines[0]; // qty 2
+  var lineB = o.lines[1]; // qty 1
+
+  // Plan a manual split: line A (full qty 2) ships now in parcel 1, line B
+  // (qty 1) ships later in parcel 2 — partial then remainder. The browser
+  // form posts parcel_<id> + qty_<id> pairs.
+  var planBody = {};
+  planBody["parcel_" + lineA.id] = "1"; planBody["qty_" + lineA.id] = String(lineA.qty);
+  planBody["parcel_" + lineB.id] = "2"; planBody["qty_" + lineB.id] = String(lineB.qty);
+  var plan = await router._call("POST", "/admin/orders/" + o.id + "/split/plan", {
+    headers: auth, params: { id: o.id }, body: planBody,
+  });
+  check("split plan → 201", plan.status === 201);
+  var planned = JSON.parse(plan.body);
+  check("split plan has two parcels", planned.shipments.length === 2);
+  check("split plan is proposed", planned.status === "proposed");
+
+  // Execute the plan → one shipment per parcel.
+  var exec = await router._call("POST", "/admin/orders/" + o.id + "/split/" + planned.id + "/execute", {
+    headers: auth, params: { id: o.id, planId: planned.id },
+  });
+  check("split execute → 200", exec.status === 200);
+  var executed = JSON.parse(exec.body);
+  check("split executed creates two shipments", executed.shipment_ids.length === 2);
+  check("split plan is executed", executed.status === "executed");
+
+  // Both parcels are now shipments on the order; the order FSM stays
+  // honest — it's still `paid`/`fulfilling`, not auto-advanced.
+  var shipRows = await orderTracking.listForOrder(o.id);
+  check("split produced two order shipments", shipRows.length === 2);
+  var fresh = await order.get(o.id);
+  check("order FSM not auto-advanced by split", fresh.status === "paid");
+
+  // A plan that drops a line (zero qty on lineB, only parcel 1) violates
+  // the conservation check → 400.
+  var o2 = await _seedPaidOrder(query, catalog, cart, order, "split2");
+  var dropBody = {};
+  dropBody["parcel_" + o2.lines[0].id] = "1"; dropBody["qty_" + o2.lines[0].id] = String(o2.lines[0].qty);
+  // lineB omitted entirely → unconsumed qty.
+  var bad = await router._call("POST", "/admin/orders/" + o2.id + "/split/plan", {
+    headers: auth, params: { id: o2.id }, body: dropBody,
+  });
+  check("split with unconsumed line → 400", bad.status === 400);
+
+  // Split with zero items (empty parcel assignment) → 400.
+  var empty = await router._call("POST", "/admin/orders/" + o2.id + "/split/plan", {
+    headers: auth, params: { id: o2.id }, body: {},
+  });
+  check("split zero items → 400", empty.status === 400);
+
+  // Cancel a proposed plan.
+  var o3 = await _seedPaidOrder(query, catalog, cart, order, "split3");
+  var cBody = {};
+  cBody["parcel_" + o3.lines[0].id] = "1"; cBody["qty_" + o3.lines[0].id] = String(o3.lines[0].qty);
+  cBody["parcel_" + o3.lines[1].id] = "1"; cBody["qty_" + o3.lines[1].id] = String(o3.lines[1].qty);
+  var p3 = JSON.parse((await router._call("POST", "/admin/orders/" + o3.id + "/split/plan", {
+    headers: auth, params: { id: o3.id }, body: cBody,
+  })).body);
+  var cancel = await router._call("POST", "/admin/orders/" + o3.id + "/split/" + p3.id + "/cancel", {
+    headers: auth, params: { id: o3.id, planId: p3.id },
+  });
+  check("split cancel → 200", cancel.status === 200);
+  check("split plan is cancelled", JSON.parse(cancel.body).status === "cancelled");
+
+  // Bad order id on plan → 400 (TypeError swallowed).
+  var nf = await router._call("POST", "/admin/orders/not-a-uuid/split/plan", {
+    headers: auth, params: { id: "not-a-uuid" }, body: { manualPlan: [{ lines: [{ line_id: lineA.id, qty: 2 }] }] },
+  });
+  check("split bad order id → 400", nf.status === 400);
+
+  // Route-gating: no splitShipments dep → split routes absent.
+  var router2 = _fakeRouter();
+  bShop.admin.mount(router2, { token: TOKEN, catalog: catalog, order: order, orderTracking: orderTracking });
+  check("split absent: plan route not mounted", !router2._routes["POST /admin/orders/:id/split/plan"]);
+}
+
 async function run() {
   await _bearerGate();
   await _productCRUD();
@@ -894,6 +1186,9 @@ async function run() {
   await _mediaFileUploadAbsent();
   await _salesReport();
   await _orderDocuments();
+  await _pickListConsole();
+  await _shippingLabelConsole();
+  await _splitShipmentConsole();
   await _factoryValidation();
 }
 

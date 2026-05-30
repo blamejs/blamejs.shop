@@ -137,12 +137,23 @@ function _stubOrder(q) {
 
 // orderTracking stub — captures every createShipment fan-out so the
 // test can assert per-order coverage + returns deterministic uuid-v7
-// shipment ids the markListComplete result echoes back.
+// shipment ids the markListComplete result echoes back. The stub mirrors
+// the real primitive's carrier contract (the enum + the
+// carrier_other_name-required-when-'other' rule) so the fan-out is
+// exercised against the production shape, not a permissive mock that
+// would let an invalid carrier slip through.
+var _OT_CARRIERS = ["ups", "fedex", "usps", "dhl", "royal-mail", "canada-post", "australia-post", "other"];
 function _stubOrderTracking() {
   var calls = [];
   return {
     calls: calls,
     createShipment: async function (input) {
+      if (_OT_CARRIERS.indexOf(input.carrier) === -1) {
+        throw new TypeError("order-tracking.createShipment: carrier must be one of " + _OT_CARRIERS.join(", "));
+      }
+      if (input.carrier === "other" && (typeof input.carrier_other_name !== "string" || !input.carrier_other_name.length)) {
+        throw new TypeError("order-tracking.createShipment: carrier_other_name required when carrier='other'");
+      }
       var id = b.uuid.v7();
       calls.push({ id: id, input: input });
       return { id: id, order_id: input.order_id, status: "pending" };
@@ -480,7 +491,8 @@ async function _markCompleteAndFanOut() {
   check("markComplete fans out per order", orderIds[0] === seedOrderIds[0] && orderIds[1] === seedOrderIds[1]);
   check("orderTracking received 2 calls",  ot.calls.length === 2);
   check("orderTracking notes carry list",  ot.calls[0].input.notes === "pick-list:" + list.id);
-  check("orderTracking carrier=pickup",    ot.calls[0].input.carrier === "pickup");
+  check("orderTracking carrier=other",     ot.calls[0].input.carrier === "other");
+  check("orderTracking pickup label",      ot.calls[0].input.carrier_other_name === "pickup");
 
   // Refuse re-completing a complete list (the list is terminal)
   await assert.rejects(svc.markListComplete({ list_id: list.id }),                         /only generated or in_progress/);
