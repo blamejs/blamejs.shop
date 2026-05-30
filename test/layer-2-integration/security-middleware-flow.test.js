@@ -11,7 +11,7 @@
  * with the shared `helpers.httpRequest` client so the assertions
  * exercise the production code path.
  *
- * Four properties, the four ways this wiring could go wrong:
+ * Five properties, the five ways this wiring could go wrong:
  *   a. A normal session (page loads + a checkout POST + a login) from
  *      ONE client IP is NOT throttled — the global budget is generous.
  *   b. Rapid repeated POSTs to a tight endpoint from one IP ARE
@@ -23,6 +23,9 @@
  *   d. The Stripe webhook path is exempt from BOTH fetch-metadata
  *      (cross-site allowed) and the rate limiter (a flood of signed
  *      deliveries is never throttled away).
+ *   e. The csrf origin pre-check accepts a same-origin POST carrying the
+ *      public https Origin (the TLS-terminated proxy scheme) and refuses a
+ *      foreign one — so authenticated forms work behind the CDN.
  *
  * The real client IP is read from `cf-connecting-ip` (the Cloudflare
  * header the Worker forwards), so every request sets it explicitly to
@@ -192,6 +195,38 @@ async function _run() {
       if (hk.status === 403 || hk.status === 429) hookBlocked += 1;
     }
     check("(d) webhook path: never 403 (fetch-metadata exempt) and never 429 (rate-limit exempt)", hookBlocked === 0);
+
+    // ---- (e) CSRF origin gate: public https Origin passes -----------
+    //
+    // The csrf double-submit gate runs an Origin/Referer pre-check. Behind
+    // the Cloudflare Worker the container connection is plain http while the
+    // browser is on https, so a legitimate same-origin POST arrives carrying
+    // `Origin: https://<public-host>`. The gate must NOT refuse it as cross-
+    // origin on the bare scheme mismatch — doing so 403'd sign-in and every
+    // authenticated form behind the CDN. A foreign Origin is still refused.
+    //
+    // The gate only engages when a cookie is present (skipStateless passes
+    // cookieless requests), so seed the csrf cookie with a GET first; the
+    // shared client then replays the cookie + echoes its value as the
+    // X-CSRF-Token header, so only the Origin differs between the two POSTs.
+    var jar = helpers.cookieJar();
+    var seed = await httpRequest({ port: port, path: "/", headers: _hdr("203.0.113.80", nav), jar: jar });
+    check("(e) GET issues a csrf cookie", seed.status >= 200 && seed.status < 300 &&
+      !!(jar.get("csrf") || jar.get("__Host-csrf")));
+
+    var publicOrigin = await httpRequest({
+      port: port, method: "POST", path: "/account/login",
+      headers: _hdr("203.0.113.81", Object.assign({ "origin": "https://blamejs.shop" }, nav)),
+      jar: jar, form: { u: "a" },
+    });
+    check("(e) same-origin POST carrying the public https Origin is NOT refused cross-origin", publicOrigin.status !== 403);
+
+    var foreignOrigin = await httpRequest({
+      port: port, method: "POST", path: "/account/login",
+      headers: _hdr("203.0.113.82", Object.assign({ "origin": "https://evil.example" }, nav)),
+      jar: jar, form: { u: "a" },
+    });
+    check("(e) POST carrying a foreign Origin IS refused cross-origin (403)", foreignOrigin.status === 403);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
