@@ -216,6 +216,114 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         res.json({ ok: true, container: true });
       });
 
+      // Abandoned-cart recovery — a scheduled pass that scans for carts
+      // left idle past `shop.cart_recovery_after_hours` (default 4h),
+      // enrolls the eligible ones (known customer + deliverable address
+      // + no marketing-opt-out) into a multi-step nurture sequence, and
+      // dispatches every step that has come due. The Worker cron POSTs
+      // `/_/cart-recovery-tick` (below) once a minute; that handler runs
+      // one bounded, drop-silent pass.
+      //
+      // Delivery is gated: the pass is INERT unless a mailer is wired
+      // (SMTP_HOST + MAIL_FROM) AND a `resolveEmail` hook can turn a
+      // cart's customer_id into a plaintext address. The customer record
+      // stores only an email_hash (never the plaintext) and the carts
+      // table carries no email column, so without an operator-supplied
+      // resolver there is no deliverable address to recover — the pass
+      // no-ops cleanly rather than scanning or sending. A guest cart
+      // (no customer_id) likewise carries no address anywhere in the
+      // schema and is skipped; guest-cart recovery re-opens the day a
+      // guest checkout-email is persisted on the cart and fed through
+      // the resolver.
+      var cartRecoveryPass = null;
+      if (catalog && cart) {
+        // Build the transactional mailer only when the operator has
+        // configured SMTP. Absent it, `recoveryEmail` stays null and the
+        // pass gate keeps the cron quiet.
+        var recoveryEmail = null;
+        if (process.env.SMTP_HOST && process.env.MAIL_FROM) {
+          var mailer = b.mail.create({
+            transport: b.mail.transports.smtp({
+              host: process.env.SMTP_HOST,
+              port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587,
+              user: process.env.SMTP_USER || undefined,
+              pass: process.env.SMTP_PASS || undefined,
+            }),
+            defaults: { from: process.env.MAIL_FROM },
+          });
+          recoveryEmail = bShop.email.create({ mailer: mailer });
+        }
+
+        // Operator-owned resolver: cart customer_id → deliverable
+        // plaintext address. The default deploy has no plaintext-email
+        // store (customers persist only the hash), so the stock resolver
+        // returns null — which keeps the pass inert until an operator
+        // wires their own address lookup here. Returning null is the
+        // honest no-deliverable-address signal, not a silent failure.
+        var recoveryResolveEmail = function (_candidate) {
+          return Promise.resolve(null);
+        };
+
+        var recoveryEmailSuppressions = bShop.emailSuppressions.create({
+          cursorSecret: process.env.D1_BRIDGE_SECRET
+            ? b.crypto.namespaceHash("email-suppressions-cursor", process.env.D1_BRIDGE_SECRET)
+            : "email-suppressions-cursor-dev-only",
+        });
+
+        // cart-abandonment's recentDetections paginates with an
+        // HMAC-tagged cursor, so the primitive demands a cursorSecret in
+        // production (it throws at boot otherwise). Derive it from the
+        // bridge secret like every other shop cursor; the dev fallback
+        // keeps local boots working.
+        var abandonmentCursorSecret = process.env.D1_BRIDGE_SECRET
+          ? b.crypto.namespaceHash("cart-abandonment-cursor", process.env.D1_BRIDGE_SECRET)
+          : "cart-abandonment-cursor-secret-dev-only";
+
+        cartRecoveryPass = bShop.cartRecoveryPass.create({
+          cartAbandonment: bShop.cartAbandonment.create({
+            cart:         cart,
+            cursorSecret: abandonmentCursorSecret,
+          }),
+          cartRecovery:    bShop.cartRecovery.create({
+            email:             recoveryEmail,
+            emailSuppressions: recoveryEmailSuppressions,
+          }),
+          config:        bShop.config.create({}),
+          consentLedger: bShop.consentLedger.create({}),
+          cartUrlBase:   process.env.SHOP_ORIGIN
+            ? process.env.SHOP_ORIGIN.replace(/\/$/, "") + "/cart"
+            : null,
+          resolveEmail:  recoveryResolveEmail,
+        });
+      }
+
+      // Internal cron endpoint — the Worker's scheduled() handler POSTs
+      // here once a minute over the SHOP service binding. Gated by the
+      // shared D1_BRIDGE_SECRET header (same trust root as the SQL / R2
+      // bridges) so a publicly-reachable URL can't drive the pass. The
+      // pass itself is drop-silent (never throws); a failure surfaces as
+      // `{ ok: false }` in the JSON body, not a 5xx that would mark the
+      // cron run failed.
+      r.post("/_/cart-recovery-tick", async function (req, res) {
+        var got = req.headers && req.headers["x-d1-bridge-secret"];
+        var want = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !want ||
+          typeof got !== "string" ||
+          got.length !== want.length ||
+          !b.crypto.timingSafeEqual(got, want)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!cartRecoveryPass) {
+          res.json({ ok: true, enabled: false, reason: "cart recovery not composed (no catalog/cart)" });
+          return;
+        }
+        var summary = await cartRecoveryPass.runPass();
+        res.json(summary);
+      });
+
       // Shared config primitive — operator-tunable runtime
       // configuration (tax rules, shipping services, brand name).
       // Built once at boot so the admin write-path and the storefront
