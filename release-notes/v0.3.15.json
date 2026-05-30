@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.15",
+  "date": "2026-05-30",
+  "headline": "Product image galleries are interactive — click a thumbnail to view that image full size",
+  "summary": "A product page's image gallery now lets a shopper switch between the product's images: clicking a thumbnail swaps the main image, with no JavaScript required. Previously the thumbnail strip was decorative — the additional images were unreachable, a single-image product showed empty placeholder slots, and only the first four images were shown. Now the main image stacks the product's images and the thumbnails are real, keyboard-accessible controls that select which one is shown; a product with one image shows just that image (no empty slots), and the four-image cap is raised to twelve so far more images are reachable. The picker is pure HTML and CSS, so it works without scripting and degrades cleanly.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "The product image gallery actually switches images now", "body": "Thumbnails on the product page are now interactive: selecting one shows that image as the main image, using a no-JavaScript radio/label control. The empty placeholder slots a single-image product used to show are gone, the four-image cap is raised to twelve so far more images are reachable, and the strip is keyboard-navigable with accessible labels. The edge and container renderers emit identical markup." }
+      ]
+    }
+  ]
+}

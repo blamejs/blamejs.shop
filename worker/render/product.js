@@ -683,32 +683,53 @@ function _wrap(opts) {
     .replace("RAW_BODY_PLACEHOLDER", opts.body);
 }
 
+// PDP gallery markup — a no-JS, CSS-`:checked` picker. Byte-identical to
+// the container renderer (`lib/storefront.js#_buildPdpGallery`): every
+// media row renders both as a hidden radio + a stacked main `<img>` (only
+// the `:checked` radio's image shows) and as a `<label for>` thumbnail;
+// activating a thumbnail checks its radio and CSS swaps the visible image.
+// The first image is selected on load. A single-image product renders just
+// that image with no thumbnail strip; absent media falls back to the
+// letter-mark placeholder. Keep the two builders in sync on every change.
 function _buildPdpGallery(product, media, assetPrefix) {
   var prefix = assetPrefix || "/assets/";
   if (!media || media.length === 0) {
     return "<figure class=\"pdp__media pdp__media--placeholder\" aria-hidden=\"true\">" +
              "<svg class=\"media-ph__svg\" viewBox=\"0 0 240 240\" aria-hidden=\"true\"><rect width=\"240\" height=\"240\" fill=\"none\"/><g stroke=\"currentColor\" stroke-opacity=\"0.10\" stroke-width=\"1\"><path d=\"M0 40 H240 M0 80 H240 M0 120 H240 M0 160 H240 M0 200 H240 M40 0 V240 M80 0 V240 M120 0 V240 M160 0 V240 M200 0 V240\"/></g><g fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M120 64 L162 80 L162 122 C162 152 144 168 120 178 C96 168 78 152 78 122 L78 80 Z\" stroke=\"#732A8D\" stroke-width=\"2.4\"/><path d=\"M120 92 L146 105 L146 134 L120 147 L94 134 L94 105 Z\"/><path d=\"M94 105 L120 118 L146 105 M120 118 V147\" stroke=\"#732A8D\" stroke-width=\"2.4\"/><path d=\"M107 101 L112 105 L107 109\" stroke=\"currentColor\" stroke-width=\"2.4\"/><path d=\"M116 110 H128\" stroke=\"currentColor\" stroke-width=\"2.4\"/></g><text x=\"120\" y=\"208\" text-anchor=\"middle\" font-family=\"ui-monospace,Menlo,Consolas,monospace\" font-size=\"12\" letter-spacing=\"2\" fill=\"#6b6b78\">no image yet</text></svg>" +
-           "</figure>" +
-           "<ul class=\"pdp__thumbs\" aria-hidden=\"true\">" +
-             "<li class=\"is-active\"></li><li></li><li></li><li></li>" +
-           "</ul>";
+           "</figure>";
   }
   var hero = media[0];
-  var heroUrl = prefix + hero.r2_key;
   var heroAlt = hero.alt_text || product.title || "Product image";
-  var heroImg = "<figure class=\"pdp__media pdp__media--image\">" +
-                  "<img src=\"" + escapeAttr(heroUrl) + "\" alt=\"" + escapeAttr(heroAlt) + "\" loading=\"eager\">" +
-                "</figure>";
-  var thumbs = ["<li class=\"is-active\">" +
-                  "<img src=\"" + escapeAttr(heroUrl) + "\" alt=\"\">" +
-                "</li>"];
-  for (var i = 1; i < Math.min(media.length, 4); i += 1) {
-    var t = media[i];
-    var tUrl = prefix + t.r2_key;
-    thumbs.push("<li><img src=\"" + escapeAttr(tUrl) + "\" alt=\"\"></li>");
+  // The CSS picker (main.css) maps :checked radios through nth-of-type(12),
+  // so render at most that many — a thumbnail that checked a radio with no
+  // matching visibility rule would blank the gallery. Twelve covers any
+  // realistic product; keep this in lockstep with the rule count in main.css.
+  var shown = media.length < 12 ? media.length : 12;
+  var radios = "";
+  var imgs = "";
+  var thumbs = "";
+  for (var i = 0; i < shown; i += 1) {
+    var m = media[i];
+    var url = prefix + m.r2_key;
+    var id = "pdp-img-" + i;
+    var checked = i === 0 ? " checked" : "";
+    var alt = i === 0 ? heroAlt : (m.alt_text || product.title || "Product image");
+    var loading = i === 0 ? "eager" : "lazy";
+    radios += "<input class=\"pdp__radio\" type=\"radio\" name=\"pdp-img\" id=\"" + escapeAttr(id) + "\"" + checked + ">";
+    imgs += "<img class=\"pdp__img\" src=\"" + escapeAttr(url) + "\" alt=\"" + escapeAttr(alt) + "\" loading=\"" + loading + "\">";
+    thumbs += "<li>" +
+                "<label class=\"pdp__thumb\" for=\"" + escapeAttr(id) + "\">" +
+                  "<img src=\"" + escapeAttr(url) + "\" alt=\"\">" +
+                  "<span class=\"sr-only\">Show image " + (i + 1) + "</span>" +
+                "</label>" +
+              "</li>";
   }
-  while (thumbs.length < 4) thumbs.push("<li></li>");
-  return heroImg + "<ul class=\"pdp__thumbs\" aria-hidden=\"true\">" + thumbs.join("") + "</ul>";
+  // Radios are siblings of the figure + thumbnail list (not nested), so a
+  // checked radio can reach both the stacked images and the matching
+  // thumbnail through the general-sibling combinator in CSS.
+  var figure = "<figure class=\"pdp__media pdp__media--image pdp__media--gallery\">" + imgs + "</figure>";
+  if (shown === 1) return radios + figure;
+  return radios + figure + "<ul class=\"pdp__thumbs\">" + thumbs + "</ul>";
 }
 
 // Resolve a product's availability + shipping shape from the variant list

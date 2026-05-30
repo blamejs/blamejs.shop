@@ -1987,6 +1987,29 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason:    "Every container page (e.g. /cart, /admin/*) emitted a Document-Policy header with document-write=?0, unsized-media=?0, oversized-images=?0 — feature names current Chromium no longer recognizes. The browser logged \"Document-Policy HTTP header: Unrecognized document policy feature name <x>\" and applied no policy, so the header was pure console noise with zero protection. The vendored blamejs securityHeaders default hardcodes these three; the shop now passes documentPolicy:false through createApp (lib/security-middleware.js securityHeadersOpts) to suppress the inert header, matching the edge (worker/index.js _SECURITY_HEADERS), which never sent it. Detector matches the three legacy tokens in their structured-field `=?0`/`=?1` value form so a re-introduced Document-Policy value (in either substrate's header set) trips it; the recognized feature set today is force-load-at-top / js-profiling / include-js-call-stacks-in-crash-reports / expect-no-linked-resources / network-efficiency-guardrails — assert one of those instead, or send no header.",
   },
+  {
+    // The PDP image gallery was a decorative dead end: the thumbnail strip
+    // was rendered `aria-hidden` (screen readers couldn't reach it) with
+    // bare <img> tiles that did nothing on click, padded to four fixed
+    // slots with empty <li> so a one-image product showed three dashed
+    // "missing image" squares. The functional gallery is a no-JS,
+    // CSS-`:checked` picker (radios + stacked images + `<label for>`
+    // thumbnails). This detector locks two specific regressions out of the
+    // gallery builders (lib/storefront.js + worker/render/product.js): an
+    // `aria-hidden` pdp__thumbs strip (the strip is interactive now — it
+    // must NOT be hidden from assistive tech), and the empty-<li>
+    // slot-padding shape (`<li></li>` literal or a `while (...) push("<li>
+    // </li>")` pad-loop). An empty <li> in markup or a pad-to-N loop both
+    // trip it; the real thumbnails are `<li><label ...>...</label></li>`,
+    // which carry no empty body and aren't matched.
+    id:        "pdp-gallery-inert-thumbnail-strip",
+    bugClassDeclared: true,
+    primitive: "render the PDP thumbnail strip as an interactive, focusable `<ul class=\"pdp__thumbs\">` of `<label for>` controls bound to hidden radios (no `aria-hidden`, no empty-<li> padding) so the gallery is a working no-JS CSS-`:checked` picker, not a decorative strip that pads a single-image product with empty slots",
+    regex:     /class=\\?"pdp__thumbs\\?"[^>]*aria-hidden|<li>\s*<\/li>|while\s*\([^)]*\)\s*[\w$]+\.push\s*\(\s*\\?"<li>\s*<\/li>/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "The PDP gallery shipped decorative-only: the thumbnail strip was `aria-hidden` with non-interactive bare-<img> tiles, capped at four images, and padded short strips to four fixed slots with empty <li> — so a single-image product rendered three dashed missing-image squares and clicking a thumbnail did nothing. The functional replacement is a server-rendered, no-JS gallery: N hidden radios (first checked), a stack of N main <img> shown/hidden by the radios' `:checked` state in CSS, and N `<label for>` thumbnails (keyboard-focusable through the radio) that swap the visible image — no island, exactly N thumbnails, no strip at all for a lone image. Detector flags a re-introduced `aria-hidden` on the pdp__thumbs strip (it's interactive now and must reach assistive tech), a literal empty `<li></li>`, or the `while (...) push(\"<li></li>\")` slot-pad loop in either gallery builder.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
