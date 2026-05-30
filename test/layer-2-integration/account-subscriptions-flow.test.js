@@ -194,7 +194,7 @@ async function _run() {
 
     // Skip next shipment → 303 ?ok=skipped + a ledger row.
     var skipRes = await _post("/skip");
-    check("skip then 303 ?ok=skipped",            skipRes.status === 303 && (skipRes.headers["location"] || "").indexOf("?ok=skipped") !== -1);
+    check("skip then 303 ?ok=skipped [status=" + skipRes.status + " loc=" + (skipRes.headers["location"] || "-") + " body=" + String(skipRes.body || "").replace(/\s+/g, " ").slice(0, 120) + "]", skipRes.status === 303 && (skipRes.headers["location"] || "").indexOf("?ok=skipped") !== -1);
 
     // Change quantity (happy path) → 303 ?ok=quantity + the row updates.
     var qtyRes = await _post("/quantity", { quantity: "3" });
