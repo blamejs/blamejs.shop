@@ -101,15 +101,21 @@ async function _run() {
   var handle = await _bootApp({ catalog: catalog, cart: cart, customers: customers });
 
   try {
-    var cookieA = _authCookie(custA.id);
-    var cookieB = _authCookie(custB.id);
+    // A jar per customer: the first authenticated GET seeds the
+    // double-submit CSRF cookie, echoed as X-CSRF-Token on each customer's
+    // subsequent POSTs (real gate, no bypass). B's first action is a POST,
+    // so a benign authed GET seeds its token first.
+    var jarA = helpers.cookieJar();
+    jarA.capture({ "set-cookie": [_authCookie(custA.id)] });
+    var jarB = helpers.cookieJar();
+    jarB.capture({ "set-cookie": [_authCookie(custB.id)] });
 
     // ---- passkeys list ------------------------------------------------
     // Anon → redirect to login.
     var anon = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys" });
     check("anon passkeys then 303 login",       anon.status === 303 && (anon.headers["location"] || "") === "/account/login");
 
-    var listA = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys", headers: { cookie: cookieA } });
+    var listA = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys", jar: jarA });
     check("passkeys page then 200",             listA.status === 200);
     check("list shows both A credentials",       listA.body.indexOf("alice-cred-1") !== -1 && listA.body.indexOf("alice-cred-2") !== -1);
     check("list offers revoke for A (2 keys)",   listA.body.indexOf("/account/passkeys/" + pkA1.id + "/remove") !== -1 &&
@@ -117,48 +123,50 @@ async function _run() {
     check("list shows the add-another island",   listA.body.indexOf("id=\"passkey-add-btn\"") !== -1);
 
     // ---- revoke confirm + POST ---------------------------------------
-    var confirm = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + pkA1.id + "/remove", headers: { cookie: cookieA } });
+    var confirm = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + pkA1.id + "/remove", jar: jarA });
     check("revoke confirm page then 200",        confirm.status === 200);
     check("revoke confirm asks first",           confirm.body.indexOf("Revoke this passkey?") !== -1);
     check("revoke confirm POSTs to revoke",       confirm.body.indexOf("action=\"/account/passkeys/" + pkA1.id + "/revoke\"") !== -1);
 
-    var revoke = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + pkA1.id + "/revoke", method: "POST", headers: { cookie: cookieA } });
+    var revoke = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + pkA1.id + "/revoke", method: "POST", jar: jarA });
     check("revoke then 303",                     revoke.status === 303 && (revoke.headers["location"] || "") === "/account/passkeys?ok=revoked");
     check("revoked credential gone from DB",      (await customers.listPasskeys(custA.id)).length === 1);
 
     // ---- last-credential guard (NO oauth) ----------------------------
     // A now has exactly one passkey and no OAuth → revoking it is refused.
     var soleA = (await customers.listPasskeys(custA.id))[0];
-    var guard = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + soleA.id + "/revoke", method: "POST", headers: { cookie: cookieA } });
+    var guard = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + soleA.id + "/revoke", method: "POST", jar: jarA });
     check("last-credential revoke then 409",      guard.status === 409);
     check("guard surfaces a clear notice",        guard.body.indexOf("only way to sign in") !== -1);
     check("last credential NOT removed",          (await customers.listPasskeys(custA.id)).length === 1);
 
     // The list page for A now withholds the revoke control entirely.
-    var listAsolo = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys", headers: { cookie: cookieA } });
+    var listAsolo = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys", jar: jarA });
     check("solo list withholds revoke",           listAsolo.body.indexOf("/account/passkeys/" + soleA.id + "/remove") === -1);
     check("solo list shows only-method note",      listAsolo.body.indexOf("Only sign-in method") !== -1);
 
     // ---- last-credential WITH oauth fallback -------------------------
     // B has one passkey but a linked Google identity → revoke is allowed.
-    var revokeB = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + pkB1.id + "/revoke", method: "POST", headers: { cookie: cookieB } });
+    // Seed B's CSRF cookie with a benign authed GET before its first POST.
+    await helpers.httpRequest({ port: handle.port, path: "/account/passkeys", jar: jarB });
+    var revokeB = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + pkB1.id + "/revoke", method: "POST", jar: jarB });
     check("oauth-fallback last revoke then 303",  revokeB.status === 303);
     check("B's last passkey removed (oauth left)", (await customers.listPasskeys(custB.id)).length === 0);
 
     // ---- cross-customer IDOR -----------------------------------------
     // B cannot view/revoke A's remaining credential.
-    var idorView = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + soleA.id + "/remove", headers: { cookie: cookieB } });
+    var idorView = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + soleA.id + "/remove", jar: jarB });
     check("IDOR confirm then 404",                idorView.status === 404);
-    var idorRevoke = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + soleA.id + "/revoke", method: "POST", headers: { cookie: cookieB } });
+    var idorRevoke = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + soleA.id + "/revoke", method: "POST", jar: jarB });
     check("IDOR revoke then 404",                 idorRevoke.status === 404);
     check("A's credential untouched by B",        (await customers.listPasskeys(custA.id)).length === 1);
 
     // Malformed (non-UUID) id is a clean 404, not a 500.
-    var malformed = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/not-a-uuid/remove", headers: { cookie: cookieA } });
+    var malformed = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/not-a-uuid/remove", jar: jarA });
     check("malformed passkey id then 404",        malformed.status === 404);
 
     // ---- add-another begin challenge ---------------------------------
-    var addBegin = await helpers.httpRequest({ port: handle.port, path: "/account/passkey/add-begin", method: "POST", headers: { cookie: cookieA, "content-type": "application/json" }, body: "{}" });
+    var addBegin = await helpers.httpRequest({ port: handle.port, path: "/account/passkey/add-begin", method: "POST", jar: jarA, headers: { "content-type": "application/json" }, body: "{}" });
     check("add-begin then 200",                   addBegin.status === 200);
     var opts = JSON.parse(addBegin.body);
     check("add-begin returns a challenge",        typeof opts.challenge === "string" && opts.challenge.length > 0);
@@ -168,12 +176,12 @@ async function _run() {
     check("anon add-begin then 303 login",        addBeginAnon.status === 303);
 
     // ---- profile edit -------------------------------------------------
-    var profGet = await helpers.httpRequest({ port: handle.port, path: "/account/profile", headers: { cookie: cookieA } });
+    var profGet = await helpers.httpRequest({ port: handle.port, path: "/account/profile", jar: jarA });
     check("profile page then 200",                profGet.status === 200);
     check("profile pre-fills display name",        profGet.body.indexOf("value=\"Alice\"") !== -1);
     check("profile email field disabled",          profGet.body.indexOf("disabled") !== -1);
 
-    var profPost = await helpers.httpRequest({ port: handle.port, path: "/account/profile", method: "POST", headers: { cookie: cookieA }, form: { display_name: "Alice Cooper" } });
+    var profPost = await helpers.httpRequest({ port: handle.port, path: "/account/profile", method: "POST", jar: jarA, form: { display_name: "Alice Cooper" } });
     check("profile update then 303",              profPost.status === 303 && (profPost.headers["location"] || "") === "/account/profile?ok=updated");
     var beforeHash = custA.email_hash;
     var afterEdit = await customers.get(custA.id);
@@ -181,12 +189,12 @@ async function _run() {
     check("email hash unchanged by edit",          afterEdit.email_hash === beforeHash);
 
     // Bad display name (control bytes) re-renders 400 with the value kept.
-    var profBad = await helpers.httpRequest({ port: handle.port, path: "/account/profile", method: "POST", headers: { cookie: cookieA }, form: { display_name: "" } });
+    var profBad = await helpers.httpRequest({ port: handle.port, path: "/account/profile", method: "POST", jar: jarA, form: { display_name: "" } });
     check("profile empty name then 400",          profBad.status === 400);
     check("profile 400 shows error notice",        profBad.body.indexOf("form-notice--error") !== -1);
 
     // PRG success notice renders on the redirected GET.
-    var profOk = await helpers.httpRequest({ port: handle.port, path: "/account/profile?ok=updated", headers: { cookie: cookieA } });
+    var profOk = await helpers.httpRequest({ port: handle.port, path: "/account/profile?ok=updated", jar: jarA });
     check("profile success notice via role=status", profOk.body.indexOf("role=\"status\"") !== -1 && profOk.body.indexOf("Profile updated.") !== -1);
   } finally {
     await _teardown(handle);

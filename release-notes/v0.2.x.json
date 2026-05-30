@@ -1,0 +1,796 @@
+{
+  "$schema": "../scripts/release-notes-consolidated-schema.json",
+  "minor": "0.2",
+  "releases": [
+    {
+      "version": "0.2.31",
+      "date": "2026-05-29",
+      "headline": "Abandoned-cart recovery",
+      "summary": "A scheduled pass now finds carts left idle with items and no order and emails the shopper a link back — composed from the cart-abandonment scanner and a multi-step recovery sequence, gated on marketing consent (anyone who has withdrawn marketing consent is skipped) and idempotent (one email per abandonment, no double-sends across ticks). It stays completely inert until an SMTP mailer and an email resolver are configured, so a store without them is unaffected; the existing once-a-minute cron drives it.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Abandoned-cart recovery",
+              "body": "A scheduled pass detects carts that have items, no paid order, and have been idle past a configurable threshold (`shop.cart_recovery_after_hours`, default 4h), then emails a recovery link to shoppers whose address is known. Enrolment is gated on the marketing-consent ledger and the send path honors the suppression list, so a withdrawn or unsubscribed shopper is never contacted; sends are idempotent. The pass no-ops cleanly until an SMTP mailer (`SMTP_HOST` / `MAIL_FROM`) and an email resolver are wired, so deploying it changes nothing until you opt in."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.30",
+      "date": "2026-05-29",
+      "headline": "Fulfillment operations in the admin console — pick lists, labels, split shipments",
+      "summary": "The admin console gains a fulfillment workspace. Pick lists batch unfulfilled orders into a warehouse worksheet — generate from eligible orders or a pasted set of order ids, confirm or recount each line, then complete the list to fan out shipments, with a print-optimized worksheet. Shipping labels can be recorded per shipment on the order detail (carrier, service, parcel dimensions, tracking, and cost). Split shipments let you ship part of an order now and the rest later, planning per-line parcel assignments — without forcing the order's lifecycle forward until everything ships. Separately, an accessibility fix: the footer column headings move from h4 to h2, removing a heading-level skip on every page (the footer looks identical).",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Pick lists",
+              "body": "`/admin/pick-lists` batches unfulfilled orders into a warehouse worksheet — generate from auto-selected eligible orders or a pasted set of order ids, confirm/recount each line with a variance summary, cancel with a reason, and complete the list (which fans out one shipment per parent order). A self-contained `@media print` worksheet prints the picks."
+            },
+            {
+              "title": "Shipping labels",
+              "body": "Record a carrier-minted shipping label per shipment from the order detail — carrier, service, parcel dimensions, tracking number, label URL, and cost — with a mark-used action and a per-shipment label list. Available where shipment tracking is wired."
+            },
+            {
+              "title": "Split shipments",
+              "body": "Plan and execute partial shipments for an order: assign line items and quantities to parcels and ship them as separate shipments. The order stays in its fulfilling state until all parcels have shipped, so a partial shipment never marks the order delivered prematurely."
+            }
+          ]
+        },
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Footer heading order",
+              "body": "The footer column headings were emitted as `h4` directly after the page's `h2`, skipping intermediate levels — a WCAG 1.3.1 heading-hierarchy violation. They are now `h2` (correct for a top-level region inside the footer landmark). The footer's appearance is unchanged."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.29",
+      "date": "2026-05-29",
+      "headline": "Show the real total before checkout and truthful stock on every product",
+      "summary": "Two storefront truthfulness fixes. The cart and checkout now show the real total before payment — subtotal plus estimated tax, shipping, and any discount, all totalled — computed by the same engine that runs the actual charge, so the figure shown matches what will be charged (labelled estimated until an address narrows the tax and shipping, then exact; a destination with no matching rule reads 'calculated at checkout' rather than a wrong number). Cart lines also surface real stock state. On product pages, the buy box now reflects real per-variant inventory: an out-of-stock variant disables Add to cart with an honest message, and a low-stock variant shows 'Only N left'.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "The cart and checkout show your real total before you pay",
+              "body": "Previously the cart total was just the subtotal and checkout showed no tax/shipping until the payment step. Both now render subtotal + estimated tax + estimated shipping + discount + total, computed from the same tax/shipping primitives as the Stripe charge — the displayed estimate equals the confirmed order total to the cent. Figures are labelled 'estimated' until a shipping address is entered (then exact); a destination with no matching tax or shipping rule reads 'calculated at checkout', and the subtotal stays honest. Cart lines now also show out-of-stock / low-stock state."
+            },
+            {
+              "title": "Product availability reflects real inventory",
+              "body": "The product buy box now reads real per-variant stock: an out-of-stock variant disables 'Add to cart' and shows an out-of-stock message (in the badge and the JSON-LD), and a variant at or below the configured low-stock threshold shows 'Only N left'. The add-to-cart control is no longer enabled for items that can't be bought."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.28",
+      "date": "2026-05-29",
+      "headline": "Sales reports and printable receipts in the admin console",
+      "summary": "The admin console gains a Reports screen and printable order documents. Reports aggregates a sales and revenue summary over a date range you choose — order count, gross and net revenue, refunds, average order value, an order-status funnel, a by-day revenue table, and top products — with a CSV export of the daily series. Every order detail page now offers a printable receipt and a printable packing slip (print-optimized, carrying your shop name and contact), so you can pull a revenue report or print an order without querying the database directly.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Reports screen",
+              "body": "`/admin/reports` aggregates a sales/revenue summary over a selectable date range: order count, gross and net revenue, refunds and refund rate, average order value, an order-status funnel, a by-day revenue table, and top products. The daily series exports to CSV. The screen reads only — it never writes."
+            },
+            {
+              "title": "Printable receipts and packing slips",
+              "body": "`GET /admin/orders/:id/receipt` and `GET /admin/orders/:id/packing-slip` render self-contained, print-optimized order documents (lines, totals, ship-to, tracking barcode) with your shop name and contact in the masthead. Both are linked from a Documents panel on the admin order detail screen."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.27",
+      "date": "2026-05-29",
+      "headline": "Upload product images directly from the admin console",
+      "summary": "The admin product media manager can now take an image file uploaded straight from your device, in addition to attaching one by URL. On the product detail screen, pick a PNG, JPEG, WebP, GIF, AVIF, or SVG and it streams to object storage and attaches to the product (or a specific variant) in one step. Every upload is validated by both its declared content type and its actual magic bytes — a mismatched or disguised file is refused — and capped at 10 MiB. The upload surface is only present when object storage is configured, so a store without it sees no change.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Direct image-file upload in the admin product media manager",
+              "body": "A file picker on the admin product detail screen accepts a local image (`multipart/form-data`) alongside the existing attach-by-URL field. The file is content-type- and magic-byte-validated (png/jpeg/webp/gif/avif/svg), size-capped at 10 MiB, streamed to the object-storage bridge, and attached to the product or variant. JSON API: `POST /admin/products/:id/media/upload-file` and `POST /admin/media/upload-file`. The routes mount only when the object-storage bridge is configured."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.26",
+      "date": "2026-05-29",
+      "headline": "Update the vendored blamejs runtime to v0.13.44",
+      "summary": "The bundled blamejs runtime moves from v0.13.0 to v0.13.44, carrying a run of upstream security and reliability fixes through the crypto, storage, and middleware layers the shop is built on, with no API or configuration changes. Highlights: DNSSEC validation now bounds the work spent on colliding keys and signatures (KeyTrap / NSEC3 resource-exhaustion defense); a sealed database column that fails to unseal now returns null instead of risking forged or cross-row ciphertext; the encrypted database gains a temporary-storage free-space guard and a shutdown watchdog that preserves the final flush on exit; S/MIME chain verification binds the leaf certificate to the verifying signer key; archive extraction refuses Windows reserved and alternate-data-stream path names; and the replay-nonce store is memory-capped and fails closed under flood.",
+      "sections": [
+        {
+          "heading": "Security",
+          "items": [
+            {
+              "title": "Bundled blamejs runtime updated to v0.13.44",
+              "body": "Pulls in the upstream security fixes accumulated since v0.13.0: DNSSEC KeyTrap / NSEC3 work caps, sealed-column null-on-unseal-failure (no forged or cross-row ciphertext), S/MIME leaf-to-signer binding, archive-extraction rejection of Windows reserved / alternate-data-stream names, static-file sibling-prefix path containment, and a memory-capped, fail-closed replay-nonce store. No API or configuration changes are required."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Database reliability under low temporary storage",
+              "body": "The encrypted database now refuses growth-writes with a clear error when its temporary storage drops below a safety headroom (rather than risking corruption), and a shutdown watchdog preserves the final database flush if a shutdown phase hangs. Both harden the container restart path."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.25",
+      "date": "2026-05-29",
+      "headline": "Harden session and admin cookies with __Host- / __Secure- name prefixes",
+      "summary": "The session, login, and admin cookies now carry the browser-enforced `__Host-` / `__Secure-` name prefixes when served over HTTPS. These prefixes bind a cookie to a secure, same-origin context — a browser only accepts a `__Host-` cookie that was set with `Secure`, `Path=/`, and no `Domain` attribute — which closes off cookie-injection and session-fixation paths from a related origin or a non-secure context. The secure-versus-plain decision follows the forwarded request protocol, so a deployment behind a TLS-terminating proxy (the production setup) gets the hardened prefixes while local development and tests over HTTP keep the bare names and keep working. Returning visitors are not signed out by the upgrade: the cookie reader resolves both the prefixed and the legacy name during the transition.",
+      "sections": [
+        {
+          "heading": "Security",
+          "items": [
+            {
+              "title": "`__Host-` on the session and login cookies",
+              "body": "Over HTTPS the storefront session and login cookies are issued as `__Host-shop_sid` and `__Host-shop_auth` with `Secure`, `Path=/`, and no `Domain` — the attribute set a browser requires before it will store a `__Host-` cookie, so the session cookie can no longer be planted or overwritten by a related origin or a non-secure context."
+            },
+            {
+              "title": "`__Secure-` on the admin cookie",
+              "body": "The admin session cookie is scoped to `Path=/admin`, so it takes the `__Secure-` prefix (which requires `Secure`) rather than `__Host-` (which mandates `Path=/`). The edge cache-skip check and the audience bucketing were updated to recognize the prefixed names so a signed-in response is never served from the shared edge cache."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.24",
+      "date": "2026-05-29",
+      "headline": "Scope cart-line edits to your own cart, harden structured data, and redact auth errors",
+      "summary": "A set of request-path hardening fixes. Cart line edit and remove are now scoped to your own session cart, so a cart-line id belonging to another shopper can no longer be used to change quantities on or delete their item — a mismatched id is a no-op, not a mutation. The product structured-data (JSON-LD) embedded in page heads now neutralizes every `</script` close-tag variant (with trailing space, slash, or newline), not just the exact `</script>`, closing a markup-injection path from admin-entered product fields. Account sign-in, registration, and passkey error responses now return a generic message plus a request id instead of the raw internal error string, with the full error logged server-side for the operator. And the worker DB/R2 bridge secret is checked at boot: a secret shorter than 32 characters logs a loud warning so a weak secret is visible in the boot log (the documented generator produces 43 characters, so a by-the-docs deploy stays quiet).",
+      "sections": [
+        {
+          "heading": "Security",
+          "items": [
+            {
+              "title": "Cart-line edits are scoped to your cart",
+              "body": "`POST /cart/lines/:id/update` and `/remove` now resolve the requester's session cart and scope the change to it (`WHERE id = ? AND cart_id = ?`), so a cart-line id from another shopper's cart can't be used to alter or delete their line — it resolves to a no-op rather than a cross-cart mutation. Legitimate edits to your own cart are unchanged."
+            },
+            {
+              "title": "Structured-data close-tag escaping hardened",
+              "body": "JSON-LD embedded in page heads (edge and origin, byte-identical) now escapes every `</script` sequence the HTML parser treats as a tag-closer — including `</script `, `</script/`, and `</script` followed by a newline — not only the exact `</script>`. This removes a markup-injection vector from admin-entered product fields that flow into structured data."
+            },
+            {
+              "title": "Account auth errors no longer leak internals",
+              "body": "The sign-in, registration, and passkey ceremony endpoints now return a generic message and a request id on an unexpected server error instead of the raw error string; the real error is logged server-side, correlated by that request id. Client-shape (400) and other expected responses are unchanged."
+            },
+            {
+              "title": "Bridge-secret entropy warning at boot",
+              "body": "The worker DB/R2 bridge secret (`D1_BRIDGE_SECRET`) authorizes the database and object-storage bridge, so a weak value is high-impact. The container now logs a loud boot warning in production when it is shorter than 32 characters. The documented generator produces 43 characters; if you see the warning, regenerate the secret with the command it prints."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.23",
+      "date": "2026-05-29",
+      "headline": "Rate limiting and cross-site request isolation on the request lifecycle",
+      "summary": "Two request-lifecycle defenses are now composed into every storefront and admin request. A per-client-IP rate limit backs the whole site (a generous global budget that a normal browsing and checkout session never trips) with tighter budgets on the abusable POST/auth endpoints — sign-in, passkey enrolment, checkout, gift-card balance lookup, account registration, newsletter, review/question submit, and survey response — so credential and passkey spraying, gift-card brute-forcing, and checkout flooding are shut down. Separately, a fetch-metadata gate refuses cross-site state-changing requests using the browser's Sec-Fetch headers, adding CSRF defense-in-depth on top of the SameSite session cookies. The client IP is read from the edge-forwarded header (the container sits behind the Worker), so limits apply per real visitor; the payment-webhook and health-probe paths are exempt. No change for normal use.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Per-client rate limiting",
+              "body": "A generous global token-bucket limit per client IP backs the whole site, with tight fixed-window budgets on the abusable POST/auth endpoints (login, passkey register/add, checkout, gift-card balance, register, newsletter, review/question, survey). Keyed on the real client IP forwarded from the edge; payment-webhook and health-probe paths are exempt. The single-instance container uses an in-memory backend."
+            },
+            {
+              "title": "Cross-site request isolation (fetch-metadata)",
+              "body": "Cross-site state-changing requests (the CSRF vector) are refused using the browser's Sec-Fetch-Site/Mode/Dest headers — same-origin requests and direct navigations pass; payment webhooks are exempt. This restores defense-in-depth alongside the SameSite session cookies."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.22",
+      "date": "2026-05-29",
+      "headline": "See your full order history, track shipments, reorder, and request returns",
+      "summary": "The customer order surface is now complete end-to-end. A new order-history list shows every order (cursor-paginated), and each order page gains a status timeline, a carrier tracking panel (tracking number + the carrier's public tracking link), a one-click Reorder that rebuilds a cart from the order, and a Request-a-return button for eligible orders — the same Reorder/Return actions also appear per row on the account dashboard and the history list. On the operator side, the admin order screen gets a shipment panel to attach a carrier + tracking number and record shipment events, and the returns console's Refund now issues the payment-provider refund first (then records the RMA) whenever the order has a captured charge, so a return can't be marked refunded while the customer is left un-refunded; manual/guest orders with no charge fall back to an explicit record-only step.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Order history + tracking + reorder + returns (customer)",
+              "body": "`/account/orders` lists all your orders with pagination; each order page shows a status timeline and carrier tracking, plus Reorder (`POST /orders/:id/reorder` rebuilds a cart from the order's lines at current prices) and Request-a-return for eligible orders. The dashboard and history rows carry the same actions."
+            },
+            {
+              "title": "Shipment + tracking panel (admin)",
+              "body": "The admin order detail screen can attach a shipment (carrier + tracking number) and record shipment events; marking delivered advances the order's lifecycle. Tracking the order surfaces the carrier's public tracking link to the customer."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Return refunds move the money",
+              "body": "The returns console Refund action now issues the payment-provider refund first and records the RMA only on success when the order has a captured charge, so an approved return is never marked refunded without the customer actually being refunded. Orders with no captured charge use an explicit record-only step that points to the order."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.21",
+      "date": "2026-05-29",
+      "headline": "Related products (\"You may also like\") on the product page",
+      "summary": "Product pages now show a related-products rail. The picks are the other products in the product's primary collection, ordered deterministically and capped at four, rendered with the same product-card markup the home and search grids use — identical on the edge and origin paths. The rail is hidden when a product has no related items. This surfaces existing catalog relationships to shoppers without any new data or configuration.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Related-products rail on the PDP",
+              "body": "A \"You may also like\" section on each product page lists other active products from the same primary collection (deterministic order, up to four), using the standard product-card markup byte-identically across the edge and origin renders. Hidden when there are no related products."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.20",
+      "date": "2026-05-29",
+      "headline": "Manage a subscription yourself — pause, skip, change, or reactivate",
+      "summary": "The subscriptions account screen previously only let a customer cancel. It now exposes the full self-service set: pause and resume, skip the next shipment, change the quantity, change the delivery frequency, and reactivate a recently-cancelled subscription within its grace window. Each action is state-gated (only the controls that apply to a subscription's current state are shown), confirm-aware where it changes billing, and reports back with a status notice. No more cancelling just to make a change.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Subscription self-management",
+              "body": "`/account/subscriptions` gains Pause / Resume, Skip next shipment, Change quantity, Change frequency, and Reactivate (within the grace window) alongside Cancel. Controls are shown only when valid for the subscription's state; quantity and frequency are validated server-side; pause and cancel go through a confirmation step."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.19",
+      "date": "2026-05-29",
+      "headline": "Search results render the same product cards as the rest of the store",
+      "summary": "A product with no image showed an outdated, text-only card on the search-results page when that page was served from the edge, while the home and category grids (and the origin-rendered search page) used the current placeholder-illustration card. The edge search page now emits the same card markup as every other grid, so a no-image product looks identical wherever it appears. A render-level parity check now pins the search page's markup byte-for-byte across the edge and origin paths so this kind of drift is caught automatically.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Consistent no-image product card on search",
+              "body": "The edge-rendered search results page used a stale text-only card for products without a hero image; it now renders the placeholder-illustration card used across the rest of the storefront, byte-identical to the origin render."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.18",
+      "date": "2026-05-29",
+      "headline": "Admin: a clear \"payments aren't live\" warning, and void a gift card",
+      "summary": "Two admin-console fixes. The landing page now warns that payments aren't live whenever Stripe isn't configured — independently of the setup wizard — so an operator who finishes the identity wizard isn't misled into thinking customers can check out when they still can't. And gift cards can now be voided from the console: the card detail screen gets a confirm-gated Void action for active cards, composing the existing void capability.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Gift-card void",
+              "body": "The gift-card detail screen shows a confirm-gated \"Void card\" action for active cards. Voiding goes through a confirmation step and is content-negotiated like the rest of the console (a bearer-token client gets the voided card as JSON; already-redeemed cards are refused)."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Payment-readiness banner on the admin landing",
+              "body": "The admin landing shows a \"Payments aren't live yet — customers can't check out. See Integrations\" banner whenever Stripe isn't enabled, gated on live payment readiness rather than on whether the setup wizard was marked complete. The existing not-set-up identity banner is unchanged; both can appear together."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.17",
+      "date": "2026-05-29",
+      "headline": "Manage your passkeys and edit your profile from your account",
+      "summary": "Signed-in customers can now manage their own passkeys and edit their profile, instead of only being able to enrol a passkey at registration. A new account screen lists each enrolled passkey (device transport + when it was added) with an add-another flow and a confirm-gated revoke; revocation is scoped to the signed-in account and refuses to remove your last sign-in method when no other (OAuth) method is linked, so you can't lock yourself out. A separate profile screen edits the display name.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Passkey management",
+              "body": "`/account/passkeys` lists your enrolled passkeys, lets you register an additional one, and revoke one you no longer use (behind a confirmation step). Revocation only ever affects your own credentials, and the last remaining sign-in method is protected against removal."
+            },
+            {
+              "title": "Profile editing",
+              "body": "`/account/profile` edits your display name with a confirmation notice. Account links for both screens were added to the account dashboard."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.16",
+      "date": "2026-05-29",
+      "headline": "Configure tax, shipping, and discounts from the admin console",
+      "summary": "Three commerce-configuration areas that previously existed only behind the JSON API now have admin console screens, so an operator can run a real store from the UI without scripting. Tax rates (per jurisdiction), shipping zones and rates, and discounts (automatic-discount rules plus coupon-stacking policies) each get a list / create / edit / archive screen, content-negotiated like the rest of the console (a bearer-token client still gets JSON). Their nav links appear only when the feature is wired.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Tax rates screen",
+              "body": "`/admin/tax-rates` — pick a jurisdiction to see its rate history, create a rate (category + rate in basis points + effective window + source), edit the rate, and archive it. Overlap/archived conflicts surface as inline notices rather than errors."
+            },
+            {
+              "title": "Shipping screen",
+              "body": "`/admin/shipping` — create a shipping zone (country/region + a flat-rate service) and manage it on a per-zone screen that lists its rates, edits the title/active state, and archives it; richer multi-region/multi-rate shapes remain available on the JSON path."
+            },
+            {
+              "title": "Discounts screen",
+              "body": "`/admin/discounts` — create automatic-discount rules (cart-total / item-count / SKU triggers; percent-off / amount-off / free-shipping / BOGO values; priority), edit and archive them, plus manage coupon-stacking policies (max codes, combine toggles, order minimum)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.14",
+      "date": "2026-05-28",
+      "headline": "Manage products end-to-end from the admin console — variants, prices, and images",
+      "summary": "The admin console can now build a complete, sellable product without dropping to the JSON API. Previously creating a product only captured its name, slug, status, and description — there was no way to add a variant, set a price, or attach an image from the console, so a product made there was not sellable. Each product now has a management screen (reachable from the product list) with variant create/edit/delete, per-variant price setting plus price history, and media attach / upload / delete, with confirmation steps for deletes. The screen is content-negotiated: a bearer-token API client still gets JSON (now including the full product model), a signed-in browser gets the management UI.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Product management screen in the admin console",
+              "body": "Each product's title in the admin product list now links to a detail screen where an operator can edit the product's fields, add/edit/remove variants, set a variant's price and see its price history, and attach/upload/remove product images — the full path to a sellable product, all from the console. Destructive actions (remove variant/image) go through a confirmation step."
+            },
+            {
+              "title": "Catalog read helpers",
+              "body": "`prices.currencies(variantId)` (the distinct currencies a variant is priced in) and `media.get(id)` (single media row) were added to support the screen."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "`GET /admin/products/:id` is content-negotiated",
+              "body": "It previously returned JSON only; it now returns the management screen to a signed-in browser and a fuller JSON model (product + variants + prices + media) to a bearer-token client. The existing variant/price/media write endpoints are unchanged in contract — the new browser forms route to the same handlers."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.13",
+      "date": "2026-05-28",
+      "headline": "Product-grid and product-page visual polish",
+      "summary": "Small visual refinements to the catalog grid and product page. Product tiles previously all carried the same fixed corner glow, so a grid of them read as one card stamped repeatedly; the glow position now rotates per tile so the grid looks like a designed set. The product page's buy box gets clearer elevation so it reads as a distinct purchase surface, and the fallback placeholder shown for a product with no image is now legible on the dark theme instead of a near-invisible mark.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Product tiles no longer share one identical glow",
+              "body": "Each product card's media glow now rotates through a set of positions per tile (matching the collection cards) instead of every tile glowing in the exact same corner, so a full grid reads as a designed set rather than a single card repeated."
+            },
+            {
+              "title": "Clearer product-page buy box",
+              "body": "The product page's buy box gains a stronger border and a soft shadow so it stands out from the page as the purchase surface."
+            },
+            {
+              "title": "Legible image-less placeholder",
+              "body": "The fallback artwork shown when a product has no image was nearly invisible on the dark canvas; its contrast is lifted (grid lines, shield detail, and caption) so it reads as an intentional placeholder. Applied identically on the edge and container render paths."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.12",
+      "date": "2026-05-28",
+      "headline": "Truthful product availability and real SEO metadata — canonical URLs, structured data, and per-page descriptions",
+      "summary": "Two related improvements to the storefront's honesty and discoverability. Product pages now report real availability from inventory (instead of a hardcoded 'In stock') and reflect it in their structured data, and the shipping line is suppressed for digital products. Separately, every page now emits a canonical URL and a populated Open Graph URL (previously empty — which broke social-share unfurls and let sort/currency query parameters fork into duplicate indexed pages), the home page emits the same Organization/Website structured data the edge already did, breadcrumb structured data uses absolute URLs, and the home, category, and search pages get their own meta descriptions instead of one shared default. The footer's account links are regrouped and a shipping-and-returns link was added.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Product availability is truthful",
+              "body": "The product page's stock badge and its `Product`/`AggregateOffer` structured-data `availability` are now driven by real per-SKU inventory (`InStock` / `OutOfStock`) rather than a hardcoded value, so a sold-out item reads as sold out everywhere and structured data no longer mismatches reality. The shipping-time line is suppressed for all-digital products (shown as delivered on purchase). Identical across the edge and container render paths."
+            },
+            {
+              "title": "Footer account links regrouped",
+              "body": "The footer's operator-oriented column is now a customer 'Your account' grouping (Account / Orders / Contact), the public Admin link was removed, and a 'Shipping & returns' link was added to the policy area."
+            },
+            {
+              "title": "Form fields are legible on the dark theme",
+              "body": "Text inputs, selects, and textareas (checkout, address book, search, sign-in) previously rendered with a 10%-opacity hairline that disappeared against the near-black canvas — fields read as empty voids. They now have a clearly-bounded outline and a lifted fill, stretch to fill their column, and the rule covers `tel`/`url`/`password` inputs it previously missed."
+            }
+          ]
+        },
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Canonical + Open Graph URLs on every page",
+              "body": "Every page now includes `<link rel=\"canonical\">` and a populated `og:url` (both were absent/empty before). This fixes social-share previews that unfurled with no link target and prevents tracking/sort/currency query-string variants from being indexed as duplicate pages. Emitted on both render paths, derived from the request's own origin."
+            },
+            {
+              "title": "Consistent structured data + unique page descriptions",
+              "body": "The home page now emits the `Organization` and `WebSite` (search-action) structured data that previously only appeared on the edge render, breadcrumb structured-data item URLs are absolute (so the breadcrumb rich result is eligible), and the home, category, and search pages each carry their own meta/OG description instead of sharing one generic string."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.11",
+      "date": "2026-05-27",
+      "headline": "A clearer checkout — itemised order summary, honest pricing, and recoverable errors",
+      "summary": "Reworks the checkout and cart experience. Checkout now uses the same two-column layout as the cart, with a sticky order-summary rail that lists the actual items being bought (thumbnail, title, quantity, line total) rather than a bare number in a lonely column. The summary no longer shows a misleading 'Total' equal to the subtotal — it shows the subtotal plus an honest note that tax and shipping are calculated at the payment step, matching the cart. Adding an item now confirms it and offers to keep shopping, checkout and cart failures render as proper pages you can recover from instead of a blank error string, required fields announce themselves to screen readers, and the header 'Framework' link works from every page.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Checkout shows an itemised, sticky order summary",
+              "body": "The checkout page adopts the cart's two-column layout: the shipping form on the left and a sticky order summary on the right that lists each item (thumbnail, title, quantity, line total) with an 'Edit cart' link back to the cart. Previously the form was a narrow column with a bare subtotal box and no way back."
+            },
+            {
+              "title": "Honest checkout pricing",
+              "body": "The order summary no longer renders a 'Total (plus tax + shipping)' line bound to the subtotal value (which read as the final price but wasn't). It now shows the subtotal and the same honest note the cart uses — tax and shipping are calculated at the payment step."
+            },
+            {
+              "title": "Add-to-cart confirmation + continue shopping",
+              "body": "Adding an item lands on the cart with a dismissible 'Added to cart' confirmation, and the cart now has a 'Continue shopping' link so multi-item shoppers aren't dead-ended."
+            }
+          ]
+        },
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Checkout and cart errors are recoverable, not blank pages",
+              "body": "A declined gift card, an invalid input, or a checkout failure previously dumped an unstyled plain-text error. These now render as styled pages with the reason and a way back — gift-card and loyalty errors re-display the checkout form with the message inline so the shopper can correct it without losing their place."
+            },
+            {
+              "title": "Required fields announce to screen readers",
+              "body": "Required form fields kept only a red asterisk (color-only); they now include a visually-hidden '(required)' so assistive technology conveys it."
+            },
+            {
+              "title": "Header 'Framework' link works on every page",
+              "body": "It pointed at an on-page anchor that only existed on the home page (a no-op elsewhere); it now resolves from any page."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.10",
+      "date": "2026-05-27",
+      "headline": "Accessibility and mobile polish — the cookie bar stops covering the page, and forms behave on phones",
+      "summary": "A round of default-theme refinements focused on the cookie consent bar, mobile ergonomics, and accessibility. The consent bar previously floated over page content — on a product page or checkout it could sit on top of the price, variant picker, and the add-to-cart / continue-to-payment button on a first visit. It is now a compact bottom bar that reserves its own space (so nothing important is ever hidden under it), scrolls within itself if the text is long, and receives keyboard focus when it appears. Alongside it: mobile form inputs no longer trigger iOS zoom-on-focus, the header touch targets meet the 44px minimum, inline text links are underlined, and a consistency pass tightened button shapes, table-label typography, and small-screen layout.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Cookie consent bar no longer covers page content",
+              "body": "On a first visit the consent bar could overlap the product buy box and the checkout form (the price, variant selector, and primary button). It is now a compact bottom-docked bar that reserves matching space at the foot of the page until a choice is made, caps its height and scrolls internally for long text, and moves keyboard focus to its first control when shown — so the page's primary action is never hidden and the bar is reachable without tabbing the whole page."
+            },
+            {
+              "title": "Mobile form inputs no longer zoom on iOS",
+              "body": "Text inputs, selects, and textareas render at a 16px minimum on touch devices, so mobile Safari no longer zooms the viewport when a field is focused (which previously left the page zoomed-in and pannable mid-checkout)."
+            },
+            {
+              "title": "Header touch targets meet the 44px minimum on mobile",
+              "body": "The account and cart controls in the header — the two primary controls on a phone — are now at least 44×44px."
+            },
+            {
+              "title": "Clearer link and prompt-glyph affordances",
+              "body": "Inline text links in body copy are underlined (no longer distinguished by color alone), and the terminal prompt glyph on the dark accent bands renders in full contrast."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Visual consistency pass",
+              "body": "Action buttons share a single corner radius (primary and secondary no longer differ in shape), uppercase micro-labels use the monospace face consistently across tables and forms, the catalog grid shows two columns on small phones instead of one, the hero stat row breathes on narrow screens, and a few dark-theme borders/placeholders that read muddy were moved onto the semantic token palette."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.9",
+      "date": "2026-05-27",
+      "headline": "Storefront read pages stay fast for every visitor — the cart badge updates client-side",
+      "summary": "Restores full edge-render speed for returning and signed-in shoppers. Every storefront read page (home, product listing, search, blog) now renders at the edge for all visitors again; the nav cart badge renders server-side and a tiny client island corrects the number from a new lightweight endpoint. The result: the fast cached page AND an accurate cart count, without sending a shopper-with-a-cart through the slower origin on every page.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Fast read pages for shoppers who have a session",
+              "body": "A visitor carrying a cart or sign-in cookie is once again served the edge-rendered storefront pages instead of being routed to the origin container, so the home page and other read pages load quickly for returning visitors, not just first-time guests. The nav cart count stays correct via the island below."
+            }
+          ]
+        },
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "`GET /cart/count` + a cart-count island",
+              "body": "A new endpoint returns the current session's cart line count as JSON (`{\"count\": N}`), cached `no-store`, with no product hydration. A small deferred same-origin script (`assets/js/cart-count.js`) reads it on load and updates the nav badge text and its aria-label. A visitor with JavaScript off keeps the server-rendered badge. The script is a same-origin external file, so the existing `script-src 'self'` policy already permits it — no CSP change required."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.8",
+      "date": "2026-05-27",
+      "headline": "A complete shipping address at checkout, and an accurate cart count on every page",
+      "summary": "Two storefront fixes. Checkout now collects a real, shippable address — a street line, an optional apt/suite line, and a city — alongside the region, postal code, and country it already took; a signed-in customer's default saved address pre-fills the form, the address shows on the order confirmation, and the order export carries it so fulfilment has everything it needs. Separately, the navigation cart badge now shows the correct item count on the catalog, product, search, and blog pages — not only on the cart and account pages — by rendering those pages for a shopper-with-a-cart on the path that can read their session.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Cart count is correct on every page",
+              "body": "The nav cart badge previously read zero on edge-rendered pages (home, product, search, blog) for a shopper who had items in their cart, while the cart and account pages showed the real count. A request that carries a session cookie is now rendered on the path that can unseal the session and read the cart, so the badge is consistent everywhere. Guests — who have no cart — still get the fast cached render with a count of zero, which is correct for them."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Checkout collects a complete shipping address",
+              "body": "The shipping step now takes a street address (line 1, plus an optional apartment / suite / unit line) and a city in addition to the region, postal code, and country it already collected, so a placed order carries an address you can actually ship to. Street line and city are marked required for the common physical-goods path; the server treats them as optional so a digital-only order still completes. A signed-in customer's default saved address pre-fills the form."
+            },
+            {
+              "title": "Shipping address on the confirmation page and in the order export",
+              "body": "The order confirmation now shows the ship-to address, and the order CSV / NDJSON export gains `shipping_line1`, `shipping_line2`, and `shipping_city` columns (inserted after `customer_name`) so a fulfilment handoff has the full address. Consumers that key on the header name are unaffected; a consumer that keys on absolute column position should re-map to the 27-column layout."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.7",
+      "date": "2026-05-27",
+      "headline": "Default-theme brand polish — broader favicon support and a larger logo",
+      "summary": "Small refinements to the bundled default theme's branding. Every page head now advertises a PNG favicon and an Apple touch icon alongside the existing SVG favicon, so the site icon renders correctly on Safari / iOS home screens and on browsers that don't support SVG favicons, plus a theme-color so the mobile browser chrome matches the dark canvas. The header and footer logo are rendered larger for more presence. These affect the default theme only; a custom theme passed via the theme primitive is unchanged.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Fuller favicon + icon metadata",
+              "body": "The page head now includes a PNG favicon and an `apple-touch-icon` (Apple home-screen icons require PNG — SVG favicons aren't used there) in addition to the SVG favicon, plus a `theme-color` meta for the mobile browser UI. Emitted on every page across both the edge and container render paths."
+            },
+            {
+              "title": "Larger header and footer logo",
+              "body": "The default theme renders the brand logo at a larger size in the header and footer for clearer presence."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.6",
+      "date": "2026-05-27",
+      "headline": "Business-hours page, a graceful unconfigured-checkout state, and the brand shield on the product page",
+      "summary": "Three storefront changes. Operators can publish their open hours: define schedules (timezone + per-weekday open/close) from a new Hours screen in the admin console, and a public /hours page renders each as a weekly grid with a live open/closed status computed per request in the schedule's timezone. The cart now degrades gracefully when no payment provider is configured — instead of a checkout button that leads to a dead route, it shows a clear, disabled 'checkout isn't set up yet' notice, and a direct visit to /checkout returns a tidy 'unavailable' page rather than a 404. And the product page's post-quantum-checkout trust badge now uses the real brand shield mark (the site favicon) in place of a CSS approximation.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Public /hours page",
+              "body": "A server-rendered page listing every active schedule as a weekday grid (closed days marked), with a live open/closed pill and the next transition (\"Opens Monday at 09:00\" / \"Closes at 17:00\"). Timezone-aware and computed per request, so it isn't cached stale."
+            },
+            {
+              "title": "Admin console: Hours",
+              "body": "A new Hours screen (and matching JSON API) to create a schedule with a timezone and per-weekday open/close times (a blank day is closed), list schedules, and archive ones no longer in use. Holiday closures and one-off date exceptions — which override the weekly base — are available through the API. The screen appears only when the business-hours primitive is wired."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Cart and /checkout degrade gracefully without a payment provider",
+              "body": "When checkout isn't configured (no payment provider), the cart no longer shows a checkout button that leads nowhere — it shows a disabled control with a clear note that online checkout isn't set up yet and the cart is saved. A direct visit to /checkout now returns a tidy 503 'checkout unavailable' page instead of a 404. Configuring a payment provider restores the full cart → shipping → payment → confirmation flow with no other change."
+            },
+            {
+              "title": "Product-page trust badge uses the brand shield",
+              "body": "The post-quantum-secured-checkout badge on the product page now renders the actual brand shield mark (the site icon) rather than a CSS-drawn hex approximation, so the badge matches the brand identity used elsewhere."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.5",
+      "date": "2026-05-27",
+      "headline": "Customer surveys — token-gated NPS / CSAT / CES feedback with an admin rollup",
+      "summary": "Operators can now collect structured post-experience feedback. Define a survey (NPS, CSAT, CES, or a custom open-ended prompt) from a new Surveys screen in the admin console, then issue a single-use invitation for a customer — the console shows the survey link once for you to send. The customer opens the link and answers without signing in; the token itself is the access. Responses roll up on the survey's detail page with the kind-appropriate score (NPS index, CSAT positive-rate, CES mean) plus a per-question breakdown. Surveys can be archived when a campaign ends; existing invitation links keep working.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Token-gated survey page",
+              "body": "A `/survey/:token` page renders the survey's questions — a rating scale, single-select options, or a free-text box — and accepts one response per invitation. The single-use token is the access (no login), and the page degrades cleanly to a clear notice when a link is already used, expired, closed, or invalid. The required-answer check re-renders the form with a message rather than losing the visitor's work."
+            },
+            {
+              "title": "Admin console: Surveys",
+              "body": "A new Surveys screen (and matching JSON API) to create a survey for the chosen kind (the console seeds the standard question set; fully custom question lists go through the API), issue a single-use invitation for a customer id (the link is revealed exactly once), read the response rollup with the kind's headline score and per-question results, and archive finished surveys. The screen appears only when the surveys primitive is wired."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.4",
+      "date": "2026-05-27",
+      "headline": "Announcement bar — publish a sitewide promo or notice strip from the admin console",
+      "summary": "Operators can now publish a sitewide announcement bar — a strip at the very top of every storefront page for a sale, a shipping notice, or an urgent alert. Manage it from a new Announcements screen in the admin console: set the message, an optional call-to-action link, a theme (urgency, promo, info, or success), the audience (everyone, signed-out visitors, or signed-in customers), an optional start/expiry schedule, and whether visitors can dismiss it. The highest-priority active announcement shows automatically (urgency outranks promo outranks info outranks success). The bar renders on both the edge and container paths so it appears on every page including the cached ones, and a dismissed bar stays hidden across navigation. Until an announcement is published, nothing changes.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Sitewide announcement bar",
+              "body": "A page-top strip rendered on every storefront page (home, search, product, cart, blog, and the storefront chrome) in one of four themes. The single highest-priority active announcement for the viewer is shown, chosen by theme rank (urgency > promo > info > success). Audience targeting covers everyone, signed-out visitors, and signed-in customers, with an optional scheduled start and expiry. An optional call-to-action link is included; its URL is restricted to https:// or a site-relative path."
+            },
+            {
+              "title": "Admin console: Announcements",
+              "body": "A new Announcements screen (and matching JSON API) to create announcements, filter the list to those active right now, and archive ones that are done. The screen appears in the console only when the announcement primitive is wired."
+            },
+            {
+              "title": "Dismiss without a round-trip",
+              "body": "Dismissible announcements carry a close control. With JavaScript it's hidden in place and remembered in a local cookie so it doesn't reappear as you browse; with JavaScript off, a form submission records the dismissal and returns you to the page. The bar is always server-rendered identically for everyone, so a dismissed bar never leaks back in from a cached page — it's hidden per-visitor on the client."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.3",
+      "date": "2026-05-27",
+      "headline": "Admin console adopts the dark violet brand — the operator dashboard now matches the storefront",
+      "summary": "The admin console has been restyled from its previous light theme and orange accent onto the same dark violet identity as the storefront: a neutral near-black canvas with violet reserved for accents, the self-hosted Hanken Grotesk and Space Mono typefaces in place of Inter, and Space Mono carrying the terminal-style chrome (header mark, navigation, micro-labels, figures, SKUs, order ids, and code). Stat cards, tables, status pills, forms, buttons, banners, nav cards, and the sign-in card are all recoloured for the dark surface with contrast preserved — order statuses keep their meaning (green for paid/shipped, amber for pending, violet for refunded, muted for cancelled), form inputs read clearly on the dark wells, and the revenue sparkline is drawn in the brand violet. Operators on the default theme get the new console on upgrade; no admin functionality, routes, or data change.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Dark violet admin theme",
+              "body": "The admin stylesheet is rebuilt on the storefront's palette — near-black surfaces, neutral hairline borders, and violet reserved for accents (active nav, primary buttons, the `/ admin` mark, focus states, and the revenue sparkline) rather than the former light paper and orange. Self-hosted Hanken Grotesk (display/body) and Space Mono (chrome/mono) replace Inter, loaded under the strict `font-src 'self'` policy."
+            },
+            {
+              "title": "Components recoloured for the dark surface",
+              "body": "Stat cards, the orders table, status pills, filter chips, forms, buttons (primary/ghost/danger), banners, nav cards, the gift-card detail grid, and the sign-in card are all restyled for dark with contrast maintained. Order-status pills keep their semantics — green for paid/shipped/fulfilling/delivered, amber for pending, violet for refunded, muted for cancelled. Form inputs sit on recessed dark wells with light text and a violet focus ring."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.2",
+      "date": "2026-05-27",
+      "headline": "Bespoke line-art illustrations across the storefront — category tiles, image placeholders, and every empty state",
+      "summary": "The storefront's stand-in graphics are now a single, cohesive set of hand-drawn line illustrations in the brand violet, replacing the previous mix of gradient-only tiles, single-letter image marks, and emoji. The six featured-collection tiles carry a matching icon (apparel, hardware, digital, subscriptions, bundles, gift cards). Products without an image — in the grid and on the product page — show a bespoke \"no image yet\" placeholder instead of a letter glyph. Every empty state has its own illustration: cart, search, wishlist, saved-for-later, addresses, returns, and orders. The artwork is inline SVG (no extra files fetched, consistent with the strict asset policy) and adapts to the surface — the fine detail strokes follow the text colour, so the same set reads correctly on a dark or a light background.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Category tiles carry line-art icons",
+              "body": "Each of the six featured-collection tiles now shows a violet line icon for its category, centered over the existing tile gradient. The tile links and labels are unchanged."
+            },
+            {
+              "title": "Bespoke image placeholder replaces the letter mark",
+              "body": "When a product has no image, the grid card and the product-page gallery render a line-art \"no image yet\" placeholder — an isometric package on a faint grid (the product page adds a shield motif and a terminal-prompt accent) — instead of the previous single uppercase letter. The no-image grid card now uses the same media-card layout as image-bearing cards for a consistent grid."
+            },
+            {
+              "title": "Every empty state has matching artwork",
+              "body": "The empty cart, no-search-results, empty wishlist, saved-for-later, addresses, returns, and orders states now show a bespoke line illustration in place of the previous emoji or unicode glyphs, so the storefront and account sections share one visual language."
+            },
+            {
+              "title": "Inline, theme-adaptive SVG",
+              "body": "All of the new artwork is inline SVG with presentation attributes only — nothing is fetched from a CDN and no inline styles are used, consistent with the strict content-security and asset policies. The detail strokes use currentColor, so the set adapts to the background it sits on. The edge and container renderers emit identical markup."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.1",
+      "date": "2026-05-27",
+      "headline": "Theme tuning — stronger contrast, a cleaner product buy-box, and natural code-sample colors",
+      "summary": "A polish pass over the new dark theme. The palette is rebalanced so the brand violet reads as a deliberate accent rather than the whole field: surfaces, borders, and shadows are now neutral dark, body text and prices are high-contrast near-white, and violet is concentrated on calls-to-action, the hero accent, and the newsletter band. The product page's buy-box is now a single contained card — price, variant, quantity, and add-to-cart group cleanly with proper spacing and alignment instead of blending into the column, and the wishlist/compare controls sit in their own separated row. The homepage code sample uses natural syntax-highlight colours (green strings, blue functions, violet keywords) with the usual window dots. The home collection tiles are calmer dark tiles with a subtle violet glow rather than solid magenta swatches.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Rebalanced palette for contrast",
+              "body": "Surfaces (`--surface`, card and raised tiers) and borders are now neutral dark instead of violet-tinted; secondary text and prices are high-contrast near-white; default shadows are neutral. The violet accent is reserved for primary buttons, the hero accent word, focus states, and the newsletter/framework bands — so contrast and hierarchy are clearer and the page no longer reads as a single wash of magenta."
+            },
+            {
+              "title": "Product buy-box is a contained, aligned card",
+              "body": "Price, variant chip(s), quantity, and the full-width add-to-cart now sit in one bordered buy-box card with consistent spacing, the price rendered in high-contrast white, and the post-quantum-secured-checkout trust line as a calm note beneath it. The wishlist and compare controls are grouped into their own row, separated from the buy-box. No change to add-to-cart, variant, or currency behaviour."
+            },
+            {
+              "title": "Natural code-sample colours and calmer collection tiles",
+              "body": "The homepage server-rendered code sample now uses a natural console palette — green strings, blue function names, violet keywords, grey comments — with red/yellow/green window dots. The home collection tiles are dark with a subtle, position-varied violet glow instead of solid violet gradient fills."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.2.0",
+      "date": "2026-05-27",
+      "headline": "A new storefront visual identity — a dark, violet brand theme with self-hosted typefaces and a redesigned product buy-box",
+      "summary": "The default storefront theme has been redesigned around the project's actual brand: a dark, near-black canvas with a violet-to-magenta accent system that matches the blamejs shield-and-terminal mark, replacing the previous light theme and its unrelated orange accent. The stylesheet is restructured onto a semantic design-token layer (a purpose tier — surface, text, border, accent, price — sitting over the raw palette), so colour, contrast, and surfaces are now consistent and themeable rather than hard-coded per component. Two distinctive open-licensed typefaces are self-hosted in place of Inter: Hanken Grotesk for display and body, Space Mono for the terminal-style chrome (navigation, labels, SKUs, prices). The product page's variant selector is rebuilt from a data table into a proper buy-box: a prominent price, the variant(s) as selectable chips, a full-width add-to-cart, and a post-quantum-secured-checkout trust line — the add-to-cart, variant, and currency-conversion behaviour is unchanged. Accessibility is preserved (contrast targets met on the dark surfaces, focus-visible, reduced-motion guards, the consent banner restyled as legible dark glass). Operators on the default theme get the new look on upgrade; a custom theme passed via the theme primitive is unaffected.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Dark violet brand theme replaces the light theme",
+              "body": "The default theme is now a dark, near-black storefront with a violet→magenta accent family (matching the logo's shield/terminal mark) carried across the chrome, hero, cards, forms, badges, switchers, and footer. The previous light canvas and its off-brand orange accent are gone. Depth comes from hard-edged and soft violet shadows and a faint circuit-grid texture; motion (a staggered page-load reveal, a glitch treatment on the hero accent word, a terminal cursor) is CSS-only and disabled under `prefers-reduced-motion`."
+            },
+            {
+              "title": "Semantic design-token layer + self-hosted typefaces",
+              "body": "The stylesheet now has a primitive→semantic token structure (`--surface`/`--surface-raised`, `--text`/`--text-muted`, `--border`, `--color-accent`, `--color-price`, glow tokens) so components reference purpose, not raw values — fixing the previously undefined `--font-sans`/`--danger-l` tokens and a duplicated button definition along the way. Hanken Grotesk (display/body) and Space Mono (mono chrome) are self-hosted as OFL woff2, replacing Inter; nothing is fetched from a font CDN, consistent with the strict `font-src 'self'` policy."
+            },
+            {
+              "title": "Product buy-box redesign",
+              "body": "The product page's variant table is replaced by a buy-box: a large monospace price, each variant as a selectable pill chip (with a clear selected state, fully operable with JavaScript off), a full-width add-to-cart, and a trust line stating the checkout is post-quantum secured. The underlying add-to-cart form, multi-variant selection, and multi-currency price formatting are unchanged; products with many variants keep a compact fallback. The PDP trust badge wording \"Ships from origin\" is replaced with a real delivery estimate."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

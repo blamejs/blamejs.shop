@@ -146,14 +146,18 @@ async function _run() {
   });
 
   try {
-    var cookie = helpers.authCookie(b, buyer);
+    // A cookie jar (not a bare cookie header) so the double-submit CSRF
+    // cookie set on the first authenticated GET is captured and echoed as
+    // X-CSRF-Token on the redeem POSTs — the real gate, no bypass.
+    var jar = helpers.cookieJar();
+    jar.capture({ "set-cookie": [helpers.authCookie(b, buyer)] });
 
     // --- auth gate -----------------------------------------------------
     var anon = await helpers.httpRequest({ port: handle.port, path: "/account/loyalty" });
     check("anon loyalty then 303 login", anon.status === 303 && (anon.headers["location"] || "") === "/account/login");
 
     // --- zero-balance first load --------------------------------------
-    var first = await helpers.httpRequest({ port: handle.port, path: "/account/loyalty", headers: { cookie: cookie } });
+    var first = await helpers.httpRequest({ port: handle.port, path: "/account/loyalty", jar: jar });
     check("loyalty page then 200",          first.status === 200);
     check("zero-balance shows 0 points",    first.body.indexOf("Points balance") !== -1);
     check("how-you-earn lists a rule",      first.body.indexOf("10 points per $1 spent") !== -1);
@@ -184,7 +188,7 @@ async function _run() {
     check("balance unchanged after dedup", balAfterDedup.balance === 525);
 
     // --- page reflects the earned balance -----------------------------
-    var loaded = await helpers.httpRequest({ port: handle.port, path: "/account/loyalty", headers: { cookie: cookie } });
+    var loaded = await helpers.httpRequest({ port: handle.port, path: "/account/loyalty", jar: jar });
     check("page shows earned balance",  loaded.body.indexOf("525") !== -1);
     check("ledger shows an earn row",   loaded.body.indexOf("loyalty-tx--earn") !== -1);
     check("affordable reward redeemable", loaded.body.indexOf(">Redeem<") !== -1);
@@ -193,7 +197,7 @@ async function _run() {
     // --- redeem a reward ----------------------------------------------
     var redeem = await helpers.httpRequest({
       port: handle.port, path: "/account/loyalty/redeem", method: "POST",
-      headers: { cookie: cookie }, form: { reward_slug: "five-off" },
+      jar: jar, form: { reward_slug: "five-off" },
     });
     check("redeem reward then 303", redeem.status === 303 && (redeem.headers["location"] || "") === "/account/loyalty");
     var balAfterRedeem = await loyalty.balance(buyer);
@@ -205,7 +209,7 @@ async function _run() {
     // Insufficient balance (25 points left, $10-off costs 1000).
     var poor = await helpers.httpRequest({
       port: handle.port, path: "/account/loyalty/redeem", method: "POST",
-      headers: { cookie: cookie }, form: { reward_slug: "ten-off" },
+      jar: jar, form: { reward_slug: "ten-off" },
     });
     check("insufficient redeem then 400",   poor.status === 400);
     check("insufficient shows a message",   poor.body.indexOf("enough points for that reward") !== -1);
@@ -213,7 +217,7 @@ async function _run() {
     // Unknown reward slug → 400 re-render (TypeError, not 500).
     var unknown = await helpers.httpRequest({
       port: handle.port, path: "/account/loyalty/redeem", method: "POST",
-      headers: { cookie: cookie }, form: { reward_slug: "does-not-exist" },
+      jar: jar, form: { reward_slug: "does-not-exist" },
     });
     check("unknown reward then 400",        unknown.status === 400);
 
@@ -225,7 +229,7 @@ async function _run() {
     check("anon redeem then 303 login", anonRedeem.status === 303 && (anonRedeem.headers["location"] || "") === "/account/login");
 
     // --- malformed history cursor degrades, never 500 ----------------
-    var badCursor = await helpers.httpRequest({ port: handle.port, path: "/account/loyalty?cursor=not-a-number", headers: { cookie: cookie } });
+    var badCursor = await helpers.httpRequest({ port: handle.port, path: "/account/loyalty?cursor=not-a-number", jar: jar });
     check("malformed cursor then 200", badCursor.status === 200);
   } finally {
     await _teardown(handle);

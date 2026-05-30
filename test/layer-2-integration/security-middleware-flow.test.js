@@ -58,9 +58,25 @@ async function _run() {
     dataDir: dataDir,
     vault: { mode: "plaintext" },
     db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
-    // Same global limiter server.js wires.
-    middleware: { rateLimit: bShop.securityMiddleware.globalRateLimitOpts() },
+    // Mirror server.js exactly: createApp (v0.13.46+) wires cookies, CSP
+    // nonce, fetch-metadata, body parser, and CSRF ON by default. The shop
+    // mounts its OWN scoped copies inside routes() — the webhook-exempt body
+    // parser + webhookRawBodyCapture + mountRouteGuards (fetch-metadata +
+    // CSRF with the webhook exemptions). Disable createApp's app-level
+    // duplicates so the shop's scoped copies are the single source of truth;
+    // otherwise the app-level fetch-metadata (no webhook exemption) would 403
+    // a cross-site signed webhook delivery before the exempt copy runs.
+    middleware: {
+      rateLimit:     bShop.securityMiddleware.globalRateLimitOpts(),
+      csrf:          false,
+      bodyParser:    false,
+      fetchMetadata: false,
+      cspNonce:      false,
+    },
     routes: function (r) {
+      // Capture the raw webhook body before the JSON parser, the way
+      // server.js does — the signature is verified over the exact bytes.
+      r.use(bShop.storefront.webhookRawBodyCapture(["/api/webhooks/stripe"]));
       r.use(b.middleware.bodyParser());
       bShop.securityMiddleware.mountRouteGuards(r);
 
@@ -170,7 +186,7 @@ async function _run() {
     for (var h = 0; h < 25; h += 1) {
       var hk = await httpRequest({
         port: port, method: "POST", path: "/api/webhooks/stripe",
-        headers: _hdr(hookIp, { "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors" }),
+        headers: _hdr(hookIp, { "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors", "content-type": "application/json" }),
         body: JSON.stringify({ id: "evt_" + h }),
       });
       if (hk.status === 403 || hk.status === 429) hookBlocked += 1;

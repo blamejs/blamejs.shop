@@ -18,6 +18,12 @@
     for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
     return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
+  // Read the double-submit CSRF token from the JS-readable cookie
+  // (`__Host-csrf` over HTTPS, `csrf` over HTTP) so these fetch POSTs carry
+  // the `X-CSRF-Token` header the container's csrfGuard validates.
+  function _csrfToken() {
+    return (document.cookie.match(/(?:^|; )(?:__Host-csrf|csrf)=([^;]+)/) || [])[1] || "";
+  }
   var btn = document.getElementById("passkey-add-btn");
   var msg = document.getElementById("passkey-add-message");
   if (!btn) return;
@@ -25,7 +31,7 @@
     if (msg) msg.textContent = "Follow your device's prompt…";
     btn.disabled = true;
     try {
-      var beginR = await fetch("/account/passkey/add-begin", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: "{}" });
+      var beginR = await fetch("/account/passkey/add-begin", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "X-CSRF-Token": _csrfToken() }, body: "{}" });
       if (!beginR.ok) { if (msg) msg.textContent = (await beginR.text()) || "Could not start enrollment."; btn.disabled = false; return; }
       var options = await beginR.json();
       options.challenge = _b64uToBuf(options.challenge);
@@ -33,7 +39,7 @@
       if (options.excludeCredentials) options.excludeCredentials = options.excludeCredentials.map(function (c) { return Object.assign({}, c, { id: _b64uToBuf(c.id) }); });
       var att = await navigator.credentials.create({ publicKey: options });
       var payload = { id: att.id, rawId: _bufToB64u(att.rawId), type: att.type, response: { attestationObject: _bufToB64u(att.response.attestationObject), clientDataJSON: _bufToB64u(att.response.clientDataJSON), transports: att.response.getTransports ? att.response.getTransports() : [] } };
-      var finishR = await fetch("/account/passkey/add-finish", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      var finishR = await fetch("/account/passkey/add-finish", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "X-CSRF-Token": _csrfToken() }, body: JSON.stringify(payload) });
       if (finishR.ok) { window.location.href = "/account/passkeys?ok=added"; } else { if (msg) msg.textContent = (await finishR.text()) || "Enrollment failed."; btn.disabled = false; }
     } catch (e) { if (msg) msg.textContent = (e && e.message) || "Enrollment error."; btn.disabled = false; }
   });

@@ -739,6 +739,35 @@ var KNOWN_ANTIPATTERNS = [
     ],
     reason:    "Direct leaf-module imports (`import bMoney from \"../lib/vendor/blamejs/lib/money.js\"` etc.) bypass the Worker adapter's single point of validation. The adapter is the place where leaf-module Worker-compatibility lives; broadening primitive access through ad-hoc imports drops that gate. Add a new namespace to `worker/b.js` instead.",
   },
+  {
+    // A new edge-rendered POST form whose action isn't in the CSRF guard's
+    // exempt set (EDGE_POST_PATHS in lib/security-middleware.js) would 403 in
+    // production: the container scopes its double-submit CSRF check to exempt
+    // exactly the edge-cached, cookie-less, dual-rendered forms (cart-add,
+    // consent, currency, newsletter, wishlist/compare toggle, announcement
+    // dismiss), and the edge copies carry no `_csrf` token. Any OTHER edge
+    // POST form's no-JS submit arrives token-less and the guard rejects it.
+    // The negative-lookahead prefix list MUST stay in sync with
+    // EDGE_POST_PATHS — when that array changes, update this regex too.
+    id:        "edge-form-csrf-exempt",
+    primitive: "Every `<form method=\"post\">` in worker/render/* must post to an action covered by an EDGE_POST_PATHS prefix (lib/security-middleware.js). Edge forms are cookie-less + token-less, so the container's csrfGuard exempts exactly that set; a new edge POST form to any other action 403s on a no-JS submit. Either move the action under an existing exempt prefix, add the prefix to EDGE_POST_PATHS (+ here), or render that form container-only so it carries the `_csrf` token.",
+    regex:     /<form\b[^>\n]*?method=\\"post\\"[^>\n]*?action=\\"(?!(?:\/cart\/lines|\/cart\/bundle|\/wishlist\/toggle|\/compare\/toggle|\/consent|\/currency|\/newsletter|\/announcements\/))/i,
+    scanScope: "worker",
+    allowlist: [],
+    reason:    "The CSRF guard (lib/security-middleware.js) double-submit-validates every state-changing POST except EDGE_POST_PATHS — the edge-cached, cookie-less, dual-rendered forms that cannot carry a per-session token without breaking render-parity or no-JS submission. An edge POST form to any action OUTSIDE that set ships a token-less form whose no-JS submit the guard rejects with 403. This detector fires the moment a new worker/render form posts to an un-exempt action, before it reaches production. Resolution: route the action under an existing exempt prefix, extend EDGE_POST_PATHS (and the lookahead here in lockstep), or move the form to a container-only render where _csrf is injected.",
+  },
+  {
+    // The vendor refresh pins an explicit release tag; `latest` would make a
+    // CI run silently adopt whatever the upstream default branch points at —
+    // a moving supply-chain target that bypasses the deliberate, reviewed
+    // version bump the vendor-update flow exists to gate.
+    id:        "workflow-no-vendor-latest",
+    primitive: "scripts/vendor-update.sh <name> <tag> — pin an explicit release tag in CI, never `latest`. `latest` resolves to a mutable upstream ref, so a workflow run silently re-vendors a different tree than the one that was reviewed.",
+    regex:     /vendor-update\.sh\s+\S+\s+latest\b/,
+    scanScope: "workflows",
+    allowlist: [],
+    reason:    "`vendor-update.sh <name> latest` in a workflow resolves the vendored dependency against a mutable upstream ref at run time — a workflow re-run can pull a different tree than the one a human reviewed, defeating the pinned-tag discipline the vendor refresh enforces. Vendor refreshes are a deliberate, reviewed version bump; CI must pass an explicit `vX.Y.Z` tag (or `--check`, which verifies the pin without refreshing), never `latest`.",
+  },
 
   // ---- Catalog mirror from vendored blamejs ----
   // Ported from lib/vendor/blamejs/test/layer-0-primitives/codebase-patterns.test.js.

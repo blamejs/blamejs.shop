@@ -140,6 +140,19 @@ async function httpRequest(opts) {
   if (opts.jar) {
     var cookieHeader = opts.jar.header();
     if (cookieHeader) headers["cookie"] = cookieHeader;
+    // Double-submit CSRF (blamejs createApp default, v0.13.46+): a
+    // state-changing request echoes the captured CSRF cookie as the
+    // X-CSRF-Token header (csrfProtect accepts the header OR a `_csrf`
+    // body field). Any prior GET in the flow seeds the cookie into the
+    // jar. Loopback is plain HTTP → the cookie is `csrf`; production
+    // (HTTPS) would be `__Host-csrf`. A caller-set header or `_csrf` form
+    // field wins.
+    if ((method === "POST" || method === "PUT" || method === "DELETE" || method === "PATCH") &&
+        !headers["x-csrf-token"] && !headers["X-CSRF-Token"] &&
+        !(opts.form && opts.form._csrf)) {
+      var csrfTok = opts.jar.get("csrf") || opts.jar.get("__Host-csrf");
+      if (csrfTok) headers["x-csrf-token"] = csrfTok;
+    }
   }
   var bodyBuf = null;
   if (opts.form) {

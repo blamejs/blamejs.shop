@@ -17,6 +17,12 @@
     for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
     return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
+  // Read the double-submit CSRF token from the JS-readable cookie
+  // (`__Host-csrf` over HTTPS, `csrf` over HTTP) so these fetch POSTs carry
+  // the `X-CSRF-Token` header the container's csrfGuard validates.
+  function _csrfToken() {
+    return (document.cookie.match(/(?:^|; )(?:__Host-csrf|csrf)=([^;]+)/) || [])[1] || "";
+  }
   var form = document.getElementById("reg-form");
   var msg  = document.getElementById("reg-message");
   if (!form) return;
@@ -24,7 +30,7 @@
     ev.preventDefault();
     msg.textContent = "Creating account...";
     try {
-      var beginR = await fetch("/account/passkey/register-begin", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: document.getElementById("email").value, display_name: document.getElementById("display_name").value }) });
+      var beginR = await fetch("/account/passkey/register-begin", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "X-CSRF-Token": _csrfToken() }, body: JSON.stringify({ email: document.getElementById("email").value, display_name: document.getElementById("display_name").value }) });
       if (!beginR.ok) { msg.textContent = (await beginR.text()) || "Registration unavailable."; return; }
       var options = await beginR.json();
       options.challenge = _b64uToBuf(options.challenge);
@@ -32,7 +38,7 @@
       if (options.excludeCredentials) options.excludeCredentials = options.excludeCredentials.map(function (c) { return Object.assign({}, c, { id: _b64uToBuf(c.id) }); });
       var att = await navigator.credentials.create({ publicKey: options });
       var payload = { id: att.id, rawId: _bufToB64u(att.rawId), type: att.type, response: { attestationObject: _bufToB64u(att.response.attestationObject), clientDataJSON: _bufToB64u(att.response.clientDataJSON), transports: att.response.getTransports ? att.response.getTransports() : [] } };
-      var finishR = await fetch("/account/passkey/register-finish", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      var finishR = await fetch("/account/passkey/register-finish", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "X-CSRF-Token": _csrfToken() }, body: JSON.stringify(payload) });
       if (finishR.ok) { window.location.href = "/account"; } else { msg.textContent = (await finishR.text()) || "Enrollment failed."; }
     } catch (e) { msg.textContent = (e && e.message) || "Registration error."; }
   });

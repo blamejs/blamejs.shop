@@ -99,26 +99,32 @@ async function _run() {
   var handle = await _bootApp({ catalog: catalog, cart: cart, addresses: addresses, customers: customers });
 
   try {
-    var cookieA = _authCookie(custA);
-    var cookieB = _authCookie(custB);
+    // A jar per customer: the first authenticated GET seeds the
+    // double-submit CSRF cookie, which the helper echoes as X-CSRF-Token
+    // on each customer's subsequent state-changing POSTs (real gate, no
+    // bypass). B gets its own jar so its IDOR attempts carry B's token.
+    var jarA = helpers.cookieJar();
+    jarA.capture({ "set-cookie": [_authCookie(custA)] });
+    var jarB = helpers.cookieJar();
+    jarB.capture({ "set-cookie": [_authCookie(custB)] });
 
     // Anon → redirect to login.
     var anon = await helpers.httpRequest({ port: handle.port, path: "/account/addresses" });
     check("anon addresses then 303 login",      anon.status === 303 && (anon.headers["location"] || "") === "/account/login");
 
     // Empty state.
-    var empty = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", headers: { cookie: cookieA } });
+    var empty = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", jar: jarA });
     check("addresses page then 200",            empty.status === 200);
     check("empty-state shown",                  empty.body.indexOf("No saved addresses yet") !== -1);
     check("add form present",                   empty.body.indexOf("name=\"recipient_name\"") !== -1);
 
     // Validation: missing required recipient_name then 400 + notice.
-    var bad = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", method: "POST", headers: { cookie: cookieA }, form: { street_line1: "x", city: "y", postal_code: "z", country: "US" } });
+    var bad = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", method: "POST", jar: jarA, form: { street_line1: "x", city: "y", postal_code: "z", country: "US" } });
     check("add missing field then 400",         bad.status === 400);
     check("add validation notice shown",        bad.body.indexOf("form-notice--error") !== -1);
 
     // Add a valid address.
-    var add = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", method: "POST", headers: { cookie: cookieA }, form: Object.assign({ is_default_shipping: "1" }, ADDR_FORM) });
+    var add = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", method: "POST", jar: jarA, form: Object.assign({ is_default_shipping: "1" }, ADDR_FORM) });
     check("add then 303 /account/addresses",    add.status === 303 && (add.headers["location"] || "") === "/account/addresses?ok=added");
     var rowsA = await addresses.listForCustomer(custA, {});
     check("address persisted",                  rowsA.length === 1 && rowsA[0].recipient_name === "Ada Lovelace");
@@ -126,33 +132,34 @@ async function _run() {
     var addrId = rowsA[0].id;
 
     // List shows it.
-    var list = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", headers: { cookie: cookieA } });
+    var list = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", jar: jarA });
     check("list shows the recipient",           list.body.indexOf("Ada Lovelace") !== -1);
     check("list shows default badge",           list.body.indexOf("Default shipping") !== -1);
 
     // Edit form pre-fills.
-    var editForm = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/" + addrId + "/edit", headers: { cookie: cookieA } });
+    var editForm = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/" + addrId + "/edit", jar: jarA });
     check("edit form pre-fills recipient",      editForm.body.indexOf("value=\"Ada Lovelace\"") !== -1);
     check("edit form posts to the id",          editForm.body.indexOf("action=\"/account/addresses/" + addrId + "\"") !== -1);
 
     // Update it.
-    var upd = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/" + addrId, method: "POST", headers: { cookie: cookieA }, form: Object.assign({}, ADDR_FORM, { city: "Manchester" }) });
+    var upd = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/" + addrId, method: "POST", jar: jarA, form: Object.assign({}, ADDR_FORM, { city: "Manchester" }) });
     check("update then 303",                    upd.status === 303);
     check("update applied",                     (await addresses.get(addrId)).city === "Manchester");
 
     // Malformed (non-UUID) id is a clean 404, not a 500.
-    var malformed = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/not-a-uuid/edit", headers: { cookie: cookieA } });
+    var malformed = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/not-a-uuid/edit", jar: jarA });
     check("malformed id then 404",              malformed.status === 404);
 
     // Cross-customer ownership guard: B cannot edit/archive A's address.
-    var idorEdit = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/" + addrId + "/edit", headers: { cookie: cookieB } });
+    // The GET seeds B's CSRF cookie so the archive POST carries B's token.
+    var idorEdit = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/" + addrId + "/edit", jar: jarB });
     check("IDOR edit then 404",                 idorEdit.status === 404);
-    var idorArch = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/" + addrId + "/archive", method: "POST", headers: { cookie: cookieB } });
+    var idorArch = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/" + addrId + "/archive", method: "POST", jar: jarB });
     check("IDOR archive then 404",              idorArch.status === 404);
     check("A's address untouched by B",         (await addresses.get(addrId)).is_archived === 0);
 
     // Archive (own) removes it from the list.
-    var arch = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/" + addrId + "/archive", method: "POST", headers: { cookie: cookieA } });
+    var arch = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/" + addrId + "/archive", method: "POST", jar: jarA });
     check("archive then 303",                   arch.status === 303);
     check("archived out of the list",           (await addresses.listForCustomer(custA, {})).length === 0);
   } finally {

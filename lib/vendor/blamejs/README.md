@@ -114,25 +114,22 @@ The framework bundles the surface a typical Node app reaches for. Every primitiv
 - **CMS codec** — RFC 5652 Cryptographic Message Syntax encoder + decoder with PQC signers (ML-DSA-65 / ML-DSA-87 / SLH-DSA-SHAKE-256f; RFC 9909 + 9881) and KEMRecipientInfo recipients (ML-KEM-1024; RFC 9629 + 9936); ChaCha20-Poly1305 content encryption (RFC 8103) so Efail-class malleability cannot apply (`b.cms`)
 - **Stream throttle** — shared token-bucket bandwidth limiter (RFC 2697 srTCM shape); N concurrent `node:stream` pipelines draw from one operator-configured `bytesPerSec` budget (`b.streamThrottle`)
 - **TLS-RPT receiver** — RFC 8460 inbound aggregate-report ingest; HTTPS POST handler + §4.4 schema parser with gzip-bomb / ratio-bomb / depth-bomb defenses (`b.mail.deploy.parseTlsRptReport` / `b.mail.deploy.tlsRptIngestHttp`)
-- **TLS / channel binding** — RFC 9266 TLS-Exporter token-to-session pinning (`b.tlsExporter`); RFC 9162 CT v2 inclusion-proof verification (`b.network.tls.ct.verifyInclusion`); RFC 8555 ACME + RFC 9773 ARI for 47-day certs with `{ jitter: true }` fleet-scheduling (`b.acme.renewIfDue`); draft-aaron-acme-profiles (`acme.listProfiles()` + `newOrder({ profile })`); draft-ietf-acme-dns-account-label (`acme.dnsAccount01ChallengeRecord(token, { identifier })`); RFC 8470 0-RTT inbound posture refuse / replay-cache (`b.router.create({tls0Rtt})`); RFC 9794 SecP256r1MLKEM768 in preferred-group order (`b.network.tls.preferredGroups`)
+- **TLS / channel binding** — RFC 9266 TLS-Exporter token-to-session pinning (`b.tlsExporter`); RFC 9162 CT v2 inclusion-proof verification (`b.network.tls.ct.verifyInclusion`); RFC 8555 ACME + RFC 9773 ARI for 47-day certs with `{ jitter: true }` fleet-scheduling (`b.acme.renewIfDue`); draft-aaron-acme-profiles (`acme.listProfiles()` + `newOrder({ profile })`); draft-ietf-acme-dns-account-label (`acme.dnsAccount01ChallengeRecord(token, { identifier })`); RFC 8470 0-RTT inbound posture refuse / replay-cache (`b.router.create({tls0Rtt})`); RFC 9794 SecP256r1MLKEM768 in preferred-group order (`b.network.tls.preferredGroups`); RFC 6960 OCSP stapling — the cert manager (`b.cert`) fetches + validates each managed certificate's OCSP response (`b.network.tls.ocsp.fetch`) on a refresh cadence and exposes it on the served context for a TLS server's `OCSPRequest` handler to staple
 - **mTLS CA** — pure-JS, issues clientAuth / serverAuth / dual-EKU certs with SAN; auto-detects highest-PQC signature alg (today ECDSA-P384-SHA384; self-upgrades to SLH-DSA / ML-DSA when X.509 ecosystem catches up); PQC TLS gates inbound + outbound (`b.mtlsCa`, `b.pqcGate`, `b.pqcAgent`)
 ### HTTP
 
 - **Router + API specs** — schema-validated routes; OpenAPI publication (`b.openapi`) + AsyncAPI publication for event/streaming (`b.asyncapi`)
-- **Middleware stack (wired by `createApp`)**
-  - CSRF protection
-  - CORS with W3C Private Network Access preflight refusal default + `allowPrivateNetwork` opt
-  - Rate-limit
+- **Middleware stack (`createApp`)** — security layers wired ON by default (Core Rule §3); each is configurable via `middleware.<name>` (operator cookie / field names flow straight through — nothing static is baked in) or opt-out with `false` (disabling a default is audited via `app.middleware.disabled`). Ordered so each layer has what it needs (cookies + CSP nonce + fetch-metadata, then body parser, then CSRF last):
+  - Request-ID tagging and bot-guard
   - Security headers with `Permissions-Policy` defaults denying storage-access / browsing-topics / private-aggregation / controlled-frame
-  - CSP nonce
-  - Body parser — JSON / urlencoded / text / multipart; multipart file parts stream to a tmp dir or buffer in memory (`storage: "memory"`) for read-only / serverless filesystems
-  - Compression
-  - SSE
-  - Request log
   - Threat-aware cookie parser (`b.middleware.cookies`)
-  - Request-time DB role binding (`b.middleware.dbRoleFor`)
-  - In-process CIDR fence (`b.middleware.networkAllowlist`)
+  - CSP nonce — generated per request, merged into the CSP (`b.middleware.cspNonce`)
+  - Fetch-metadata resource-isolation guard (`b.middleware.fetchMetadata`)
+  - Body parser — JSON / urlencoded / text / multipart; multipart file parts stream to a tmp dir or buffer in memory (`storage: "memory"`) for read-only / serverless filesystems
+  - CSRF protection — double-submit cookie + Origin/Referer cross-check; auto-skips Authorization-header / cookieless requests, which are not CSRF-able (`b.middleware.csrfProtect`)
+  - CORS (W3C Private Network Access preflight refusal default + `allowPrivateNetwork` opt) and rate-limit are wired when configured via `middleware.cors` / `middleware.rateLimit`
   - `Cache-Control: no-store` on every 401 from `requireAuth` / `requireAal` / `requireStepUp` per RFC 9111 §5.2.2.5
+- **Additional middleware** to mount in your `routes` callback: compression, SSE, request logging, request-time DB role binding (`b.middleware.dbRoleFor`), in-process CIDR fence (`b.middleware.networkAllowlist`)
 - **Outbound HTTP client** — HTTP/1.1 + HTTP/2 with SSRF gate (cloud-metadata IPs hard-denied; private / loopback / link-local overridable per call); scheme + userinfo + per-host destination allowlist; redirects, multipart, interceptors, progress, encrypted cookie jar (`b.httpClient`, `b.ssrfGuard`, `b.safeUrl`)
 - **Network configurability (`b.network`)** — env-driven NTP / NTS (RFC 8915), IPv4/IPv6 NTP, DNS with IPv6 / DoH / DoT (private-CA pinning) / cache / lookup timeout; local DNSSEC signature verification (RFC 4035 — `b.network.dns.dnssec.verifyRrset` over a canonicalised RRset against RSA / ECDSA P-256·P-384 / Ed25519 DNSKEYs, plus DS-digest + key-tag, plus `verifyDenial` for NSEC / NSEC3 (RFC 5155) NXDOMAIN / NODATA proofs with iteration caps + Opt-Out handling, plus `verifyChain` to validate a full root→TLD→zone delegation chain against the pinned IANA root anchors) so a resolver client can verify both positive and negative answers instead of trusting the upstream AD bit; DANE / TLSA certificate matching (RFC 6698/7671 — `b.network.dns.dane.matchCertificate`) to pin a service's key through DNSSEC instead of a public CA; TSIG transaction signatures (RFC 8945 — `b.network.dns.tsig.sign` / `verify`) for shared-key HMAC authentication of zone transfers, dynamic updates, and query/response pairs, with constant-time MAC compare + fudge-window check (verified against dnspython); outbound HTTP proxy (`HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`); runtime DPI trust-store CA additions; application-level heartbeats; TCP socket defaults
 - **Error pages** — operator-rendered, no app-frame leakage (`b.errorPage`)
