@@ -502,11 +502,12 @@ async function main() {
     // never blocks loopback browsing at audit volumes); CSRF is mounted scoped
     // via mountRouteGuards.
     middleware: {
-      rateLimit:     bShop.securityMiddleware.globalRateLimitOpts(),
-      csrf:          false,
-      bodyParser:    false,
-      fetchMetadata: false,
-      cspNonce:      false,
+      securityHeaders: bShop.securityMiddleware.securityHeadersOpts(),
+      rateLimit:       bShop.securityMiddleware.globalRateLimitOpts(),
+      csrf:            false,
+      bodyParser:      false,
+      fetchMetadata:   false,
+      cspNonce:        false,
     },
     routes: function (r) {
       // Public static assets first — before bodyParser/guards (mirrors prod,

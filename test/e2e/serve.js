@@ -72,11 +72,12 @@ function _makeQuery() {
     // copies + the scoped CSRF inside routes() below, exactly as server.js
     // does, so the harness exercises the real production composition.
     middleware: {
-      rateLimit:     bShop.securityMiddleware.globalRateLimitOpts(),
-      csrf:          false,
-      bodyParser:    false,
-      fetchMetadata: false,
-      cspNonce:      false,
+      securityHeaders: bShop.securityMiddleware.securityHeadersOpts(),
+      rateLimit:       bShop.securityMiddleware.globalRateLimitOpts(),
+      csrf:            false,
+      bodyParser:      false,
+      fetchMetadata:   false,
+      cspNonce:        false,
     },
     routes: function (r) {
       r.use(b.middleware.bodyParser());

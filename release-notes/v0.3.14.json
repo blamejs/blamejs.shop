@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.14",
+  "date": "2026-05-30",
+  "headline": "Drop the inert Document-Policy header that only produced browser warnings",
+  "summary": "Container-rendered pages were sending a Document-Policy response header whose feature tokens (document-write, unsized-media, oversized-images) are no longer recognized by current browsers — so it enforced nothing while making the browser log a warning for each token on every page. The header is now omitted; every other security header (Content-Security-Policy, Permissions-Policy, HSTS, X-Frame-Options, the COOP/CORP set, and the rest) is unchanged. The edge and container paths now agree — neither sends Document-Policy — closing a header-parity gap.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "No more Document-Policy console warnings", "body": "The Document-Policy header is no longer emitted on container-rendered pages. Its tokens were rejected by current browsers (the policy applied nothing and logged a warning per token on every page), so the header is dropped rather than shipped inert; the full set of other security headers is retained unchanged. Edge and container responses are now consistent." }
+      ]
+    }
+  ]
+}

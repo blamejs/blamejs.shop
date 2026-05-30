@@ -1356,6 +1356,24 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
 // every HTML response from the Worker, matching the framework's
 // posture documented at `lib/vendor/blamejs/lib/middleware/
 // security-headers.js#DEFAULT_*`.
+//
+// No Document-Policy header is emitted here, and the container
+// suppresses the vendored default's copy (lib/security-middleware.js
+// securityHeadersOpts → documentPolicy:false) so the two substrates
+// stay consistent. The vendored default's tokens (document-write,
+// unsized-media, oversized-images) are not recognized by current
+// browsers — they only produce "Unrecognized document policy feature
+// name" console warnings and enforce nothing.
+//
+// The CSP below is nonce-free here (script-src 'self'); the container
+// renders a per-request nonce. Either way, Cloudflare Web Analytics is
+// incompatible with this policy: enabling it for the zone makes the CDN
+// auto-inject an inline loader for static.cloudflareinsights.com that
+// carries no nonce and is not 'self', so the strict script-src refuses
+// it (the console shows two CSP errors per page). The fix is to leave it
+// OFF for this zone rather than add 'unsafe-inline' / a beacon host to
+// script-src — the shop injects no beacon, so there is nothing in-repo
+// to nonce. Keep Web Analytics disabled in the Cloudflare dashboard.
 var _SECURITY_HEADERS = {
   "content-security-policy":
     "default-src 'self'; " +

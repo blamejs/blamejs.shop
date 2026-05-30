@@ -285,13 +285,18 @@ async function main() {
     // duplicates and keep the shop's configured copies as the single source
     // of truth; `cspNonce` stays off to leave the existing strict-`'self'`
     // CSP unchanged. The cookie parser stays on (the scoped CSRF reads the
-    // double-submit cookie through it).
+    // double-submit cookie through it). securityHeaders stays ON but drops
+    // the inert Document-Policy header (the vendored default's legacy
+    // feature tokens are unrecognized by current browsers — see
+    // securityHeadersOpts); this also keeps the container header-consistent
+    // with the edge, which sends no Document-Policy.
     middleware: {
-      rateLimit:     bShop.securityMiddleware.globalRateLimitOpts(),
-      csrf:          false,
-      bodyParser:    false,
-      fetchMetadata: false,
-      cspNonce:      false,
+      securityHeaders: bShop.securityMiddleware.securityHeadersOpts(),
+      rateLimit:       bShop.securityMiddleware.globalRateLimitOpts(),
+      csrf:            false,
+      bodyParser:      false,
+      fetchMetadata:   false,
+      cspNonce:        false,
     },
     routes: function (r) {
       // Capture the raw body for payment webhooks BEFORE the JSON parser
