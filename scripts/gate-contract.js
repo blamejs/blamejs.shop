@@ -103,6 +103,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "a malformed id is a 400 bad-request like its sibling actions; only a well-formed missing id is a 404",
   },
+  {
+    bugClass: "Document-Policy header asserts a legacy feature token current browsers don't recognize (inert header + console noise)",
+    detector: "document-policy-unrecognized-feature-token",
+    gate:     "codebase-patterns",
+    note:     "suppress the vendored default's inert Document-Policy (securityHeadersOpts → documentPolicy:false) and emit none at the edge; the recognized feature set is force-load-at-top / js-profiling / include-js-call-stacks-in-crash-reports / expect-no-linked-resources / network-efficiency-guardrails — assert one of those or send no header",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the

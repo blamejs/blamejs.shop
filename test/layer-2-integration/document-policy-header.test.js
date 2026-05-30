@@ -1,0 +1,155 @@
+"use strict";
+/**
+ * Document-Policy header hygiene — proof that no shipped response asserts
+ * a legacy Document-Policy feature token (document-write / unsized-media /
+ * oversized-images) that current browsers don't recognize.
+ *
+ * The vendored blamejs securityHeaders default emits a Document-Policy
+ * header naming exactly those three tokens. Current Chromium recognizes
+ * none of them: it parses the header, rejects every token, logs
+ * "Document-Policy HTTP header: Unrecognized document policy feature name
+ * <x>", and applies nothing — an inert header that adds console noise with
+ * zero protection. The shop suppresses that copy by passing
+ * `documentPolicy: false` through createApp's `middleware.securityHeaders`
+ * (lib/security-middleware.js securityHeadersOpts), matching the edge
+ * Worker which never sent the header.
+ *
+ * Two properties:
+ *   a. CONTAINER — a real `b.createApp` booted with the SAME middleware
+ *      composition server.js uses (securityHeadersOpts() in the
+ *      securityHeaders slot) emits NO Document-Policy header, and in any
+ *      case none of the three legacy tokens, on a representative page.
+ *      Other vendored security headers (CSP, X-Frame-Options) still ship —
+ *      proving the suppression is scoped to Document-Policy, not a blanket
+ *      disable of securityHeaders.
+ *   b. EDGE PARITY — the Worker's `_SECURITY_HEADERS` set (worker/index.js)
+ *      emits no Document-Policy and carries none of the three tokens in a
+ *      header-value shape, so whatever the container sends (here: none)
+ *      the edge matches. Guarded by existsSync: worker/ is excluded from
+ *      the container build context, so the assertion is skipped in the
+ *      in-image smoke and runs in the full-tree CI.
+ */
+
+var nodeFs   = require("node:fs");
+var nodeOs   = require("node:os");
+var nodePath = require("node:path");
+
+var bShop   = require("../../lib");
+var b       = bShop.framework;
+var helpers = require("../helpers");
+var check   = helpers.check;
+var httpRequest = helpers.httpRequest;
+
+// The three legacy Document-Policy feature names current browsers reject.
+var LEGACY_TOKENS = ["document-write", "unsized-media", "oversized-images"];
+
+// Browser-shaped headers so bot-guard (a createApp default) passes.
+function _hdr(extra) {
+  return Object.assign({
+    "cf-connecting-ip": "203.0.113.20",
+    "user-agent":       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+    "accept":           "text/html,application/xhtml+xml",
+    "accept-language":  "en-US,en;q=0.9",
+    "sec-fetch-site":   "same-origin",
+    "sec-fetch-mode":   "navigate",
+  }, extra || {});
+}
+
+function _hasLegacyToken(value) {
+  if (typeof value !== "string") return false;
+  var lower = value.toLowerCase();
+  for (var i = 0; i < LEGACY_TOKENS.length; i += 1) {
+    if (lower.indexOf(LEGACY_TOKENS[i]) !== -1) return true;
+  }
+  return false;
+}
+
+async function _container() {
+  var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-docpol-"));
+
+  var app = await b.createApp({
+    dataDir: dataDir,
+    vault: { mode: "plaintext" },
+    db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
+    // Mirror server.js exactly: securityHeaders stays ON but drops the
+    // inert Document-Policy via securityHeadersOpts(); the other app-level
+    // duplicates are disabled because the shop mounts its own scoped copies.
+    middleware: {
+      securityHeaders: bShop.securityMiddleware.securityHeadersOpts(),
+      rateLimit:       bShop.securityMiddleware.globalRateLimitOpts(),
+      csrf:            false,
+      bodyParser:      false,
+      fetchMetadata:   false,
+      cspNonce:        false,
+    },
+    routes: function (r) {
+      r.use(b.middleware.bodyParser());
+      bShop.securityMiddleware.mountRouteGuards(r);
+      // A representative read page — the same surface that emitted the
+      // unrecognized Document-Policy header in production.
+      r.get("/cart", function (_req, res) { res.json({ ok: true }); });
+    },
+  });
+
+  var bound = await app.listen({ port: 0, host: "127.0.0.1" });
+  var port  = bound.port;
+
+  try {
+    var resp = await httpRequest({ port: port, path: "/cart", headers: _hdr() });
+    check("(a) container page renders (2xx)", resp.status >= 200 && resp.status < 300);
+
+    // node:http lowercases header names. The header must be ABSENT (the
+    // shop suppresses the vendored default) — and, defensively, must carry
+    // none of the three legacy tokens even if a future change re-adds a
+    // (valid) Document-Policy.
+    var docPolicy = resp.headers["document-policy"];
+    check("(a) container sends NO Document-Policy header (vendored default suppressed)",
+      docPolicy === undefined);
+    check("(a) container Document-Policy carries no legacy/unrecognized token",
+      !_hasLegacyToken(docPolicy));
+
+    // Suppression is scoped to Document-Policy — the rest of the vendored
+    // securityHeaders posture still ships. CSP + X-Frame-Options prove
+    // securityHeaders wasn't disabled wholesale.
+    check("(a) securityHeaders still ON — CSP present",
+      typeof resp.headers["content-security-policy"] === "string" &&
+      resp.headers["content-security-policy"].length > 0);
+    check("(a) securityHeaders still ON — X-Frame-Options DENY present",
+      resp.headers["x-frame-options"] === "DENY");
+  } finally {
+    try { await app.shutdown(); } catch (_e) { /* */ }
+    try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
+  }
+}
+
+function _edgeParity() {
+  // worker/ is excluded from the container build context (.dockerignore),
+  // so guard the source read: when worker/index.js isn't present (in-image
+  // smoke) this parity assertion is skipped rather than crashing the gate
+  // (an unguarded worker import bricks every container deploy). The full-
+  // tree CI run has worker/ present and exercises this.
+  var workerIndexPath = nodePath.resolve(__dirname, "..", "..", "worker", "index.js");
+  if (!nodeFs.existsSync(workerIndexPath)) return;
+
+  var src = nodeFs.readFileSync(workerIndexPath, "utf8");
+
+  // The edge header set must declare no `document-policy` key — it sends no
+  // Document-Policy, matching the container (which now suppresses it). A
+  // `"document-policy":` key in the _SECURITY_HEADERS object literal would
+  // mean the edge ships one; assert it's absent.
+  check("(b) edge _SECURITY_HEADERS declares no document-policy key",
+    !/["']document-policy["']\s*:/i.test(src));
+
+  // And no legacy token appears in a structured-field value shape anywhere
+  // in the edge header source (the detector's value shape), so the two
+  // substrates are header-consistent on Document-Policy.
+  check("(b) edge source carries no legacy Document-Policy token value",
+    !/\b(?:document-write|unsized-media|oversized-images)=\?[01]\b/i.test(src));
+}
+
+async function _run() {
+  await _container();
+  _edgeParity();
+}
+
+module.exports = { run: _run };

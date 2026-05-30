@@ -1961,6 +1961,32 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason:    "POST /admin/returns/<malformed-id>/refund returned 404 return-not-found while the three sibling actions (approve/received/reject) returned 400 for the same id — and the 404 body was actually a guardUuid \"not a valid UUID\" message (self-contradictory). The refund handler caught the TypeError from `returns.get(...)` and mapped it to 404 instead of letting it surface as 400. A malformed id is a bad request, not a missing record; only a well-formed id resolving to null is a 404. Detector locks the W(\"return.refund\") mutation so the TypeError → return-not-found mapping can't return. The GET detail reader's bad-id-to-404 is a separate, intentional defensive-reader tier and is not matched.",
   },
+  {
+    // A shipped header value (container or edge) that re-introduces one of
+    // the three legacy Document-Policy feature tokens — document-write,
+    // unsized-media, oversized-images. Current browsers recognize none of
+    // them: the header parses, every token is rejected, the browser logs
+    // "Unrecognized document policy feature name <x>", and nothing is
+    // enforced. The vendored blamejs default emits exactly these three; the
+    // shop suppresses that copy (securityHeadersOpts → documentPolicy:false)
+    // and the edge sends no Document-Policy. This detector locks that: a
+    // hand-rolled Document-Policy value carrying any of the three is flagged
+    // so the inert-header regression can't return through a shop header layer.
+    id:        "document-policy-unrecognized-feature-token",
+    bugClassDeclared: true,
+    primitive: "do not assert a legacy Document-Policy feature (document-write / unsized-media / oversized-images) — current browsers recognize none of them and log \"Unrecognized document policy feature name\"; suppress the vendored default via securityHeadersOpts (documentPolicy:false) and emit no Document-Policy at the edge, or set only a recognized feature (force-load-at-top / js-profiling / include-js-call-stacks-in-crash-reports / expect-no-linked-resources / network-efficiency-guardrails)",
+    // Match the three token names ONLY in a structured-field value shape
+    // (`<token>=?0` / `<token>=?1`), the exact form a Document-Policy header
+    // value takes. Prose mentioning the names (the explanatory comments in
+    // lib/security-middleware.js + worker/index.js) never uses the `=?`
+    // boolean syntax, and lib/worker comment lines are skipped by the scanner
+    // anyway — so the detector locks the header value without flagging its
+    // own rationale text.
+    regex:     /\b(?:document-write|unsized-media|oversized-images)=\?[01]\b/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "Every container page (e.g. /cart, /admin/*) emitted a Document-Policy header with document-write=?0, unsized-media=?0, oversized-images=?0 — feature names current Chromium no longer recognizes. The browser logged \"Document-Policy HTTP header: Unrecognized document policy feature name <x>\" and applied no policy, so the header was pure console noise with zero protection. The vendored blamejs securityHeaders default hardcodes these three; the shop now passes documentPolicy:false through createApp (lib/security-middleware.js securityHeadersOpts) to suppress the inert header, matching the edge (worker/index.js _SECURITY_HEADERS), which never sent it. Detector matches the three legacy tokens in their structured-field `=?0`/`=?1` value form so a re-introduced Document-Policy value (in either substrate's header set) trips it; the recognized feature set today is force-load-at-top / js-profiling / include-js-call-stacks-in-crash-reports / expect-no-linked-resources / network-efficiency-guardrails — assert one of those instead, or send no header.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
