@@ -256,4 +256,124 @@ async function _run() {
   }
 }
 
-module.exports = { run: _run };
+// Build a multipart/form-data body from a list of parts. Text parts:
+// { name, value }. File parts: { name, filename, contentType, bytes }.
+// Returns { body: Buffer, contentType: string } so the test can post the
+// real wire bytes through the framework's multipart body-parser.
+function _multipart(parts) {
+  var boundary = "----blamejsAdminUpload" + Date.now();
+  var chunks = [];
+  parts.forEach(function (p) {
+    chunks.push(Buffer.from("--" + boundary + "\r\n"));
+    if (p.filename !== undefined) {
+      chunks.push(Buffer.from(
+        "Content-Disposition: form-data; name=\"" + p.name + "\"; filename=\"" + p.filename + "\"\r\n" +
+        "Content-Type: " + p.contentType + "\r\n\r\n"));
+      chunks.push(Buffer.isBuffer(p.bytes) ? p.bytes : Buffer.from(p.bytes));
+      chunks.push(Buffer.from("\r\n"));
+    } else {
+      chunks.push(Buffer.from(
+        "Content-Disposition: form-data; name=\"" + p.name + "\"\r\n\r\n" + p.value + "\r\n"));
+    }
+  });
+  chunks.push(Buffer.from("--" + boundary + "--\r\n"));
+  return { body: Buffer.concat(chunks), contentType: "multipart/form-data; boundary=" + boundary };
+}
+
+// 1x1 PNG — valid magic bytes so b.fileType.detect classifies it.
+var TINY_PNG = Buffer.from(
+  "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489" +
+  "0000000a49444154789c6360000002000100ffff", "hex");
+
+// Direct-file upload through the wired multipart body-parser + a mock R2
+// bridge. Confirms the file-upload form renders on the detail screen, a
+// valid PNG multipart POST stores to R2 + attaches the media row + PRGs
+// back saved, a disallowed type is a clean ?err=1 (never a 500), and the
+// bearer JSON route returns 201 with the stored record.
+async function _runFileUpload() {
+  var query   = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query, cursorSecret: "upload-console" });
+  var order   = bShop.order.create({ query: query, cursorSecret: "upload-console" });
+  var prod    = await catalog.products.create({ slug: "uploadable", title: "Uploadable", status: "active" });
+
+  var puts = [];
+  var r2Mock = { put: async function (key, body, contentType) {
+    puts.push({ key: key, size: body.length, contentType: contentType });
+    return { ok: true, key: key, size: body.length };
+  } };
+
+  var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-upload-console-"));
+  var app = await b.createApp({
+    dataDir: dataDir, vault: { mode: "plaintext" }, db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
+    middleware: { botGuard: false, rateLimit: false },
+    routes: function (r) {
+      r.use(b.middleware.bodyParser());
+      bShop.admin.mount(r, { token: TOKEN, catalog: catalog, order: order, r2_bridge: r2Mock, asset_prefix: "/assets/", shop_name: "Test Shop" });
+    },
+  });
+  var bound = await app.listen({ port: 0, host: "127.0.0.1" });
+  var port = bound.port;
+  var bearer = { authorization: "Bearer " + TOKEN };
+  var P = "/admin/products/" + prod.id;
+
+  try {
+    var jar = helpers.cookieJar();
+    await helpers.httpRequest({ port: port, path: "/admin/login", method: "POST", form: { token: TOKEN }, jar: jar });
+
+    // The file-upload form now renders on the detail screen (bridge wired).
+    var detail = await helpers.httpRequest({ port: port, path: P, jar: jar });
+    check("detail shows file-upload form",       detail.body.indexOf(P + "/media/upload-file") !== -1);
+    check("file form is multipart",              detail.body.indexOf("enctype=\"multipart/form-data\"") !== -1);
+    check("file input present + accept-gated",   detail.body.indexOf("type=\"file\"") !== -1 && detail.body.indexOf("accept=\"image/png") !== -1);
+
+    // Browser multipart POST: PNG file + alt text → 303 saved; stored +
+    // attached.
+    var mp = _multipart([
+      { name: "alt_text", value: "Uploaded hero" },
+      { name: "file", filename: "hero.png", contentType: "image/png", bytes: TINY_PNG },
+    ]);
+    var up = await helpers.httpRequest({
+      port: port, path: P + "/media/upload-file", method: "POST", jar: jar,
+      headers: { "content-type": mp.contentType }, body: mp.body,
+    });
+    check("file upload then 303",                up.status === 303);
+    check("file upload redirects saved",         (up.headers.location || "").indexOf("saved=1") !== -1);
+    check("file upload stored to R2",            puts.length === 1 && /^media\/.*\.png$/.test(puts[0].key));
+    var rows = await catalog.media.listForProduct(prod.id);
+    check("file upload media persisted",         rows.length === 1 && rows[0].r2_key === puts[0].key && rows[0].alt_text === "Uploaded hero");
+
+    // Disallowed type via the browser form → ?err=1 notice, never a 500.
+    var mpBad = _multipart([
+      { name: "file", filename: "doc.pdf", contentType: "application/pdf", bytes: Buffer.from("%PDF-1.4\n") },
+    ]);
+    var bad = await helpers.httpRequest({
+      port: port, path: P + "/media/upload-file", method: "POST", jar: jar,
+      headers: { "content-type": mpBad.contentType }, body: mpBad.body,
+    });
+    check("disallowed file flags err",           (bad.headers.location || "").indexOf("err=1") !== -1);
+    check("disallowed file stored nothing",      puts.length === 1);
+
+    // Bearer JSON API route → 201 with the stored record.
+    var mpApi = _multipart([
+      { name: "product_id", value: prod.id },
+      { name: "file", filename: "api.png", contentType: "image/png", bytes: TINY_PNG },
+    ]);
+    var api = await helpers.httpRequest({
+      port: port, path: "/admin/media/upload-file", method: "POST",
+      headers: Object.assign({ "content-type": mpApi.contentType }, bearer), body: mpApi.body,
+    });
+    check("bearer file upload 201 JSON",         api.status === 201);
+    var apiRec = JSON.parse(api.body);
+    check("bearer file upload returns record",   apiRec.r2_key === puts[1].key && apiRec.content_type === "image/png");
+  } finally {
+    try { await app.shutdown(); } catch (_e) { /* */ }
+    try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
+  }
+}
+
+async function run() {
+  await _run();
+  await _runFileUpload();
+}
+
+module.exports = { run: run };
