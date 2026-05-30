@@ -1830,6 +1830,7 @@ var KNOWN_ANTIPATTERNS = [
     // degrades to a clean 400 with a generic message (the shipping-zone
     // regions_json / rates_json edit was the live reproducer).
     id:        "admin-unguarded-json-parse-request-field",
+    bugClassDeclared: true,
     primitive: "wrap any JSON.parse of an operator-supplied request-body field in try/catch and throw a TypeError (→ clean 400 via _wrap), e.g. `try { patch.regions = JSON.parse(body.regions_json); } catch (_e) { throw new TypeError(\"...must be valid JSON\"); }`",
     regex:     /(?<!try\s*\{[\s\S]{0,80})JSON\.parse\s*\(\s*(?:body|req\s*\.\s*body)\b/,
     scanScope: "lib",
@@ -1845,6 +1846,7 @@ var KNOWN_ANTIPATTERNS = [
     // delivery dial into a probe of the host's own network + the
     // instance-credential metadata service.
     id:        "outbound-webhook-url-without-ssrf-guard",
+    bugClassDeclared: true,
     primitive: "compose b.ssrfGuard.classify(host) (literal-IP loopback/private/link-local/reserved/cloud-metadata) + a localhost / metadata.google.internal / *.internal name denylist when validating an outbound webhook endpoint URL — never accept an operator/customer-supplied webhook URL on b.safeUrl.parse alone",
     // Scoped to the webhook endpoint-URL validators by their canonical
     // throw-string shape (`webhooks: url must be ...` /
@@ -1854,9 +1856,9 @@ var KNOWN_ANTIPATTERNS = [
     // endpoint — none of which are attacker-supplied fan-out targets.
     regex:     /["'](?:webhooks: url|webhookSubscriptions: endpoint_url) must be /,
     scanScope: "lib",
-    requires:  /ssrfGuard\.classify|ssrfGuard\.checkUrl|host is not allowed \(internal\/loopback\/metadata/,
+    requires:  /ssrfGuard\.classify|ssrfGuard\.checkUrl|textGuard\.hostLabel|host is not allowed \(internal\/loopback\/metadata/,
     allowlist: [],
-    reason:    "The webhook subscription/create URL guard enforced https + blocked user:pass@ userinfo but accepted internal/loopback/link-local/cloud-metadata destinations — `https://169.254.169.254/...`, `https://127.0.0.1/x`, `https://localhost/x`, `https://metadata.google.internal/x` all registered ACTIVE (confirmed against the live harness). Any lib module that validates an outbound webhook endpoint URL MUST also compose the framework's SSRF guard (`b.ssrfGuard.classify` for literal-IP hosts + a known-name denylist). DNS-rebinding is out of scope at registration time by design; the resolving guard belongs on the delivery dial. The `requires` check exonerates a file that names the ssrfGuard composition or the canonical refusal message; the regex is tied to the webhook validators' throw strings so content-URL validators and the operator-set SMS provider URL aren't flagged.",
+    reason:    "The webhook subscription/create URL guard enforced https + blocked user:pass@ userinfo but accepted internal/loopback/link-local/cloud-metadata destinations — `https://169.254.169.254/...`, `https://127.0.0.1/x`, `https://localhost/x`, `https://metadata.google.internal/x` all registered ACTIVE (confirmed against the live harness). Any lib module that validates an outbound webhook endpoint URL MUST also compose the framework's SSRF guard — directly via `b.ssrfGuard.classify` (literal-IP hosts) + a known-name denylist, or through `textGuard.hostLabel` which centralizes both. DNS-rebinding is out of scope at registration time by design; the resolving guard belongs on the delivery dial. The `requires` check exonerates a file that names the ssrfGuard composition, the textGuard.hostLabel wrapper, or the canonical refusal message; the regex is tied to the webhook validators' throw strings so content-URL validators and the operator-set SMS provider URL aren't flagged.",
   },
   {
     // An admin handler whose catch branch passes the caught error's raw
@@ -1865,6 +1867,7 @@ var KNOWN_ANTIPATTERNS = [
     // 5xx responses carry NO error-derived detail; the message is recorded
     // server-side (audit) and the client sees a generic code.
     id:        "admin-5xx-echoes-raw-error-message",
+    bugClassDeclared: true,
     primitive: "for a 5xx problem-details response, pass NO error-derived detail — record `e.message` server-side via b.audit.safeEmit(outcome:\"failure\") and return `_problem(res, 5xx, \"<code>\")` with no fourth argument; only 4xx (client-shape) errors may surface their message",
     regex:     /_problem\s*\(\s*res\s*,\s*5\d\d\s*,\s*["'][^"']+["']\s*,\s*(?:\(?\s*e\s*&&\s*e\.message|e\.message|String\s*\(\s*e\s*\))/,
     scanScope: "lib",
@@ -1880,12 +1883,35 @@ var KNOWN_ANTIPATTERNS = [
     // 4217 catalog (b.money.CURRENCIES) — the same surface currency-
     // rounding + display compose.
     id:        "giftcard-issue-without-iso4217-currency-check",
-    primitive: "validate the gift-card currency against b.money.CURRENCIES (ISO 4217 catalog membership) before giftcards.issue(...) — a /^[A-Z]{3}$/ shape check alone issues cards in non-existent currencies",
+    bugClassDeclared: true,
+    primitive: "validate the gift-card currency against b.money.CURRENCIES (ISO 4217 catalog membership) before giftcards.issue(...) — a /^[A-Z]{3}$/ shape check alone issues cards in non-existent currencies; textGuard.currencyCode centralizes the shape + membership check",
     regex:     /giftcards\.issue\s*\(/,
     scanScope: "lib",
-    requires:  /money\.CURRENCIES/,
+    requires:  /money\.CURRENCIES|textGuard\.currencyCode/,
     allowlist: [],
-    reason:    "POST /admin/gift-cards with `currency=ZZZ` returned 201 and issued a card in a non-existent currency — the only gate was the giftcards primitive's `/^[A-Z]{3}$/` shape check. Any lib file that calls `giftcards.issue(...)` MUST first validate the currency against the framework's ISO 4217 catalog (`b.money.CURRENCIES`, the catalog the currency-rounding + currency-display primitives already compose) and refuse unknown codes with a clean 400. The `requires` check exonerates a file that composes `money.CURRENCIES`.",
+    reason:    "POST /admin/gift-cards with `currency=ZZZ` returned 201 and issued a card in a non-existent currency — the only gate was the giftcards primitive's `/^[A-Z]{3}$/` shape check. Any lib file that calls `giftcards.issue(...)` MUST first validate the currency against the framework's ISO 4217 catalog — directly against `b.money.CURRENCIES` (the catalog the currency-rounding + currency-display primitives compose) or through `textGuard.currencyCode`, which runs the shape + membership check in one call — and refuse unknown codes with a clean 400. The `requires` check exonerates a file that composes `money.CURRENCIES` or `textGuard.currencyCode`.",
+  },
+  {
+    // Generalizes the giftcard-specific currency check to every
+    // money-binding issue / grant / credit primitive. Binding a balance
+    // to a currency that only shape-checks (/^[A-Z]{3}$/) lets a
+    // well-formed-but-nonexistent code ("ZZZ") create a balance the rest
+    // of the shop can't price — the same class as the giftcard-ZZZ bug,
+    // one rung up. Any file that issues / grants / credits a money balance
+    // MUST validate the currency against the framework's ISO 4217 catalog
+    // (b.money.CURRENCIES) or the textGuard.currencyCode wrapper that
+    // composes it. The `requires` exoneration keeps shape-only display
+    // sites (the ~50 CURRENCY_RE renderers) out of scope — only a file
+    // that BINDS money is matched, and a file that names the catalog check
+    // is cleared.
+    id:        "money-binding-currency-without-catalog-check",
+    bugClassDeclared: true,
+    primitive: "validate the currency against b.money.CURRENCIES (or textGuard.currencyCode) before any money-binding issue / grant / credit — a /^[A-Z]{3}$/ shape check alone binds a balance to a non-existent currency",
+    regex:     /\b(?:giftcards\.issue|storeCredit\.(?:issue|grant|adjust)|giftCardLedger\.(?:issue|credit))\s*\(/,
+    scanScope: "lib",
+    requires:  /money\.CURRENCIES|textGuard\.currencyCode/,
+    allowlist: [],
+    reason:    "A money-binding call (`giftcards.issue`, `storeCredit.issue/grant/adjust`, `giftCardLedger.issue/credit`) that runs only a `/^[A-Z]{3}$/` shape check on the currency binds a balance to a currency code the catalog doesn't recognize — the giftcard-ZZZ bug, generalized to every issue/grant/credit primitive. Validate the currency against `b.money.CURRENCIES` (ISO 4217 catalog membership) or `textGuard.currencyCode` (which centralizes the shape + membership check) before binding the balance, and refuse unknown codes with a clean 400. The `requires` check exonerates a file that names the catalog composition; the regex matches only money-binding calls, so the shape-only display renderers (`CURRENCY_RE`) aren't flagged.",
   },
   {
     // The returns refund MUTATION (POST) must classify a malformed rma id
@@ -1897,6 +1923,7 @@ var KNOWN_ANTIPATTERNS = [
     // request-shape reader, a different tier — so this detector is scoped
     // tightly to the W("return.refund") mutation.)
     id:        "returns-refund-typeerror-mapped-to-404",
+    bugClassDeclared: true,
     primitive: "let the malformed-id TypeError from returns.get(...) surface as a clean 400 via _wrap (matching approve/received/reject); only a well-formed id that resolves to null is a 404 return-not-found",
     regex:     /W\(\s*["']return\.refund["'][\s\S]{0,400}?returns\.get\([\s\S]{0,200}?TypeError[\s\S]{0,80}?return-not-found/,
     scanScope: "lib",
@@ -1984,6 +2011,14 @@ function run() {
   process.exit(1);
 }
 
-module.exports = { run: run };
+// `KNOWN_ANTIPATTERNS` is exported so the release-time coverage verifier
+// (`scripts/gate-contract.js`) can enumerate the detector ids and assert
+// every declared preventable bug-class still maps to a live detector
+// (and that every `bugClassDeclared` detector is declared in the
+// coverage registry). Requiring this module is side-effect-free when
+// `require.main !== module` — the heap-ceiling self-spawn at the top is
+// a no-op off the entry point, and `run()` only fires on direct
+// invocation.
+module.exports = { run: run, KNOWN_ANTIPATTERNS: KNOWN_ANTIPATTERNS };
 
 if (require.main === module) run();

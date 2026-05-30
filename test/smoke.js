@@ -145,6 +145,12 @@ async function _runLayer(layerNum, layerName) {
   // build stage without network access.
   _gate("worker-syntax", "check-worker-syntax.js", []);
   console.log("  " + _padRight("worker-syntax", 40) + " (ok)");
+  // Gate-contract coverage — every declared preventable bug-class still
+  // maps to a live detector + an enforced gate; new outbound-URL /
+  // money-binding-currency / admin-5xx surfaces that look like they need
+  // a declared gate are surfaced for classification.
+  _gate("gate-contract", "gate-contract.js", []);
+  console.log("  " + _padRight("gate-contract", 40) + " (ok)");
 
   await _runLayer(0, "Layer 0");
   await _runLayer(1, "Layer 1");

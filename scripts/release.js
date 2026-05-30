@@ -246,6 +246,12 @@ function cmdPrepare(opts) {
   // the cut with a paste-ready `uses: owner/repo@<sha>  # vX.Y.Z` line and every
   // file:line using it. Conscious deferral: RELEASE_ALLOW_STALE_PINS=1.
   _run("node", ["scripts/check-currency.js"]);
+  // Gate-contract coverage — asserts every declared preventable bug-class
+  // maps to a live codebase-patterns detector + an enforced gate, and flags
+  // new outbound-URL / money-binding-currency / admin-5xx surfaces that look
+  // like they need a declared gate but aren't covered. Conscious deferral:
+  // RELEASE_ALLOW_GATE_GAPS=1.
+  _run("node", ["scripts/gate-contract.js"]);
   _ok("static gates clean");
 
   console.log("\nnext: node scripts/release.js smoke");
