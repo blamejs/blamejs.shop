@@ -389,6 +389,23 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
         ? bShop.orderTracking.create({ order: order })
         : null;
 
+      // Fulfillment ops — the warehouse-side surfaces over the order +
+      // shipment data. Pick lists consolidate open orders into an aisle-
+      // sequenced picker route (composing order.get + orderTracking for
+      // the on-complete shipment fan-out); shipping labels record a
+      // carrier-minted label against a shipment; split shipments plan +
+      // execute multi-parcel fulfillment (one orderTracking shipment per
+      // parcel). All three only need the externalDb query handle plus the
+      // shared order / orderTracking instances. Every admin route that
+      // reads them degrades gracefully if the backing table is missing.
+      var pickLists      = (catalog && cart && orderTracking)
+        ? bShop.pickLists.create({ order: order, orderTracking: orderTracking })
+        : null;
+      var shippingLabels = (catalog && cart) ? bShop.shippingLabels.create({}) : null;
+      var splitShipments = (catalog && cart && orderTracking)
+        ? bShop.splitShipments.create({ order: order, orderTracking: orderTracking })
+        : null;
+
       // Reporting + printable order documents — operator surfaces over the
       // existing order data. salesReports aggregates pure read-only SQL over
       // orders/order_lines for the /admin/reports screen; printReceipts +
@@ -629,6 +646,9 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           catalog:       catalog,
           order:         order,
           orderTracking: orderTracking,
+          pickLists:      pickLists,
+          shippingLabels: shippingLabels,
+          splitShipments: splitShipments,
           salesReports:  salesReports,
           printReceipts: printReceipts,
           packingSlips:  packingSlips,
