@@ -87,15 +87,14 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.0
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.0.0
         with: { node-version: '24.14.1' }
-      - name: Vendor blamejs (latest tag)
-        # Smoke can't run without a vendored copy; fetch it fresh on
-        # every CI run so we exercise against the latest blamejs
-        # release rather than a stale shrink-wrap. GITHUB_TOKEN raises
-        # the GitHub API rate limit so tag resolution doesn't 403 on
-        # shared runner IP pools (the unauthenticated 60/hr cap).
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/vendor-update.sh blamejs latest
+      - name: Verify the committed vendored blamejs is present
+        # Smoke runs against the COMMITTED lib/vendor/ tree — the exact
+        # tree the Dockerfile copies into the deployed container — so the
+        # gate tests what we ship. Re-fetching `latest` here drifted the
+        # gate ahead of the deployed version and red-lit CI on an upstream
+        # release we hadn't adopted. The `vendor-drift` job keeps the
+        # committed-vs-latest signal as a non-blocking warning.
+        run: test -f lib/vendor/blamejs/lib/app.js || { echo "::error::lib/vendor/blamejs missing from checkout — the vendored tree must be committed"; exit 1; }
         shell: bash
       - name: Run smoke
         env:
