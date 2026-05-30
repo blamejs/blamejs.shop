@@ -1,0 +1,21 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.2.26",
+  "date": "2026-05-29",
+  "headline": "Update the vendored blamejs runtime to v0.13.44",
+  "summary": "The bundled blamejs runtime moves from v0.13.0 to v0.13.44, carrying a run of upstream security and reliability fixes through the crypto, storage, and middleware layers the shop is built on, with no API or configuration changes. Highlights: DNSSEC validation now bounds the work spent on colliding keys and signatures (KeyTrap / NSEC3 resource-exhaustion defense); a sealed database column that fails to unseal now returns null instead of risking forged or cross-row ciphertext; the encrypted database gains a temporary-storage free-space guard and a shutdown watchdog that preserves the final flush on exit; S/MIME chain verification binds the leaf certificate to the verifying signer key; archive extraction refuses Windows reserved and alternate-data-stream path names; and the replay-nonce store is memory-capped and fails closed under flood.",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        { "title": "Bundled blamejs runtime updated to v0.13.44", "body": "Pulls in the upstream security fixes accumulated since v0.13.0: DNSSEC KeyTrap / NSEC3 work caps, sealed-column null-on-unseal-failure (no forged or cross-row ciphertext), S/MIME leaf-to-signer binding, archive-extraction rejection of Windows reserved / alternate-data-stream names, static-file sibling-prefix path containment, and a memory-capped, fail-closed replay-nonce store. No API or configuration changes are required." }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Database reliability under low temporary storage", "body": "The encrypted database now refuses growth-writes with a clear error when its temporary storage drops below a safety headroom (rather than risking corruption), and a shutdown watchdog preserves the final database flush if a shutdown phase hangs. Both harden the container restart path." }
+      ]
+    }
+  ]
+}

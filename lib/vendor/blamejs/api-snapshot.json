@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "frameworkVersion": "0.13.0",
-  "createdAt": "2026-05-26T20:24:46.807Z",
+  "frameworkVersion": "0.13.44",
+  "createdAt": "2026-05-30T00:31:59.364Z",
   "exports": {
     "a2a": {
       "type": "object",
@@ -992,6 +992,10 @@
               "type": "function",
               "arity": 1
             },
+            "derivedKey": {
+              "type": "function",
+              "arity": 2
+            },
             "guards": {
               "type": "object",
               "members": {
@@ -1388,6 +1392,10 @@
             }
           }
         },
+        "aedtBiasAudit": {
+          "type": "function",
+          "arity": 1
+        },
         "aiContentDetect": {
           "type": "object",
           "members": {
@@ -1572,6 +1580,10 @@
               "arity": 1
             }
           }
+        },
+        "frontierModelProtocol": {
+          "type": "function",
+          "arity": 1
         },
         "input": {
           "type": "object",
@@ -6411,6 +6423,10 @@
           "arity": 1
         },
         "tableName": {
+          "type": "function",
+          "arity": 1
+        },
+        "transaction": {
           "type": "function",
           "arity": 1
         }
@@ -13655,6 +13671,10 @@
           "type": "function",
           "arity": 2
         },
+        "exportKey": {
+          "type": "function",
+          "arity": 2
+        },
         "importKey": {
           "type": "function",
           "arity": 1
@@ -13696,6 +13716,43 @@
               "arity": 1
             }
           }
+        }
+      }
+    },
+    "crdt": {
+      "type": "object",
+      "members": {
+        "CrdtError": {
+          "type": "function",
+          "arity": 4
+        },
+        "gCounter": {
+          "type": "function",
+          "arity": 1
+        },
+        "gSet": {
+          "type": "function",
+          "arity": 1
+        },
+        "lwwRegister": {
+          "type": "function",
+          "arity": 1
+        },
+        "orMap": {
+          "type": "function",
+          "arity": 1
+        },
+        "orSet": {
+          "type": "function",
+          "arity": 1
+        },
+        "pnCounter": {
+          "type": "function",
+          "arity": 1
+        },
+        "twoPSet": {
+          "type": "function",
+          "arity": 1
         }
       }
     },
@@ -13999,6 +14056,56 @@
         "verify": {
           "type": "function",
           "arity": 3
+        },
+        "xwing": {
+          "type": "object",
+          "members": {
+            "NAME": {
+              "type": "primitive",
+              "valueType": "string"
+            },
+            "SIZES": {
+              "type": "object",
+              "members": {
+                "ciphertext": {
+                  "type": "primitive",
+                  "valueType": "number"
+                },
+                "publicKey": {
+                  "type": "primitive",
+                  "valueType": "number"
+                },
+                "secretKey": {
+                  "type": "primitive",
+                  "valueType": "number"
+                },
+                "sharedSecret": {
+                  "type": "primitive",
+                  "valueType": "number"
+                }
+              }
+            },
+            "XWingError": {
+              "type": "function",
+              "arity": 4
+            },
+            "combiner": {
+              "type": "function",
+              "arity": 4
+            },
+            "decapsulate": {
+              "type": "function",
+              "arity": 2
+            },
+            "encapsulate": {
+              "type": "function",
+              "arity": 2
+            },
+            "keygen": {
+              "type": "function",
+              "arity": 1
+            }
+          }
         }
       }
     },
@@ -36828,6 +36935,14 @@
           "type": "function",
           "arity": 2
         },
+        "encode": {
+          "type": "function",
+          "arity": 1
+        },
+        "isValid": {
+          "type": "function",
+          "arity": 1
+        },
         "parseString": {
           "type": "function",
           "arity": 1
@@ -37449,6 +37564,67 @@
         "agent": {
           "type": "object",
           "members": {
+            "COMPOSE_HINT": {
+              "type": "object",
+              "members": {
+                "compose": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "export": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "forward": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "identity.set": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "import": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "job": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "mdn.allowList": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "mdn.parse": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "mdn.send": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "reply": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "send": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "sieve.activate": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "sieve.list": {
+                  "type": "primitive",
+                  "valueType": "string"
+                },
+                "vacation.set": {
+                  "type": "primitive",
+                  "valueType": "string"
+                }
+              }
+            },
             "HEAVY_METHODS": {
               "type": "object",
               "members": {
@@ -37558,71 +37734,6 @@
                   "valueType": "string"
                 },
                 "thread": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "vacation.set": {
-                  "type": "primitive",
-                  "valueType": "string"
-                }
-              }
-            },
-            "WIRED_AT": {
-              "type": "object",
-              "members": {
-                "compose": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "export": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "forward": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "identity.set": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "import": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "job": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "mdn.allowList": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "mdn.parse": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "mdn.send": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "reply": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "send": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "sieve.activate": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "sieve.list": {
-                  "type": "primitive",
-                  "valueType": "string"
-                },
-                "sieve.put": {
                   "type": "primitive",
                   "valueType": "string"
                 },
@@ -49629,6 +49740,10 @@
           "type": "function",
           "arity": 1
         },
+        "isInitialized": {
+          "type": "function",
+          "arity": 0
+        },
         "seal": {
           "type": "function",
           "arity": 1
@@ -50347,6 +50462,23 @@
         "create": {
           "type": "function",
           "arity": 2
+        }
+      }
+    },
+    "worm": {
+      "type": "object",
+      "members": {
+        "MODES": {
+          "type": "instance",
+          "ctorName": "Array"
+        },
+        "WormError": {
+          "type": "function",
+          "arity": 4
+        },
+        "create": {
+          "type": "function",
+          "arity": 1
         }
       }
     },
