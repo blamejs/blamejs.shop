@@ -16,6 +16,7 @@
  */
 
 var nodeFs   = require("node:fs");
+var nodeOs   = require("node:os");
 var nodePath = require("node:path");
 var { DatabaseSync } = require("node:sqlite");
 
@@ -111,6 +112,10 @@ function _fakeRouter() {
         params:  opts.params  || {},
         url:     opts.url     || path,
       };
+      // The framework's multipart body-parser sets req.files; the fake
+      // router lets a test pass the parsed-file shape directly so the
+      // media file-upload route can be exercised without a live socket.
+      if (opts.files) req.files = opts.files;
       var sent = { status: 0, body: null, headers: {} };
       var res = {
         // Node's res interface uses `res.statusCode = N`; framework
@@ -545,6 +550,113 @@ async function _factoryValidation() {
   assert.throws(function () { bShop.admin.mount(router, { catalog: catalog, order: order, token: "short" }); },   /deps\.token/);
 }
 
+// A 1x1 PNG (valid magic bytes + IHDR + IDAT) — small enough to inline,
+// real enough for b.fileType.detect to classify as image/png.
+var TINY_PNG = Buffer.from(
+  "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489" +
+  "0000000a49444154789c6360000002000100ffff", "hex");
+// GIF89a header — sniffs as image/gif, used to drive the
+// declared-vs-detected mismatch path (uploaded as image/png).
+var TINY_GIF = Buffer.from("474946383961", "hex");
+
+// Write a buffer to a fresh tmp file and return the multipart-file shape
+// the framework body-parser produces (field / filename / mimeType / path
+// / size / hash). The file-upload route reads file.path back off disk.
+function _fileFixture(buf, mimeType, filename) {
+  var p = nodePath.join(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-admin-upload-")), filename || "upload.bin");
+  nodeFs.writeFileSync(p, buf);
+  return { field: "file", filename: filename || "upload.bin", mimeType: mimeType, path: p, size: buf.length, hash: "" };
+}
+
+async function _mediaFileUpload() {
+  var query   = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query });
+  var order   = bShop.order.create({ query: query });
+  var prod    = await catalog.products.create({ slug: "upload-target", title: "Upload Target", status: "active" });
+
+  // Mock r2_bridge: records every put, returns the bridge's success shape.
+  var puts = [];
+  var r2Mock = {
+    put: async function (key, body, contentType) {
+      puts.push({ key: key, size: body.length, contentType: contentType });
+      return { ok: true, key: key, size: body.length };
+    },
+  };
+
+  var router = _fakeRouter();
+  bShop.admin.mount(router, { token: TOKEN, catalog: catalog, order: order, r2_bridge: r2Mock, asset_prefix: "/assets/" });
+  var auth = { authorization: "Bearer " + TOKEN };
+  var P = "/admin/products/" + prod.id + "/media/upload-file";
+
+  // Happy path: a valid PNG attaches the media row + stores to R2.
+  var okFile = _fileFixture(TINY_PNG, "image/png", "hero.png");
+  var ok = await router._call("POST", P, { headers: auth, files: [okFile], params: { id: prod.id }, body: { alt_text: "Hero" } });
+  check("file upload returns 201",            ok.status === 201);
+  var rec = JSON.parse(ok.body);
+  check("file upload stored to R2",           puts.length === 1 && /^media\/.*\.png$/.test(puts[0].key));
+  check("file upload put used declared CT",   puts[0].contentType === "image/png");
+  check("file upload attached media row",     rec.r2_key === puts[0].key && rec.content_type === "image/png");
+  check("file upload exposed asset_url",      rec.asset_url === "/assets/" + puts[0].key);
+  check("file upload kept alt text",          rec.alt_text === "Hero");
+  var mediaRows = await catalog.media.listForProduct(prod.id);
+  check("file upload media persisted",        mediaRows.length === 1 && mediaRows[0].r2_key === puts[0].key);
+
+  // Disallowed content-type → 415, nothing stored.
+  var pdfFile = _fileFixture(Buffer.from("%PDF-1.4\n"), "application/pdf", "doc.pdf");
+  var badType = await router._call("POST", P, { headers: auth, files: [pdfFile], params: { id: prod.id }, body: {} });
+  check("disallowed type → 415",              badType.status === 415);
+  check("disallowed type stored nothing",     puts.length === 1);
+
+  // Content-type / magic-byte mismatch: GIF bytes labelled image/png → 422.
+  var mismatch = _fileFixture(TINY_GIF, "image/png", "fake.png");
+  var mm = await router._call("POST", P, { headers: auth, files: [mismatch], params: { id: prod.id }, body: {} });
+  check("CT/magic mismatch → 422",            mm.status === 422);
+  check("mismatch stored nothing",            puts.length === 1);
+
+  // Oversized file (size header beyond the 10 MiB media cap) → 413. Use a
+  // small on-disk buffer but an inflated size field so the cap trips on the
+  // declared size before the bytes are read back.
+  var bigFile = _fileFixture(TINY_PNG, "image/png", "big.png");
+  bigFile.size = bShop.framework.constants.BYTES.mib(11);
+  var big = await router._call("POST", P, { headers: auth, files: [bigFile], params: { id: prod.id }, body: {} });
+  check("oversized file → 413",               big.status === 413);
+  check("oversized stored nothing",           puts.length === 1);
+
+  // No file part → 400.
+  var noFile = await router._call("POST", P, { headers: auth, files: [], params: { id: prod.id }, body: {} });
+  check("missing file → 400",                 noFile.status === 400);
+
+  // No product/variant target (JSON API route, no path id) → 400.
+  var noTarget = await router._call("POST", "/admin/media/upload-file", { headers: auth, files: [_fileFixture(TINY_PNG, "image/png", "x.png")], body: {} });
+  check("missing target → 400",               noTarget.status === 400);
+
+  // SVG: text body (no magic bytes) is accepted on the declared type — the
+  // mismatch cross-check is skipped, matching the upload-from-URL flow.
+  var svgFile = _fileFixture(Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"), "image/svg+xml", "icon.svg");
+  var svg = await router._call("POST", P, { headers: auth, files: [svgFile], params: { id: prod.id }, body: {} });
+  check("svg upload accepted (201)",          svg.status === 201);
+  check("svg stored as .svg key",             puts.length === 2 && /\.svg$/.test(puts[1].key));
+
+  // Bearer JSON API route with explicit product_id field works too.
+  var apiFile = _fileFixture(TINY_PNG, "image/png", "api.png");
+  var api = await router._call("POST", "/admin/media/upload-file", { headers: auth, files: [apiFile], body: { product_id: prod.id } });
+  check("API file upload returns 201",        api.status === 201);
+}
+
+async function _mediaFileUploadAbsent() {
+  // No r2_bridge dep → the file-upload routes must not mount.
+  var query   = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query });
+  var order   = bShop.order.create({ query: query });
+  var router  = _fakeRouter();
+  bShop.admin.mount(router, { token: TOKEN, catalog: catalog, order: order });
+
+  check("no-bridge: api file route absent",     !router._routes["POST /admin/media/upload-file"]);
+  check("no-bridge: product file route absent", !router._routes["POST /admin/products/:id/media/upload-file"]);
+  // The URL-upload routes are equally gated on the bridge.
+  check("no-bridge: api url route absent",      !router._routes["POST /admin/media/upload"]);
+}
+
 async function run() {
   await _bearerGate();
   await _productCRUD();
@@ -553,6 +665,8 @@ async function run() {
   await _reviewsAbsent();
   await _returnModeration();
   await _returnsAbsent();
+  await _mediaFileUpload();
+  await _mediaFileUploadAbsent();
   await _factoryValidation();
 }
 
