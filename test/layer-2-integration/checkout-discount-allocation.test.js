@@ -194,6 +194,14 @@ async function _run() {
   var alloced = rec.breakdown.map(function (l) { return l.allocated_minor; }).sort(function (a, c) { return a - c; });
   check("proportional split is exactly 750 / 1250",   alloced[0] === 750 && alloced[1] === 1250);
 
+  // The breakdown keys on the PERSISTED order-line ids (not cart-line ids), so
+  // a later partial refund — which operates on order lines — can apply it
+  // directly. The recorded line_ids must be exactly the placed order's lines.
+  var orderLineIds     = placed.lines.map(function (l) { return l.id; }).sort();
+  var breakdownLineIds = rec.breakdown.map(function (e) { return e.line_id; }).sort();
+  check("breakdown keys on the persisted order-line ids",
+    JSON.stringify(breakdownLineIds) === JSON.stringify(orderLineIds));
+
   // ---- (c) a throwing recordAllocation never fails the order ----------
   // evaluate SUCCEEDS so the recorder runs; recordAllocation throws — the
   // order must still place and persist the discount (drop-silent).
