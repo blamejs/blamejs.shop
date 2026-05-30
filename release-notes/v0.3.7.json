@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.7",
+  "date": "2026-05-30",
+  "headline": "Shipping zones now apply at checkout",
+  "summary": "The shipping zones you define in the admin console — per-region rates by destination, parcel weight, and order value — now drive the shipping options shown at checkout. When a cart's destination matches a zone, the shopper sees that zone's rates; when no zone matches, or none are defined, checkout falls back to the existing flat-rate table exactly as before, so a store that has not configured zones is entirely unaffected. A fully digital order is never quoted physical shipping. The admin screen for managing zones already shipped; this wires it through to the checkout quote.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Zone-based shipping rates at checkout", "body": "When a cart's destination matches a configured shipping zone, the checkout shipping quote uses that zone's rates — resolved by destination country and region, parcel weight, and order subtotal — instead of the flat-rate table. With no matching zone, or no zones defined, checkout returns the existing flat rates unchanged, so the change stays invisible until you set zones up; any lookup error degrades to the same flat fallback. A fully digital order (no shipping-requiring item) is never quoted physical shipping." }
+      ]
+    }
+  ]
+}

@@ -31,7 +31,108 @@ var b     = bShop.framework;
 var PORT     = parseInt(process.env.PORT || "8080", 10);
 var DATA_DIR = process.env.DATA_DIR || "./data";
 
-(async function main() {
+// ISO 3166-2 subdivision codes the shippingZones engine accepts (the
+// country prefix stripped). The checkout ship_to.state field is wider
+// (up to 5 chars) than a zone region (1-3), so a too-long / off-shape
+// state is passed as a region-less lookup — country-only zones still
+// match, and the engine never throws on an out-of-shape region.
+var ZONE_REGION_RE = /^[A-Z0-9]{1,3}$/;
+
+// Translate a checkout shipping ctx into shippingZones.rateFor params,
+// run the lookup, and map any matching zone rows into the same
+// { id, label, amount_minor } service shape the config-services
+// adapter returns. Returns [] (so the caller falls back to the flat
+// config-services table) when no zone covers the destination, no rate
+// row matches, the cart currency can't be read, or the lookup throws.
+//
+// Pure read of operator-defined rate tables — it never reaches the
+// order-total / tax / discount / payment math; it only sources the
+// list of shipping services the shopper picks from. Any failure
+// degrades to the fallback rather than surfacing a 5xx at the till.
+async function _zoneShippingRates(shippingZones, ctx) {
+  if (!shippingZones || !ctx || typeof ctx !== "object") return [];
+  var shipTo = ctx.shipTo;
+  if (!shipTo || typeof shipTo !== "object") return [];
+  if (typeof shipTo.country !== "string") return [];
+
+  // Currency rides on the cart lines (unit_currency), not on the ctx
+  // root. Read it off the first line; absent a usable currency there's
+  // nothing to match a zone rate against, so fall back.
+  var lines = Array.isArray(ctx.lines) ? ctx.lines : [];
+
+  // Mirror the flat adapter's digital-only gate (lib/shipping.js): a cart with
+  // no shipping-requiring line must NOT be quoted physical zone rates. Return
+  // empty so the fallback applies its digital-only (no-charge) path instead.
+  var anyShippable = lines.some(function (l) {
+    return l && (l.requires_shipping === undefined ? true : !!l.requires_shipping);
+  });
+  if (!anyShippable) return [];
+
+  var currency = "";
+  for (var ci = 0; ci < lines.length; ci += 1) {
+    if (lines[ci] && typeof lines[ci].unit_currency === "string" && lines[ci].unit_currency) {
+      currency = lines[ci].unit_currency.toUpperCase();
+      break;
+    }
+  }
+  if (!currency) return [];
+
+  // Total parcel weight = sum of (per-variant weight * qty) over the
+  // shipping-requiring lines. A line missing a weight contributes 0,
+  // matching the flat-rate adapter's own weight accounting.
+  var weightGrams = 0;
+  for (var wi = 0; wi < lines.length; wi += 1) {
+    var line = lines[wi];
+    if (!line || line.requires_shipping === false) continue;
+    var w = Number(line.weight_grams);
+    var q = Number(line.qty);
+    if (!isFinite(w) || w < 0) w = 0;
+    if (!isFinite(q) || q < 1) q = 1;   // missing/degenerate qty defaults to 1, matching the flat adapter (l.qty || 1)
+    weightGrams += Math.round(w) * Math.round(q);
+  }
+
+  var orderMinor = Number(ctx.subtotal_minor);
+  if (!isFinite(orderMinor) || orderMinor < 0) orderMinor = 0;
+
+  var region = (typeof shipTo.state === "string" && ZONE_REGION_RE.test(shipTo.state))
+    ? shipTo.state
+    : undefined;
+
+  var rows;
+  try {
+    rows = await shippingZones.rateFor({
+      destination_country: shipTo.country,
+      destination_region:  region,
+      weight_grams:        weightGrams,
+      order_minor:         orderMinor,
+      currency:            currency,
+    });
+  } catch (_e) {
+    // Bad destination shape, out-of-range weight, or any engine error —
+    // degrade to the config-services fallback, never a 5xx.
+    return [];
+  }
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+
+  // Map each zone rate row onto the checkout service shape. The id is
+  // deterministic (zone slug + position in the already-sorted result)
+  // so the same lookup re-run at confirm time resolves the shopper's
+  // selected_shipping_id to the same rate.
+  var out = [];
+  for (var ri = 0; ri < rows.length; ri += 1) {
+    var r = rows[ri];
+    out.push({
+      id:           "zone-" + r.zone_slug + "-" + ri,
+      label:        r.service_label,
+      amount_minor: r.rate_minor,
+      free:         r.rate_minor === 0,
+      jurisdiction: shipTo.country,
+    });
+  }
+  return out;
+}
+
+async function main() {
   // createApp's secure defaults unlock TWO wrapped components at boot — the
   // vault AND the audit-signing keypair — and the framework reads their
   // passphrases from BLAMEJS_VAULT_PASSPHRASE / BLAMEJS_AUDIT_SIGNING_PASSPHRASE.
@@ -1016,6 +1117,20 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
           var sfShipping = {
             name: "configured",
             rates: async function (ctx) {
+              // Operator-defined shipping zones take precedence over the
+              // flat config-services table WHEN a zone covers the
+              // destination AND a rate row matches the (weight, order
+              // value, currency) tuple. Anything else — no zones
+              // defined, destination outside every zone, no matching
+              // rate row, or any lookup error — falls through to the
+              // config-services adapter unchanged, so a store with no
+              // zones configured keeps its existing shipping quote.
+              if (shippingZones) {
+                var zoneServices = await _zoneShippingRates(shippingZones, ctx);
+                if (zoneServices && zoneServices.length) {
+                  return { services: zoneServices };
+                }
+              }
               var services = await config.get("shipping.services", DEFAULT_SHIPPING_SERVICES);
               var adapter = bShop.shipping.create({ services: services });
               return await adapter.rates(ctx);
@@ -1170,8 +1285,17 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
   }
   process.on("SIGTERM", function () { _drain("SIGTERM"); });
   process.on("SIGINT",  function () { _drain("SIGINT");  });
-})().catch(function (err) {
-  process.stderr.write("[server] failed to start: " + (err && err.message || err) + "\n");
-  if (err && err.stack) process.stderr.write(err.stack + "\n");
-  process.exit(1);
-});
+}
+
+// Boot only when run as the entry point (`node server.js`). Requiring
+// this file (the shipping-zone rate mapper is exercised in tests) must
+// not start the listener.
+if (require.main === module) {
+  main().catch(function (err) {
+    process.stderr.write("[server] failed to start: " + (err && err.message || err) + "\n");
+    if (err && err.stack) process.stderr.write(err.stack + "\n");
+    process.exit(1);
+  });
+}
+
+module.exports = { _zoneShippingRates: _zoneShippingRates };
