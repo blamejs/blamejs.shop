@@ -342,6 +342,125 @@ async function _productAvailabilityParity() {
   check("container low-stock badge shows Only 3 left",          (_availBlock(cLow) || "").indexOf("Only 3 left") !== -1);
 }
 
+// Dual-render parity + functional shape for the no-JS image gallery. A
+// multi-image product renders one radio + one stacked main image + one
+// `<label for>` thumbnail PER media row (the radio/label `for` wiring is
+// what makes the pure-CSS `:checked` swap work — no JS island). The first
+// radio is checked, there are exactly N thumbnails (no empty-slot
+// padding), and the two substrates emit the gallery byte-for-byte. A
+// single-image product renders no thumbnail strip.
+async function _productGalleryParity() {
+  var fs       = require("fs");
+  var path     = require("path");
+  var nodeModule = require("node:module");
+  var nodeUrl    = require("node:url");
+
+  var edgeProductPath = path.join(__dirname, "..", "..", "worker", "render", "product.js");
+  if (!fs.existsSync(edgeProductPath)) return;
+  nodeModule.registerHooks({
+    resolve: function (spec, ctx, next) {
+      var r = next(spec, ctx);
+      if (r.url && r.url.slice(-5) === ".json") r.importAttributes = { type: "json" };
+      return r;
+    },
+  });
+  var edgeProduct = await import(nodeUrl.pathToFileURL(edgeProductPath).href);
+
+  var media = [
+    { r2_key: "products/a.svg", alt_text: "Alpha art" },
+    { r2_key: "products/b.svg", alt_text: "Beta art" },
+    { r2_key: "products/c.svg", alt_text: null },
+  ];
+  var base = {
+    product:  { id: "p1", slug: "widget-pro", title: "Widget Pro", description: "The pro variant of the widget." },
+    variants: [{ id: "v1", sku: "WDG-PRO-BLK-L", title: "Black / Large" }],
+    prices:   { v1: { amount_minor: 2999, currency: "USD" } },
+  };
+
+  // Slice the `.pdp__gallery` block (the figure + radios + thumbnail
+  // strip) out of the full page so the parity assertion compares only the
+  // gallery markup the two builders produce.
+  function _galleryBlock(html) {
+    var open = "<div class=\"pdp__gallery\">";
+    var start = html.indexOf(open);
+    if (start === -1) return null;
+    var end = html.indexOf("<div class=\"pdp__info\">", start);
+    return end === -1 ? null : html.slice(start + open.length, end);
+  }
+
+  var cHtml = storefront.renderProduct(Object.assign({}, base, { media: media, shop_name: "Acme", asset_prefix: "/assets/" }));
+  var eHtml = edgeProduct.renderProduct(Object.assign({}, base, { media: media, shopName: "Acme", assetPrefix: "/assets/", version: "test" }));
+  var cGal = _galleryBlock(cHtml);
+  var eGal = _galleryBlock(eHtml);
+
+  // (a) dual-render parity.
+  check("container PDP emits the gallery block",   cGal !== null);
+  check("edge PDP emits the gallery block",         eGal !== null);
+  check("edge + container PDP gallery is byte-identical", cGal === eGal);
+
+  // (b) exactly N thumbnails, ZERO empty <li> padding.
+  function _count(haystack, needle) {
+    var n = 0, i = 0;
+    while ((i = haystack.indexOf(needle, i)) !== -1) { n += 1; i += needle.length; }
+    return n;
+  }
+  check("gallery renders exactly 3 thumbnail labels", _count(cGal, "<label class=\"pdp__thumb\"") === 3);
+  check("gallery has no empty <li> padding",           /<li>\s*<\/li>/.test(cGal) === false);
+  check("gallery has exactly 3 list items",            _count(cGal, "<li>") === 3);
+
+  // (c) each thumbnail is a <label for> bound to a radio (interactive,
+  //     not a bare img) — the for/id wiring that drives the CSS swap.
+  check("thumbnails are labels bound to radios", cGal.indexOf("<label class=\"pdp__thumb\" for=\"pdp-img-0\">") !== -1 &&
+                                                  cGal.indexOf("<label class=\"pdp__thumb\" for=\"pdp-img-1\">") !== -1 &&
+                                                  cGal.indexOf("<label class=\"pdp__thumb\" for=\"pdp-img-2\">") !== -1);
+  check("each label's radio target exists",      cGal.indexOf("id=\"pdp-img-0\"") !== -1 &&
+                                                  cGal.indexOf("id=\"pdp-img-1\"") !== -1 &&
+                                                  cGal.indexOf("id=\"pdp-img-2\"") !== -1);
+  check("thumbnail strip is NOT aria-hidden",    cGal.indexOf("<ul class=\"pdp__thumbs\" aria-hidden") === -1);
+  check("thumbnails carry an accessible name",   _count(cGal, "<span class=\"sr-only\">Show image ") === 3);
+
+  // (d) all N images present, each carrying its alt text (the hero uses
+  //     its own alt, the alt-less row falls back to the product title).
+  check("gallery stacks 3 main images",          _count(cGal, "<img class=\"pdp__img\"") === 3);
+  check("hero image carries its alt text",        cGal.indexOf("alt=\"Alpha art\"") !== -1);
+  check("second image carries its alt text",      cGal.indexOf("alt=\"Beta art\"") !== -1);
+  check("alt-less image falls back to the title", cGal.indexOf("src=\"/assets/products/c.svg\" alt=\"Widget Pro\"") !== -1);
+  check("hero loads eager, the rest lazy",        _count(cGal, "loading=\"eager\"") === 1 && _count(cGal, "loading=\"lazy\"") === 2);
+
+  // (e) the first radio is checked on load.
+  check("first radio is checked",                 cGal.indexOf("id=\"pdp-img-0\" checked>") !== -1);
+  check("only the first radio is checked",         _count(cGal, " checked>") === 1);
+
+  // A single-image product renders the image with NO thumbnail strip.
+  var c1 = storefront.renderProduct(Object.assign({}, base, { media: [media[0]], shop_name: "Acme" }));
+  var e1 = edgeProduct.renderProduct(Object.assign({}, base, { media: [media[0]], shopName: "Acme", version: "test" }));
+  var c1Gal = _galleryBlock(c1);
+  check("1-image PDP gallery is byte-identical",  c1Gal === _galleryBlock(e1));
+  check("1-image PDP renders no thumbnail strip", c1Gal.indexOf("pdp__thumbs") === -1);
+  check("1-image PDP still stacks the one image", _count(c1Gal, "<img class=\"pdp__img\"") === 1);
+  check("1-image PDP checks its single radio",     c1Gal.indexOf("id=\"pdp-img-0\" checked>") !== -1);
+
+  // No-media product keeps the letter-mark placeholder with NO thumb strip.
+  var c0 = storefront.renderProduct(Object.assign({}, base, { media: [], shop_name: "Acme" }));
+  var c0Gal = _galleryBlock(c0);
+  check("no-media PDP keeps the placeholder figure", c0Gal.indexOf("pdp__media--placeholder") !== -1);
+  check("no-media PDP renders no thumbnail strip",    c0Gal.indexOf("pdp__thumbs") === -1);
+
+  // A product with MORE than 12 media renders at most 12: the CSS picker only
+  // maps :checked radios through nth-of-type(12), so a 13th thumbnail would
+  // check a radio with no visibility rule and blank the gallery. The builders
+  // cap the rendered radios/images/thumbnails to the CSS rule count.
+  var many = [];
+  for (var mi = 0; mi < 15; mi += 1) many.push({ r2_key: "products/m" + mi + ".svg", alt_text: "Image " + mi });
+  var cManyGal = _galleryBlock(storefront.renderProduct(Object.assign({}, base, { media: many, shop_name: "Acme" })));
+  var eManyGal = _galleryBlock(edgeProduct.renderProduct(Object.assign({}, base, { media: many, shopName: "Acme", version: "test" })));
+  check("over-cap gallery is byte-identical",             cManyGal === eManyGal);
+  check("over-cap gallery renders exactly 12 thumbnails", _count(cManyGal, "<label class=\"pdp__thumb\"") === 12);
+  check("over-cap gallery stacks exactly 12 images",      _count(cManyGal, "<img class=\"pdp__img\"") === 12);
+  check("over-cap gallery has no 13th radio",             cManyGal.indexOf("id=\"pdp-img-12\"") === -1);
+  check("over-cap gallery still checks only the first",   _count(cManyGal, " checked>") === 1);
+}
+
 // JSON-LD `</script>` breakout neutralization — both render paths.
 // Admin-controlled product fields (title / description) flow into the
 // Product + BreadcrumbList JSON-LD. The HTML tokenizer ends a <script>
@@ -1141,6 +1260,7 @@ async function run() {
   await _productRelated();
   await _productRelatedParity();
   await _productAvailabilityParity();
+  await _productGalleryParity();
   await _jsonLdScriptBreakout();
   await _cart();
   await _cartTotalsEstimate();

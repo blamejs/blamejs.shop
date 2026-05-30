@@ -109,6 +109,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "suppress the vendored default's inert Document-Policy (securityHeadersOpts → documentPolicy:false) and emit none at the edge; the recognized feature set is force-load-at-top / js-profiling / include-js-call-stacks-in-crash-reports / expect-no-linked-resources / network-efficiency-guardrails — assert one of those or send no header",
   },
+  {
+    bugClass: "PDP image gallery is decorative-only — aria-hidden thumbnail strip with non-interactive tiles padded to fixed empty slots",
+    detector: "pdp-gallery-inert-thumbnail-strip",
+    gate:     "codebase-patterns",
+    note:     "render the thumbnail strip as a focusable <ul.pdp__thumbs> of <label for> controls bound to hidden radios (no aria-hidden, no empty-<li> padding) so the gallery is a working no-JS CSS-:checked picker — exactly N thumbnails, no strip for a lone image",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
