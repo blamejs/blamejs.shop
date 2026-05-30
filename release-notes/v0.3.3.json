@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.3",
+  "date": "2026-05-30",
+  "headline": "Manage quantity-break (volume) pricing from the admin console",
+  "summary": "The admin console gains a Quantity breaks section for creating and managing volume-pricing tier sets — buy-more-save-more rules scoped to a SKU, product, collection, vendor, category, or the whole store. Each set defines one or more quantity thresholds (e.g. buy 5, buy 10) with a percentage off, an amount off each unit, an amount off the line, or a fixed per-unit price, and can be marked exclusive or left to stack with others. A sample-price preview shows the discounted unit at each threshold before you commit, and sets archive and restore. The tiers take effect immediately on the product page, in the cart, and at checkout.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Quantity Breaks admin console", "body": "A new Quantity breaks section manages volume-pricing tier sets: create a set scoped to a SKU, product, collection, vendor, category, or globally; define one or more quantity thresholds with a percent-off, amount-off-each, amount-off-line, or fixed-per-unit discount; mark a set exclusive or let it stack. A sample-price preview shows the discounted unit at each threshold, and sets archive and restore. The tiers apply automatically on the product page, the cart, and at checkout." }
+      ]
+    }
+  ]
+}
