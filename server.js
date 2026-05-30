@@ -1158,6 +1158,7 @@ async function main() {
             customers: sfDeps.customers, paypal: sfPaypal,
             giftcards: giftcards, giftCardLedger: giftCardLedger,
             loyalty: loyalty, quantityDiscounts: quantityDiscounts,
+            autoDiscount: autoDiscount,
           });
           sfDeps.payment           = sfPayment;
           sfDeps.paypal            = sfPaypal;
