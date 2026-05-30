@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.4",
+  "date": "2026-05-30",
+  "headline": "Sales-tax filings and remittance tracking in the admin console",
+  "summary": "The admin console gains a Tax filings section for tracking sales-tax remittance across reporting periods. Open a filing period for a jurisdiction, compute the tax collected from completed orders in that window, then record the submission and the payment as you remit. Each filing carries a per-rate breakdown and an audit trail, and the list surfaces what's due soon or already overdue. A per-jurisdiction remittance report totals the tax owed across a date range. Every figure derives from completed orders — nothing in the storefront, cart, or checkout changes.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Tax filings admin console", "body": "A new Tax filings section tracks sales-tax remittance: open a filing period for a jurisdiction and reporting kind, compute the tax collected from completed orders in the window with a per-rate breakdown, then record submission and payment through the filing lifecycle. The list surfaces filings due soon or overdue, and a remittance report totals tax owed per jurisdiction across a date range. This is reporting only — it reads completed orders and changes nothing in checkout." }
+      ]
+    }
+  ]
+}
