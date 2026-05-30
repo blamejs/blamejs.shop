@@ -170,14 +170,18 @@ async function _run() {
     var prodApi = await helpers.httpRequest({ port: port, path: "/admin/products", headers: bearer });
     check("products API still JSON for bearer",  (prodApi.headers["content-type"] || "").indexOf("application/json") === 0);
 
-    // Create a product via the browser form → PRG redirect, then it shows.
+    // Create a product via the browser form → PRG redirect straight to the
+    // new product's detail screen, where the created banner guides setup.
     var createP = await helpers.httpRequest({ port: port, path: "/admin/products", method: "POST", jar: jar,
       form: { title: "Console Widget", slug: "console-widget", status: "active" } });
     check("product create then 303",           createP.status === 303);
-    check("product create redirects created",   (createP.headers.location || "").indexOf("/admin/products?created=1") === 0);
-    var prodList = await helpers.httpRequest({ port: port, path: "/admin/products?created=1", jar: jar });
+    var createdLoc = createP.headers.location || "";
+    check("product create redirects to detail", /^\/admin\/products\/[^/?]+\?created=1$/.test(createdLoc));
+    var prodDetail = await helpers.httpRequest({ port: port, path: createdLoc, jar: jar });
+    check("created product detail shows it",     prodDetail.body.indexOf("Console Widget") !== -1);
+    check("created banner guides next steps",    prodDetail.body.indexOf("Product created") !== -1);
+    var prodList = await helpers.httpRequest({ port: port, path: "/admin/products", jar: jar });
     check("created product in the list",        prodList.body.indexOf("Console Widget") !== -1);
-    check("created banner shows",               prodList.body.indexOf("Product created") !== -1);
     // Bad create (missing slug) re-renders with a notice, not a 500.
     var badCreate = await helpers.httpRequest({ port: port, path: "/admin/products", method: "POST", jar: jar, form: { title: "No Slug" } });
     check("bad product create then 400",        badCreate.status === 400);
