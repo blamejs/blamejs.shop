@@ -125,15 +125,22 @@ export function minifyHtml(html) {
 
 // Schema.org JSON-LD `<script type="application/ld+json">` block.
 // `JSON.stringify` covers the standard escapes (`"` / `\`); the
-// `</` → `<\/` rewrite neutralises any literal `</script>` that
-// could appear in a value (Schema.org doesn't ship strings with
-// HTML in the supported field set, but the rewrite is the canonical
-// XSS defense for inline JSON-in-HTML and costs one regex pass).
+// `</script` → `<\/script` rewrite neutralises any literal closing tag
+// that could appear in a value. The HTML tokenizer ends a <script> on
+// `</script` followed by whitespace, `/`, or `>`, so matching only the
+// exact `</script>` byte sequence misses `</script `, `</script\n`,
+// `</script/` — all of which still break out. Matching `</script` (any
+// trailing byte) closes every variant. Schema.org doesn't ship strings
+// with HTML in the supported field set, but the rewrite is the
+// canonical defense for inline JSON-in-HTML and costs one regex pass.
+// Mirrors the container renderer's `_jsonLdScript` byte-for-byte (this
+// output is dual-rendered; the render-parity tests gate on the two
+// agreeing).
 export function jsonLdScript(data) {
   if (data == null || typeof data !== "object") {
     throw new TypeError("jsonLdScript: data must be a non-null object");
   }
-  var serialised = JSON.stringify(data).replace(/<\/(?=script>)/gi, "<\\/");
+  var serialised = JSON.stringify(data).replace(/<\/script/gi, "<\\/script");
   return "<script type=\"application/ld+json\">" + serialised + "</script>";
 }
 

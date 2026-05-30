@@ -65,6 +65,26 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
   var catalog = null;
   var cart    = null;
   if (process.env.D1_BRIDGE_URL && process.env.D1_BRIDGE_SECRET) {
+    // Entropy floor on the bridge secret. The Worker route POST
+    // /_/db/query is a single-statement SQL oracle on the live D1, and
+    // the same secret authorizes /_/r2/put + /_/low-stock-alert, so a
+    // weak/guessable secret hands an attacker the whole backend. Flag
+    // anything shorter than 32 characters — the deploy recipe generates
+    // `randomBytes(32).toString("base64url")` (43 chars), so a documented
+    // deploy clears this comfortably. This is a loud boot WARNING rather
+    // than a hard refusal: the live secret's length can't be verified out
+    // of band at deploy time, so failing the boot on this check would risk
+    // wedging an otherwise-healthy deploy. The warning keeps a weak secret
+    // visible in the boot log; regenerate it to clear the warning.
+    // Enforced only in production: local/e2e boot over http with short
+    // test secrets and must keep working.
+    if (process.env.NODE_ENV === "production" && process.env.D1_BRIDGE_SECRET.length < 32) {
+      process.stderr.write(
+        "[server] WARNING: D1_BRIDGE_SECRET is too short (" + process.env.D1_BRIDGE_SECRET.length +
+        " chars) — it authorizes the worker DB/R2 bridge and should be at least 32 characters. " +
+        "Regenerate with: node -e \"process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))\"\n",
+      );
+    }
     var d1 = bShop.externaldbD1.create({
       mode:         "service-binding",
       bridgeUrl:    process.env.D1_BRIDGE_URL,

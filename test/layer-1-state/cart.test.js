@@ -103,15 +103,57 @@ async function _crud() {
   var lines = await cart.listLines(c.id);
   check("cart.listLines returns both", lines.length === 2);
 
-  // Update line qty
-  var u = await cart.updateLine(l1.id, { qty: 5 });
+  // Update line qty — scoped to the owning cart
+  var u = await cart.updateLine(l1.id, c.id, { qty: 5 });
   check("cart.updateLine changes qty", u.qty === 5);
 
-  // Remove line
-  var removed = await cart.removeLine(l2.id);
+  // Remove line — scoped to the owning cart
+  var removed = await cart.removeLine(l2.id, c.id);
   check("cart.removeLine returns true",       removed === true);
   var afterRm = await cart.listLines(c.id);
   check("cart.removeLine actually removes",    afterRm.length === 1);
+}
+
+// Cart-line mutations are scoped to (lineId, cartId): a caller who knows
+// another session's cart_lines.id (it's rendered in their own cart HTML
+// as the update/remove form action) must not be able to mutate or delete
+// it. Cross-cart ids become no-ops; the owner's own mutations still work.
+async function _lineMutationCartScope() {
+  var query = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query });
+  var cart    = bShop.cart.create({ query: query, catalog: catalog });
+  var { v1, v2 } = await _setupCatalog(catalog);
+
+  // Two independent session carts ("victim" + "attacker").
+  var victimCart   = await cart.create(_newSessionId(), { currency: "USD" });
+  var attackerCart = await cart.create(_newSessionId(), { currency: "USD" });
+
+  var victimLine = await cart.addLine(victimCart.id, { variant_id: v1.id, qty: 2 });
+  await cart.addLine(attackerCart.id, { variant_id: v2.id, qty: 1 });
+
+  // Attacker tries to update the victim's line through the attacker's
+  // own cart id → no-op (returns null), victim's qty unchanged.
+  var crossUpd = await cart.updateLine(victimLine.id, attackerCart.id, { qty: 99 });
+  check("updateLine cross-cart is a no-op (null)", crossUpd === null);
+  var victimAfterUpd = (await cart.listLines(victimCart.id))[0];
+  check("updateLine cross-cart leaves victim qty",  victimAfterUpd.qty === 2);
+
+  // Attacker tries to remove the victim's line → no-op (returns false),
+  // line still present.
+  var crossRem = await cart.removeLine(victimLine.id, attackerCart.id);
+  check("removeLine cross-cart is a no-op (false)", crossRem === false);
+  check("removeLine cross-cart leaves victim line", (await cart.listLines(victimCart.id)).length === 1);
+
+  // The owner can still mutate + remove their own line.
+  var ownUpd = await cart.updateLine(victimLine.id, victimCart.id, { qty: 4 });
+  check("updateLine same-cart still works",         ownUpd && ownUpd.qty === 4);
+  var ownRem = await cart.removeLine(victimLine.id, victimCart.id);
+  check("removeLine same-cart still works",         ownRem === true);
+  check("removeLine same-cart empties victim cart", (await cart.listLines(victimCart.id)).length === 0);
+
+  // cartId is required — a missing/garbage cart id is rejected.
+  await assert.rejects(cart.updateLine(victimLine.id, "not-a-uuid", { qty: 1 }), /cart: cart_id/);
+  await assert.rejects(cart.removeLine(victimLine.id, "not-a-uuid"), /cart: cart_id/);
 }
 
 async function _explicitPriceSnapshot() {
@@ -232,6 +274,7 @@ async function _validation() {
 
 async function run() {
   await _crud();
+  await _lineMutationCartScope();
   await _explicitPriceSnapshot();
   await _missingPrice();
   await _activeSessionUniqueness();
