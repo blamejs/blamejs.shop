@@ -71,6 +71,7 @@
   --success-deep:   #1c7a3f;
   --danger:         #ff6b6b;
   --danger-deep:    #b3261e;
+  --warning:        #e8b341;
 
   /* =================================================================
      SEMANTIC LAYER — the tokens components consume.
@@ -1413,7 +1414,15 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
   color: var(--text-muted);
 }
 .pdp__badge--ok { color: var(--success); border-color: rgba(74,208,106,0.4); background: rgba(74,208,106,0.10); }
+.pdp__badge--low { color: var(--warning); border-color: rgba(232,179,65,0.45); background: rgba(232,179,65,0.10); }
 .pdp__badge--out { color: var(--danger); border-color: rgba(255,107,107,0.4); background: rgba(255,107,107,0.10); }
+
+/* Out-of-stock note shown under the disabled add-to-cart control. */
+.pdp__soldout-note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--danger);
+}
 
 /* Short shipping/returns line under the buy box, linking the policy page. */
 .pdp__shipping-note {
@@ -1697,6 +1706,27 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   font-weight: 700;
   color: var(--ink);
 }
+/* A deferred tax/shipping line (no zone/rule matched the destination yet)
+   reads as a quiet, italic note so the shopper sees the figure is pending
+   rather than zero. */
+.totals-list__pending dd { font-weight: 500; font-style: italic; color: var(--mute); }
+/* The discount line's amount uses the accent so the saving stands out. */
+.totals-list__discount dd { color: var(--color-accent); }
+/* Truthful per-line stock pills in the cart. Out-of-stock reads danger;
+   low-stock reads as a warning kicker. Inline-start aligned to sit under
+   the product title without widening the column. */
+.cart-line__stock {
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-sm);
+}
+.cart-line__stock--out { color: var(--near-black); background: var(--danger); }
+.cart-line__stock--low { color: var(--warn, #e3c14e); border: 1px solid var(--warn, #e3c14e); background: transparent; }
 .cart-page__checkout { width: 100%; }
 .cart-page__note { margin: var(--space-4) 0 0; color: var(--mute); font-size: var(--text-xs); }
 .cart-page__note--warn { color: var(--warn, #e3c14e); font-size: var(--text-sm); }
