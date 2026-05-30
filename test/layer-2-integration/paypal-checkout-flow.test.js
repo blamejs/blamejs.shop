@@ -76,7 +76,12 @@ async function _run() {
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-ppsf-"));
   var app = await b.createApp({
     dataDir: dataDir, vault: { mode: "plaintext" }, db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
-    middleware: { botGuard: false, rateLimit: false },
+    // bodyParser off at the app level (as production does in server.js): the
+    // webhook signature is verified over the EXACT raw bytes, which an app-
+    // level parser would consume before webhookRawBodyCapture (mounted inside
+    // routes) can buffer them. CSRF stays ON and reads the X-CSRF-Token
+    // header the cookie jar echoes — it never needs the parsed body here.
+    middleware: { botGuard: false, rateLimit: false, bodyParser: false },
     routes: function (r) {
       r.use(bShop.storefront.webhookRawBodyCapture(["/api/webhooks/paypal"]));
       r.use(b.middleware.bodyParser());
@@ -135,6 +140,9 @@ async function _run() {
     var c2 = await cart.create(b.uuid.v7(), { currency: "USD" });
     await cart.addLine(c2.id, { variant_id: v.id, qty: 1 });
     var jar2 = helpers.cookieJar(); jar2.capture({ "set-cookie": ["shop_sid=" + (await cart.get(c2.id)).session_id + "; Path=/"] });
+    // GET /checkout seeds the double-submit CSRF cookie into jar2 so the
+    // create POST below carries a real X-CSRF-Token (the gate is exercised).
+    await helpers.httpRequest({ port: port, path: "/checkout", jar: jar2 });
     var created2 = JSON.parse((await helpers.httpRequest({ port: port, path: "/checkout/paypal/create", method: "POST", jar: jar2,
       body: JSON.stringify({ email: "b2@example.com", country: "US" }), headers: { "content-type": "application/json" } })).body);
     var evt = JSON.stringify({ id: "WH-1", event_type: "PAYMENT.CAPTURE.COMPLETED",

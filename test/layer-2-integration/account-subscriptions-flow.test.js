@@ -160,14 +160,19 @@ async function _run() {
   });
 
   try {
-    var cookie = helpers.authCookie(b, buyer);
+    // A cookie jar (not a bare cookie header) so the double-submit CSRF
+    // cookie the server sets on the first authenticated GET is captured and
+    // replayed: helpers.httpRequest echoes it as X-CSRF-Token on the POSTs
+    // below, exercising the real CSRF gate end-to-end (no bypass).
+    var jar = helpers.cookieJar();
+    jar.capture({ "set-cookie": [helpers.authCookie(b, buyer)] });
 
     // Anon → login.
     var anon = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions" });
     check("anon subscriptions then 303 login",   anon.status === 303 && (anon.headers["location"] || "") === "/account/login");
 
     // List shows only the buyer's own subscription, never the stranger's.
-    var list = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", headers: { cookie: cookie } });
+    var list = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", jar: jar });
     check("subscriptions page then 200",          list.status === 200);
     check("list shows the active status pill",    list.body.indexOf("subscription-status--active") !== -1);
     check("list shows the plan price",            list.body.indexOf("$19.99") !== -1);
@@ -182,14 +187,14 @@ async function _run() {
     var mgmt = await _seedSubscription(query, buyer, variant.id, "active");
 
     // Active row exposes pause + skip + quantity + frequency controls.
-    var mgmtList = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", headers: { cookie: cookie } });
+    var mgmtList = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", jar: jar });
     check("list offers pause control",            mgmtList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/pause") !== -1);
     check("list offers skip control",             mgmtList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/skip") !== -1);
     check("list offers quantity control",         mgmtList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/quantity") !== -1);
     check("list offers frequency control",        mgmtList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/frequency") !== -1);
 
     function _post(suffix, form) {
-      return helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + mgmt.subId + suffix, method: "POST", headers: { cookie: cookie }, form: form || {} });
+      return helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + mgmt.subId + suffix, method: "POST", jar: jar, form: form || {} });
     }
 
     // Skip next shipment → 303 ?ok=skipped + a ledger row.
@@ -219,7 +224,7 @@ async function _run() {
     check("frequency persisted on the row",       freqRow && freqRow.frequency === "quarterly");
 
     // Pause is confirm-gated: GET renders the confirm page, POST pauses.
-    var pauseConfirm = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + mgmt.subId + "/pause", headers: { cookie: cookie } });
+    var pauseConfirm = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + mgmt.subId + "/pause", jar: jar });
     check("pause confirm page then 200",          pauseConfirm.status === 200 && pauseConfirm.body.indexOf("Pause subscription") !== -1);
     var pauseRes = await _post("/pause");
     check("pause then 303 ?ok=paused",            pauseRes.status === 303 && (pauseRes.headers["location"] || "").indexOf("?ok=paused") !== -1);
@@ -227,7 +232,7 @@ async function _run() {
     check("pause stamped paused_at",              pausedRow && pausedRow.paused_at != null);
 
     // Paused row swaps the pause control for a resume control.
-    var pausedList = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", headers: { cookie: cookie } });
+    var pausedList = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", jar: jar });
     check("paused list offers resume control",    pausedList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/resume") !== -1);
     check("paused list hides pause control",       pausedList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/pause") === -1);
 
@@ -241,7 +246,7 @@ async function _run() {
     // (immediate, so cancelled_at lands now, inside the grace window), then
     // reactivate it via the self-manage route.
     await subscriptionControls.cancel({ subscription_id: mgmt.subId, reason: "test cancel for reactivate", actor: { actor_type: "operator", actor_id: null }, immediate: true });
-    var cancelledList = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", headers: { cookie: cookie } });
+    var cancelledList = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", jar: jar });
     check("cancelled list offers reactivate control", cancelledList.body.indexOf("/account/subscriptions/" + mgmt.subId + "/reactivate") !== -1);
     var reactRes = await _post("/reactivate");
     check("reactivate then 303 ?ok=reactivated",  reactRes.status === 303 && (reactRes.headers["location"] || "").indexOf("?ok=reactivated") !== -1);
@@ -254,23 +259,23 @@ async function _run() {
     check("ledger newest event is reactivate",    ledger[0].event === "reactivate");
 
     // IDOR guard on a self-manage route — pausing the stranger's row 404s.
-    var foreignPause = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + foreign.subId + "/pause", method: "POST", headers: { cookie: cookie }, form: {} });
+    var foreignPause = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + foreign.subId + "/pause", method: "POST", jar: jar, form: {} });
     check("foreign pause then 404 (IDOR guard)",  foreignPause.status === 404);
 
     // IDOR guard — cancel of the stranger's subscription is refused (404)
     // and the stub's cancel is NEVER reached for the foreign stripe id.
-    var idor = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + foreign.subId + "/cancel", method: "POST", headers: { cookie: cookie }, form: {} });
+    var idor = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + foreign.subId + "/cancel", method: "POST", jar: jar, form: {} });
     check("foreign cancel then 404 (IDOR guard)", idor.status === 404);
     check("foreign stripe id never canceled",     stubState.canceled.indexOf(foreign.stripeId) === -1);
     var foreignRow = await subscriptions.subscriptions.get(foreign.subId);
     check("foreign subscription untouched",       foreignRow && foreignRow.status === "active");
 
     // Malformed id → 404, not 500.
-    var malformed = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/not-a-uuid/cancel", method: "POST", headers: { cookie: cookie }, form: {} });
+    var malformed = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/not-a-uuid/cancel", method: "POST", jar: jar, form: {} });
     check("malformed cancel id then 404",         malformed.status === 404);
 
     // Cancel the buyer's own subscription → 303 + transitioned to canceled.
-    var ok = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + owned.subId + "/cancel", method: "POST", headers: { cookie: cookie }, form: {} });
+    var ok = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + owned.subId + "/cancel", method: "POST", jar: jar, form: {} });
     check("own cancel then 303 /account/subscriptions", ok.status === 303 && (ok.headers["location"] || "").indexOf("/account/subscriptions") === 0);
     check("own stripe id was canceled",           stubState.canceled.indexOf(owned.stripeId) !== -1);
     var ownedRow = await subscriptions.subscriptions.get(owned.subId);
@@ -278,7 +283,7 @@ async function _run() {
 
     // Re-list — the now-canceled subscription shows the canceled pill and
     // no longer offers a cancel control.
-    var after = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", headers: { cookie: cookie } });
+    var after = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions", jar: jar });
     check("list shows canceled status pill",      after.body.indexOf("subscription-status--canceled") !== -1);
     check("canceled row hides cancel control",    after.body.indexOf("/account/subscriptions/" + owned.subId + "/cancel") === -1);
   } finally {

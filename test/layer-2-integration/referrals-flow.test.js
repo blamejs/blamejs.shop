@@ -139,7 +139,11 @@ async function _run() {
   });
 
   try {
-    var referrerCookie = helpers.authCookie(b, referrer.id);
+    // The referrer's jar: the first authenticated GET seeds the double-
+    // submit CSRF cookie, echoed as X-CSRF-Token on the mint-code POSTs
+    // (real gate, no bypass).
+    var referrerJar = helpers.cookieJar();
+    referrerJar.capture({ "set-cookie": [helpers.authCookie(b, referrer.id)] });
 
     // --- auth gate -----------------------------------------------------
     var anon = await helpers.httpRequest({ port: handle.port, path: "/account/referrals" });
@@ -149,7 +153,7 @@ async function _run() {
     check("anon mint-code then 303 login", anonPost.status === 303 && (anonPost.headers["location"] || "") === "/account/login");
 
     // --- empty state (no code yet) ------------------------------------
-    var empty = await helpers.httpRequest({ port: handle.port, path: "/account/referrals", headers: { cookie: referrerCookie } });
+    var empty = await helpers.httpRequest({ port: handle.port, path: "/account/referrals", jar: referrerJar });
     check("referrals page then 200",        empty.status === 200);
     check("empty state offers create code", empty.body.indexOf("Create my referral code") !== -1);
     check("empty state no friends yet",     empty.body.indexOf("No referrals yet") !== -1);
@@ -157,7 +161,7 @@ async function _run() {
     // --- mint the code -------------------------------------------------
     var mint = await helpers.httpRequest({
       port: handle.port, path: "/account/referrals/code", method: "POST",
-      headers: { cookie: referrerCookie },
+      jar: referrerJar,
     });
     check("mint code then 303", mint.status === 303 && (mint.headers["location"] || "") === "/account/referrals");
 
@@ -165,7 +169,7 @@ async function _run() {
     // never a 500.
     var reMint = await helpers.httpRequest({
       port: handle.port, path: "/account/referrals/code", method: "POST",
-      headers: { cookie: referrerCookie },
+      jar: referrerJar,
     });
     check("re-mint code then 303 (idempotent)", reMint.status === 303);
 
@@ -173,7 +177,7 @@ async function _run() {
     check("exactly one active code", stats.codes.length === 1 && stats.codes[0].status === "active");
     var code = stats.codes[0].code;
 
-    var loaded = await helpers.httpRequest({ port: handle.port, path: "/account/referrals", headers: { cookie: referrerCookie } });
+    var loaded = await helpers.httpRequest({ port: handle.port, path: "/account/referrals", jar: referrerJar });
     check("page surfaces the code",         loaded.body.indexOf(code) !== -1);
     check("page surfaces the share link",   loaded.body.indexOf("https://shop.example/r/" + code) !== -1);
 
@@ -250,7 +254,7 @@ async function _run() {
     check("guest order didn't bump the funnel", afterGuest.completed_referrals === 1);
 
     // --- account page reflects the converted friend + leaderboard -----
-    var converted = await helpers.httpRequest({ port: handle.port, path: "/account/referrals", headers: { cookie: referrerCookie } });
+    var converted = await helpers.httpRequest({ port: handle.port, path: "/account/referrals", jar: referrerJar });
     check("page lists a referred friend", converted.body.indexOf("Friends you've referred") !== -1 && converted.body.indexOf("Friend 1") !== -1);
     check("page shows converted stage",   converted.body.indexOf("referral-stage--converted") !== -1);
     check("leaderboard surfaces the referrer as You", converted.body.indexOf("Top referrers") !== -1 && converted.body.indexOf(">#1 You<") !== -1);

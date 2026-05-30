@@ -93,7 +93,12 @@ async function _run() {
   var handle  = await _bootApp({ catalog: catalog, cart: cart, wishlist: wishlist, customers: customers });
 
   try {
-    var cookie = _authCookie(buyerId);
+    // The buyer's jar. The buyer's first state-changing request is a POST,
+    // so a benign authed GET below seeds the double-submit CSRF cookie that
+    // the helper echoes as X-CSRF-Token on the toggle POSTs (real gate, no
+    // bypass).
+    var jar = helpers.cookieJar();
+    jar.capture({ "set-cookie": [_authCookie(buyerId)] });
 
     // Anon → both wishlist surfaces redirect to login.
     var anonList = await helpers.httpRequest({ port: handle.port, path: "/account/wishlist" });
@@ -108,12 +113,16 @@ async function _run() {
     check("pdp save form posts to toggle",         /action="\/wishlist\/toggle"/.test(pdp0.body));
     check("pdp no count before any save",          pdp0.body.indexOf("saved this") === -1);
 
+    // A benign authed GET first to seed the buyer's CSRF cookie before the
+    // toggle POSTs below.
+    await helpers.httpRequest({ port: handle.port, path: "/account/wishlist", jar: jar });
+
     // Bad product id → 400.
-    var bad = await helpers.httpRequest({ port: handle.port, path: "/wishlist/toggle", method: "POST", headers: { cookie: cookie }, form: { product_id: "not-a-uuid" } });
+    var bad = await helpers.httpRequest({ port: handle.port, path: "/wishlist/toggle", method: "POST", jar: jar, form: { product_id: "not-a-uuid" } });
     check("toggle bad id → 400",                   bad.status === 400);
 
     // Save → 303 back to the product PDP; entry persisted.
-    var add = await helpers.httpRequest({ port: handle.port, path: "/wishlist/toggle", method: "POST", headers: { cookie: cookie }, form: { product_id: product.id } });
+    var add = await helpers.httpRequest({ port: handle.port, path: "/wishlist/toggle", method: "POST", jar: jar, form: { product_id: product.id } });
     check("toggle save → 303",                     add.status === 303);
     check("toggle save → back to product",         (add.headers["location"] || "") === "/products/widget-pro");
     check("wishlist now has the entry",            (await wishlist.isWishlisted({ customer_id: buyerId, product_id: product.id })) === true);
@@ -123,24 +132,24 @@ async function _run() {
     check("pdp shows '1 shopper saved this'",      pdp1.body.indexOf("1 shopper saved this") !== -1);
 
     // Account page lists the saved product.
-    var list = await helpers.httpRequest({ port: handle.port, path: "/account/wishlist", headers: { cookie: cookie } });
+    var list = await helpers.httpRequest({ port: handle.port, path: "/account/wishlist", jar: jar });
     check("account wishlist → 200",                list.status === 200);
     check("account wishlist shows the product",    list.body.indexOf("Widget Pro") !== -1);
     check("account wishlist has remove form",      /name="return_to" value="\/account\/wishlist"/.test(list.body));
 
     // Toggle again (idempotent remove) → entry gone.
-    var remove = await helpers.httpRequest({ port: handle.port, path: "/wishlist/toggle", method: "POST", headers: { cookie: cookie }, form: { product_id: product.id, return_to: "/account/wishlist" } });
+    var remove = await helpers.httpRequest({ port: handle.port, path: "/wishlist/toggle", method: "POST", jar: jar, form: { product_id: product.id, return_to: "/account/wishlist" } });
     check("toggle remove → 303",                   remove.status === 303);
     check("toggle remove honors return_to",        (remove.headers["location"] || "") === "/account/wishlist?ok=removed");
     check("wishlist entry removed",                (await wishlist.isWishlisted({ customer_id: buyerId, product_id: product.id })) === false);
 
     // Empty state after removal.
-    var listEmpty = await helpers.httpRequest({ port: handle.port, path: "/account/wishlist", headers: { cookie: cookie } });
+    var listEmpty = await helpers.httpRequest({ port: handle.port, path: "/account/wishlist", jar: jar });
     check("account wishlist empty-state",          listEmpty.body.indexOf("haven't saved anything yet") !== -1);
 
     // Open-redirect guard: a `//evil` return_to is rejected, falls back to product.
     await wishlist.add({ customer_id: buyerId, product_id: product.id });
-    var evil = await helpers.httpRequest({ port: handle.port, path: "/wishlist/toggle", method: "POST", headers: { cookie: cookie }, form: { product_id: product.id, return_to: "//evil.example" } });
+    var evil = await helpers.httpRequest({ port: handle.port, path: "/wishlist/toggle", method: "POST", jar: jar, form: { product_id: product.id, return_to: "//evil.example" } });
     check("toggle rejects //evil return_to",       (evil.headers["location"] || "") === "/products/widget-pro");
   } finally {
     await _teardown(handle);

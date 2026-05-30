@@ -121,34 +121,38 @@ async function _run() {
   var handle = await _bootApp({ catalog: catalog, cart: cart, order: order, returns: returns, customers: customers });
 
   try {
-    var cookie = _authCookie(buyer);
+    // The buyer's jar: the first authenticated GET seeds the double-submit
+    // CSRF cookie, echoed as X-CSRF-Token on the return POSTs (real gate,
+    // no bypass).
+    var jar = helpers.cookieJar();
+    jar.capture({ "set-cookie": [_authCookie(buyer)] });
 
     // Anon → login.
     var anon = await helpers.httpRequest({ port: handle.port, path: "/account/returns" });
     check("anon returns then 303 login",        anon.status === 303 && (anon.headers["location"] || "") === "/account/login");
 
     // Empty list.
-    var empty = await helpers.httpRequest({ port: handle.port, path: "/account/returns", headers: { cookie: cookie } });
+    var empty = await helpers.httpRequest({ port: handle.port, path: "/account/returns", jar: jar });
     check("returns page then 200",              empty.status === 200);
     check("returns empty-state",                empty.body.indexOf("No returns yet") !== -1);
 
     // Return form for the buyer's own order shows the line.
-    var form = await helpers.httpRequest({ port: handle.port, path: "/account/orders/" + seeded.orderId + "/return", headers: { cookie: cookie } });
+    var form = await helpers.httpRequest({ port: handle.port, path: "/account/orders/" + seeded.orderId + "/return", jar: jar });
     check("return form then 200",               form.status === 200);
     check("return form shows the SKU",          form.body.indexOf("WDG-PRO-L") !== -1);
     check("return form has a reason select",    form.body.indexOf("name=\"reason\"") !== -1);
     check("return form keys line by id",        form.body.indexOf("name=\"return_" + seeded.lineId + "\"") !== -1);
 
     // Malformed order id then 404, not 500.
-    var malformed = await helpers.httpRequest({ port: handle.port, path: "/account/orders/not-a-uuid/return", headers: { cookie: cookie } });
+    var malformed = await helpers.httpRequest({ port: handle.port, path: "/account/orders/not-a-uuid/return", jar: jar });
     check("malformed order id then 404",        malformed.status === 404);
 
     // Another customer's order then 404 (no leak).
-    var foreign = await helpers.httpRequest({ port: handle.port, path: "/account/orders/" + strangerOrder.orderId + "/return", headers: { cookie: cookie } });
+    var foreign = await helpers.httpRequest({ port: handle.port, path: "/account/orders/" + strangerOrder.orderId + "/return", jar: jar });
     check("foreign order then 404",             foreign.status === 404);
 
     // POST with nothing selected then 400 + notice.
-    var none = await helpers.httpRequest({ port: handle.port, path: "/account/orders/" + seeded.orderId + "/return", method: "POST", headers: { cookie: cookie }, form: { reason: "defective" } });
+    var none = await helpers.httpRequest({ port: handle.port, path: "/account/orders/" + seeded.orderId + "/return", method: "POST", jar: jar, form: { reason: "defective" } });
     check("no items selected then 400",         none.status === 400);
     check("no-items notice shown",              none.body.indexOf("Select at least one item") !== -1);
 
@@ -158,14 +162,14 @@ async function _run() {
     req["qty_" + seeded.lineId] = "1";
     req.reason = "defective";
     req.customer_notes = "stopped working";
-    var ok = await helpers.httpRequest({ port: handle.port, path: "/account/orders/" + seeded.orderId + "/return", method: "POST", headers: { cookie: cookie }, form: req });
+    var ok = await helpers.httpRequest({ port: handle.port, path: "/account/orders/" + seeded.orderId + "/return", method: "POST", jar: jar, form: req });
     check("valid return then 303 /account/returns", ok.status === 303 && (ok.headers["location"] || "").indexOf("/account/returns?ok=RMA-") === 0);
     var rmas = await returns.listForCustomer(buyer, { limit: 10 });
     check("RMA persisted pending",              rmas.rows.length === 1 && rmas.rows[0].status === "pending");
     check("RMA carries the reason",             rmas.rows[0].reason === "defective");
 
     // List shows the RMA.
-    var list = await helpers.httpRequest({ port: handle.port, path: "/account/returns", headers: { cookie: cookie } });
+    var list = await helpers.httpRequest({ port: handle.port, path: "/account/returns", jar: jar });
     check("list shows the RMA code",            list.body.indexOf(rmas.rows[0].rma_code) !== -1);
     check("list shows pending status",          list.body.indexOf("return-status--pending") !== -1);
   } finally {

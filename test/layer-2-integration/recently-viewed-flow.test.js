@@ -98,18 +98,22 @@ async function _run() {
   var handle = await _bootApp({
     catalog: catalog, cart: cart, customers: customers, recentlyViewed: recentlyViewed,
   });
-  // The vault is initialized by createApp — mint the sealed cookie now.
-  var cookie = _authCookie(buyer);
+  // The vault is initialized by createApp — seed the sealed auth cookie
+  // into a jar now. The first authenticated GET captures the double-submit
+  // CSRF cookie, echoed as X-CSRF-Token on the clear POST (real gate, no
+  // bypass).
+  var jar = helpers.cookieJar();
+  jar.capture({ "set-cookie": [_authCookie(buyer)] });
 
   try {
     // Empty state before any views.
-    var empty = await helpers.httpRequest({ port: handle.port, path: "/account/recently-viewed", headers: { cookie: cookie } });
+    var empty = await helpers.httpRequest({ port: handle.port, path: "/account/recently-viewed", jar: jar });
     check("recently-viewed empty then 200",      empty.status === 200);
     check("empty state copy renders",             empty.body.indexOf("haven't viewed any products") !== -1);
     check("no clear-history form when empty",      empty.body.indexOf("/account/recently-viewed/clear") === -1);
 
     // A signed-in PDP visit records the view server-side.
-    var pdp = await helpers.httpRequest({ port: handle.port, path: "/products/widget-pro", headers: { cookie: cookie } });
+    var pdp = await helpers.httpRequest({ port: handle.port, path: "/products/widget-pro", jar: jar });
     check("PDP renders for signed-in customer",   pdp.status === 200);
 
     // The view now surfaces on the history page as a product card.
@@ -118,7 +122,7 @@ async function _run() {
       return r.length >= 1;
     }, { timeoutMs: 5000, label: "recently-viewed: PDP view recorded" });
 
-    var listed = await helpers.httpRequest({ port: handle.port, path: "/account/recently-viewed", headers: { cookie: cookie } });
+    var listed = await helpers.httpRequest({ port: handle.port, path: "/account/recently-viewed", jar: jar });
     check("history then 200",                     listed.status === 200);
     check("history shows the viewed product",      listed.body.indexOf("Widget Pro") !== -1);
     check("history links to the PDP",              listed.body.indexOf("/products/widget-pro") !== -1);
@@ -126,11 +130,11 @@ async function _run() {
     check("history shows clear-history form",       listed.body.indexOf("/account/recently-viewed/clear") !== -1);
 
     // Clear history → redirect → empty again.
-    var cleared = await helpers.httpRequest({ port: handle.port, path: "/account/recently-viewed/clear", method: "POST", headers: { cookie: cookie }, form: {} });
+    var cleared = await helpers.httpRequest({ port: handle.port, path: "/account/recently-viewed/clear", method: "POST", jar: jar, form: {} });
     check("clear-history then 303",               cleared.status === 303);
     check("clear-history redirects to history",    (cleared.headers.location || "") === "/account/recently-viewed");
 
-    var afterClear = await helpers.httpRequest({ port: handle.port, path: "/account/recently-viewed", headers: { cookie: cookie } });
+    var afterClear = await helpers.httpRequest({ port: handle.port, path: "/account/recently-viewed", jar: jar });
     check("history empty after clear",            afterClear.body.indexOf("haven't viewed any products") !== -1);
 
     // Unauthenticated access redirects to login, never renders.

@@ -118,6 +118,10 @@ async function _run() {
     await cart.setCustomer(c.id, buyer);
     var jar = helpers.cookieJar();
     jar.capture({ "set-cookie": ["shop_sid=" + sid + "; Path=/", authCookie] });
+    // GET /checkout seeds the double-submit CSRF cookie into the jar so
+    // the checkout POST below carries a real X-CSRF-Token (the gate is
+    // exercised end-to-end, never bypassed).
+    await helpers.httpRequest({ port: port, path: "/checkout", jar: jar });
     return jar;
   }
 
@@ -190,6 +194,9 @@ async function _run() {
     await cart.addLine(cg.id, { variant_id: v.id, qty: 1 });
     var jarGuest = helpers.cookieJar();
     jarGuest.capture({ "set-cookie": ["shop_sid=" + sidGuest + "; Path=/"] });
+    // Seed CSRF for the guest jar too: the 400 we assert must come from the
+    // route refusing a guest points-redeem, not from the CSRF gate.
+    await helpers.httpRequest({ port: port, path: "/checkout", jar: jarGuest });
     var coGuest = await helpers.httpRequest({
       port: port, path: "/checkout", method: "POST", jar: jarGuest,
       form: { email: "guest@example.com", name: "Guest", country: "US", loyalty_redeem_points: "100" },

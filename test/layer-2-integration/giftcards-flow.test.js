@@ -116,12 +116,16 @@ async function _run() {
   var bearer = { authorization: "Bearer " + TOKEN };
 
   // Helper: seed a fresh active session cart with one unit of the product.
+  // The trailing GET /cart seeds the double-submit CSRF cookie into the
+  // jar so the checkout POST below carries a real X-CSRF-Token (the gate
+  // is exercised, never bypassed).
   async function _freshCart() {
     var sid = b.uuid.v7();
     var c = await cart.create(sid, { currency: "USD" });
     await cart.addLine(c.id, { variant_id: v.id, qty: 1 });
     var jar = helpers.cookieJar();
     jar.capture({ "set-cookie": ["shop_sid=" + sid + "; Path=/"] });
+    await helpers.httpRequest({ port: port, path: "/cart", jar: jar });
     return jar;
   }
 

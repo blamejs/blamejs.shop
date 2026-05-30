@@ -19,6 +19,12 @@
     for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
     return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
+  // Read the double-submit CSRF token from the JS-readable cookie
+  // (`__Host-csrf` over HTTPS, `csrf` over HTTP) so these fetch POSTs carry
+  // the `X-CSRF-Token` header the container's csrfGuard validates.
+  function _csrfToken() {
+    return (document.cookie.match(/(?:^|; )(?:__Host-csrf|csrf)=([^;]+)/) || [])[1] || "";
+  }
   var form = document.getElementById("login-form");
   var msg  = document.getElementById("login-message");
   if (!form) return;
@@ -26,14 +32,14 @@
     ev.preventDefault();
     msg.textContent = "Requesting challenge...";
     try {
-      var beginR = await fetch("/account/passkey/login-begin", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: document.getElementById("email").value }) });
+      var beginR = await fetch("/account/passkey/login-begin", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "X-CSRF-Token": _csrfToken() }, body: JSON.stringify({ email: document.getElementById("email").value }) });
       if (!beginR.ok) { msg.textContent = "Sign-in unavailable."; return; }
       var options = await beginR.json();
       options.challenge = _b64uToBuf(options.challenge);
       if (options.allowCredentials) options.allowCredentials = options.allowCredentials.map(function (c) { return Object.assign({}, c, { id: _b64uToBuf(c.id) }); });
       var assertion = await navigator.credentials.get({ publicKey: options });
       var payload = { id: assertion.id, rawId: _bufToB64u(assertion.rawId), type: assertion.type, response: { authenticatorData: _bufToB64u(assertion.response.authenticatorData), clientDataJSON: _bufToB64u(assertion.response.clientDataJSON), signature: _bufToB64u(assertion.response.signature), userHandle: assertion.response.userHandle ? _bufToB64u(assertion.response.userHandle) : null } };
-      var finishR = await fetch("/account/passkey/login-finish", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      var finishR = await fetch("/account/passkey/login-finish", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "X-CSRF-Token": _csrfToken() }, body: JSON.stringify(payload) });
       if (finishR.ok) { window.location.href = "/account"; } else { msg.textContent = "Sign-in failed."; }
     } catch (e) { msg.textContent = (e && e.message) || "Sign-in error."; }
   });

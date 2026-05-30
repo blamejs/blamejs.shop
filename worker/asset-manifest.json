@@ -1,5 +1,5 @@
 {
-  "version": "0.2.31",
+  "version": "0.3.0",
   "assets": {
     "css/admin.css": {
       "integrity": "sha384-1SIn6oAf1DjECbRfKENZasdKHJiywGdXR58wn0hsFGcdVHzUmvfgMkEz5ANIAZJ3",
@@ -22,16 +22,16 @@
       "fingerprinted": "js/consent.59060d7723d050b2.js"
     },
     "js/passkey-add.js": {
-      "integrity": "sha384-HSi+w0ampPZWcfPnnpV2Dkn/oGdgnyLe7QykGM5Sregud4CbH2KsU5Hb1FQQxJTy",
-      "fingerprinted": "js/passkey-add.c4b7350f2cac5477.js"
+      "integrity": "sha384-97y8Ej4xZfwgYzbpLg3qtO2rrrvPccje4ZiNjw99JfN0gUqBtiwdw2YDabSYxbG1",
+      "fingerprinted": "js/passkey-add.b535e6a3eef4514e.js"
     },
     "js/passkey-login.js": {
-      "integrity": "sha384-65i1wVHIkiS2e0YiOV6oUOF9+tNR7s6QRvpnWaEne43P+B8UvKLTpDgp4MSKNGqX",
-      "fingerprinted": "js/passkey-login.f3d6787bdd5e20df.js"
+      "integrity": "sha384-iJ5mKqQ15N2dSCqvQRsez9SRgESaCX8CJD0mTZSYoQVhtxQz+DGdZPYe2+df/0VF",
+      "fingerprinted": "js/passkey-login.4482cca420479033.js"
     },
     "js/passkey-register.js": {
-      "integrity": "sha384-RaSkJbTpc6ClfPy5QyaY96doIqBqa9CLeIB1CzWnL05pSSJEA9IrIK0S7V7igRxY",
-      "fingerprinted": "js/passkey-register.8f6ee49284ab4226.js"
+      "integrity": "sha384-NB0gCF+Bpo6cJYkqfTdcvCMYBzpTJfzz/pYCx6iTykznRWVcBHKqidj+mMIv5qKV",
+      "fingerprinted": "js/passkey-register.537c8a0a0b70ddec.js"
     }
   }
 }

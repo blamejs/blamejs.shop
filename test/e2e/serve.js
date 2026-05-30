@@ -67,7 +67,17 @@ function _makeQuery() {
     dataDir: dataDir,
     vault: { mode: "plaintext" },
     db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
-    middleware: { rateLimit: bShop.securityMiddleware.globalRateLimitOpts() },
+    // Disable createApp's app-level body-parser / fetch-metadata / CSP-nonce
+    // / CSRF auto-mounts (v0.13.46+) — the shop mounts its own configured
+    // copies + the scoped CSRF inside routes() below, exactly as server.js
+    // does, so the harness exercises the real production composition.
+    middleware: {
+      rateLimit:     bShop.securityMiddleware.globalRateLimitOpts(),
+      csrf:          false,
+      bodyParser:    false,
+      fetchMetadata: false,
+      cspNonce:      false,
+    },
     routes: function (r) {
       r.use(b.middleware.bodyParser());
       bShop.securityMiddleware.mountRouteGuards(r);

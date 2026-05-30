@@ -93,7 +93,13 @@ async function _run() {
   var app = await b.createApp({
     dataDir: dataDir, vault: { mode: "plaintext" },
     db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
-    middleware: { botGuard: false, rateLimit: false },
+    // bodyParser off at the app level (as server.js does): the signature is
+    // verified over the EXACT raw bytes, which an app-level parser would
+    // consume before webhookRawBodyCapture (mounted inside routes) can buffer
+    // them. The signed deliveries are cookieless with no Sec-Fetch headers,
+    // so app-level CSRF (skipStateless) and fetch-metadata (allowMissing)
+    // defer them either way.
+    middleware: { botGuard: false, rateLimit: false, bodyParser: false },
     routes: function (r) {
       // Same ordering as server.js: raw-capture BEFORE the body parser.
       r.use(bShop.storefront.webhookRawBodyCapture(["/api/webhooks/stripe"]));

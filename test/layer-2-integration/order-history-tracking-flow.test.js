@@ -165,13 +165,19 @@ async function _run() {
   });
 
   try {
-    var cookie = helpers.authCookie(b, buyer);
+    // A cookie jar (not a bare cookie header) so the double-submit CSRF
+    // cookie set on the first authenticated GET is captured and echoed as
+    // X-CSRF-Token on the reorder POSTs (real gate, no bypass). It also
+    // captures the shop_sid the reorder sets so the cart GET sees the
+    // rebuilt cart.
+    var buyerJar = helpers.cookieJar();
+    buyerJar.capture({ "set-cookie": [helpers.authCookie(b, buyer)] });
 
     // ---- /account/orders history list -----------------------------------
     var anon = await helpers.httpRequest({ port: sf.port, path: "/account/orders" });
     check("anon order list → 303 login",        anon.status === 303 && (anon.headers["location"] || "") === "/account/login");
 
-    var list = await helpers.httpRequest({ port: sf.port, path: "/account/orders", headers: { cookie: cookie } });
+    var list = await helpers.httpRequest({ port: sf.port, path: "/account/orders", jar: buyerJar });
     check("order list → 200",                   list.status === 200);
     check("order list titled Your orders",      list.body.indexOf("Your orders") !== -1);
     check("order list shows shipped order",     list.body.indexOf("/orders/" + shippedOrder.orderId) !== -1);
@@ -183,7 +189,7 @@ async function _run() {
     check("list omits reorder for pending",     list.body.indexOf("/orders/" + pendingOrder.orderId + "/reorder") === -1);
 
     // ---- order page: timeline + actions (no tracking yet) ----------------
-    var orderPage = await helpers.httpRequest({ port: sf.port, path: "/orders/" + shippedOrder.orderId, headers: { cookie: cookie } });
+    var orderPage = await helpers.httpRequest({ port: sf.port, path: "/orders/" + shippedOrder.orderId, jar: buyerJar });
     check("order page → 200",                   orderPage.status === 200);
     check("order page shows status timeline",   orderPage.body.indexOf("order-timeline") !== -1);
     check("timeline marks shipped current",     orderPage.body.indexOf("is-current") !== -1);
@@ -193,25 +199,24 @@ async function _run() {
 
     // ---- reorder: ownership + eligibility + cart rebuild -----------------
     // Stranger's order → 404 (no leak), pending → bounce, shipped → cart.
-    var foreignReorder = await helpers.httpRequest({ port: sf.port, path: "/orders/" + strangerOrder.orderId + "/reorder", method: "POST", headers: { cookie: cookie }, form: {} });
+    var foreignReorder = await helpers.httpRequest({ port: sf.port, path: "/orders/" + strangerOrder.orderId + "/reorder", method: "POST", jar: buyerJar, form: {} });
     check("reorder foreign order → 404",        foreignReorder.status === 404);
 
-    var pendingReorder = await helpers.httpRequest({ port: sf.port, path: "/orders/" + pendingOrder.orderId + "/reorder", method: "POST", headers: { cookie: cookie }, form: {} });
+    var pendingReorder = await helpers.httpRequest({ port: sf.port, path: "/orders/" + pendingOrder.orderId + "/reorder", method: "POST", jar: buyerJar, form: {} });
     check("reorder pending → 303 back to order", pendingReorder.status === 303 &&
       (pendingReorder.headers["location"] || "") === "/orders/" + pendingOrder.orderId);
 
-    var jar = helpers.cookieJar();
-    var reorder = await helpers.httpRequest({ port: sf.port, path: "/orders/" + shippedOrder.orderId + "/reorder", method: "POST", headers: { cookie: cookie }, form: {}, jar: jar });
+    var reorder = await helpers.httpRequest({ port: sf.port, path: "/orders/" + shippedOrder.orderId + "/reorder", method: "POST", jar: buyerJar, form: {} });
     check("reorder → 303 reordered",            reorder.status === 303 &&
       (reorder.headers["location"] || "").indexOf("/orders/" + shippedOrder.orderId + "?reordered=1") === 0);
     // The reorder set a session cookie; the rebuilt cart holds the line.
-    var sid = jar.get("shop_sid") || jar.get("sid");
+    var sid = buyerJar.get("shop_sid") || buyerJar.get("sid");
     check("reorder set a session cookie",       !!sid);
     // Follow the cart to confirm the line landed.
-    var cartPage = await helpers.httpRequest({ port: sf.port, path: "/cart", jar: jar });
+    var cartPage = await helpers.httpRequest({ port: sf.port, path: "/cart", jar: buyerJar });
     check("reordered cart shows the SKU",        cartPage.body.indexOf("TRK-W-1") !== -1);
     // The redirected order page carries the confirmation banner.
-    var reordered = await helpers.httpRequest({ port: sf.port, path: "/orders/" + shippedOrder.orderId + "?reordered=1", headers: { cookie: cookie } });
+    var reordered = await helpers.httpRequest({ port: sf.port, path: "/orders/" + shippedOrder.orderId + "?reordered=1", jar: buyerJar });
     check("order page shows reorder banner",     reordered.body.indexOf("added to your cart") !== -1);
 
     // ---- admin: attach a shipment, record an event ----------------------
@@ -243,7 +248,7 @@ async function _run() {
     check("event recorded + status advanced",    hydrated.status === "in-transit" && hydrated.events.length >= 1);
 
     // ---- customer order page now renders the tracking panel -------------
-    var trackedPage = await helpers.httpRequest({ port: sf.port, path: "/orders/" + shippedOrder.orderId, headers: { cookie: cookie } });
+    var trackedPage = await helpers.httpRequest({ port: sf.port, path: "/orders/" + shippedOrder.orderId, jar: buyerJar });
     check("order page now has tracking panel",   trackedPage.body.indexOf("order-tracking-panel") !== -1);
     check("tracking panel shows the carrier",     trackedPage.body.indexOf("order-shipment__carrier") !== -1);
     check("tracking panel links the carrier URL", trackedPage.body.indexOf("ups.com/track") !== -1);

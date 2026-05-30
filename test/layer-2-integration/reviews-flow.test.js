@@ -133,6 +133,16 @@ async function _run() {
   try {
     var P = "/products/widget-pro/review";
 
+    // A jar per customer: each one's first authenticated GET seeds the
+    // double-submit CSRF cookie, echoed as X-CSRF-Token on that customer's
+    // review POSTs (real gate, no bypass). The stranger keeps its own jar
+    // so its no-purchase POST still carries a valid token — the 403 it
+    // gets is the verified-buyer gate, not CSRF.
+    var buyerJar = helpers.cookieJar();
+    buyerJar.capture({ "set-cookie": [_authCookie(buyerId)] });
+    var strangerJar = helpers.cookieJar();
+    strangerJar.capture({ "set-cookie": [_authCookie(strangerId)] });
+
     // PDP shows the reviews section + CTA, empty state before any review.
     var pdp0 = await helpers.httpRequest({ port: handle.port, path: "/products/widget-pro" });
     check("pdp shows reviews section",            pdp0.body.indexOf("Customer reviews") !== -1);
@@ -145,13 +155,13 @@ async function _run() {
     check("form GET anon → /account/login",       (anon.headers["location"] || "") === "/account/login");
 
     // GET form, logged in but no purchase → ineligible.
-    var stranger = await helpers.httpRequest({ port: handle.port, path: P, headers: { cookie: _authCookie(strangerId) } });
+    var stranger = await helpers.httpRequest({ port: handle.port, path: P, jar: strangerJar });
     check("form GET stranger → 200",              stranger.status === 200);
     check("form GET stranger → ineligible copy",  stranger.body.indexOf("Only verified buyers") !== -1);
     check("form GET stranger → no form",          stranger.body.indexOf("name=\"rating\"") === -1);
 
     // GET form, logged in + purchased → the form renders.
-    var buyerForm = await helpers.httpRequest({ port: handle.port, path: P, headers: { cookie: _authCookie(buyerId) } });
+    var buyerForm = await helpers.httpRequest({ port: handle.port, path: P, jar: buyerJar });
     check("form GET buyer → 200",                 buyerForm.status === 200);
     check("form GET buyer → rating radios",       buyerForm.body.indexOf("name=\"rating\"") !== -1);
     check("form GET buyer → review-form class",   buyerForm.body.indexOf("class=\"review-form\"") !== -1);
@@ -159,7 +169,7 @@ async function _run() {
     // POST submit, stranger (no purchase) → 403, re-checked on write.
     var strangerPost = await helpers.httpRequest({
       port: handle.port, path: P, method: "POST",
-      headers: { cookie: _authCookie(strangerId) },
+      jar: strangerJar,
       form: { rating: 5, title: "Sneaky", body: "no buy" },
     });
     check("submit stranger → 403",                strangerPost.status === 403);
@@ -167,7 +177,7 @@ async function _run() {
     // POST submit, buyer, invalid rating → 400 + form with notice.
     var badRating = await helpers.httpRequest({
       port: handle.port, path: P, method: "POST",
-      headers: { cookie: _authCookie(buyerId) },
+      jar: buyerJar,
       form: { rating: 9, title: "Out of range", body: "x" },
     });
     check("submit bad rating → 400",              badRating.status === 400);
@@ -176,7 +186,7 @@ async function _run() {
     // POST submit, buyer, valid → 200 thanks; review lands pending.
     var ok = await helpers.httpRequest({
       port: handle.port, path: P, method: "POST",
-      headers: { cookie: _authCookie(buyerId) },
+      jar: buyerJar,
       form: { rating: 5, title: "Excellent widget", body: "Holds up great." },
     });
     check("submit buyer valid → 200",             ok.status === 200);

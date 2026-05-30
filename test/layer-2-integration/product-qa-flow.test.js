@@ -116,6 +116,12 @@ async function _run() {
   try {
     var P = "/products/widget-pro/question";
 
+    // A jar for the asker: the authenticated GET form below seeds the
+    // double-submit CSRF cookie, echoed as X-CSRF-Token on the ask POSTs
+    // (the real gate, no bypass).
+    var askerJar = helpers.cookieJar();
+    askerJar.capture({ "set-cookie": [_authCookie(askerId)] });
+
     // PDP shows the Q&A section + CTA, empty state before any question.
     var pdp0 = await helpers.httpRequest({ port: handle.port, path: "/products/widget-pro" });
     check("pdp shows Q&A section",                pdp0.body.indexOf("Questions &amp; answers") !== -1);
@@ -128,7 +134,7 @@ async function _run() {
     check("form GET anon → /account/login",        (anon.headers["location"] || "") === "/account/login");
 
     // GET form, logged in → the form renders.
-    var askerForm = await helpers.httpRequest({ port: handle.port, path: P, headers: { cookie: _authCookie(askerId) } });
+    var askerForm = await helpers.httpRequest({ port: handle.port, path: P, jar: askerJar });
     check("form GET asker → 200",                  askerForm.status === 200);
     check("form GET asker → question textarea",    askerForm.body.indexOf("name=\"body\"") !== -1);
     check("form GET asker → review-form class",    askerForm.body.indexOf("class=\"review-form\"") !== -1);
@@ -136,7 +142,7 @@ async function _run() {
     // POST submit, empty body → 400 + form with notice (malformed input).
     var badPost = await helpers.httpRequest({
       port: handle.port, path: P, method: "POST",
-      headers: { cookie: _authCookie(askerId) },
+      jar: askerJar,
       form: { body: "" },
     });
     check("submit empty body → 400",               badPost.status === 400);
@@ -145,7 +151,7 @@ async function _run() {
     // POST submit, valid → 200 thanks; question lands pending.
     var ok = await helpers.httpRequest({
       port: handle.port, path: P, method: "POST",
-      headers: { cookie: _authCookie(askerId) },
+      jar: askerJar,
       form: { body: "Is this dishwasher safe?" },
     });
     check("submit asker valid → 200",              ok.status === 200);
@@ -191,7 +197,7 @@ async function _run() {
     // Failure mode: unknown product slug on the form route → 404.
     var noProd = await helpers.httpRequest({
       port: handle.port, path: "/products/does-not-exist/question",
-      headers: { cookie: _authCookie(askerId) },
+      jar: askerJar,
     });
     check("form GET unknown product → 404",        noProd.status === 404);
 
