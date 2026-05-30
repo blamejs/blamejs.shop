@@ -242,7 +242,10 @@ function cmdPrepare(opts) {
   _run("node", ["scripts/generate-changelog-entry.js", "--check"]);
   _run("node", ["scripts/consolidate-release-notes.js", "--check"]);
   _run("node", ["scripts/generate-asset-manifest.js", "--check"]);
-  _run("bash", ["scripts/vendor-update.sh", "--check"], { allowFail: true }); // drift is a non-fatal warning
+  // Currency gate — a stale pinned GitHub Action or vendored dependency fails
+  // the cut with a paste-ready `uses: owner/repo@<sha>  # vX.Y.Z` line and every
+  // file:line using it. Conscious deferral: RELEASE_ALLOW_STALE_PINS=1.
+  _run("node", ["scripts/check-currency.js"]);
   _ok("static gates clean");
 
   console.log("\nnext: node scripts/release.js smoke");
