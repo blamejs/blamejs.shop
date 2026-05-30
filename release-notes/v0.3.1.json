@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.1",
+  "date": "2026-05-30",
+  "headline": "Fix CSRF origin check refusing authenticated forms behind a TLS-terminating proxy",
+  "summary": "The token-based CSRF protection added in 0.3.0 runs an Origin/Referer pre-check on every state-changing request. When the app is served behind a proxy that terminates TLS and forwards plain HTTP to the application — a CDN or load balancer, the standard production topology — the application saw the connection as HTTP and rebuilt its own origin as `http://<host>`, while the browser's request carried `Origin: https://<host>`. That bare scheme mismatch made the check refuse every legitimate same-origin POST as cross-origin, blocking sign-in and every account and admin form. The CSRF gate now trusts the forwarded protocol header — the same proxy stance the session cookies already use — so it derives the real public origin, and it matches against an explicit allowlist of the public origin(s), configurable via SHOP_PUBLIC_ORIGINS. The token cookie also regains its `__Host-` prefix over the forwarded HTTPS connection. No operator action is required for the default origin.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Authenticated forms no longer refused behind a TLS-terminating proxy", "body": "The CSRF origin pre-check derived the application origin from the raw proxied connection scheme, so a same-origin browser POST carrying `Origin: https://<host>` was refused as cross-origin under a CDN that forwards plain HTTP. The gate now trusts the forwarded `x-forwarded-proto` and matches against an explicit public-origin allowlist — `SHOP_PUBLIC_ORIGINS` (comma-separated), defaulting to the canonical origin — so sign-in and the account and admin forms submit correctly. The double-submit token cookie also regains its `__Host-` prefix over the forwarded HTTPS connection." }
+      ]
+    }
+  ]
+}
