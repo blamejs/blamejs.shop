@@ -29,9 +29,12 @@ jobs:
           languages: javascript-typescript
           # The vendored blamejs tree comes from upstream; scan only
           # our own surface so we get signal on integration code, not
-          # on the framework we vendor.
-          paths-ignore: |
-            lib/vendor/**
+          # on the framework we vendor. `paths-ignore` is a config
+          # property — it is silently ignored if passed as a bare
+          # action input, so it must nest under `config:`.
+          config: |
+            paths-ignore:
+              - lib/vendor/**
       - uses: github/codeql-action/analyze@4e828ff8d448a8a6e532957b1811f387a63867e8  # v3.30.0
         with:
           category: "/language:javascript-typescript"
