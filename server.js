@@ -835,6 +835,14 @@ async function main() {
       var shippingZones  = (catalog && cart) ? bShop.shippingZones.create({})  : null;
       var autoDiscount   = (catalog && cart) ? bShop.autoDiscount.create({})   : null;
       var couponStacking = (catalog && cart) ? bShop.couponStacking.create({}) : null;
+      // Per-line allocation of cart-level order discounts — back-office
+      // bookkeeping that records how an order's discount split across its
+      // lines, so a later partial refund knows each line's discounted
+      // share. checkout writes a row post-commit (drop-silent) when an
+      // order carried a discount; the admin console reads it back. A
+      // missing / unmigrated table only surfaces when the console route
+      // reads it (degrades to an empty list / notice), never at boot.
+      var discountAllocation = (catalog && cart) ? bShop.discountAllocation.create({}) : null;
 
       // Sales tax filings — periodic remittance bookkeeping over completed
       // orders. Post-checkout reporting only: it reads orders that landed in
@@ -910,6 +918,7 @@ async function main() {
           shippingZones:   shippingZones,
           autoDiscount:    autoDiscount,
           couponStacking:  couponStacking,
+          discountAllocation: discountAllocation,
           salesTaxFilings: salesTaxFilings,
           quantityDiscounts: quantityDiscounts,
           // Integration state map for /admin/integrations — "enabled" |
@@ -1159,6 +1168,7 @@ async function main() {
             giftcards: giftcards, giftCardLedger: giftCardLedger,
             loyalty: loyalty, quantityDiscounts: quantityDiscounts,
             autoDiscount: autoDiscount,
+            discountAllocation: discountAllocation,
           });
           sfDeps.payment           = sfPayment;
           sfDeps.paypal            = sfPaypal;

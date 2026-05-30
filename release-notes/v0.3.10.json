@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.10",
+  "date": "2026-05-30",
+  "headline": "Order discounts are split across lines for accurate partial refunds",
+  "summary": "When an order carries a cart-level discount, the admin console now records how that discount split across the order's lines — proportional to each line's value — so a later partial refund of one line knows that line's discounted share rather than the whole-order amount. A new read-only Discount splits screen shows the per-line breakdown for an order. This is back-office bookkeeping recorded after the order is placed; it has no effect on what the shopper is charged, and an order with no discount records nothing.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Per-line discount allocation + admin view", "body": "An order that carried an automatic cart discount now gets a recorded breakdown of how that discount split across its lines — proportional to each line's subtotal, summing exactly to the discount. A read-only Discount splits admin screen shows the breakdown for an order. The recording runs after the order is placed and never affects the charged amount; an order with no discount records nothing." }
+      ]
+    }
+  ]
+}
