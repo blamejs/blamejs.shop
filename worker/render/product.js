@@ -161,10 +161,14 @@ var VARIANT_ROW =
 // keeps a per-row add form, so the same endpoint contract holds.
 // `variants` is the pre-formatted array [{ id, sku, title, price }]
 // the renderers already build; `escAttr` is the path's HTML escaper.
-// Mirrors the container (lib/storefront.js#_buildBuyBox) byte-for-byte.
+// `availability` is the resolved `{ in_stock }` shape — an out-of-stock
+// product renders a disabled add control with an honest message instead
+// of an active button. Mirrors the container
+// (lib/storefront.js#_buildBuyBox) byte-for-byte.
 var BUYBOX_CHIP_LIMIT = 12;
 
-function _buildBuyBox(variants, escAttr) {
+function _buildBuyBox(variants, escAttr, availability) {
+  var inStock = !availability || availability.in_stock !== false;
   if (!variants || variants.length === 0) {
     return "<div class=\"pdp__variants\">\n" +
            "        <h2 class=\"pdp__variants-title\">Choose a variant</h2>\n" +
@@ -182,10 +186,22 @@ function _buildBuyBox(variants, escAttr) {
     "        <span class=\"pdp__badge\"><img class=\"pdp__badge-mark\" src=\"/assets/brand/favicon.svg\" alt=\"\" aria-hidden=\"true\" width=\"22\" height=\"22\"> Post-quantum secured checkout · ML-KEM-1024 key agreement · ML-DSA-65 receipt signature.</span>\n" +
     "      </div>";
 
+  var soldOutBtn =
+    "<button type=\"submit\" class=\"btn-primary cart-page__checkout\" disabled aria-disabled=\"true\">Out of stock</button>\n" +
+    "          <p class=\"pdp__soldout-note\" role=\"status\">This item is currently out of stock.</p>";
+  var soldOutRowBtn =
+    "<button type=\"submit\" class=\"btn-primary btn-primary--sm\" disabled aria-disabled=\"true\">Out of stock</button>";
+
   // Many variants → keep the compact table (still a per-row add form).
   if (variants.length > BUYBOX_CHIP_LIMIT) {
     var rows = variants.map(function (v) {
-      return renderTemplate(VARIANT_ROW, { title: v.title, sku: v.sku, price: v.price, variant_id: v.id });
+      var row = renderTemplate(VARIANT_ROW, { title: v.title, sku: v.sku, price: v.price, variant_id: v.id });
+      if (!inStock) {
+        row = row.replace(
+          "<button type=\"submit\" class=\"btn-primary btn-primary--sm\">Add to cart</button>",
+          soldOutRowBtn);
+      }
+      return row;
     }).join("");
     return "<div class=\"pdp__variants\">\n" +
            "        <h2 class=\"pdp__variants-title\">Choose a variant</h2>\n" +
@@ -223,13 +239,17 @@ function _buildBuyBox(variants, escAttr) {
       "          <div class=\"pdp__meta\">" + chips + "</div>\n" +
       "        </fieldset>";
 
+  var addControl = inStock
+    ? "<button type=\"submit\" class=\"btn-primary cart-page__checkout\">$ add to cart</button>"
+    : soldOutBtn;
+
   return "<div class=\"pdp__buybox\">\n" +
          "        <p class=\"featured-product__price\">" + escAttr(lead.price) + "</p>\n" +
          "        <form method=\"post\" action=\"/cart/lines\">\n" +
          "          " + variantBlock + "\n" +
          "          <label class=\"pdp__variants-title\" for=\"buybox-qty\">Quantity</label>\n" +
          "          <input id=\"buybox-qty\" type=\"number\" name=\"qty\" value=\"1\" min=\"1\" max=\"99\" class=\"variant-row__qty\" aria-label=\"Quantity\">\n" +
-         "          <button type=\"submit\" class=\"btn-primary cart-page__checkout\">$ add to cart</button>\n" +
+         "          " + addControl + "\n" +
          "        </form>\n" +
          "      </div>\n" +
          "      " + trustLine;
@@ -694,16 +714,19 @@ function _buildPdpGallery(product, media, assetPrefix) {
 // Resolve a product's availability + shipping shape from the variant list
 // + (optional) inventory map. Mirrors the container
 // (`lib/storefront.js#_resolveAvailability`) so both render paths drive
-// the badge + JSON-LD from the same shape. `in_stock` is true if ANY
+// the badge + CTA + JSON-LD from the same shape. `in_stock` is true if ANY
 // variant is buyable (a SKU with no inventory row counts as available —
 // the never-block stance); `requires_shipping` is true if ANY variant
-// ships physically.
+// ships physically; `low_stock` is the smallest still-buyable count across
+// the tracked variants when that count is at or below the variant's
+// operator-configured `low_stock_threshold` (null otherwise).
 function _resolveAvailability(variants, inventoryBySku) {
   variants = Array.isArray(variants) ? variants : [];
   var inv = (inventoryBySku && typeof inventoryBySku === "object") ? inventoryBySku : null;
   var anyTracked = false;
   var anyInStock = false;
   var requiresShipping = false;
+  var lowStock = null;
   for (var i = 0; i < variants.length; i += 1) {
     var v = variants[i] || {};
     if (v.requires_shipping === undefined || v.requires_shipping === null ||
@@ -715,11 +738,16 @@ function _resolveAvailability(variants, inventoryBySku) {
       var row = inv[v.sku];
       var available = row ? (Number(row.stock_on_hand) - Number(row.stock_held)) : 0;
       if (available > 0) anyInStock = true;
+      var threshold = row ? Number(row.low_stock_threshold) : NaN;
+      if (available > 0 && Number.isFinite(threshold) && available <= threshold) {
+        if (lowStock === null || available < lowStock) lowStock = available;
+      }
     }
   }
   return {
     in_stock:          anyTracked ? anyInStock : true,
     requires_shipping: variants.length === 0 ? true : requiresShipping,
+    low_stock:         (anyTracked ? anyInStock : true) ? lowStock : null,
   };
 }
 
@@ -727,9 +755,15 @@ function _resolveAvailability(variants, inventoryBySku) {
 // (`lib/storefront.js#_buildAvailability`) byte-for-byte.
 function _buildAvailability(availability) {
   var a = availability || { in_stock: true, requires_shipping: true };
-  var stockBadge = a.in_stock
-    ? "<span class=\"pdp__badge pdp__badge--ok\"><span class=\"dot dot--live\" aria-hidden=\"true\"></span> In stock</span>"
-    : "<span class=\"pdp__badge pdp__badge--out\">Out of stock</span>";
+  var low = Number(a.low_stock);
+  var stockBadge;
+  if (!a.in_stock) {
+    stockBadge = "<span class=\"pdp__badge pdp__badge--out\">Out of stock</span>";
+  } else if (Number.isFinite(low) && low > 0) {
+    stockBadge = "<span class=\"pdp__badge pdp__badge--low\"><span class=\"dot dot--live\" aria-hidden=\"true\"></span> Only " + low + " left</span>";
+  } else {
+    stockBadge = "<span class=\"pdp__badge pdp__badge--ok\"><span class=\"dot dot--live\" aria-hidden=\"true\"></span> In stock</span>";
+  }
   var shipBadge = a.requires_shipping
     ? "<span class=\"pdp__badge\">Ships in 1–2 business days</span>"
     : "<span class=\"pdp__badge\">Digital — delivered on purchase</span>";
@@ -822,7 +856,7 @@ export function renderProduct(opts) {
   // edge handler threads `opts.inventory` (per-SKU stock map); absent it,
   // the product reads as in stock (never-block stance).
   var availability = _resolveAvailability(variants, opts.inventory);
-  var buyboxHtml = _buildBuyBox(rendered, escapeHtml);
+  var buyboxHtml = _buildBuyBox(rendered, escapeHtml, availability);
   var availabilityHtml = _buildAvailability(availability);
   var shippingNoteHtml = _pdpShippingNote(availability);
 

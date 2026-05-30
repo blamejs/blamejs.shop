@@ -103,6 +103,12 @@ async function _productAvailability() {
   check("sold-out PDP shows Out of stock badge",  soldOut.indexOf("pdp__badge--out") !== -1);
   check("sold-out PDP omits In stock badge",      soldOut.indexOf("pdp__badge--ok") === -1);
   check("sold-out PDP JSON-LD is OutOfStock",     soldOut.indexOf("schema.org/OutOfStock") !== -1);
+  // Backend validates, frontend displays: a sold-out buy box disables the
+  // add-to-cart control + shows an honest message — no active purchase the
+  // cart-hold path would reject.
+  check("sold-out PDP disables add-to-cart",      soldOut.indexOf("disabled aria-disabled=\"true\">Out of stock</button>") !== -1);
+  check("sold-out PDP omits active add button",   soldOut.indexOf(">$ add to cart</button>") === -1);
+  check("sold-out PDP shows the out-of-stock note", soldOut.indexOf("class=\"pdp__soldout-note\"") !== -1);
 
   var inStock = storefront.renderProduct({
     product:  { slug: "widget-pro", title: "Widget Pro", description: "" },
@@ -114,6 +120,34 @@ async function _productAvailability() {
   check("in-stock PDP shows In stock badge",      inStock.indexOf("pdp__badge--ok") !== -1);
   check("in-stock PDP JSON-LD is InStock",        inStock.indexOf("schema.org/InStock") !== -1);
   check("physical PDP keeps the ships-in line",   inStock.indexOf("Ships in 1–2 business days") !== -1);
+  check("in-stock PDP keeps active add-to-cart",  inStock.indexOf(">$ add to cart</button>") !== -1);
+
+  // Low stock: a configured threshold the available count sits at/below
+  // surfaces the "Only N left" nudge, but the product stays buyable (the
+  // CTA is still active — running low is not sold out).
+  var low = storefront.renderProduct({
+    product:  { slug: "widget-pro", title: "Widget Pro", description: "" },
+    variants: [{ id: "v1", sku: "WDG-PRO-BLK-L", title: "Black / Large", requires_shipping: 1 }],
+    prices:   { v1: { amount_minor: 2999, currency: "USD" } },
+    inventory: { "WDG-PRO-BLK-L": { stock_on_hand: 5, stock_held: 2, low_stock_threshold: 5 } },
+    shop_name: "Acme",
+  });
+  check("low-stock PDP shows Only N left",         low.indexOf("Only 3 left") !== -1);
+  check("low-stock PDP uses the low badge",        low.indexOf("pdp__badge--low") !== -1);
+  check("low-stock PDP stays buyable (active CTA)", low.indexOf(">$ add to cart</button>") !== -1);
+  check("low-stock PDP JSON-LD is InStock",        low.indexOf("schema.org/InStock") !== -1);
+
+  // A threshold the available count is above does NOT trip the nudge —
+  // plenty in stock reads as the plain In-stock badge.
+  var plenty = storefront.renderProduct({
+    product:  { slug: "widget-pro", title: "Widget Pro", description: "" },
+    variants: [{ id: "v1", sku: "WDG-PRO-BLK-L", title: "Black / Large", requires_shipping: 1 }],
+    prices:   { v1: { amount_minor: 2999, currency: "USD" } },
+    inventory: { "WDG-PRO-BLK-L": { stock_on_hand: 50, stock_held: 0, low_stock_threshold: 5 } },
+    shop_name: "Acme",
+  });
+  check("plenty-stock PDP omits the low nudge",    plenty.indexOf("pdp__badge--low") === -1);
+  check("plenty-stock PDP shows the In stock badge", plenty.indexOf("pdp__badge--ok") !== -1);
 
   var digital = storefront.renderProduct({
     product:  { slug: "license", title: "License Key", description: "" },
@@ -244,6 +278,70 @@ async function _productRelatedParity() {
   check("edge + container related section is byte-identical", cBlock === eBlock);
 }
 
+// Dual-render parity for the truthful buy box: the out-of-stock disabled
+// CTA + the low-stock "Only N left" nudge must be byte-identical across the
+// container + edge substrates (the same enforcement the related-section
+// parity test applies to the recommendation rail).
+async function _productAvailabilityParity() {
+  var fs       = require("fs");
+  var path     = require("path");
+  var nodeModule = require("node:module");
+  var nodeUrl    = require("node:url");
+
+  var edgeProductPath = path.join(__dirname, "..", "..", "worker", "render", "product.js");
+  if (!fs.existsSync(edgeProductPath)) return;
+  nodeModule.registerHooks({
+    resolve: function (spec, ctx, next) {
+      var r = next(spec, ctx);
+      if (r.url && r.url.slice(-5) === ".json") r.importAttributes = { type: "json" };
+      return r;
+    },
+  });
+  var edgeProduct = await import(nodeUrl.pathToFileURL(edgeProductPath).href);
+
+  var base = {
+    product:  { slug: "widget-pro", title: "Widget Pro", description: "The pro variant of the widget." },
+    variants: [{ id: "v1", sku: "WDG-PRO-BLK-L", title: "Black / Large", requires_shipping: 1 }],
+    prices:   { v1: { amount_minor: 2999, currency: "USD" } },
+  };
+
+  // The PDP buy-box block (.pdp__buybox … through its trailing trust line)
+  // is where the stock-driven CTA lives; slice it from both renders.
+  function _buyBoxBlock(html) {
+    var start = html.indexOf("<div class=\"pdp__buybox\">");
+    if (start === -1) return null;
+    // The block ends at the availability badges' shipping note placeholder
+    // replacement — grab through the trust line's closing div by finding the
+    // next "RAW" boundary is brittle, so slice to the shipping note marker.
+    var end = html.indexOf("<p class=\"pdp__shipping-note\"", start);
+    return end === -1 ? html.slice(start) : html.slice(start, end);
+  }
+  // The availability badge row (.pdp__meta … In stock / Only N left / Out).
+  function _availBlock(html) {
+    var marker = "pdp__badge--";
+    var idx = html.indexOf(marker);
+    if (idx === -1) return null;
+    var start = html.lastIndexOf("<div class=\"pdp__meta\">", idx);
+    var end = html.indexOf("</div>", idx);
+    return (start === -1 || end === -1) ? null : html.slice(start, end + "</div>".length);
+  }
+
+  // Out of stock.
+  var outInv = { inventory: { "WDG-PRO-BLK-L": { stock_on_hand: 5, stock_held: 5 } } };
+  var cOut = storefront.renderProduct(Object.assign({}, base, outInv, { shop_name: "Acme" }));
+  var eOut = edgeProduct.renderProduct(Object.assign({}, base, outInv, { shopName: "Acme", version: "test" }));
+  check("edge + container sold-out buy box is byte-identical", _buyBoxBlock(cOut) === _buyBoxBlock(eOut));
+  check("edge + container sold-out badge is byte-identical",    _availBlock(cOut) === _availBlock(eOut));
+  check("container sold-out buy box is disabled",  (_buyBoxBlock(cOut) || "").indexOf("disabled aria-disabled") !== -1);
+
+  // Low stock.
+  var lowInv = { inventory: { "WDG-PRO-BLK-L": { stock_on_hand: 4, stock_held: 1, low_stock_threshold: 5 } } };
+  var cLow = storefront.renderProduct(Object.assign({}, base, lowInv, { shop_name: "Acme" }));
+  var eLow = edgeProduct.renderProduct(Object.assign({}, base, lowInv, { shopName: "Acme", version: "test" }));
+  check("edge + container low-stock badge is byte-identical",  _availBlock(cLow) === _availBlock(eLow));
+  check("container low-stock badge shows Only 3 left",          (_availBlock(cLow) || "").indexOf("Only 3 left") !== -1);
+}
+
 // JSON-LD `</script>` breakout neutralization — both render paths.
 // Admin-controlled product fields (title / description) flow into the
 // Product + BreadcrumbList JSON-LD. The HTML tokenizer ends a <script>
@@ -360,6 +458,86 @@ async function _cart() {
   check("cart shows line totals",   html.indexOf("$59.98") !== -1 && html.indexOf("$19.99") !== -1);
   check("cart shows subtotal",      html.indexOf("$79.97") !== -1);
   check("cart count = line count",  html.indexOf("Cart, 2 items") !== -1);
+  // Back-compat caller (no totals_detail) keeps the bare Subtotal + Total list.
+  check("cart without detail shows a Total row",  html.indexOf("<dt>Total</dt>") !== -1);
+}
+
+// Real grand total before pay: cart with a full totals breakdown (the
+// shape the route computes via _estimateCartTotals) renders Subtotal +
+// estimated tax + estimated shipping + discount + an Estimated total.
+async function _cartTotalsEstimate() {
+  var detail = {
+    // subtotal 7997, discount 500, tax 656, shipping 695 → grand 9848
+    totals: {
+      currency: "USD", line_count: 2,
+      subtotal_minor: 7997, discount_minor: 500, tax_minor: 656, shipping_minor: 695,
+      grand_total_minor: 9848,
+    },
+    estimated: true, tax_resolved: true, shipping_resolved: true, shipping_label: "Standard",
+    destination: { ship_to: { country: "US" }, from_saved: false },
+  };
+  var html = storefront.renderCart({
+    lines:  [
+      { variant_id: "v1", sku: "ABC-1", qty: 2, unit_amount_minor: 2999, unit_currency: "USD" },
+      { variant_id: "v2", sku: "ABC-2", qty: 1, unit_amount_minor: 1999, unit_currency: "USD" },
+    ],
+    totals: detail.totals,
+    totals_detail: detail,
+    shop_name: "Acme",
+  });
+  check("cart total breakdown shows subtotal",        html.indexOf("$79.97") !== -1);
+  check("cart total breakdown shows the discount",     html.indexOf("−$5.00") !== -1);
+  check("cart total breakdown shows estimated tax",    /Estimated tax/.test(html) && html.indexOf("$6.56") !== -1);
+  check("cart total breakdown shows estimated shipping", /Estimated shipping/.test(html) && html.indexOf("$6.95") !== -1);
+  check("cart shows the estimated grand total",        /Estimated total/.test(html) && html.indexOf("$98.48") !== -1);
+  check("cart CTA note says the total finalizes at the address step",
+    html.indexOf("exact total is confirmed once you enter your shipping address") !== -1);
+  // Estimate must NOT present the figure as the final charge.
+  check("cart estimate avoids the stale 'next step' microcopy",
+    html.indexOf("Tax and shipping are calculated on the next step") === -1);
+}
+
+// When tax/shipping can't be resolved (no zone match for the destination,
+// tax primitive returned nothing), the figures fall back to a labelled
+// "Calculated at checkout" — the subtotal is still honest, nothing faked.
+async function _cartTotalsUnresolved() {
+  var detail = {
+    totals: {
+      currency: "USD", line_count: 1,
+      subtotal_minor: 2999, discount_minor: 0, tax_minor: 0, shipping_minor: 0,
+      grand_total_minor: 2999,
+    },
+    estimated: true, tax_resolved: false, shipping_resolved: false, shipping_label: null,
+    destination: { ship_to: { country: "US" }, from_saved: false },
+  };
+  var html = storefront.renderCart({
+    lines:  [{ variant_id: "v1", sku: "ABC-1", qty: 1, unit_amount_minor: 2999, unit_currency: "USD" }],
+    totals: detail.totals,
+    totals_detail: detail,
+    shop_name: "Acme",
+  });
+  check("unresolved tax labelled calculated-at-checkout",
+    html.indexOf("totals-list__pending") !== -1 && html.indexOf("Calculated at checkout") !== -1);
+  check("unresolved cart still shows the honest subtotal", html.indexOf("$29.99") !== -1);
+}
+
+// Out-of-stock + low-stock cart lines surface a real status pill instead
+// of an implied always-buyable line.
+async function _cartLineStock() {
+  var html = storefront.renderCart({
+    lines: [
+      { id: "l1", variant_id: "v1", sku: "OUT-1", qty: 1, unit_amount_minor: 1000, unit_currency: "USD" },
+      { id: "l2", variant_id: "v2", sku: "LOW-1", qty: 1, unit_amount_minor: 1000, unit_currency: "USD" },
+      { id: "l3", variant_id: "v3", sku: "OK-1",  qty: 1, unit_amount_minor: 1000, unit_currency: "USD" },
+    ],
+    totals: { subtotal_minor: 3000, grand_total_minor: 3000, currency: "USD" },
+    line_stock: { v1: "out", v2: "low", v3: "ok" },
+    shop_name: "Acme",
+  });
+  check("out-of-stock line shows the badge", html.indexOf("cart-line__stock--out") !== -1 && html.indexOf("Out of stock") !== -1);
+  check("low-stock line shows the badge",    html.indexOf("cart-line__stock--low") !== -1 && html.indexOf("Low stock") !== -1);
+  // The in-stock line carries no pill (the implied default).
+  check("in-stock line carries no pill",     (html.match(/cart-line__stock--/g) || []).length === 2);
 }
 
 async function _cartEmpty() {
@@ -556,8 +734,52 @@ async function _checkoutForm() {
 
   // Honest microcopy — NO fabricated "Total (plus tax + shipping)" line.
   check("checkout drops the fabricated Total line", html.indexOf("plus tax + shipping") === -1);
-  check("checkout shows the honest tax/shipping note",
-    html.indexOf("Tax and shipping are calculated on the next step") !== -1);
+  // Without a totals_detail the summary degrades to a subtotal-only
+  // breakdown: tax + shipping labelled "calculated at checkout", and a
+  // Total that equals the subtotal (no fabricated number).
+  check("checkout (no detail) defers tax/shipping honestly",
+    html.indexOf("Calculated at checkout") !== -1);
+  check("checkout (no detail) shows a grand Total row", html.indexOf("totals-list__grand") !== -1);
+
+  // With a real totals breakdown (the shape the route computes) the
+  // summary shows estimated tax + shipping + the grand total.
+  var withTotals = storefront.renderCheckoutForm({
+    lines:  [{ variant_id: "v1", sku: "X-1", qty: 2, unit_amount_minor: 2999, unit_currency: "USD", line_total_minor: 5998 }],
+    totals: { subtotal_minor: 5998, currency: "USD" },
+    totals_detail: {
+      totals: {
+        currency: "USD", line_count: 1,
+        subtotal_minor: 5998, discount_minor: 0, tax_minor: 525, shipping_minor: 695,
+        grand_total_minor: 7218,
+      },
+      estimated: true, tax_resolved: true, shipping_resolved: true, shipping_label: "Standard",
+    },
+    shop_name: "Acme",
+    product_lookup: { v1: { product: { title: "Test Widget", slug: "widget" }, hero_media: null } },
+  });
+  check("checkout summary shows estimated tax",      /Estimated tax/.test(withTotals) && withTotals.indexOf("$5.25") !== -1);
+  check("checkout summary shows estimated shipping", /Estimated shipping/.test(withTotals) && withTotals.indexOf("$6.95") !== -1);
+  check("checkout summary shows the grand total",    withTotals.indexOf("$72.18") !== -1);
+
+  // An entered (confirmed) address reads as the EXACT total, not an estimate.
+  var confirmed = storefront.renderCheckoutForm({
+    lines:  [{ variant_id: "v1", sku: "X-1", qty: 2, unit_amount_minor: 2999, unit_currency: "USD", line_total_minor: 5998 }],
+    totals: { subtotal_minor: 5998, currency: "USD" },
+    totals_detail: {
+      totals: {
+        currency: "USD", line_count: 1,
+        subtotal_minor: 5998, discount_minor: 0, tax_minor: 525, shipping_minor: 695,
+        grand_total_minor: 7218,
+      },
+      estimated: false, tax_resolved: true, shipping_resolved: true, shipping_label: "Standard",
+    },
+    shop_name: "Acme",
+    product_lookup: { v1: { product: { title: "Test Widget", slug: "widget" }, hero_media: null } },
+  });
+  check("confirmed checkout shows an exact Tax label (not estimated)",
+    confirmed.indexOf("<dt>Tax</dt>") !== -1 && confirmed.indexOf("Estimated tax") === -1);
+  check("confirmed checkout note reads as the exact total",
+    confirmed.indexOf("Total includes tax and shipping for the address above") !== -1);
 
   // Edit-cart link back to /cart.
   check("checkout has an Edit cart link",  /href=\"\/cart\"[^>]*class=\"checkout-page__edit-cart\"|class=\"checkout-page__edit-cart\"[^>]*href=\"\/cart\"|<a href=\"\/cart\" class=\"checkout-page__edit-cart\">/.test(html));
@@ -918,8 +1140,12 @@ async function run() {
   await _productNoVariants();
   await _productRelated();
   await _productRelatedParity();
+  await _productAvailabilityParity();
   await _jsonLdScriptBreakout();
   await _cart();
+  await _cartTotalsEstimate();
+  await _cartTotalsUnresolved();
+  await _cartLineStock();
   await _cartEmpty();
   await _checkoutForm();
   await _payPage();
