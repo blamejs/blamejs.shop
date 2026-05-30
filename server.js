@@ -174,7 +174,24 @@ var DATA_DIR = process.env.DATA_DIR || "./data";
     // so a socket-keyed global limit would throttle the whole store. The
     // tight per-route limiters + fetch-metadata gate mount inside routes()
     // below. createApp mounts this at the app level, ahead of routes().
-    middleware: { rateLimit: bShop.securityMiddleware.globalRateLimitOpts() },
+    // createApp (v0.13.46+) wires several security middlewares ON by
+    // default — cookies, CSP nonce, fetch-metadata, body parser, and CSRF.
+    // The shop already mounts its OWN body parser (with the `text/csv`
+    // sub-parser the admin CSV import needs) and fetch-metadata (configured
+    // `allowMissing` + webhook exemptions), and mounts CSRF, inside routes()
+    // below via `mountRouteGuards` — scoped so the edge-rendered, cookie-
+    // less, dual-rendered forms are exempt. So disable createApp's app-level
+    // duplicates and keep the shop's configured copies as the single source
+    // of truth; `cspNonce` stays off to leave the existing strict-`'self'`
+    // CSP unchanged. The cookie parser stays on (the scoped CSRF reads the
+    // double-submit cookie through it).
+    middleware: {
+      rateLimit:     bShop.securityMiddleware.globalRateLimitOpts(),
+      csrf:          false,
+      bodyParser:    false,
+      fetchMetadata: false,
+      cspNonce:      false,
+    },
     routes: function (r) {
       // Capture the raw body for payment webhooks BEFORE the JSON parser
       // consumes it — Stripe (and PayPal) verify the signature over the
