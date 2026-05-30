@@ -68,6 +68,12 @@ var COVERAGE = [
     note:     "5xx problem-details must carry no error-derived detail; record server-side, return a generic code",
   },
   {
+    bugClass: "admin cookie/HTML error banner leaks raw error text to the operator's browser",
+    detector: "admin-html-error-banner-echoes-raw-error-message",
+    gate:     "codebase-patterns",
+    note:     "every admin HTML notice/banner built from a thrown error routes through _safeNotice; the cookie path can never diverge from the bearer path on what it reveals",
+  },
+  {
     bugClass: "operator-supplied outbound webhook URL enables SSRF",
     detector: "outbound-webhook-url-without-ssrf-guard",
     gate:     "codebase-patterns",

@@ -1875,6 +1875,36 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "The admin _wrap fallthrough returned `_problem(res, 500, \"internal-error\", e.message)`, echoing the raw error to the client. A DB constraint violation (`UNIQUE constraint failed: products.slug`, `FOREIGN KEY constraint failed`) or any unexpected throw then leaked SQLite internals. 5xx bodies must carry no error-derived detail: record the message via the framework audit (drop-silent, outcome:\"failure\") and return a generic code. Known 4xx mappings (TypeError → 400, constraint → 409/400) surface a generic operator-facing message instead. Detector flags any `_problem(res, 5xx, code, e.message / e && e.message / String(e))` shape.",
   },
   {
+    // The cookie/HTML sibling of admin-5xx-echoes-raw-error-message: an
+    // admin HTML handler that renders a caught error's RAW message into a
+    // banner/notice (`notice: e.message` / `notice: (e && e.message)` /
+    // `notice: String(e)`) leaks storage-engine / parser internals to the
+    // operator's browser — the same "UNIQUE constraint failed:
+    // products.slug" string the bearer path was hardened against, surfaced
+    // through the rendered page instead of the JSON body. Every admin HTML
+    // notice/banner built from a thrown error MUST route through _safeNotice,
+    // which returns the validation message verbatim for a TypeError and a
+    // generic message for a constraint / parser / unknown error (auditing
+    // the unknown case server-side). The good shape is `notice:
+    // _safeNotice(e, "...").message` (or `n.message` for a hoisted result);
+    // a bare `e.message` in a notice value is the antipattern.
+    id:        "admin-html-error-banner-echoes-raw-error-message",
+    bugClassDeclared: true,
+    primitive: "route every admin HTML error banner/notice through _safeNotice(e, \"<action>\") — render `_safeNotice(e, ...).message`, never a raw `e.message` / `(e && e.message)` / `String(e)`; the classifier surfaces TypeError validation text verbatim and genericizes constraint / parser / unknown errors",
+    regex:     /notice\s*[:=][^;}\n]*?(?:\b(?:e|e2|e3|err)\s*(?:&&\s*(?:e|e2|e3|err)\s*)?\.message|String\s*\(\s*(?:e|e2|e3|err)\s*\))/,
+    scanScope: "lib",
+    // The admin console is the surface that composes _safeNotice. The
+    // storefront's own form-error renders (survey / return / review / Q&A)
+    // already sit inside an `if (e instanceof TypeError)` guard with a
+    // `throw e` fall-through, so they only ever render an operator-safe
+    // validation message and never a constraint / unknown error — a
+    // distinct, already-correct discipline. Exempt that file so the detector
+    // locks the admin-banner contract without forcing the storefront to
+    // route through an admin-module helper.
+    allowlist: ["lib/storefront.js"],
+    reason:    "POST /admin/products with a duplicate slug via the cookie/HTML form returned a 400 page whose error banner contained the raw `UNIQUE constraint failed: products.slug` — the bearer JSON path was hardened (the _wrap chokepoint), but the htmlHandler branch passed the caught error's message straight into `renderAdminProducts({ notice: (e && e.message) })`. Every admin HTML notice/banner built from a thrown error must route through the shared _safeNotice classifier so the cookie and bearer surfaces can never diverge: TypeError → its (operator-safe) validation message verbatim; UNIQUE/FOREIGN KEY → a generic in-use / referenced-record message; CHECK/NOT NULL → a generic missing-or-invalid message; SyntaxError → \"Invalid input.\"; anything else → a generic message with the raw text recorded server-side via the framework audit. Detector flags any `notice: <expr with e.message / (e && e.message) / String(e)>` on a single line; the good shapes (`notice: _safeNotice(e, ...).message`, `notice: n.message`) carry no bare `e.message` in the notice value and are not matched. The storefront's TypeError-guarded form renders are exempted via allowlist (they enforce the same no-leak guarantee through an explicit `instanceof TypeError` branch with a `throw e` fall-through).",
+  },
+  {
     // Issuing a gift card binds a money balance to a currency. The
     // giftcards primitive only shape-checks the code (/^[A-Z]{3}$/), so a
     // well-formed-but-nonexistent code like "ZZZ" used to issue a card in a

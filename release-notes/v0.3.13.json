@@ -1,0 +1,21 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.13",
+  "date": "2026-05-30",
+  "headline": "Updated runtime hardens the storage and audit layers; admin error pages no longer show raw database text",
+  "summary": "The vendored blamejs runtime is updated to v0.14.7, which tightens the data and audit layers the shop is built on: database queries are checked against each table's declared columns (a reference to an undeclared column fails closed), the database encryption key is bound to its deployment so a copied key can't be unsealed elsewhere, raw SQL fragments refuse embedded string literals so values bind through placeholders, audit-chain purges can require two authorizers, and breach-notification deadlines raise a running clock. Separately, when an admin form action fails the console now shows a short generic message with the correct status instead of rendering a raw database or parser string into its error banner. No operator action is required.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Vendored runtime updated to v0.14.7 (storage + audit hardening)", "body": "The underlying runtime now checks every database query against the table's declared columns and fails closed on an undeclared reference, binds the database encryption key to its data directory and key path so a relocated key won't unseal, refuses embedded string literals in raw SQL fragments, supports two-authorizer dual control on audit-chain purges, can compute sealed-column lookup hashes as a keyed MAC, and ships a running clock for breach-notification deadlines. The shop inherits these protections; no configuration change is needed." }
+      ]
+    },
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Console error banners show a safe message, not internal text", "body": "Every admin HTML form handler now routes a thrown error through one shared classifier: a duplicate key becomes a 409 \"That value is already in use.\", a missing referenced record a generic not-found, malformed input a generic \"Invalid input.\", and an unexpected failure a generic message whose detail is recorded server-side rather than shown. Operator-facing validation messages are unchanged. This closes the path where a create form could render a raw database constraint string into its error banner, matching the API behavior the bearer path already had." }
+      ]
+    }
+  ]
+}
