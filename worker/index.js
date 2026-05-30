@@ -128,7 +128,10 @@ function _redact(s) {
   out = out.replace(/\bt=\d+\s*,\s*v1=[a-f0-9]+(?:\s*,\s*v\d+=[a-f0-9]+)*/gi, "<redacted-stripe-signature>");
   // JWT-like tri-segment dotted token
   out = out.replace(/\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "<redacted-jwt>");
-  // shop_sid / shop_auth cookie value (anything until ; or end)
+  // shop_sid / shop_auth cookie value (anything until ; or end). The `\b`
+  // anchors the name match so it also covers the `__Host-`-prefixed
+  // production form (`__Host-shop_sid=` / `__Host-shop_auth=`): the hyphen
+  // is a word boundary, so the value is redacted while the prefix is kept.
   out = out.replace(/\b(shop_sid|shop_auth)=[^;\s]+/gi, "$1=<redacted>");
   // Bridge / admin secret headers (key=value style, common log shape)
   out = out.replace(/\b(x-d1-bridge-secret|x-admin-api-key|d1_bridge_secret|admin_api_key|stripe_webhook_secret|stripe_api_key)\s*[:=]\s*\S+/gi, "$1=<redacted>");
@@ -729,10 +732,18 @@ function _hasSessionCookie(request) {
   // `b.cookies.parseSafe` handles the framework's parse rules
   // (token-grammar, length cap, duplicate-key resolution) without
   // throwing on bad input. The presence check inspects the
-  // returned `jar` for either session cookie.
+  // returned `jar` for either session cookie. Both names are checked
+  // in their prefix-hardened (`__Host-`) and bare forms: the container
+  // emits the `__Host-`-prefixed name over https (production) and the
+  // bare name only over plain http (dev), so the edge must treat the
+  // prefixed name as session-bearing too — otherwise a logged-in
+  // visitor's per-session page could land in the shared edge cache.
   const parsed = b.cookies.parseSafe(cookieHeader);
-  return Object.prototype.hasOwnProperty.call(parsed.jar, "shop_sid") ||
-         Object.prototype.hasOwnProperty.call(parsed.jar, "shop_auth");
+  const has = function (name) {
+    return Object.prototype.hasOwnProperty.call(parsed.jar, name);
+  };
+  return has("__Host-shop_sid")  || has("shop_sid") ||
+         has("__Host-shop_auth") || has("shop_auth");
 }
 
 // Accept-Language tags in q-sorted order (primary preference first),
