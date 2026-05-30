@@ -154,16 +154,19 @@ async function _mintBatchShape() {
 }
 
 async function _mintBatchCollisionRetry() {
-  // 2-character alphabet + length 4 = 16 possible bodies. Mint 12 of
-  // them with no prefix/suffix so the per-batch dedupe path
-  // necessarily triggers as the space fills up. The minter must keep
-  // retrying until it lands on an unused draw.
+  // 2-character alphabet + length 5 = 32 possible bodies. Mint 12 of
+  // them with no prefix/suffix so the per-batch dedupe path trips as the
+  // space fills (the minter must retry until it lands on an unused draw).
+  // The space is kept comfortably larger than the mint count so the draw
+  // exercises the retry path without ever exhausting the per-code retry
+  // budget by chance — a tighter space (12 of 16) leaves the tail draws
+  // colliding often enough to occasionally blow the budget on a slow run.
   var f = _cmFactory();
   var out = await f.cm.mintBatch({
     batch_label:     "tiny-space",
     count:           12,
     alphabet:        "AB",
-    length:          4,
+    length:          5,
     coupon_template: { kind: "amount_off", value: 500 },
   });
   check("collision-retry mint completed",          out.count_minted === 12);
@@ -184,14 +187,16 @@ async function _mintBatchCollisionRetry() {
     dedupe[all.rows[i].coupon_code] = true;
   }
 
-  // Tiny space exhausted: 16/16 used; another mint of 5 codes must
-  // bust the retry budget rather than return a partial batch.
+  // Tiny space saturation: 12 of the 32 codes are taken, so a further
+  // mint of 21 codes (33 > 32 total demand) can never be filled — the
+  // minter must bust the retry budget rather than return a partial
+  // batch, no matter how the draws fall.
   await assert.rejects(
     f.cm.mintBatch({
       batch_label:     "tiny-space-bust",
-      count:           5,
+      count:           21,
       alphabet:        "AB",
-      length:          4,
+      length:          5,
       coupon_template: { kind: "amount_off", value: 500 },
     }),
     /COLLISION_BUDGET_EXHAUSTED|collision retry budget/,
