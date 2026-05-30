@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.8",
+  "date": "2026-05-30",
+  "headline": "Update the vendored blamejs runtime to v0.14.6",
+  "summary": "Refreshes the vendored blamejs runtime from v0.14.5 to v0.14.6, a maintenance update. The createApp request-lifecycle security stack the shop composes — CSRF, fetch-metadata, body-parser, cookies, rate limiting — is unchanged in default behavior. v0.14.6 adds opt-in RFC 9457 problem+json and onDeny response hooks to the access-refusal middleware (defaults unchanged, so nothing the shop relies on shifts) and corrects a few internal export and bearer-scope paths. No operator action is required.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        { "title": "Vendored blamejs runtime updated to v0.14.6", "body": "The pinned blamejs runtime moves from v0.14.5 to v0.14.6. The middleware the storefront and admin compose keeps its current default behavior; the release adds opt-in problem-details / onDeny response hooks to the refusal middleware and fixes internal export and bearer-scope paths. No behavior change for the shop." }
+      ]
+    }
+  ]
+}
