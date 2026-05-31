@@ -542,6 +542,16 @@ async function main() {
         ? bShop.returns.create({ cursorSecret: returnsCursorSecret })
         : null;
 
+      // Return-shipping labels — the operator-funded prepaid return label +
+      // its carrier-scan timeline, keyed to an approved return. Issuance is
+      // an operator action; the storefront surfaces an already-issued label
+      // (download + tracking) read-only on the customer's returns detail.
+      // The `returns` handle lets a delivered carrier scan flip the RMA to
+      // received without the two primitives duplicating state.
+      var returnLabels = returns
+        ? bShop.returnLabels.create({ returns: returns })
+        : null;
+
       // Support tickets — the customer-service ticketing surface. Opts in
       // the customer intake (/account/support) + the operator queue
       // (/admin/support). One instance shared by both surfaces. The
@@ -1076,6 +1086,7 @@ async function main() {
           reviews:       reviews,
           productQa:     productQa,
           returns:       returns,
+          returnLabels:  returnLabels,
           supportTickets: supportTickets,
           orderExchanges: orderExchanges,
           preorder:      preorder,
@@ -1228,6 +1239,7 @@ async function main() {
         if (addresses) sfDeps.addresses = addresses;
         if (cookieConsent) sfDeps.cookieConsent = cookieConsent;
         if (returns) sfDeps.returns = returns;
+        if (returnLabels) sfDeps.returnLabels = returnLabels;
         // Support tickets — the customer intake + thread (/account/support).
         if (supportTickets) sfDeps.supportTickets = supportTickets;
         // Order exchanges — the customer request + status surface

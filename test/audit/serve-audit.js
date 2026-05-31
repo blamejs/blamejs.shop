@@ -400,6 +400,7 @@ async function main() {
   var customerSegments   = bShop.customerSegments.create({ query: query, cursorSecret: "audit-customer-segments" });
   var reviews            = bShop.reviews.create({ query: query, cursorSecret: "audit-reviews" });
   var returns            = bShop.returns.create({ query: query, cursorSecret: "audit-returns" });
+  var returnLabels       = bShop.returnLabels.create({ query: query, returns: returns });
   var supportTickets     = bShop.supportTickets.create({ query: query, cursorSecret: "audit-support" });
   var orderExchanges     = bShop.orderExchanges.create({ query: query, order: order });
   // Bridge the preorder primitive's per-line createFromCart call into the
@@ -600,6 +601,7 @@ async function main() {
         config:             config,
         reviews:            reviews,
         returns:            returns,
+        returnLabels:       returnLabels,
         supportTickets:     supportTickets,
         orderExchanges:     orderExchanges,
         preorder:           preorder,
@@ -645,6 +647,7 @@ async function main() {
         orderTracking:      orderTracking,
         reviews:            reviews,
         returns:            returns,
+        returnLabels:       returnLabels,
         supportTickets:     supportTickets,
         orderExchanges:     orderExchanges,
         preorder:           preorder,

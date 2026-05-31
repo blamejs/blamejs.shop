@@ -194,6 +194,12 @@ var COVERAGE = [
     note:     "the request form + POST under /account/orders/:order_id/exchange funnel through _ownedOrderForExchange and the /account/exchanges/:id status view through _ownedExchange — both load the parent order via deps.order.get and refuse (clean 404 on a malformed id, an unknown order/exchange, or a foreign-owned one) unless order.customer_id === auth.customer_id; the order-exchanges row carries no customer_id, so ownership is asserted transitively through the order and the route owns the decision",
   },
   {
+    bugClass: "storefront customer return-label route (status detail / label download) resolves an already-issued return label + its tracking by a return/label path id without first asserting the return belongs to the session customer (any signed-in shopper could read or download another customer's return label by id — IDOR)",
+    detector: "storefront-return-label-route-without-ownership-check",
+    gate:     "codebase-patterns",
+    note:     "the /account/returns/:id status view and the /account/returns/:id/label download both funnel through _ownedReturn(req, res, auth), which loads the return via deps.returns.get and refuses it (clean 404 on a malformed / unknown / cross-customer id) unless return.customer_id === auth.customer_id, BEFORE resolving labelForReturn / eventsForLabel or redirecting to label_url; the return-labels primitive reads a label + timeline by id alone and a return label belongs to a return which belongs to a customer, so the route owns the ownership decision",
+  },
+  {
     bugClass: "storefront og:image / twitter:image / Product+Article JSON-LD image emitted as a relative `/assets/...` URL — social-share crawlers (Facebook / Slack / Twitter / iMessage) and Google's rich result fetch it from a different origin, so the share preview renders no image",
     detector: "og-image-relative-without-absolutize",
     gate:     "codebase-patterns",
@@ -294,6 +300,12 @@ var COVERAGE = [
     detector: "store-credit-history-cursor-without-peek",
     gate:     "codebase-patterns",
     note:     "fetch limit + 1, set hasMore = r.rows.length > limit, slice the page back to limit, and emit next_cursor only when hasMore — the cursor drives the /account/credit \"Older activity\" link, so a phantom page is shopper-visible",
+  },
+  {
+    bugClass: "admin return-label issuance route hand-rolls an INSERT INTO return_labels instead of composing returnLabels.issueLabel — bypassing the primitive's HTTPS-only label_url gate (b.safeUrl) + approved-only RMA-status refusal, so an unvalidated label_url lands in the column the customer download redirects at (scheme-injection / open-redirect) and a label can be funded against an un-triaged claim",
+    detector: "admin-return-label-issue-without-primitive",
+    gate:     "codebase-patterns",
+    note:     "the POST /admin/returns/:id/label route composes returnLabels.issueLabel({ return_id, carrier, service_level, weight_grams, label_url, tracking_number, cost_minor, currency }) — the primitive owns the carrier/service/tracking bounds, the weight/cost integer shapes, the ISO-4217 currency check, the approved-only refusal, and the HTTPS-only label_url validation (b.safeUrl); the storefront GET /account/returns/:id/label download redirects the shopper at the stored label_url, so the column is a redirect target the route must never populate with a hand-rolled insert. The tracking-update routes (/label/shipped|in-transit|delivered|exception) compose the matching mark-* methods",
   },
 ];
 
