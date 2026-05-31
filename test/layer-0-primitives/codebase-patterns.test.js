@@ -2438,6 +2438,38 @@ var KNOWN_ANTIPATTERNS = [
     reason: "The wishlist-sharing owner surface (on /account/wishlist) lets a signed-in shopper mint share links for their OWN wishlist, see their active links, and revoke one. The sharing primitive stores `owner_customer_id` on every `wishlist_shares` row, but `revokeShareLink({ link_id, reason })` flips `revoked_at` by id alone — it has no notion of the requesting customer — so the route owns the ownership decision. The revoke route resolves the session customer via `_currentCustomer(req)` (`auth.customer_id`), loads ONLY that customer's links via `deps.wishlistSharing.listSharesForOwner(auth.customer_id)`, and looks the path `share_id` up in that owned set; an unknown id, a malformed id, and a link owned by someone else all resolve identically to a clean 404 (no act, no leak) — only a link the session customer actually owns is revoked. The create route keys on `auth.customer_id` directly (it never names a path link id), so it carries no IDOR surface and isn't matched. Without the `listSharesForOwner(auth.customer_id)` ownership scope, any authenticated shopper could POST another customer's share id to the revoke route and kill a link that isn't theirs. The detector matches the revoke route registration and is exonerated only when the same file performs the session-scoped `listSharesForOwner(auth.customer_id)` read; dropping that scope re-opens the IDOR and trips this.",
   },
   {
+    // The storefront gift-registry owner routes (`POST /account/registry/
+    // :slug/items`, `…/items/:item_id/remove`, `…/edit`, `…/close`) mutate a
+    // registry named by slug in the path. The gift-registry primitive's
+    // addItem / removeItem / update / closeRegistry move a registry by slug
+    // ALONE — they carry no notion of the requesting customer, and
+    // `gift_registries` stores `owner_customer_id` on every row. So the
+    // storefront route alone owns the ownership decision: every owner write
+    // must first assert the registry belongs to the session customer (load it
+    // via `_ownedRegistry(slug, auth.customer_id)`, which reads through
+    // getRegistry and returns null unless `owner_customer_id === auth.customer_id`,
+    // → clean 404 on a foreign / unknown / malformed slug) before the mutation,
+    // or any signed-in shopper could add to / strip / edit / close another
+    // customer's registry by guessing its slug (IDOR). The detector matches the
+    // owner add-item route registration and is exonerated only when the same
+    // file performs the session-scoped ownership read `_ownedRegistry(<slug>,
+    // auth.customer_id)`; a route that mutated straight off the path slug
+    // without that scope trips this. The public giver view (`GET /registry/
+    // :slug`) is NOT matched — it intentionally resolves through getBySlug
+    // (never a guessable id), enforces the privacy gate in the route (a
+    // private registry 404s) and surfaces items + aggregate counts only, never
+    // the owner identity / buyer rows, so it carries no owner-scoped surface to
+    // guard.
+    id: "storefront-registry-owner-route-without-ownership-check",
+    bugClassDeclared: true,
+    primitive: "every storefront gift-registry owner write route (`POST /account/registry/:slug/items`, `…/items/:item_id/remove`, `…/edit`, `…/close`) must first assert the registry belongs to the session customer via `_ownedRegistry(slug, auth.customer_id)` (reads through deps.giftRegistry.getRegistry and returns null unless `owner_customer_id === auth.customer_id` → clean 404 on a foreign / unknown / malformed slug) before addItem / removeItem / update / closeRegistry — because the gift-registry primitive mutates a registry by slug alone, so a route that mutated straight off the path slug would let any signed-in shopper add to / strip / edit / close another customer's registry by slug (IDOR)",
+    regex: /router\.post\(\s*["']\/account\/registry\/:slug\/items["']/,
+    scanScope: "lib",
+    requires: /_ownedRegistry\s*\(\s*slug\s*,\s*auth\.customer_id\s*\)/,
+    allowlist: [],
+    reason: "The gift-registry owner surface (on /account/registry) lets a signed-in shopper create registries, then add / remove items, edit details, and close each registry they own. The primitive stores `owner_customer_id` on every `gift_registries` row, but its addItem / removeItem / update / closeRegistry methods key on the registry slug alone — they have no notion of the requesting customer — so the route owns the ownership decision. Every owner write route resolves the session customer via `_currentCustomer(req)` (`auth.customer_id`) and funnels through `_ownedRegistry(slug, auth.customer_id)`, which loads the registry via `deps.giftRegistry.getRegistry(slug)` and returns null unless `reg.owner_customer_id === auth.customer_id`: a malformed slug throws inside the primitive's slug validator (caught → null), an unknown slug returns null, and a slug owned by a DIFFERENT customer returns null — all three render an identical clean 404, with nothing mutated. The create route (`POST /account/registry`, no `:slug`) keys the new registry's owner on `auth.customer_id` directly, so it carries no cross-customer surface and isn't matched. Without the `_ownedRegistry(slug, auth.customer_id)` scope, any authenticated shopper could POST another customer's registry slug to the add-item / remove / edit / close route and mutate a registry that isn't theirs. The public giver view `GET /registry/:slug` is deliberately NOT in scope: it resolves the registry only through `getBySlug` (never a guessable owner/registry id), enforces the privacy gate in the route (a `private` registry 404s identically to an unknown slug, no existence oracle), and surfaces items + aggregate purchased counts only — the owner's customer id / shipping address and the per-buyer purchase rows are never carried into the public shape. The detector matches the owner add-item route registration and is exonerated only when the same file performs the session-scoped `_ownedRegistry(slug, auth.customer_id)` read; dropping that scope re-opens the IDOR and trips this.",
+  },
+  {
     id: "admin-discount-value-kind-silent-default",
     bugClassDeclared: true,
     primitive: "the admin auto-discount form/JSON translator `_discountValue(body)` must THROW on an unrecognized `value_kind` (so the route maps it to a clean 400), never fall through to a default `{ kind: \"free_shipping\" }` — free shipping is the most generous discount kind, so a typo'd `value_kind` from a JSON API client (the browser select is constrained to the five valid kinds, but the API is not) silently coercing to free_shipping would create a store-wide free-shipping rule with no operator signal",

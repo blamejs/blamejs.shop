@@ -498,6 +498,14 @@ async function main() {
         ? bShop.saveForLater.create({ cursorSecret: saveForLaterCursorSecret, catalog: catalog })
         : null;
 
+      // Gift registry — owner-managed list of desired items (wedding / baby /
+      // birthday / …) on /account/registry, plus the public, slug-keyed giver
+      // view at /registry/:slug. Composes the catalog so a registry item's sku
+      // resolves to a product card + a buyable variant for the giver's cart.
+      var giftRegistry = (catalog && cart)
+        ? bShop.giftRegistry.create({ catalog: catalog })
+        : null;
+
       // Multi-currency display — converts the catalog's base-currency
       // prices into the visitor's chosen currency for DISPLAY ONLY (the
       // cart / order / payment currency is unchanged). The FX-rate cache +
@@ -1148,6 +1156,7 @@ async function main() {
         // Wishlist sharing — owner share links + the public shared view.
         if (wishlistSharing) sfDeps.wishlistSharing = wishlistSharing;
         if (saveForLater) sfDeps.saveForLater = saveForLater;
+        if (giftRegistry) sfDeps.giftRegistry = giftRegistry;
         if (addresses) sfDeps.addresses = addresses;
         if (cookieConsent) sfDeps.cookieConsent = cookieConsent;
         if (returns) sfDeps.returns = returns;
