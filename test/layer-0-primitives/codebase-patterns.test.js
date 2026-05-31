@@ -2033,6 +2033,32 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason:    "catalog.media.reorder + catalog.media.setPrimary renumber a product's media `position` to control which image the PDP gallery shows as the hero (media[0]) and in what order the rest follow. Because D1 has no cross-statement transaction over the HTTP bridge, the renumber is one UPDATE per row — and each MUST be scoped by product_id so a crafted `ordered_media_ids` (reorder) or a foreign media id (set-primary) can never reposition a row that belongs to another product, which would be a cross-product IDOR on display order. Both shipped writes carry `WHERE id = ?2 AND product_id = ?3`. The detector matches an `UPDATE media SET position` whose SQL string body reaches its closing quote without naming product_id, so a re-introduced unscoped write (`UPDATE media SET position = ?1 WHERE id = ?2`) trips it while the scoped form does not.",
   },
+  {
+    // The storefront search results page reported its match count from the
+    // length of the result PAGE slice ("Showing " + products.length +
+    // " matches") instead of the real total of every product the query
+    // matched. With the grid hard-capped at one page (24 cards), the count
+    // both LIED (it said 24 when more matched) and the surplus products were
+    // unreachable. The fix drives the count copy off the real total
+    // (the searchFacets previewQuery `total` / the full narrowed-set
+    // length), windowing only the rendered cards by page. This detector
+    // locks both `renderSearch` implementations (lib/storefront.js +
+    // worker/render/search.js): a re-introduced `"Showing " + <var>.length
+    // + " match"` count built from a page-slice array trips it, while the
+    // total-driven `"Showing " + totalCount + " match"` carries no
+    // `.length` and is not matched.
+    id:        "search-count-from-page-length",
+    bugClassDeclared: true,
+    primitive: "render the search result-count copy from the REAL match total (searchFacets previewQuery `total`, or the full narrowed-set length), not from the rendered page slice's `.length` — `\"Showing \" + totalCount + \" match\"`, never `\"Showing \" + products.length + \" match\"`; the page slice is what you PAINT, the total is what you COUNT",
+    // Match the `Showing " + <identifier>.length + " match` count shape in
+    // either renderer. The fixed code interpolates a plain total variable
+    // (no `.length`), so it isn't matched; only a count rebuilt from a
+    // sliced array's length trips it.
+    regex:     /Showing\s*"\s*\+\s*[A-Za-z_$][\w$]*\.length\s*\+\s*"\s*match/,
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "GET /search rendered \"Showing 24 matches\" for any query matching more than one page — the count was built from `products.length` (the 24-card page slice) rather than the real number of matched products. The count lied AND products past the first 24 were unreachable (the grid was `.slice(0, 24)` with no pagination). The fix reads the real total (the searchFacets `previewQuery` `total`, which is the full passing-set length regardless of the page window, or the narrowed set's `.length` on the edge) and drives the count copy + the page math off it, windowing only the rendered cards by `?page=N`. Both `renderSearch` implementations (container + edge) now interpolate a `totalCount` variable into the count string. The detector matches a count rebuilt from a `<var>.length` (a page-slice array), so the page-length regression can't return in either substrate; the total-driven form carries no `.length` in the count string and is not flagged.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------

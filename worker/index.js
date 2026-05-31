@@ -1144,6 +1144,33 @@ var SEARCH_MAX_FACET_VALUES  = 64;
 var SEARCH_MAX_VALUE_LEN     = 256;
 var SEARCH_CONTROL_BYTE_RE   = /[\x00-\x1f\x7f]/;
 
+// The fixed search page size — mirrors lib/storefront.js SEARCH_PAGE_SIZE
+// so the edge and container page the result grid identically.
+var SEARCH_PAGE_SIZE = 24;
+
+// 1-based `?page=N` results page off a parsed URL. Missing / non-integer /
+// sub-1 reads as page 1; the upper bound is clamped against the real page
+// count by `_clampSearchPage` once the total is known. Mirrors the
+// container's `_parsePageParam`.
+function _parseSearchPage(url) {
+  if (!url || !url.searchParams) return 1;
+  var raw = url.searchParams.get("page");
+  if (raw == null) return 1;
+  if (!/^[0-9]{1,9}$/.test(raw)) return 1;
+  var n = parseInt(raw, 10);
+  return n >= 1 ? n : 1;
+}
+
+// Clamp a 1-based page to [1, lastPage]. A `?page` past the end serves the
+// last page rather than an empty grid. Mirrors the container's `_clampPage`.
+function _clampSearchPage(page, total, pageSize) {
+  var size = pageSize > 0 ? pageSize : SEARCH_PAGE_SIZE;
+  var lastPage = Math.max(1, Math.ceil(total / size));
+  if (page < 1) return 1;
+  if (page > lastPage) return lastPage;
+  return page;
+}
+
 // Parse `?key=value` repeats into the `{ facetKey: [value, ...] }`
 // shape the faceting module consumes, keeping only keys that match a
 // loaded facet definition and values that survive the length / control-
@@ -1180,6 +1207,8 @@ async function _edgeSearch(request, env, url, version, shopName) {
     let facets      = [];
     let filters     = {};
     let correctedQ  = "";
+    let totalCount  = 0;
+    let page        = _parseSearchPage(url);
     if (q.trim().length > 0) {
       // Synonym + typo rewrite expands the typed query into the
       // canonical term plus operator-curated expansions BEFORE the
@@ -1200,9 +1229,16 @@ async function _edgeSearch(request, env, url, version, shopName) {
 
       const universe = await searchFacetableProducts(env.DB, { terms: terms, currency: "USD" });
       // Counts reflect the full match set with the focal facet left
-      // open; the result grid is the set narrowed by every filter.
+      // open; the result grid is the set narrowed by every filter. The
+      // narrowed set's full length is the REAL total (drives the honest
+      // result-count copy + the page count); the grid is the windowed
+      // page, so products past the first page are reachable via `?page=N`
+      // rather than discarded at 24.
       facets   = computeFacets(facetDefs, universe.rows, filters);
-      products = applyFilters(facetDefs, universe.rows, filters).slice(0, 24);
+      const matched = applyFilters(facetDefs, universe.rows, filters);
+      totalCount = matched.length;
+      page = _clampSearchPage(page, totalCount, SEARCH_PAGE_SIZE);
+      products = matched.slice((page - 1) * SEARCH_PAGE_SIZE, page * SEARCH_PAGE_SIZE);
     }
     const html = renderSearch(Object.assign({
       q:              q,
@@ -1210,6 +1246,9 @@ async function _edgeSearch(request, env, url, version, shopName) {
       facets:         facets,
       filters:        filters,
       correctedQuery: correctedQ,
+      total:          totalCount,
+      page:           page,
+      pageSize:       SEARCH_PAGE_SIZE,
       shopName:       shopName,
       cartCount:      0,
       version:        version,
