@@ -608,6 +608,7 @@ async function main() {
         collections:        collections,
         giftcards:          giftcards,
         quantityDiscounts:  quantityDiscounts,
+        storeCredit:        storeCredit,
         loyalty:            loyalty,
         loyaltyEarnRules:   loyaltyEarnRules,
         loyaltyRedemption:  loyaltyRedemption,

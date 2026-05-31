@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.28",
+  "date": "2026-05-31",
+  "headline": "Customers can now see their store-credit balance and history",
+  "summary": "Operators could grant or deduct a customer's store credit, but the customer had no way to see it — the balance only ever surfaced as a silent discount at checkout. A new Store credit page in the account area shows the current balance, a callout for any credit about to expire, and the full ledger of credits, deductions, and expirations with amounts, reasons, and dates. The page is read-only and shows only the signed-in customer's own balance.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Store-credit wallet in the account area", "body": "A Store credit page lists a customer's current balance, any credit expiring soon, and the full history of credits, deductions, and expirations — each with its amount, the reason, and the date. It is reachable from the account dashboard and reflects the store credit an operator grants from the customer screen, so a shopper can finally see credit they have been given instead of only discovering it at checkout. The page is read-only and scoped to the signed-in customer." }
+      ]
+    }
+  ]
+}

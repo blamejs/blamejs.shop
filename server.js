@@ -1157,6 +1157,13 @@ async function main() {
         if (loyalty) sfDeps.loyalty = loyalty;
         if (loyaltyEarnRules) sfDeps.loyaltyEarnRules = loyaltyEarnRules;
         if (loyaltyRedemption) sfDeps.loyaltyRedemption = loyaltyRedemption;
+        // Store credit — the read-only /account/credit wallet (balance +
+        // expiring-soon callout + the credit/debit/expire ledger). The
+        // SAME instance the admin customer-detail screen grants/deducts
+        // against, so a customer sees exactly the balance the operator set.
+        // The customer surface writes nothing; granting/deducting stays
+        // operator-only on the admin console.
+        if (storeCredit) sfDeps.storeCredit = storeCredit;
         // Referrals — the /account/referrals page (the customer's code +
         // shareable link, the friends they've referred + status, and the
         // rewards funnel), the /r/<code> attribution landing, and the

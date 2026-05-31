@@ -199,6 +199,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "splice the RAW_META_KEYWORDS + RAW_ANNOUNCEMENT_BAR head placeholders through the replacer-function helper spliceRaw / _spliceRaw, never html.replace(\"RAW_META_KEYWORDS\"|\"RAW_ANNOUNCEMENT_BAR\", value) — applied to both the edge (worker/render) and the container (lib/storefront.js) so the dual-render stays byte-consistent; framework-fixed head placeholders (SRI, island scripts, robots meta) carry no `$` and stay plain .replace",
   },
+  {
+    bugClass: "storefront store-credit wallet route reads an account-bound balance/ledger from a request-supplied id instead of the session customer (any signed-in shopper could read another customer's balance by id — IDOR)",
+    detector: "storefront-store-credit-route-without-session-scope",
+    gate:     "codebase-patterns",
+    note:     "the read-only GET /account/credit route resolves the balance + ledger from the session customer id (storeCredit.balance(auth.customer_id) / .history({ customer_id: auth.customer_id }) / .expiringWithin({ customer_id: auth.customer_id }), auth from _currentCustomer(req)); there is no :id path segment and the route never reads a customer id from the query/body, so a shopper only ever sees their own wallet",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
