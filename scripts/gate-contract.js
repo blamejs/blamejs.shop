@@ -253,6 +253,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "every /admin/customers/:id/notes/:noteId/{edit,pin,unpin,archive,unarchive} route funnels through _noteBelongsToCustomer(req.params.noteId, c.id) (loads via customerNotes.getNote, returns false unless note.customer_id === c.id → clean 404 on a missing/cross-customer note, 400 on a malformed id) before customerNotes.updateNote/pinNote/archiveNote; the note primitive mutates by id alone, so the route owns the ownership decision",
   },
+  {
+    bugClass: "storefront pre-order reserve route writes a reservation owned by a request-body/query customer_id instead of the session customer — any signed-in shopper (or forged guest POST) could reserve a unit, and at launch land an order, as another customer (cross-account write)",
+    detector: "preorder-reserve-route-without-session-customer-pin",
+    gate:     "codebase-patterns",
+    note:     "the POST /products/:slug/preorder route resolves the reserving customer from the session via _currentCustomer(req) and forwards preorder.reserve({ campaign_slug, customer_id: auth.customer_id, quantity }) — the owner is the session id, never a body/query field; the campaign is resolved from the product's lead SKU (not a client slug), and the cancel route is independently ownership-scoped via _ownedReservation (404 on a foreign/unknown/malformed reservation before cancelReservation)",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the

@@ -2553,6 +2553,36 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "The customer-detail screen (/admin/customers/:id) carries the full customer-note lifecycle: add, then edit / pin / unpin / archive / unarchive each note. A customer note stores `customer_id` on its row, but the customerNotes update / pin / archive methods take a note id alone — they have no notion of the requesting customer — so the route owns the ownership decision. Every per-note write route registers under `/admin/customers/:id/notes/:noteId/...` and funnels through `_noteBelongsToCustomer(req.params.noteId, c.id)`, which loads the note via customerNotes.getNote and refuses the mutation unless `note.customer_id === c.id`: a malformed note id throws a TypeError inside getNote's UUID guard → a clean 400, a well-formed unknown id (or a note owned by a DIFFERENT customer) returns null / false → a clean 404, with nothing written either way. Without that match an operator viewing customer A could POST customer B's note id to the edit / pin / archive route and mutate a note that isn't on the screen they're acting from. The detector matches a per-note write-route path literal (`/admin/customers/:id/notes/:noteId/edit|pin|unpin|archive|unarchive`) and is exonerated only when the same file composes `_noteBelongsToCustomer(...)`; a route that drops the ownership gate re-opens the IDOR and trips this. The add route (`/admin/customers/:id/notes`, no :noteId) attaches a fresh note to the path customer and carries no cross-customer surface, so it isn't matched.",
   },
+  {
+    // The storefront pre-order reserve route (`POST /products/:slug/preorder`)
+    // writes a reservation pinned to a customer. A reservation is the holder's
+    // claim on a not-yet-released unit (and the row the launch flow later
+    // converts into THAT customer's order), so the owning customer_id MUST come
+    // from the signed-in session (`auth.customer_id`), NEVER from a request body
+    // or query field. Reading the owner from the body would let any signed-in
+    // shopper (or a forged guest POST) reserve a unit AS another customer —
+    // landing a reservation, and at launch an order, against an account that
+    // isn't theirs (a reservation-spoofing / cross-account write). The detector
+    // matches a `preorder.reserve(` call in lib and is exonerated only when the
+    // same file pins the reservation to `auth.customer_id`; a route that sourced
+    // the customer id from the body/query would not carry that pin and trips
+    // this.
+    id: "preorder-reserve-route-without-session-customer-pin",
+    bugClassDeclared: true,
+    primitive: "the storefront pre-order reserve route (`POST /products/:slug/preorder`) must pin the reservation to the SIGNED-IN SESSION customer — `preorder.reserve({ campaign_slug, customer_id: auth.customer_id, quantity })` with `auth` resolved from the session via `_currentCustomer(req)`, NEVER a `customer_id` read from the request body/query — so a shopper can only ever reserve (and at launch convert into an order) under their own account; sourcing the owner from the body would let any signed-in shopper reserve a unit as another customer (cross-account write)",
+    // The primary match is any `preorder.reserve(` call; the `requires`
+    // exoneration ties the SESSION pin to THIS call (the `customer_id:
+    // auth.customer_id` field inside the same reserve(...) object, within a
+    // bounded window) — a file-wide `auth.customer_id` elsewhere can't
+    // exonerate a reserve that sourced its owner from the body. multiline so
+    // the object literal can span lines.
+    regex: /\bpreorder\.reserve\s*\(/,
+    scanScope: "lib",
+    multiline: true,
+    requires: /preorder\.reserve\s*\(\s*\{[\s\S]{0,200}?customer_id\s*:\s*auth\.customer_id\b/,
+    allowlist: [],
+    reason: "The storefront pre-order reserve route (`POST /products/:slug/preorder`) is auth-gated (a guest 303s to /account/login) and resolves the reserving customer from the sealed session via `_currentCustomer(req)`. The reservation row carries `customer_id` as its ownership key — it's the claim a `/account/preorders` cancel is scoped against, and the account the launch-time `convertReservationToOrder` pins the resulting order to. So the owner MUST be the session customer (`auth.customer_id`); the route resolves the campaign from the product's lead SKU (not a client-supplied slug) and forwards ONLY the session id as `customer_id`. If the route instead read `customer_id` from `req.body` / the query, any signed-in shopper could POST another customer's id and land a reservation — and, at launch, a real order — against an account that isn't theirs. The detector matches a `preorder.reserve(` call in lib and is exonerated only when the same file pins `customer_id: auth.customer_id`; a route that sourced the owner from the request body/query would drop that pin and trip this. (The cancel route is independently ownership-scoped: `_ownedReservation` refuses a reservation whose `customer_id !== auth.customer_id` with a clean 404 before cancelReservation.)",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------

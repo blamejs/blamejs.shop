@@ -43,6 +43,7 @@ import {
   getBundlesForProduct,
   getQtyBreaksForSku,
   listRelatedProducts,
+  getOpenPreorderForSku,
 } from "./data/catalog.js";
 import {
   computeFacets,
@@ -1389,13 +1390,18 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
     // renderer's `fmt` applies any active display-currency conversion, so
     // the rail tracks the visitor's chosen currency identically to the
     // buy-box prices.
-    const [bundleOffers, qtyBreaks, inventory, related] = await Promise.all([
+    const [bundleOffers, qtyBreaks, inventory, related, preorderCampaign] = await Promise.all([
       getBundlesForProduct(env.DB, variantSkus, "USD"),
       firstVariant && firstPrice
         ? getQtyBreaksForSku(env.DB, firstVariant.sku, firstPrice.amount_minor, firstPrice.currency, b.money)
         : Promise.resolve([]),
       listInventoryForSkus(env.DB, variantSkus),
       listRelatedProducts(env.DB, product.id, "USD", 4),
+      // Pre-order campaign for the lead SKU — when OPEN, the renderer swaps the
+      // add-to-cart buy box for the reservation CTA (release date + remaining).
+      // One indexed read on the live D1; null (no campaign / no table) renders
+      // the standard buy box. Resolved here so the edge + container PDP agree.
+      firstVariant ? getOpenPreorderForSku(env.DB, firstVariant.sku) : Promise.resolve(null),
     ]);
     const html = renderProduct(Object.assign({
       product:       product,
@@ -1412,6 +1418,8 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
       qtyBreaks:     qtyBreaks,
       wishlistCount: wishlistCount,
       related:       related.rows,
+      preorderCampaign: preorderCampaign,
+      preorderNotice:   url && url.searchParams ? url.searchParams.get("preorder") : null,
       announcement:  await resolveAnnouncement(env.DB, {}),
       shopName:      shopName,
       cartCount:     0,
