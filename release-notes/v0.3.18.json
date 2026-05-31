@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.18",
+  "date": "2026-05-30",
+  "headline": "Write and publish blog posts from the admin console",
+  "summary": "The storefront already served a blog — the index at /blog, individual posts at /blog/:slug, an RSS feed, and sitemap entries — but there was no way to write a post, so it rendered empty. The admin console now has a Blog screen with the full lifecycle: create a draft, edit its title, body (Markdown), tags, hero image, and meta fields, publish it, unpublish it, and archive or restore it. A post is created as a draft and stays off the storefront until it is explicitly published, so work in progress is never visible to shoppers.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Blog authoring in the admin console", "body": "A new Blog screen lists posts by status and lets an operator create, edit, publish, unpublish, archive, and restore them. New posts start as drafts and do not appear on the storefront /blog, its RSS feed, or the sitemap until published; archiving removes a published post from the storefront and is reversible. This wires the admin over the blog backend that was already serving the customer-facing pages." }
+      ]
+    }
+  ]
+}

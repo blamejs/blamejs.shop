@@ -677,6 +677,21 @@ async function main() {
       // and reads the rollup. The invitation token is the access (no login).
       var customerSurveys = (catalog && cart) ? bShop.customerSurveys.create({}) : null;
 
+      // Blog — operator-published editorial posts. The edge Worker serves
+      // the customer-facing /blog index, /blog/:slug posts, the RSS feed,
+      // and the sitemap entries, reading only published rows. The admin
+      // console authors the posts: create as draft, edit, publish /
+      // unpublish, archive / restore. A draft is invisible to the
+      // storefront until it's published. Needs a cursor secret for the
+      // published-list pagination, derived like the other primitives so
+      // production never falls back to the dev-only placeholder.
+      var blogCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("blog-articles-cursor", process.env.D1_BRIDGE_SECRET)
+        : "blog-articles-cursor-secret-dev-only";
+      var blog = (catalog && cart)
+        ? bShop.blogArticles.create({ cursorSecret: blogCursorSecret })
+        : null;
+
       // Business hours — operator-defined open/close schedules surfaced on a
       // public /hours page (week grid + live open/closed) and managed from
       // the admin console. Timezone-aware; holidays + one-off exceptions
@@ -918,6 +933,7 @@ async function main() {
           collections:   collections,
           announcementBar: announcementBar,
           customerSurveys: customerSurveys,
+          blog:            blog,
           businessHours:   businessHours,
           taxRates:        taxRates,
           shippingZones:   shippingZones,

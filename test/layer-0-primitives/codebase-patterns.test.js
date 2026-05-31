@@ -2059,6 +2059,21 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason:    "GET /search rendered \"Showing 24 matches\" for any query matching more than one page — the count was built from `products.length` (the 24-card page slice) rather than the real number of matched products. The count lied AND products past the first 24 were unreachable (the grid was `.slice(0, 24)` with no pagination). The fix reads the real total (the searchFacets `previewQuery` `total`, which is the full passing-set length regardless of the page window, or the narrowed set's `.length` on the edge) and drives the count copy + the page math off it, windowing only the rendered cards by `?page=N`. Both `renderSearch` implementations (container + edge) now interpolate a `totalCount` variable into the count string. The detector matches a count rebuilt from a `<var>.length` (a page-slice array), so the page-length regression can't return in either substrate; the total-driven form carries no `.length` in the count string and is not flagged.",
   },
+  {
+    id:        "blog-create-auto-publishes-draft",
+    bugClassDeclared: true,
+    primitive: "the blog admin create path must leave a new post a DRAFT — call `blog.createDraft(...)` and stop; never `blog.publish(...)` in the same create handler. A post is hidden from the storefront /blog until the operator explicitly publishes it; auto-publishing on create skips that gate and pushes an unreviewed post live the instant it's typed",
+    // Match `blog(Articles).createDraft(` followed within a short window by
+    // a `.publish(` call — the auto-publish-on-create shape. The shipped
+    // create handlers call createDraft then redirect (PRG); publish lives
+    // in a separate, operator-invoked lifecycle route, so the clean tree
+    // carries no createDraft→publish proximity and isn't flagged.
+    regex:     /\b(?:blog|blogArticles)\.createDraft\s*\([\s\S]{0,400}?\.publish\s*\(/,
+    scanScope: "lib",
+    multiline: true,
+    allowlist: [],
+    reason:    "The customer-facing blog (/blog index, /blog/:slug, the RSS feed, the sitemap) reads ONLY rows with status='published'. The admin author flow creates every post as a draft (`blog.createDraft`) and keeps it off the storefront until a separate publish action runs, so an operator can review a post before it goes live. Folding a `blog.publish(...)` call into the create handler would defeat that review gate — the post would be live the moment it's created, with no draft state. The detector flags a createDraft immediately followed by a publish in the same handler; the shipped split (createDraft → PRG to the editor, publish only via POST /admin/blog/:slug/publish) carries no such proximity.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------

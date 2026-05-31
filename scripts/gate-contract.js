@@ -127,6 +127,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "drive the \"Showing N matches\" copy off the real total (searchFacets previewQuery total / the full narrowed-set length), not the rendered page slice's .length; window only the painted cards by ?page=N",
   },
+  {
+    bugClass: "blog admin create auto-publishes a new post, pushing it to the storefront before review (skips the draft-stays-hidden gate)",
+    detector: "blog-create-auto-publishes-draft",
+    gate:     "codebase-patterns",
+    note:     "the create handler calls blog.createDraft and stops; publishing is a separate operator-invoked action (POST /admin/blog/:slug/publish) so a post is reviewable as a draft before it goes live on /blog",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
