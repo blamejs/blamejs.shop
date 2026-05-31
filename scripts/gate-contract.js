@@ -151,6 +151,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "assert _mediaBelongsToProduct(req.params.mid, req.params.id) (clean 404 on a mismatch, 400 on a malformed id) before catalog.media.setPrimary(req.params.mid) so the path is self-consistent about which product it touched",
   },
+  {
+    bugClass: "storefront order-cancel route fires the order FSM's cancel event by id without first asserting the order belongs to the session customer (any signed-in shopper could cancel any order by id — IDOR)",
+    detector: "storefront-order-cancel-without-ownership-check",
+    gate:     "codebase-patterns",
+    note:     "compare order.customer_id against the session customer's id (clean 404 on a mismatch / guest-owned order) before deps.order.transition(id, \"cancel\"); the order primitive transitions by id alone, so the route owns the ownership decision",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
