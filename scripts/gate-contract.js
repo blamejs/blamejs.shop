@@ -139,6 +139,18 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "_discountPatch must forward patch.trigger = _discountTrigger(body) and patch.value = _discountValue(body) so the browser edit path reaches the same terms columns (amount/percentage/threshold/BOGO) as the bearer PATCH; both reuse the create form's validating vocabulary so a bad terms edit is a clean 400",
   },
+  {
+    bugClass: "R2-served media asset response carries no protective headers — a mis-typed operator upload can be MIME-sniffed into an executable type, embedded cross-origin, or (for a directly-navigated SVG) run script in the site's origin",
+    detector: "r2-asset-response-without-nosniff-hardening",
+    gate:     "codebase-patterns",
+    note:     "stamp the asset Response via _hardenAssetResponse(headers) before new Response(obj.body, { headers }) — X-Content-Type-Options: nosniff + Cross-Origin-Resource-Policy: same-origin on every asset, plus a default-src 'none'; style-src 'unsafe-inline'; sandbox CSP on image/svg+xml",
+  },
+  {
+    bugClass: "admin /admin/products/:id/media/:mid/primary route ignores its :id path segment — setPrimary scopes by the media row's own product, so a request can name product A in the path while acting on product B's media (path/contract honesty gap)",
+    detector: "admin-media-mid-route-ignores-id-segment",
+    gate:     "codebase-patterns",
+    note:     "assert _mediaBelongsToProduct(req.params.mid, req.params.id) (clean 404 on a mismatch, 400 on a malformed id) before catalog.media.setPrimary(req.params.mid) so the path is self-consistent about which product it touched",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the

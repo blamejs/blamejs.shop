@@ -396,6 +396,7 @@ export default {
       // names so a long cache is safe.
       const fingerprinted = /\.[a-f0-9]{8,}\.[a-z0-9]+$/.test(key);
       headers.set("cache-control", fingerprinted ? ASSET_CACHE_CONTROL_IMMUTABLE : ASSET_CACHE_CONTROL_DEFAULT);
+      _hardenAssetResponse(headers);
       return new Response(obj.body, { headers });
     }
 
@@ -1457,6 +1458,40 @@ function _withSecurityHeaders(base) {
     for (var i = 0; i < keys.length; i += 1) out[keys[i]] = base[keys[i]];
   }
   return out;
+}
+
+// Stamp the protective response headers onto an R2-served asset. R2
+// stores arbitrary operator-supplied bytes (the media upload path writes
+// whatever the operator attaches), so the bytes leave the bucket with a
+// content-type the operator declared, not one the edge verified — without
+// these headers a browser can MIME-sniff a mis-typed upload into something
+// it will execute, and one origin's assets can be embedded cross-site.
+//
+//   X-Content-Type-Options: nosniff      — pin the declared content-type;
+//     no sniffing a `text/plain` upload into `text/html` or a script.
+//   Cross-Origin-Resource-Policy: same-origin — the storefront references
+//     every asset same-origin (`/assets/…` on its own pages), so a
+//     same-origin policy is the tightest value that renders the site;
+//     it stops other origins from embedding the bucket's bytes.
+//
+// SVG is the sharp edge: `image/svg+xml` opened by DIRECT navigation runs
+// embedded script in the document's own origin even though the upload path
+// sanitizes it before storage. Sandbox a directly-navigated SVG with a CSP
+// that allows only inline styles (so `<img src=…svg>` still paints the
+// vector) and nothing else — no script, no fetch, no plugin. The
+// `cross-origin-resource-policy` already shipped above covers the embed
+// case; this closes the run-on-direct-navigation case behind the
+// container-side sanitizer (defence in depth).
+function _hardenAssetResponse(headers) {
+  // The edge owns the asset security posture, not operator-set R2 object
+  // metadata — set unconditionally so a stored header can't weaken it.
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("cross-origin-resource-policy", "same-origin");
+  var ct = String(headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+  if (ct === "image/svg+xml") {
+    headers.set("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+  }
+  return headers;
 }
 
 // Link `rel=preload` for the critical theme stylesheet. Cloudflare

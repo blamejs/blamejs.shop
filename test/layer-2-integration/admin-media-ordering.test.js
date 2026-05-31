@@ -190,15 +190,19 @@ async function _runOrdering() {
     check("set-primary promoted to hero",        afterPrimary[0].id === m0.id && afterPrimary[0].position === 0);
     check("set-primary preserved relative order", afterPrimary.map(function (m) { return m.r2_key; }).join() === "media/a.png,media/c.png,media/b.png");
 
-    // Set-primary on a foreign product's row from THIS product's path still
-    // only touches that row's own product — no cross-product reshuffle. The
-    // primitive scopes every UPDATE by product_id, so it succeeds for the
-    // foreign row but never moves this product's rows.
+    // Set-primary naming THIS product's path but a media id that belongs to
+    // ANOTHER product is refused: the route asserts the media row's product_id
+    // matches the :id segment before promoting, so a path that names product A
+    // can never act on product B's media. It flags ?err=1, touches no rows on
+    // either product, and never leaks.
     var crossP = await helpers.httpRequest({
       port: port, path: P + "/media/" + foreign.id + "/primary", method: "POST", jar: jar,
     });
-    check("cross-product set-primary 303",       crossP.status === 303);
-    check("this product's order unchanged",      (await catalog.media.listForProduct(prod.id)).map(function (m) { return m.id; }).join() === [m0.id, m2.id, m1.id].join());
+    check("cross-product set-primary flags err",  (crossP.headers.location || "").indexOf("err=1") !== -1);
+    check("cross-product set-primary not 2xx",    crossP.status !== 200);
+    _noLeak("cross-product set-primary", crossP);
+    check("this product's order unchanged",        (await catalog.media.listForProduct(prod.id)).map(function (m) { return m.id; }).join() === [m0.id, m2.id, m1.id].join());
+    check("foreign product's row untouched",       (await catalog.media.get(foreign.id)).position === 0);
 
     // Set-primary on an unknown id → ?err=1 (false from the primitive).
     var unknown = await helpers.httpRequest({
@@ -238,6 +242,24 @@ async function _runOrdering() {
       port: port, path: P + "/media/" + b.uuid.v7() + "/primary", method: "POST", headers: bearer,
     });
     check("bearer unknown set-primary 404",      apiMiss.status === 404);
+    // Bearer set-primary whose :mid belongs to ANOTHER product than the :id
+    // path segment → 404, no leak (the route asserts the pairing). The correct
+    // pairing (apiPrimary above, m2 under prod) is the 200 happy path.
+    var apiCross = await helpers.httpRequest({
+      port: port, path: P + "/media/" + foreign.id + "/primary", method: "POST", headers: bearer,
+    });
+    check("bearer cross-product set-primary 404", apiCross.status === 404);
+    _noLeak("bearer cross-product set-primary", apiCross);
+    // Bearer reorder naming THIS product's path but a foreign product's media
+    // id in the set → 400 (the primitive refuses a set that isn't exactly this
+    // product's current media), no leak. The route already passes :id through.
+    var apiCrossReorder = await helpers.httpRequest({
+      port: port, path: P + "/media/reorder", method: "POST",
+      headers: Object.assign({ "content-type": "application/json" }, bearer),
+      body: JSON.stringify({ ordered_media_ids: [m2.id, m1.id, foreign.id] }),
+    });
+    check("bearer cross-product reorder 400",     apiCrossReorder.status === 400);
+    _noLeak("bearer cross-product reorder", apiCrossReorder);
 
     // Auth gate: a state-changing POST with a WRONG csrf token is refused.
     var noCsrf = await helpers.httpRequest({
@@ -384,9 +406,114 @@ async function _runUploadHardening() {
   }
 }
 
+// ---- upload-from-URL response-size cap (stubbed httpClient) --------------
+// The upload-from-URL path fetches `source_url` via the framework's shared
+// `b.httpClient` and buffers the body. It must pass the media budget as the
+// client's `maxResponseBytes` so an over-cap source is refused with a clean
+// 4xx (never a 500 / OOM) BEFORE the magic-byte sniff. This stub stands in
+// for `b.httpClient.request`, honoring `maxResponseBytes` exactly as the real
+// client does (reject with a `RESPONSE_TOO_LARGE`-coded error past the cap),
+// so the assertion proves the route wires the cap through. b.httpClient is the
+// same singleton admin.js captured at module top, so the patch is observed.
+async function _runUrlUploadCap() {
+  var query   = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query, cursorSecret: "media-url-cap" });
+  var order   = bShop.order.create({ query: query, cursorSecret: "media-url-cap" });
+  var prod    = await catalog.products.create({ slug: "url-uploadable", title: "URL Uploadable", status: "active" });
+
+  var puts = [];
+  var r2Mock = { put: async function (key, body, contentType) {
+    puts.push({ key: key, bytes: Buffer.isBuffer(body) ? body : Buffer.from(body), contentType: contentType });
+    return { ok: true, key: key, size: body.length };
+  } };
+
+  // The bytes the next fetch should "serve". The stub enforces maxResponseBytes
+  // the way the real http-client does. capSeen records the cap the route asked
+  // for, proving it forwarded _UPLOAD_MAX_BYTES rather than the ~1 GiB default.
+  var TEN_MIB = 10 * 1024 * 1024;
+  var nextBody = TINY_PNG;
+  var capSeen  = null;
+  var realRequest = b.httpClient.request;
+  b.httpClient.request = function (opts) {
+    capSeen = opts.maxResponseBytes;
+    if (typeof opts.maxResponseBytes === "number" && nextBody.length > opts.maxResponseBytes) {
+      var e = new Error("response body exceeds " + opts.maxResponseBytes + " bytes");
+      e.code = "RESPONSE_TOO_LARGE";
+      return Promise.reject(e);
+    }
+    return Promise.resolve({
+      statusCode: 200,
+      headers:    { "content-type": "image/png" },
+      body:       nextBody,
+    });
+  };
+
+  var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-media-urlcap-"));
+  var app = await b.createApp({
+    dataDir: dataDir, vault: { mode: "plaintext" }, db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
+    middleware: { botGuard: false, rateLimit: false },
+    routes: function (r) {
+      r.use(b.middleware.bodyParser());
+      bShop.admin.mount(r, { token: TOKEN, catalog: catalog, order: order, r2_bridge: r2Mock, asset_prefix: "/assets/", shop_name: "Test Shop" });
+    },
+  });
+  var bound = await app.listen({ port: 0, host: "127.0.0.1" });
+  var port = bound.port;
+  var bearer = { authorization: "Bearer " + TOKEN };
+  var P = "/admin/products/" + prod.id;
+
+  try {
+    // Under-cap source (a tiny PNG) → happy path: 201, written to R2, row created.
+    nextBody = TINY_PNG;
+    var okUp = await helpers.httpRequest({
+      port: port, path: P + "/media/upload", method: "POST",
+      headers: Object.assign({ "content-type": "application/json" }, bearer),
+      body: JSON.stringify({ source_url: "https://example.test/a.png", content_type: "image/png" }),
+    });
+    check("url upload under cap 201",            okUp.status === 201);
+    check("url upload forwarded the media cap",  capSeen === TEN_MIB);
+    check("url upload wrote to R2",              puts.length === 1 && /^media\/.*\.png$/.test(puts[0].key));
+    check("url upload created a row",            (await catalog.media.listForProduct(prod.id)).length === 1);
+
+    // Over-cap source → clean 4xx (413), NOT a 500, no write, no row, no leak.
+    nextBody = Buffer.alloc(TEN_MIB + 1, 0x41);
+    TINY_PNG.copy(nextBody, 0);
+    var bigUp = await helpers.httpRequest({
+      port: port, path: P + "/media/upload", method: "POST",
+      headers: Object.assign({ "content-type": "application/json" }, bearer),
+      body: JSON.stringify({ source_url: "https://example.test/huge.png", content_type: "image/png" }),
+    });
+    check("url upload over cap is 4xx",          bigUp.status >= 400 && bigUp.status < 500);
+    check("url upload over cap not a 500",       bigUp.status !== 500);
+    check("url upload over cap is 413",          bigUp.status === 413);
+    check("url upload over cap wrote nothing",   puts.length === 1);
+    check("url upload over cap created no row",  (await catalog.media.listForProduct(prod.id)).length === 1);
+    _noLeak("url upload over cap", bigUp);
+
+    // Browser alias over cap → ?err=1, no write, never a 500.
+    var jar = helpers.cookieJar();
+    await helpers.httpRequest({ port: port, path: "/admin/login", method: "POST", form: { token: TOKEN }, jar: jar });
+    nextBody = Buffer.alloc(TEN_MIB + 1, 0x42);
+    TINY_PNG.copy(nextBody, 0);
+    var bigBrowser = await helpers.httpRequest({
+      port: port, path: P + "/media/upload", method: "POST", jar: jar,
+      form: { source_url: "https://example.test/huge2.png", content_type: "image/png" },
+    });
+    check("browser url upload over cap not saved", (bigBrowser.headers.location || "").indexOf("saved=1") === -1);
+    check("browser url upload over cap not 500",   bigBrowser.status !== 500);
+    check("browser url upload over cap wrote nothing", puts.length === 1);
+    _noLeak("browser url upload over cap", bigBrowser);
+  } finally {
+    b.httpClient.request = realRequest;
+    try { await app.shutdown(); } catch (_e) { /* */ }
+    try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
+  }
+}
+
 async function run() {
   await _runOrdering();
   await _runUploadHardening();
+  await _runUrlUploadCap();
 }
 
 module.exports = { run: run };
