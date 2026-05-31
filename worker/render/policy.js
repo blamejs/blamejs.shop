@@ -75,12 +75,15 @@ function _wrap(opts, bodyHtml) {
     canonical_url:    opts.canonicalUrl || "",
     year:             String(new Date().getUTCFullYear()),
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
-    .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
     .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "");
-  // Splice the body literally so a `$`-bearing fragment can't trip
-  // `String.replace`'s dollar substitution. See `spliceRaw`.
+  // The announcement bar carries operator-supplied message text (HTML-
+  // escaped, but `$` is not an escaped character), so splice it via the
+  // replacer-function helper — a `$&` / `` $` `` / `$N` in the message must
+  // land literally, not trigger `String.replace`'s dollar substitution.
+  // Same for the body below. See `spliceRaw`.
+  assembled = spliceRaw(assembled, "RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null));
   return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", bodyHtml);
 }
 

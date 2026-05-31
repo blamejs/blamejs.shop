@@ -1,0 +1,17 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.27",
+  "date": "2026-05-31",
+  "headline": "Shared product and page links now show a preview image, and category pages get breadcrumb rich results",
+  "summary": "Social-share previews and search rich results were emitting relative image paths, which Facebook, Slack, Twitter, iMessage, and Google all drop — so a shared product or page link showed no preview image, and product rich results had no image. Every og:image, twitter:image, and Product/Article structured-data image is now a fully-qualified URL built from the page's own origin. Collection and category pages, which already showed an on-page breadcrumb, now also emit BreadcrumbList structured data so the trail can appear in search results, matching what product pages already did. And operator-supplied page keywords or announcement text containing a dollar-sign sequence now render literally instead of being garbled.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Share and rich-result images are now absolute URLs", "body": "The og:image, twitter:image, and the image in Product and blog-article structured data were relative paths, so social platforms and Google could not load them — a shared link showed no preview image. They are now fully-qualified against the page's origin on every page, in both the edge and container renderers, so shares unfurl with the right image and product rich results carry one. Images an operator already hosts at an absolute URL pass through unchanged." },
+        { "title": "Breadcrumb structured data on collection and category pages", "body": "Collection and category pages showed a breadcrumb trail on the page but did not expose it as BreadcrumbList structured data, so search engines could not render the trail in results. They now emit it with absolute URLs, the same way product pages already do." },
+        { "title": "Dollar-sign sequences in page metadata render literally", "body": "Page meta-keywords and announcement-bar text containing a dollar-sign sequence (for example a price written with a special character) could be garbled in the page head because of how the value was substituted into the template. The substitution now treats the value as literal text, so it renders exactly as entered." }
+      ]
+    }
+  ]
+}

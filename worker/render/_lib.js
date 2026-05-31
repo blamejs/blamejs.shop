@@ -69,6 +69,46 @@ export function escapeAttr(s) {
   return b.template.escapeHtml(s);
 }
 
+// Absolute origin (scheme + host, no trailing slash) for building
+// fully-qualified URLs in `<head>` metadata and structured data. Prefers
+// the request-derived canonical URL's origin (matches the host the
+// visitor reached); falls back to the shop-name host when called without
+// one (a unit test, or a theme path). A bare host shop name and a full
+// `https://` value both normalise to `https://<host>`. Mirrors the
+// container's lib/storefront.js `_absoluteBase` so the two substrates emit
+// identical absolute URLs.
+export function absoluteBase(canonicalUrl, shopName) {
+  if (typeof canonicalUrl === "string" && canonicalUrl.length) {
+    try {
+      return new URL(canonicalUrl).origin;
+    } catch (_e) { /* fall through to the shop-name base */ }
+  }
+  return "https://" + String(shopName || "blamejs.shop").replace(/^https?:\/\//, "");
+}
+
+// Absolutize an og:image / twitter:image / JSON-LD image value against the
+// page origin. A relative `/assets/...` path (the brand-logo default, or a
+// hero R2 key joined onto the asset prefix) becomes `<origin>/assets/...`
+// so every social-share crawler and rich-result fetch resolves it — a
+// relative path is dropped by Facebook / Slack / Twitter / iMessage and by
+// Google's product rich result. An already-absolute `http(s)://` value is
+// left unchanged (an operator-hosted image), and a value that is neither a
+// `/`-rooted path nor an absolute URL is returned as-is (nothing safe to
+// prefix). Absolutizes only against a reliable origin: with a canonical URL
+// the request origin is used; without one, the shop-name host is used ONLY
+// when it is usable as a host (no whitespace) — a display-name shop such as
+// "Test Shop" would otherwise emit an invalid "https://Test Shop/..." URL,
+// so the path is left relative (it still resolves against the page on a
+// crawler fetch). Mirrors the container's `_absolutizeOgImage`.
+export function absolutizeOgImage(value, canonicalUrl, shopName) {
+  var v = (value == null) ? "" : String(value);
+  if (/^https?:\/\//i.test(v)) return v;
+  if (v.charAt(0) !== "/") return v;
+  var hasCanonical = typeof canonicalUrl === "string" && canonicalUrl.length > 0;
+  if (!hasCanonical && /\s/.test(String(shopName == null ? "" : shopName))) return v;
+  return absoluteBase(canonicalUrl, shopName) + v;
+}
+
 var PLACEHOLDER_RE = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g;
 
 function _isPlainObject(o) {

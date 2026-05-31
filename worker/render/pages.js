@@ -293,9 +293,19 @@ export function renderStorefrontPage(opts) {
     updated:          _isoDate(page.updated_at != null ? Number(page.updated_at) : null),
     canonical_url:    opts.canonicalUrl || "",
     year:             String(new Date().getUTCFullYear()),
-  }).replace("RAW_META_KEYWORDS", metaKeywords)
+  });
+  // The meta-keywords + announcement-bar fragments carry operator-supplied
+  // text (HTML-escaped at their build sites, but `$` is not one of the
+  // escaped characters). Splice them via the replacer-function helper so a
+  // `$&` / `` $` `` / `$N` sequence inside the value lands literally instead
+  // of triggering `String.replace`'s replacement-string dollar substitution
+  // — the same class the body splice already routes through `spliceRaw`. The
+  // remaining placeholders below carry only framework-fixed literals (SRI
+  // digests, island `<script>` tags), so they stay plain `.replace`.
+  assembled = spliceRaw(assembled, "RAW_META_KEYWORDS", metaKeywords);
+  assembled = spliceRaw(assembled, "RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null));
+  assembled = assembled
     .replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
-    .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
     .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "");

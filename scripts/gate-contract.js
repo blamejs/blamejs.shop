@@ -187,6 +187,18 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "every per-ticket route (/account/support/:id and /account/support/:id/reply) funnels through _ownedTicket, which loads the ticket via supportTickets.get and refuses it (clean 404 on a malformed id, an unknown ticket, or a ticket owned by someone else) unless ticket.customer_id === auth.customer_id; the support primitive moves a ticket by id alone, so the route owns the ownership decision",
   },
+  {
+    bugClass: "storefront og:image / twitter:image / Product+Article JSON-LD image emitted as a relative `/assets/...` URL — social-share crawlers (Facebook / Slack / Twitter / iMessage) and Google's rich result fetch it from a different origin, so the share preview renders no image",
+    detector: "og-image-relative-without-absolutize",
+    gate:     "codebase-patterns",
+    note:     "absolutize every og-image-class value against the page origin via absolutizeOgImage (edge worker/render/_lib.js) / _absolutizeOgImage (container lib/storefront.js) before it reaches the <head> or the structured data; the helper prefixes the canonical origin onto a /-rooted path and leaves an already-absolute http(s):// value unchanged, applied in both substrates so the dual-render stays byte-consistent",
+  },
+  {
+    bugClass: "a worker/render head builder splices an operator-supplied head fragment (CMS meta_keywords, the announcement-bar message) via html.replace(\"RAW_…\", value) with the value as the replacement STRING — a `$`-bearing value triggers replacement-string dollar substitution ($&, $`, $', $N), corrupting the <head> or leaking it into the body (the same class the body splice was fixed for)",
+    detector: "head-raw-replace-string-dollar-injection",
+    gate:     "codebase-patterns",
+    note:     "splice the RAW_META_KEYWORDS + RAW_ANNOUNCEMENT_BAR head placeholders through the replacer-function helper spliceRaw / _spliceRaw, never html.replace(\"RAW_META_KEYWORDS\"|\"RAW_ANNOUNCEMENT_BAR\", value) — applied to both the edge (worker/render) and the container (lib/storefront.js) so the dual-render stays byte-consistent; framework-fixed head placeholders (SRI, island scripts, robots meta) carry no `$` and stay plain .replace",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
