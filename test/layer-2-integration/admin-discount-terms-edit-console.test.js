@@ -156,6 +156,30 @@ async function _run() {
     check("bad terms value then 4xx",            bad.status >= 400 && bad.status < 500);
     check("bad terms edit did not persist",      (await autoDiscount.getRule("ten-off-50")).value.kind === "amount_off_total");
 
+    // An UNRECOGNIZED value_kind must NOT silently become free_shipping —
+    // the most generous kind. The browser select is constrained to the five
+    // valid kinds, but a JSON API client can post a typo; it must be a clean
+    // 4xx that leaves the rule's value untouched, never a store-wide
+    // free-shipping rule created without an operator signal.
+    var typoKind = await helpers.httpRequest({
+      port: port, path: "/admin/discounts/ten-off-50/edit", method: "POST",
+      headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ value_kind: "percentage", value_basis_points: "1000" }),
+    });
+    check("typo'd value_kind then 4xx",          typoKind.status >= 400 && typoKind.status < 500);
+    check("typo'd value_kind NOT coerced to free_shipping",
+      (await autoDiscount.getRule("ten-off-50")).value.kind === "amount_off_total");
+
+    // A LEGITIMATE free_shipping kind is still accepted — the throw is only
+    // for kinds outside the valid five, not for free_shipping itself.
+    var freeShip = await helpers.httpRequest({
+      port: port, path: "/admin/discounts/ten-off-50/edit", method: "POST",
+      headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ value_kind: "free_shipping" }),
+    });
+    check("legit free_shipping edit then 200",   freeShip.status === 200);
+    check("legit free_shipping persisted",       (await autoDiscount.getRule("ten-off-50")).value.kind === "free_shipping");
+
     // Bad terms value via the browser detail form → err redirect back to
     // the detail screen so the operator sees it in context.
     var badBrowser = await helpers.httpRequest({

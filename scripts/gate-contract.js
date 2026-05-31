@@ -205,6 +205,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "the read-only GET /account/credit route resolves the balance + ledger from the session customer id (storeCredit.balance(auth.customer_id) / .history({ customer_id: auth.customer_id }) / .expiringWithin({ customer_id: auth.customer_id }), auth from _currentCustomer(req)); there is no :id path segment and the route never reads a customer id from the query/body, so a shopper only ever sees their own wallet",
   },
+  {
+    bugClass: "admin auto-discount value translator silently coerces an unrecognized value_kind to free_shipping instead of erroring — a typo'd value_kind from a JSON API client creates a store-wide free-shipping rule (the most generous kind) with no operator signal",
+    detector: "admin-discount-value-kind-silent-default",
+    gate:     "codebase-patterns",
+    note:     "_discountValue(body) throws a TypeError (\"autoDiscount: value_kind must be one of …\") on any value_kind outside percent_off / amount_off_total / amount_off_each / bogo / free_shipping, which the create + edit routes map to a clean 400 — matching the sibling _rewardValueJson / _earnDefineInput translators that pass the kind through for the backend validator; the browser select is constrained to the five valid kinds, so only the JSON API path could reach the old free_shipping fall-through",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
