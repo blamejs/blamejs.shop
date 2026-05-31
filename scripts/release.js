@@ -64,13 +64,34 @@ function _needsShell(cmd) {
   return cmd === "npm" || cmd === "npx" || cmd === "bash";
 }
 
+// Quote a single token for cmd.exe (the only shell _needsShell selects, on
+// Windows): bare when it has no metacharacters, double-quoted (with embedded
+// quotes doubled, the cmd.exe convention) otherwise.
+function _shellQuote(token) {
+  token = String(token);
+  if (/^[A-Za-z0-9_.:/\\=@+-]+$/.test(token)) return token;
+  return "\"" + token.replace(/"/g, "\"\"") + "\"";
+}
+
+// Spawn synchronously. A Windows .cmd shim (npm/npx/bash) must go through a
+// shell, but passing an args ARRAY together with shell:true is deprecated
+// (Node DEP0190) — the array is concatenated onto the command line without
+// shell-escaping. So for the shell path we build one per-token-quoted command
+// string and pass NO args array; native exes spawn directly with shell:false.
+function _spawnSync(cmd, args, options) {
+  if (_needsShell(cmd)) {
+    var line = [cmd].concat(args || []).map(_shellQuote).join(" ");
+    return childProcess.spawnSync(line, Object.assign({}, options, { shell: true }));
+  }
+  return childProcess.spawnSync(cmd, args, Object.assign({}, options, { shell: false }));
+}
+
 function _run(cmd, args, opts) {
   opts = opts || {};
-  var rv = childProcess.spawnSync(cmd, args, {
+  var rv = _spawnSync(cmd, args, {
     cwd:   opts.cwd   || ROOT,
     stdio: opts.stdio || "inherit",
     env:   Object.assign({}, process.env, opts.env || {}),
-    shell: _needsShell(cmd),
   });
   if (rv.status !== 0 && !opts.allowFail) {
     throw new Error("release: " + cmd + " " + (args || []).join(" ") +
@@ -81,11 +102,10 @@ function _run(cmd, args, opts) {
 
 function _capture(cmd, args, opts) {
   opts = opts || {};
-  var rv = childProcess.spawnSync(cmd, args, {
+  var rv = _spawnSync(cmd, args, {
     cwd:   opts.cwd || ROOT,
     stdio: ["ignore", "pipe", "pipe"],
     env:   Object.assign({}, process.env, opts.env || {}),
-    shell: _needsShell(cmd),
   });
   return {
     status: rv.status,
