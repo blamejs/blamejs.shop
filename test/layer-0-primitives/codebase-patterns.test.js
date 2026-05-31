@@ -57,6 +57,7 @@ var path = require("node:path");
 var LIB_ROOT       = path.resolve(__dirname, "..", "..", "lib");
 var WORKER_ROOT    = path.resolve(__dirname, "..", "..", "worker");
 var TEST_ROOT      = path.resolve(__dirname, "..", "..", "test");
+var SCRIPTS_ROOT   = path.resolve(__dirname, "..", "..", "scripts");
 var WORKFLOWS_ROOT = path.resolve(__dirname, "..", "..", ".github", "workflows");
 
 function _walk(dir, files) {
@@ -76,6 +77,7 @@ function _walk(dir, files) {
 
 function _libFiles()    { return _walk(LIB_ROOT);    }
 function _workerFiles() { return _walk(WORKER_ROOT); }
+function _scriptFiles() { return _walk(SCRIPTS_ROOT); }
 function _shopFiles()   { return _walk(LIB_ROOT).concat(_walk(WORKER_ROOT)); }
 function _testFiles() { return _walk(TEST_ROOT).filter(function (f) {
   return /\.test\.js$/.test(f) || /\/helpers\/[^_].*\.js$/.test(f.replace(/\\/g, "/"));
@@ -108,6 +110,7 @@ function _scan(regex, scope, opts) {
   var files = scope === "test"      ? _testFiles()
             : scope === "workflows" ? _workflowFiles()
             : scope === "worker"    ? _workerFiles()
+            : scope === "scripts"   ? _scriptFiles()
             : scope === "shop"      ? _shopFiles()
             :                         _libFiles();
   var matches = [];
@@ -2582,6 +2585,133 @@ var KNOWN_ANTIPATTERNS = [
     requires: /preorder\.reserve\s*\(\s*\{[\s\S]{0,200}?customer_id\s*:\s*auth\.customer_id\b/,
     allowlist: [],
     reason: "The storefront pre-order reserve route (`POST /products/:slug/preorder`) is auth-gated (a guest 303s to /account/login) and resolves the reserving customer from the sealed session via `_currentCustomer(req)`. The reservation row carries `customer_id` as its ownership key — it's the claim a `/account/preorders` cancel is scoped against, and the account the launch-time `convertReservationToOrder` pins the resulting order to. So the owner MUST be the session customer (`auth.customer_id`); the route resolves the campaign from the product's lead SKU (not a client-supplied slug) and forwards ONLY the session id as `customer_id`. If the route instead read `customer_id` from `req.body` / the query, any signed-in shopper could POST another customer's id and land a reservation — and, at launch, a real order — against an account that isn't theirs. The detector matches a `preorder.reserve(` call in lib and is exonerated only when the same file pins `customer_id: auth.customer_id`; a route that sourced the owner from the request body/query would drop that pin and trip this. (The cancel route is independently ownership-scoped: `_ownedReservation` refuses a reservation whose `customer_id !== auth.customer_id` with a clean 404 before cancelReservation.)",
+  },
+  {
+    // A share / public URL must be built from the request ORIGIN —
+    // `new URL(_requestUrls(req).canonical_url).origin` — never by
+    // trimming the path off the canonical URL with a path-stripping
+    // `.replace(/\/some\/path.*$/, "")`. The canonical URL names the
+    // page the request landed on; a POST that lands on a DIFFERENT path
+    // than the share link points at (the wishlist-share create POST
+    // lands on /wishlist/share, the registry view lands on
+    // /account/registry/:slug) mangles the trimmed base, producing a
+    // broken link. The same path-trim bug surfaced first on the wishlist
+    // share link, then again on the gift-registry share link; both now
+    // take the origin form. This detector forbids re-deriving an origin
+    // by path-stripping a canonical/url value.
+    id: "share-url-from-canonical-path-trim",
+    bugClassDeclared: true,
+    primitive: "build a share / public URL from the request origin via `new URL(_requestUrls(req).canonical_url).origin` — never derive a base/origin by trimming the path off the canonical URL with a path-stripping `.replace(/\\/<path>...$/, \"\")`; the canonical names the page the request LANDED on, so trimming a path that the request didn't land on mangles the link (a POST that handles a share action lands on a different path than the share link points at)",
+    // Matches a path-stripping `.replace(/\/<path-with-a-real-label>...$/, "")`
+    // applied to a canonical_url / canonicalUrl value (within a small
+    // window). The regex body requires a real path char (letter / dot /
+    // star) between the leading escaped slash and the `$` anchor, so a
+    // legitimate trailing-slash trim (`.replace(/\/$/, "")` /
+    // `.replace(/\/+$/, "")`) on a base URL is NOT matched — only a
+    // path-stripping body (`/\/account\/wishlist.*$/`, `/\/.*$/`).
+    regex: /\bcanonical_?[uU]rl\b[\s\S]{0,40}?\.replace\s*\(\s*\/\\?\/[^,]*[A-Za-z.*][^,]*\$\/[a-z]*\s*,\s*["']["']\s*\)/,
+    scanScope: "lib",
+    multiline: true,
+    allowlist: [],
+    reason: "A one-time wishlist share link (and later a gift-registry share link) was built by trimming the route path off the canonical URL — `_requestUrls(req).canonical_url.replace(/\\/account\\/wishlist.*$/, \"\")` — to recover the site origin, then concatenating the share path. That trim assumes the request landed on the page the share link points at, but the wishlist-share create POST lands on `/wishlist/share` (and the registry share URL is built while serving `/account/registry/:slug`), so the regex stripped the wrong prefix and produced a broken absolute URL — and the token is shown only once. The correct derivation is `new URL(_requestUrls(req).canonical_url).origin`, which yields the scheme + host independent of which path the request landed on. The detector forbids deriving an origin by path-stripping a canonical/url value with a `.replace(/\\/<path>...$/, \"\")`; a legitimate trailing-slash trim on a base URL carries no path label in the stripped body and is not matched.",
+  },
+  {
+    // child_process spawn / spawnSync passing an ARGS ARRAY together
+    // with `shell: true` is deprecated (Node DEP0190): with a shell the
+    // args array is concatenated onto the command line WITHOUT
+    // shell-escaping, so a token with a space / metacharacter is
+    // mis-split or injected. When a shell is genuinely needed (a Windows
+    // .cmd shim — npm / npx / bash), build ONE per-token-quoted command
+    // STRING and pass NO args array; native executables spawn directly
+    // with `shell: false` and the args array.
+    id: "spawn-shell-true-with-args-array",
+    bugClassDeclared: true,
+    primitive: "never call spawn / spawnSync with an args ARRAY and `shell: true` together (Node DEP0190 — the array is concatenated onto the command line unescaped). When a shell is needed, build one per-token-quoted command STRING and pass no args array; otherwise pass the args array with `shell: false`",
+    // Matches a spawn/spawnSync call whose SECOND positional argument is
+    // an array literal `[...]` or a bare identifier (the args), then a
+    // top-level comma, then (within a bounded window) `shell: true`. The
+    // shell-needed-string form `spawnSync(line, Object.assign(..., {
+    // shell: true }))` is the 2-arg shape (command string + options) —
+    // its second arg is `Object.assign(...)` (not an array / bare
+    // identifier followed by a comma), so it is NOT matched; the native
+    // form `spawnSync(cmd, args, { ... shell: false })` carries
+    // `shell: false`, also not matched.
+    regex: /\bspawn(?:Sync)?\s*\(\s*[^,()]+,\s*(?:\[[^\]]*\]|[A-Za-z_$][\w$.]*)\s*,[\s\S]{0,300}?shell\s*:\s*true\b/,
+    scanScope: "scripts",
+    multiline: true,
+    allowlist: [],
+    reason: "Release tooling spawned a Windows .cmd shim (npm / npx / bash) via `spawnSync(cmd, args, { ... shell: true })` — an args array AND `shell: true`. Node 20+ deprecates that combination (DEP0190): with a shell the args array is appended to the command line with no shell-escaping, so an argument containing a space or a shell metacharacter is mis-split or injected, and Node prints a deprecation warning. The single spawn helper now branches: when the command needs a shell it builds one command STRING with every token quoted and passes NO args array (`spawnSync(line, { shell: true })`); a native executable spawns directly with the args array and `shell: false`. The detector flags any spawn / spawnSync call whose second positional argument is an array literal or a bare identifier (the args) followed by another argument carrying `shell: true`; the shell-needed string form and the `shell: false` native form are both spared.",
+  },
+  {
+    // A list method whose `next_cursor` is rendered as a user-facing
+    // Next / More link must PEEK one row beyond the page (fetch
+    // `limit + 1`, set `hasMore = fetched.length > limit`) and emit the
+    // cursor only when `hasMore` — NOT key the cursor off
+    // `rows.length === limit`, which advertises a phantom next page when
+    // the total is an exact multiple of the limit, so the final full
+    // page links to an empty one. The four detectors below lock the peek
+    // into exactly the list methods whose cursor surfaces in a rendered
+    // Next / More control (customer orders "Load more", loyalty +
+    // store-credit "Older activity", admin customers "Next page"). The
+    // many other `rows.length === limit` cursor sites feed an API / JSON
+    // / internal consumer that handles a maybe-empty next page correctly,
+    // so they are idiomatic and out of scope; the storefront collection
+    // page is locked separately by collection-route-without-cursor-
+    // pagination. `requires` is the whole-file peek token, which lives
+    // only in the fixed method — a regression that drops the peek removes
+    // it and trips the detector.
+    id: "order-listforcustomer-cursor-without-peek",
+    bugClassDeclared: true,
+    primitive: "order.listForCustomer powers the storefront customer-orders \"Load more\" link, so its `next_cursor` must be emitted only after peeking one row past the page (fetch `limit + 1`, `hasMore = fetched.length > limit`) — keying it off `rows.length === limit` advertises a phantom next page when the order count is an exact multiple of the limit, and the \"Load more\" link then lands on an empty page",
+    // Anchored on the file-unique ORDER_ORDER_KEY constant (only lib/order.js
+    // names it) so the detector locks the customer-order list method without
+    // sweeping every `ORDER BY updated_at` query in the catalog. `requires`
+    // is the whole-file peek token, present only in the fixed method.
+    regex: /\bORDER_ORDER_KEY\b/,
+    scanScope: "lib",
+    requires: /hasMore\s*=\s*[\w.]+\.length\s*>\s*limit/,
+    allowlist: [],
+    reason: "order.listForCustomer paginates the signed-in customer's order history (keyset on updated_at + id) and its `next_cursor` drives the storefront \"Load more orders\" link. Emitting the cursor whenever the page came back full (`rows.length === limit`) advertises a next page that does not exist when the order count is an exact multiple of the page size — following the link runs the keyset query past the last order and renders an empty page. The method fetches `limit + 1` rows, sets `hasMore = fetched.length > limit`, slices the page back to `limit` (so the peeked row is never hydrated or rendered), and emits the cursor only when `hasMore`. The detector anchors on the file-unique ORDER_ORDER_KEY constant (only lib/order.js names it) and is exonerated by the whole-file peek token `hasMore = <rows>.length > limit`; a regression that drops the peek and re-keys the cursor off `rows.length === limit` removes that token and trips this.",
+  },
+  {
+    id: "customers-list-cursor-without-peek",
+    bugClassDeclared: true,
+    primitive: "customers.list powers the admin customer-roster \"Next page\" link, so its `next_cursor` must be emitted only after peeking one row past the page (fetch `limit + 1`, `hasMore = fetched.length > limit`) — keying it off `rows.length === limit` advertises a phantom next page when the roster size is an exact multiple of the limit, and the console's \"Next page\" link then lands on an empty page",
+    // Anchored on the file-unique customers.list cursor-validation throw
+    // (only lib/customers.js carries it; CUSTOMERS_ORDER_KEY alone also
+    // appears in sales-reports.js, whose cursor is an internal export, so
+    // the throw string is the precise file selector).
+    regex: /customers\.list:\s*cursor must be an opaque/,
+    scanScope: "lib",
+    requires: /hasMore\s*=\s*[\w.]+\.length\s*>\s*limit/,
+    allowlist: [],
+    reason: "customers.list paginates the admin customer roster (keyset on created_at + id) and its `next_cursor` drives the console's \"Next page\" link. Emitting the cursor whenever the page came back full (`rows.length === limit`) advertises a next page that does not exist when the roster size is an exact multiple of the page size — the \"Next page\" link then renders an empty table. The method fetches `limit + 1` rows, sets `hasMore = fetched.length > limit`, slices the page back to `limit`, and emits the cursor only when `hasMore`. The detector anchors on the file-unique customers.list cursor-validation throw and is exonerated by the whole-file peek token `hasMore = <rows>.length > limit`; a regression that drops the peek removes that token and trips this.",
+  },
+  {
+    id: "loyalty-history-cursor-without-peek",
+    bugClassDeclared: true,
+    primitive: "loyalty.history powers the storefront loyalty \"Older activity\" link, so its `next_cursor` must be emitted only after peeking one row past the page (fetch `limit + 1`, `hasMore = r.rows.length > limit`) — keying it off `rows.length === limit` advertises a phantom next page when the transaction count is an exact multiple of the limit, and the \"Older activity\" link then lands on an empty page",
+    // Anchored on the file-unique loyalty.history limit-validation throw
+    // (only lib/loyalty.js carries it) so the detector targets exactly the
+    // customer-facing history method.
+    regex: /loyalty\.history:\s*limit must be/,
+    scanScope: "lib",
+    requires: /hasMore\s*=\s*[\w.]+\.length\s*>\s*limit/,
+    allowlist: [],
+    reason: "loyalty.history paginates the customer's loyalty-transaction ledger (newest first, cursor on occurred_at) and its `next_cursor` drives the storefront \"Older activity\" link on /account/loyalty. Emitting the cursor whenever the page came back full (`rows.length === limit`) advertises a next page that does not exist when the history length is an exact multiple of the page size — following the cursor queries `occurred_at < <oldest>` and renders an empty page. The method fetches `limit + 1` rows, sets `hasMore = r.rows.length > limit`, slices the page back to `limit`, and emits the cursor only when `hasMore`. The detector anchors on the file-unique loyalty.history limit-validation throw and is exonerated by the whole-file peek token `hasMore = <rows>.length > limit`; a regression that drops the peek removes that token and trips this.",
+  },
+  {
+    id: "store-credit-history-cursor-without-peek",
+    bugClassDeclared: true,
+    primitive: "storeCredit.history powers the storefront store-credit \"Older activity\" link, so its `next_cursor` must be emitted only after peeking one row past the page (fetch `limit + 1`, `hasMore = r.rows.length > limit`) — keying it off `rows.length === limit` advertises a phantom next page when the ledger length is an exact multiple of the limit, and the \"Older activity\" link then lands on an empty page",
+    // Anchored on the file-unique storeCredit.history input-validation
+    // throw (only lib/store-credit.js carries it) so the detector targets
+    // exactly the customer-facing ledger-history method.
+    regex: /storeCredit\.history:\s*input object required/,
+    scanScope: "lib",
+    requires: /hasMore\s*=\s*[\w.]+\.length\s*>\s*limit/,
+    allowlist: [],
+    reason: "storeCredit.history paginates the customer's store-credit ledger (newest first, cursor on occurred_at) and its `next_cursor` drives the storefront \"Older activity\" link on /account/credit. Emitting the cursor whenever the page came back full (`rows.length === limit`) advertises a next page that does not exist when the ledger length is an exact multiple of the page size — following the cursor queries `occurred_at < <oldest>` and renders an empty page. The method fetches `limit + 1` rows, sets `hasMore = r.rows.length > limit`, slices the page back to `limit`, and emits the cursor only when `hasMore`. The detector anchors on the file-unique storeCredit.history input-validation throw and is exonerated by the whole-file peek token `hasMore = <rows>.length > limit`; a regression that drops the peek removes that token and trips this.",
   },
 ];
 
