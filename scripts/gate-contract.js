@@ -206,6 +206,12 @@ var COVERAGE = [
     note:     "the read-only GET /account/credit route resolves the balance + ledger from the session customer id (storeCredit.balance(auth.customer_id) / .history({ customer_id: auth.customer_id }) / .expiringWithin({ customer_id: auth.customer_id }), auth from _currentCustomer(req)); there is no :id path segment and the route never reads a customer id from the query/body, so a shopper only ever sees their own wallet",
   },
   {
+    bugClass: "storefront wishlist-share revoke route flips a share link's revoked_at by path id without first asserting the link belongs to the session customer (any signed-in shopper could revoke another customer's share link by id — IDOR)",
+    detector: "storefront-wishlist-share-revoke-without-ownership-check",
+    gate:     "codebase-patterns",
+    note:     "the POST /wishlist/share/:share_id/revoke route loads the session customer's links via wishlistSharing.listSharesForOwner(auth.customer_id) and refuses a share_id that isn't among them (clean 404 on an unknown / malformed / cross-customer id) before revokeShareLink({ link_id }); the sharing primitive revokes by id alone, so the route owns the ownership decision. The public GET /wishlist/shared/:token view resolves the wishlist only through viewShared(token) — never by a guessable wishlist/customer id — and renders product cards only, redacting the owner identity + private notes",
+  },
+  {
     bugClass: "admin auto-discount value translator silently coerces an unrecognized value_kind to free_shipping instead of erroring — a typo'd value_kind from a JSON API client creates a store-wide free-shipping rule (the most generous kind) with no operator signal",
     detector: "admin-discount-value-kind-silent-default",
     gate:     "codebase-patterns",

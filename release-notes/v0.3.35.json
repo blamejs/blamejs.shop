@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.35",
+  "date": "2026-05-31",
+  "headline": "Share a wishlist with a private link",
+  "summary": "A customer's wishlist could only be viewed by the customer themselves. From the wishlist page a shopper can now create a shareable link and send it to someone — a friend buying a gift, for example — who opens it without needing an account and sees the wishlist's products. The link can be revoked at any time, after which it stops working. The shared page shows only the products: it does not reveal who owns the wishlist or any private notes on it, and it is not indexed by search engines.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Shareable wishlist links", "body": "The wishlist page now has a Share control that creates a private link to the wishlist. The full link is shown once, to copy and send; anyone with it can open the shared wishlist without an account and see its products, each linking to the product page. The owner sees their active links and can revoke any of them, which immediately stops the link from working. The shared view shows only the products — never the owner's identity or private notes — and is marked not to be indexed by search engines, so a personal wishlist stays private to whoever holds the link." }
+      ]
+    }
+  ]
+}

@@ -481,6 +481,14 @@ async function main() {
         ? bShop.wishlist.create({ cursorSecret: wishlistCursorSecret })
         : null;
 
+      // Wishlist sharing — owner-minted share links on /account/wishlist +
+      // the public /wishlist/shared/:token view a giver opens. Composes the
+      // wishlist instance above so the shared view reads the owner's entries
+      // through the same handle.
+      var wishlistSharing = wishlist
+        ? bShop.wishlistSharing.create({ wishlist: wishlist })
+        : null;
+
       // Save for later — move cart lines into a per-customer holding
       // list and back. Cursor HMAC key derived like the others.
       var saveForLaterCursorSecret = process.env.D1_BRIDGE_SECRET
@@ -1126,6 +1134,8 @@ async function main() {
         if (reviews) sfDeps.reviews = reviews;
         if (productQa) sfDeps.productQa = productQa;
         if (wishlist) sfDeps.wishlist = wishlist;
+        // Wishlist sharing — owner share links + the public shared view.
+        if (wishlistSharing) sfDeps.wishlistSharing = wishlistSharing;
         if (saveForLater) sfDeps.saveForLater = saveForLater;
         if (addresses) sfDeps.addresses = addresses;
         if (cookieConsent) sfDeps.cookieConsent = cookieConsent;
