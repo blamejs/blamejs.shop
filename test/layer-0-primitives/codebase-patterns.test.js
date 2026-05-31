@@ -2280,6 +2280,61 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "POST /admin/customers/:id/store-credit lets an operator grant or deduct a customer's account-bound store credit from the customer detail screen. A grant composes storeCredit.credit (the reason rides into the ledger row's source_ref); a deduct composes storeCredit.expire (which carries a required reason column). Both write an audited row to store_credit_ledger that an auditor must be able to explain. The route gates on `_storeCreditReason(body.reason)` (throws a TypeError → clean 400 on a missing / blank / over-long / control-byte reason) and is additionally scoped to the :id customer (the target is the path id, never a form field, so an operator can't act on a different customer than the screen they're on) with an over-deduction refused as a clean 409 before any write. Dropping the reason gate would let an adjustment write an unattributed balance change. The detector matches the store-credit route registration and is exonerated only when the same file composes `_storeCreditReason(...)`; a route that fires the credit/expire primitive without the reason gate re-opens the gap and trips this.",
   },
+  {
+    // A storefront head builder threads a relative og:image / twitter:image
+    // / JSON-LD image. og:image-class metadata is fetched by social-share
+    // crawlers (Facebook / Slack / Twitter / iMessage) and by Google's
+    // product/article rich result from a SEPARATE origin than the page, so
+    // a relative `/assets/...` value resolves against the crawler's host (or
+    // not at all) and the share preview shows no image. A renderer that
+    // computes an og image from the brand-logo default (or an asset-prefix +
+    // R2 key) MUST absolutize it against the page origin. Every renderer
+    // that emits an og:image carries the assignment shape this matches; the
+    // fix wraps the value in `absolutizeOgImage` (edge, worker/render/
+    // _lib.js) / `_absolutizeOgImage` (container, lib/storefront.js), so a
+    // file with the assignment is exonerated only when it also names the
+    // absolutizer. Stripping the absolutize call from any og:image renderer
+    // leaves the bare relative assignment and re-opens the class.
+    id: "og-image-relative-without-absolutize",
+    bugClassDeclared: true,
+    primitive: "absolutize every og:image / twitter:image / JSON-LD image against the page origin via `absolutizeOgImage` (edge) / `_absolutizeOgImage` (container) before it reaches the `<head>` or the structured data — a relative `/assets/...` value (the brand-logo default, or an asset-prefix + R2 hero key) is dropped by social-share crawlers and by Google's rich result; the helper prefixes the canonical origin onto a `/`-rooted path and leaves an already-absolute `http(s)://` value unchanged",
+    // Match a JS assignment of an `ogImage` / `og_image` to a value that
+    // carries the relative brand-logo default. After the fix that same line
+    // also calls `absolutizeOgImage(...)`, and the file-level `requires`
+    // below exonerates it; reverting the line to a bare
+    // `opts.og_image || "/assets/brand/logo.png"` keeps the match but drops
+    // the absolutizer from the file, tripping the detector. The `<img src>`
+    // chrome template lines carry no `ogImage =` assignment, so they aren't
+    // matched.
+    regex: /\bog_?[Ii]mage\s*=\s*[^;]*\/assets\/brand\/logo\.png/,
+    scanScope: "shop",
+    requires: /absolutizeOgImage\s*\(/,
+    allowlist: [],
+    reason: "Every storefront page emits an og:image + twitter:image (and the PDP / blog article emit a Product / Article JSON-LD `image`). Those URLs are fetched by social-share crawlers (Facebook / Slack / Twitter / iMessage) and by Google's rich result from a different origin than the page, so a relative `/assets/...` value never resolves and the share preview shows no image. The container funnels every page through `lib/storefront.js#_wrap` (the single head builder) and the PDP/collection/category renderers; each edge renderer (worker/render/{product,home,cart,search,blog}.js) has its own `_wrap`. All of them now compute the og image through `_absolutizeOgImage` / `absolutizeOgImage`, which prefixes the canonical origin onto a `/`-rooted path and passes an already-`http(s)://` value through unchanged (idempotent, so a PDP that absolutizes at the renderer and again at `_wrap` is stable). The detector matches the og-image assignment that carries the brand-logo default and is exonerated only when the same file names the absolutizer; stripping the absolutize call from any og:image renderer re-opens the class. `worker/render/_lib.js` (the helper definition) and the chrome `<img src>` template lines carry no such assignment and aren't flagged.",
+  },
+  {
+    // A worker/render head builder splices a NON-LITERAL fragment into the
+    // assembled HTML <head> with `html.replace("RAW_<TOKEN>", value)` where
+    // the value is operator-supplied text (meta_keywords, the announcement
+    // bar message). The body splice already routes through `spliceRaw`
+    // (covered by `raw-body-replace-string-dollar-injection`); the HEAD
+    // placeholders carrying escaped-but-`$`-bearing content need the same
+    // treatment. `String.prototype.replace(token, replacementString)` gives
+    // the replacement string special meaning to `$$` / `$&` / `` $` `` /
+    // `$'` / `$N`, and HTML-escaping does NOT neutralise `$` (it isn't one
+    // of `<>&"'`), so a `$&`/dollar-backtick inside a keywords value or an
+    // announcement message corrupts the head or leaks it. The fix routes
+    // these through the replacer-function helper `spliceRaw` (not a
+    // `.replace(` call), so the clean tree carries no match; a regression to
+    // the string-replacement form for either head token re-opens the class.
+    id: "head-raw-replace-string-dollar-injection",
+    bugClassDeclared: true,
+    primitive: "splice an operator-supplied head fragment (meta_keywords, the announcement bar message) into the assembled HTML with the replacer-function helper `spliceRaw`, never `html.replace(\"RAW_META_KEYWORDS\"|\"RAW_ANNOUNCEMENT_BAR\", value)` with the value as the replacement STRING — `String.replace`'s replacement string interprets `$$` / `$&` / `` $` `` / `$'` / `$N`, so a `$`-bearing value (an operator's keywords / announcement copy) corrupts the head or leaks it into the body; the function-replacer form inserts the fragment verbatim",
+    regex: /\.replace\(\s*["']RAW_(?:META_KEYWORDS|ANNOUNCEMENT_BAR)["']\s*,\s*(?!function\b)/,
+    scanScope: "shop",
+    allowlist: [],
+    reason: "The storefront/worker head builders fill a LAYOUT template, then splice operator-supplied head fragments in at `RAW_META_KEYWORDS` (the CMS page's meta_keywords) and `RAW_ANNOUNCEMENT_BAR` (the sitewide announcement message). Both fragments are HTML-escaped at their build sites, but `$` is not one of the escaped characters — so when the splice used `assembled.replace(\"RAW_META_KEYWORDS\", metaKeywords)` / `.replace(\"RAW_ANNOUNCEMENT_BAR\", barHtml)`, the fragment was the REPLACEMENT STRING and `String.prototype.replace` gave its dollar sequences special meaning: `$&` re-emitted the placeholder token, `` $` `` spliced everything before the match (the page <head>) into the value, `$N` indexed a (non-existent) capture group. A keywords value or an announcement message carrying a `$` corrupted the head. The fix routes both head placeholders through the shared replacer-function helper `spliceRaw` (worker `_lib.js`) / `_spliceRaw` (lib/storefront.js), which copies the fragment verbatim with no dollar interpretation, on BOTH the edge and the container so the dual-render stays byte-consistent. The framework-fixed head placeholders (SRI digests, island `<script>` tags, robots meta) carry no `$`-bearing content and stay plain `.replace`. The detector matches a `.replace(\"RAW_META_KEYWORDS\"|\"RAW_ANNOUNCEMENT_BAR\", <non-function>)` shape in lib/ + worker/; every shipped splice of those two tokens is now a `spliceRaw(...)` call, so the clean tree is unflagged and a regression to the string-replacement form re-opens the class.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------

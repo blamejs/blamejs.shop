@@ -1,4 +1,4 @@
-import { renderTemplate, escapeHtml, escapeAttr, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw } from "./_lib.js";
+import { renderTemplate, escapeHtml, escapeAttr, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw, absoluteBase, absolutizeOgImage } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -651,9 +651,15 @@ function _wrap(opts) {
   var ogType        = opts.ogType        || "website";
   var ogTitle       = opts.ogTitle       || (opts.title ? opts.title + " — " + shopName : shopName);
   var ogDescription = opts.ogDescription || "Open-source ecommerce framework built on blamejs. Server-rendered HTML, post-quantum crypto, zero npm runtime dependencies.";
-  var ogImage       = opts.ogImage       || "/assets/brand/logo.png";
   var canonicalUrl  = opts.canonicalUrl   || "";
   var ogUrl         = opts.ogUrl          || canonicalUrl;
+  // og:image / twitter:image carry a FULLY-QUALIFIED URL — a relative hero
+  // path (or the brand-logo default) is dropped by every social-share
+  // crawler and by Google's product rich result. Absolutize against the
+  // page origin; an operator-hosted `http(s)://` image passes through. The
+  // value is already absolute when threaded from `renderProduct` (so the
+  // JSON-LD `image` matches), and idempotent for any other caller.
+  var ogImage       = absolutizeOgImage(opts.ogImage || "/assets/brand/logo.png", canonicalUrl, shopName);
   var localized = _localizeLayout(opts);
   var assembled = renderTemplate(localized, {
     title:          opts.title,
@@ -670,7 +676,6 @@ function _wrap(opts) {
     canonical_url:  canonicalUrl,
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(opts.themeCss))
-    .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
     .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "")
@@ -680,9 +685,12 @@ function _wrap(opts) {
       note:        opts.currencyNote,
       redirect_to: opts.currencyRedirectTo,
     }));
-  // Splice the PDP body literally so a `$`-bearing fragment (a product
-  // description) can't trip `String.replace`'s dollar substitution. See
-  // `spliceRaw`.
+  // The announcement bar carries operator-supplied message text (HTML-
+  // escaped, but `$` is not an escaped character), so splice it via the
+  // replacer-function helper — a `$&` / `` $` `` / `$N` in the message must
+  // land literally, not trigger `String.replace`'s dollar substitution.
+  // Same for the PDP body (a product description) below. See `spliceRaw`.
+  assembled = spliceRaw(assembled, "RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null));
   return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", opts.body);
 }
 
@@ -809,18 +817,6 @@ function _pdpShippingNote(availability) {
          "See our <a href=\"/terms\">shipping &amp; returns policy</a>.</p>";
 }
 
-// Absolute origin for fully-qualified structured-data URLs. Mirrors the
-// container (`lib/storefront.js#_absoluteBase`): prefers the request
-// canonical URL's origin, falls back to the shop-name host.
-function _absoluteBase(canonicalUrl, shopName) {
-  if (typeof canonicalUrl === "string" && canonicalUrl.length) {
-    try {
-      return new URL(canonicalUrl).origin;
-    } catch (_e) { /* fall through to the shop-name base */ }
-  }
-  return "https://" + String(shopName || "blamejs.shop").replace(/^https?:\/\//, "");
-}
-
 export function renderProduct(opts) {
   if (!opts || !opts.product) throw new TypeError("renderProduct: opts.product required");
   if (!opts.variants) throw new TypeError("renderProduct: opts.variants required");
@@ -929,10 +925,18 @@ export function renderProduct(opts) {
     .replace("RAW_RELATED_PLACEHOLDER", relatedHtml);
 
   var heroMedia = media[0] || null;
-  var ogImage   = heroMedia ? (assetPrefix + heroMedia.r2_key) : "/assets/brand/logo.png";
   // Absolute base for the BreadcrumbList `item` URLs — origin of the PDP's
   // own canonical, falling back to the shop-name host.
-  var absoluteBase = _absoluteBase(opts.canonicalUrl, shopName);
+  var absBase = absoluteBase(opts.canonicalUrl, shopName);
+  // og:image / twitter:image / the Product JSON-LD `image` all carry a
+  // FULLY-QUALIFIED URL — a relative hero path (or the brand-logo default)
+  // is dropped by social-share crawlers and by Google's product rich
+  // result. Absolutize once here so the JSON-LD `image` (built below) and
+  // the meta tags (`_wrap` re-runs the idempotent absolutizer) match.
+  var ogImage   = absolutizeOgImage(
+    heroMedia ? (assetPrefix + heroMedia.r2_key) : "/assets/brand/logo.png",
+    opts.canonicalUrl, shopName
+  );
 
   // Schema.org Product JSON-LD. Surfaces in Google's product-result
   // panel (price + availability), Bing Shopping, etc. The aggregate
@@ -991,8 +995,8 @@ export function renderProduct(opts) {
     "@context":        "https://schema.org",
     "@type":           "BreadcrumbList",
     "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Shop", "item": absoluteBase + "/" },
-      { "@type": "ListItem", "position": 2, "name": product.title, "item": absoluteBase + "/products/" + product.slug },
+      { "@type": "ListItem", "position": 1, "name": "Shop", "item": absBase + "/" },
+      { "@type": "ListItem", "position": 2, "name": product.title, "item": absBase + "/products/" + product.slug },
     ],
   });
   jsonLd = (jsonLd || "") + breadcrumbJsonLd;

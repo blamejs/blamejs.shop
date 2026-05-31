@@ -5,7 +5,7 @@
 // but it's file-backed; inline-string body needs a separate path).
 // Operators who want markdown formatting compose `b.template`
 // elsewhere and pass the rendered HTML in.
-import { renderTemplate, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, spliceRaw } from "./_lib.js";
+import { renderTemplate, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, spliceRaw, absolutizeOgImage } from "./_lib.js";
 import b from "../b.js";
 
 var LAYOUT =
@@ -68,6 +68,13 @@ var LAYOUT =
 function _wrap(opts, bodyHtml) {
   var shopName = opts.shopName || "blamejs.shop";
   var themeCss = opts.themeCss || assetUrl("css/main.css");
+  // og:image / twitter:image carry a FULLY-QUALIFIED URL — a relative
+  // `/assets/...` value (the blog-list brand default, or an article hero
+  // already absolutized at its own site) is dropped by social-share
+  // crawlers and by Google's rich result. Absolutize here so both the blog
+  // LIST and the article pages emit an absolute share image; the article's
+  // pre-absolutized value is idempotent.
+  var ogImage = absolutizeOgImage(opts.ogImage || "/assets/brand/logo.png", opts.canonicalUrl, shopName);
   var wrapped = renderTemplate(LAYOUT, {
     title:             opts.title,
     shop_name:         shopName,
@@ -79,16 +86,19 @@ function _wrap(opts, bodyHtml) {
     og_type:           opts.ogType || "website",
     og_title:          (opts.title || shopName) + " — " + shopName,
     og_description:    opts.description,
-    og_image:          opts.ogImage || "/assets/brand/logo.png",
+    og_image:          ogImage,
     canonical_url:     opts.canonicalUrl || "",
     year:              String(new Date().getUTCFullYear()),
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
-    .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
     .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "");
-  // The body is the rendered article/list markup; splice it literally so a
-  // `$`-bearing body can't trip `String.replace`'s dollar substitution.
+  // The announcement bar carries operator-supplied message text (HTML-
+  // escaped, but `$` is not an escaped character), so splice it via the
+  // replacer-function helper — a `$&` / `` $` `` / `$N` in the message must
+  // land literally, not trigger `String.replace`'s dollar substitution.
+  // Same for the article/list body below. See `spliceRaw`.
+  wrapped = spliceRaw(wrapped, "RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null));
   return spliceRaw(wrapped, "RAW_BODY_PLACEHOLDER", bodyHtml);
 }
 
@@ -187,12 +197,20 @@ export function renderBlogArticle(opts) {
   // Schema.org Article JSON-LD. Google's article-rich-result panel
   // reads `headline`, `datePublished`, `dateModified`, `image`,
   // `author`. The dates pass through as ISO 8601 (toISOString); the
-  // image falls back to the brand logo when no hero is set.
+  // image falls back to the brand logo when no hero is set. The `image`
+  // + the og:image carry a FULLY-QUALIFIED URL — a relative hero/default
+  // path is dropped by Google's rich result and by social-share crawlers,
+  // so absolutize once against the page origin (`_wrap` re-runs the
+  // idempotent absolutizer for the meta tag).
+  var ogImage = absolutizeOgImage(
+    article.hero_image_url || "/assets/brand/logo.png",
+    opts.canonicalUrl, shopName
+  );
   var jsonLd = jsonLdScript({
     "@context":      "https://schema.org",
     "@type":         "Article",
     "headline":      article.title,
-    "image":         article.hero_image_url ? [article.hero_image_url] : ["/assets/brand/logo.png"],
+    "image":         [ogImage],
     "datePublished": Number.isInteger(article.published_at) ? new Date(article.published_at).toISOString() : undefined,
     "dateModified":  Number.isInteger(article.updated_at)   ? new Date(article.updated_at).toISOString()   : undefined,
     "author":        { "@type": "Person", "name": article.author_id },
@@ -203,7 +221,7 @@ export function renderBlogArticle(opts) {
     title:        article.title,
     description:  article.meta_description || (String(article.body || "").slice(0, 240)),
     ogType:       "article",
-    ogImage:      article.hero_image_url || "/assets/brand/logo.png",
+    ogImage:      ogImage,
     shopName:     shopName,
     themeCss:     opts.themeCss,
     version:      opts.version,

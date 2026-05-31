@@ -1,4 +1,4 @@
-import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw } from "./_lib.js";
+import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw, absolutizeOgImage } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -405,9 +405,13 @@ function _wrap(opts) {
   var ogType        = opts.og_type        || "website";
   var ogTitle       = opts.og_title       || (opts.title ? opts.title + " — " + shopName : shopName);
   var ogDescription = opts.og_description || "Open-source ecommerce framework built on blamejs. Server-rendered HTML, post-quantum crypto, zero npm runtime dependencies.";
-  var ogImage       = opts.og_image       || "/assets/brand/logo.png";
   var canonicalUrl  = opts.canonical_url   || "";
   var ogUrl         = opts.og_url          || canonicalUrl;
+  // og:image / twitter:image carry a FULLY-QUALIFIED URL — a relative
+  // `/assets/...` value is dropped by every social-share crawler and by
+  // Google's rich result. Absolutize against the page origin; an
+  // operator-hosted `http(s)://` image passes through unchanged.
+  var ogImage       = absolutizeOgImage(opts.og_image || "/assets/brand/logo.png", canonicalUrl, shopName);
   var localized = _localizeLayout(opts);
   // Per-page robots directive. `noindex,follow` keeps internal search
   // result URLs (one per query + facet combination — thin/duplicate
@@ -435,7 +439,6 @@ function _wrap(opts) {
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
     .replace("RAW_ROBOTS_META", robotsMeta)
-    .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
     .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "")
@@ -445,8 +448,12 @@ function _wrap(opts) {
       note:        opts.currency_note,
       redirect_to: opts.currency_redirect_to,
     }));
-  // Splice the search body literally so a reflected query containing a
-  // `$` sequence can't trip `String.replace`'s dollar substitution.
+  // The announcement bar carries operator-supplied message text (HTML-
+  // escaped, but `$` is not an escaped character), so splice it via the
+  // replacer-function helper — a `$&` / `` $` `` / `$N` in the message must
+  // land literally, not trigger `String.replace`'s dollar substitution.
+  // Same for the reflected-query body below. See `spliceRaw`.
+  assembled = spliceRaw(assembled, "RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null));
   return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", opts.body);
 }
 
