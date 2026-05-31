@@ -175,6 +175,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "the POST /admin/loyalty/adjust route validates a required reason via _loyaltyReason(body.reason) and forwards it as the notes of loyalty.adjust({ customer_id, points, source, notes }); the primitive records the signed delta + reason in loyalty_transactions, so every grant/deduct is attributed",
   },
+  {
+    bugClass: "admin per-customer store-credit route grants/deducts a customer's account-bound balance without a required reason — writes an unattributed balance change the ledger can't explain",
+    detector: "customer-store-credit-route-without-reason",
+    gate:     "codebase-patterns",
+    note:     "the POST /admin/customers/:id/store-credit route validates a required reason via _storeCreditReason(body.reason) and forwards it into the store-credit ledger (source_ref on storeCredit.credit for a grant, the reason column of storeCredit.expire for a deduct); the route is scoped to the :id customer and refuses an over-deduction as a clean 409 before any write, so every grant/deduct is attributed and bounded by the available balance",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the

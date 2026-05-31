@@ -576,6 +576,27 @@ async function main() {
         ? bShop.customers.create({ cursorSecret: customersCursorSecret })
         : null;
 
+      // Per-customer operator satellites surfaced on the customer detail
+      // screen (/admin/customers/:id): the account-bound store-credit wallet
+      // (grant / deduct, audited ledger), the operator-side CRM notes, and
+      // the RFM segment membership (read-only — membership is rule-derived,
+      // recomputed by the scheduler, not hand-assigned). Each defaults to the
+      // externalDb bridge for its query handle; the two paginating primitives
+      // derive an HMAC cursor key like the roster does.
+      var storeCredit = (catalog && cart) ? bShop.storeCredit.create({}) : null;
+      var customerNotesCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("customer-notes-cursor", process.env.D1_BRIDGE_SECRET)
+        : "customer-notes-cursor-secret-dev-only";
+      var customerNotes = (catalog && cart)
+        ? bShop.customerNotes.create({ cursorSecret: customerNotesCursorSecret })
+        : null;
+      var customerSegmentsCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("customer-segments-cursor", process.env.D1_BRIDGE_SECRET)
+        : "customer-segments-cursor-secret-dev-only";
+      var customerSegments = (catalog && cart)
+        ? bShop.customerSegments.create({ cursorSecret: customerSegmentsCursorSecret })
+        : null;
+
       // Product Q&A — opts in the storefront published-Q&A display + the
       // ask-a-question route, plus the admin moderation console. Single
       // instance shared by both surfaces. The primitive paginates with
@@ -935,6 +956,9 @@ async function main() {
           productQa:     productQa,
           returns:       returns,
           customers:     customers,
+          storeCredit:      storeCredit,
+          customerNotes:    customerNotes,
+          customerSegments: customerSegments,
           subscriptions: subscriptions,
           giftcards:     giftcards,
           giftCardLedger: giftCardLedger,

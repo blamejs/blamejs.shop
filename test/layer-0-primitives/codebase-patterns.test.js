@@ -2235,6 +2235,27 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "POST /admin/loyalty/adjust lets an operator grant or deduct a customer's loyalty points from the console. The action composes loyalty.adjust, which writes the signed points delta to the loyalty_transactions ledger and recomputes the customer's tier — a balance mutation an auditor must be able to explain. The route gates on `_loyaltyReason(body.reason)` (throws a TypeError → clean 400 on a missing / blank / over-long / control-byte reason) and forwards the validated reason as the `notes` column of the ledger row, so every adjustment carries WHY it happened. Dropping the reason gate would let an adjustment write an unattributed balance change. The detector matches the adjust route registration and is exonerated only when the same file composes `_loyaltyReason(...)`; a route that fires loyalty.adjust without the reason gate re-opens the gap and trips this. The loyalty-redemption refund path (lib/loyalty-redemption.js) calls loyalty.adjust internally with its own cancel reason and carries no /admin/loyalty/adjust route, so it isn't flagged.",
   },
+  {
+    // The admin per-customer store-credit route grants or deducts a specific
+    // customer's account-bound balance. That is a money-adjacent action, so
+    // the operator MUST supply a reason that lands in the store-credit ledger
+    // row (storeCredit.credit writes it to source_ref; storeCredit.expire to
+    // its reason column). A route that fires the credit/expire primitive
+    // without first validating + forwarding a required reason would write an
+    // unattributed balance change — the ledger couldn't say WHY the credit
+    // moved. The detector matches the POST /admin/customers/:id/store-credit
+    // route registration and is exonerated only when the same file composes
+    // the reason validator (`_storeCreditReason(...)`); a route that drops the
+    // reason gate re-opens the gap and trips this.
+    id: "customer-store-credit-route-without-reason",
+    bugClassDeclared: true,
+    primitive: "the admin POST /admin/customers/:id/store-credit route must validate a required reason through `_storeCreditReason(body.reason)` and forward it into the store-credit ledger (`source_ref` of storeCredit.credit on a grant, the `reason` of storeCredit.expire on a deduct) — a store-credit adjustment is money-adjacent, so an unattributed grant/deduct is refused; the primitive records the amount + reason in store_credit_ledger",
+    regex: /router\.post\(\s*["']\/admin\/customers\/:id\/store-credit["']/,
+    scanScope: "lib",
+    requires: /_storeCreditReason\s*\(/,
+    allowlist: [],
+    reason: "POST /admin/customers/:id/store-credit lets an operator grant or deduct a customer's account-bound store credit from the customer detail screen. A grant composes storeCredit.credit (the reason rides into the ledger row's source_ref); a deduct composes storeCredit.expire (which carries a required reason column). Both write an audited row to store_credit_ledger that an auditor must be able to explain. The route gates on `_storeCreditReason(body.reason)` (throws a TypeError → clean 400 on a missing / blank / over-long / control-byte reason) and is additionally scoped to the :id customer (the target is the path id, never a form field, so an operator can't act on a different customer than the screen they're on) with an over-deduction refused as a clean 409 before any write. Dropping the reason gate would let an adjustment write an unattributed balance change. The detector matches the store-credit route registration and is exonerated only when the same file composes `_storeCreditReason(...)`; a route that fires the credit/expire primitive without the reason gate re-opens the gap and trips this.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
