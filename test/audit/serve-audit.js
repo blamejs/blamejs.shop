@@ -384,6 +384,9 @@ async function main() {
   var blog               = bShop.blogArticles.create({ query: query, cursorSecret: "audit-blog" });
   var storefrontPages    = bShop.storefrontPages.create({ query: query });
   var quantityDiscounts  = bShop.quantityDiscounts.create({ query: query, catalog: catalog });
+  var loyalty            = bShop.loyalty.create({ query: query });
+  var loyaltyEarnRules   = bShop.loyaltyEarnRules.create({ query: query, loyalty: loyalty });
+  var loyaltyRedemption  = bShop.loyaltyRedemption.create({ query: query, loyalty: loyalty });
   var taxRates           = bShop.taxRates.create({ query: query });
   var shippingZones      = bShop.shippingZones.create({ query: query });
   var autoDiscount       = bShop.autoDiscount.create({ query: query });
@@ -551,6 +554,9 @@ async function main() {
         discountAllocation: discountAllocation,
         salesTaxFilings:    salesTaxFilings,
         quantityDiscounts:  quantityDiscounts,
+        loyalty:            loyalty,
+        loyaltyEarnRules:   loyaltyEarnRules,
+        loyaltyRedemption:  loyaltyRedemption,
         integrations: {
           stripe: "off", express_checkout: "off", google_signin: "off", apple_signin: "off", paypal: "off",
         },
@@ -572,6 +578,9 @@ async function main() {
         collections:        collections,
         giftcards:          giftcards,
         quantityDiscounts:  quantityDiscounts,
+        loyalty:            loyalty,
+        loyaltyEarnRules:   loyaltyEarnRules,
+        loyaltyRedemption:  loyaltyRedemption,
         checkout:           checkout,
         payment:            payment,
         default_shipping_id: async function () { return "std"; },

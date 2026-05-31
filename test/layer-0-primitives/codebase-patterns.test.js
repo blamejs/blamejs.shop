@@ -2214,6 +2214,27 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "The storefront/worker renderers assemble a page by filling a LAYOUT template, then splicing the already-rendered body fragment in at a `RAW_BODY_PLACEHOLDER` / `RAW_BODY_HTML_PLACEHOLDER` token. The body is operator- or customer-supplied free text (a blog post, a CMS Markdown page, a reflected search query). When that splice used `assembled.replace(\"RAW_BODY_PLACEHOLDER\", body)`, the body was the REPLACEMENT STRING — and `String.prototype.replace` gives a replacement string special meaning to dollar sequences: `$$`, `$&`, `` $` `` (everything before the match — i.e. the entire page <head>), `$'` (everything after), `$N`. A body containing a dollar immediately followed by a backtick spliced the page head into the body; other dollar sequences silently corrupted the rendered HTML. HTML-escaping the body upstream does not help — `$` is not one of the escaped characters. The fix inserts the body through a REPLACER FUNCTION via the shared `spliceRaw` (worker `_lib.js`) / `_spliceRaw` (lib/storefront.js) helper, which copies the fragment verbatim with no dollar interpretation, on BOTH the edge and the container so the dual-render stays byte-consistent. The detector matches a `.replace(\"RAW_BODY…\", <non-function>)` shape in lib/ + worker/; every shipped body splice is now a `spliceRaw(...)` call (not a `.replace(`), so the clean tree is unflagged and a regression to the string-replacement form re-opens the class.",
   },
+  {
+    // The admin points-adjustment route grants or deducts a specific
+    // customer's loyalty balance. That is a money-adjacent action, so the
+    // operator MUST supply a reason that lands in the loyalty ledger row
+    // (loyalty.adjust writes the signed delta + the notes to
+    // loyalty_transactions). A route that fires loyalty.adjust without
+    // first validating + forwarding a required reason would write an
+    // unattributed balance change — the audit trail couldn't say WHY the
+    // points moved. The detector matches the POST /admin/loyalty/adjust
+    // route registration and is exonerated only when the same file
+    // composes the reason validator (`_loyaltyReason(...)`); a route that
+    // drops the reason gate re-opens the gap and trips this.
+    id: "loyalty-adjust-route-without-reason",
+    bugClassDeclared: true,
+    primitive: "the admin POST /admin/loyalty/adjust route must validate a required reason through `_loyaltyReason(body.reason)` and forward it as the `notes` of `loyalty.adjust({ customer_id, points, source, notes })` — a points adjustment is money-adjacent, so an unattributed grant/deduct (no reason in the ledger row) is refused; the primitive records the signed delta + the reason in loyalty_transactions",
+    regex: /router\.post\(\s*["']\/admin\/loyalty\/adjust["']/,
+    scanScope: "lib",
+    requires: /_loyaltyReason\s*\(/,
+    allowlist: [],
+    reason: "POST /admin/loyalty/adjust lets an operator grant or deduct a customer's loyalty points from the console. The action composes loyalty.adjust, which writes the signed points delta to the loyalty_transactions ledger and recomputes the customer's tier — a balance mutation an auditor must be able to explain. The route gates on `_loyaltyReason(body.reason)` (throws a TypeError → clean 400 on a missing / blank / over-long / control-byte reason) and forwards the validated reason as the `notes` column of the ledger row, so every adjustment carries WHY it happened. Dropping the reason gate would let an adjustment write an unattributed balance change. The detector matches the adjust route registration and is exonerated only when the same file composes `_loyaltyReason(...)`; a route that fires loyalty.adjust without the reason gate re-opens the gap and trips this. The loyalty-redemption refund path (lib/loyalty-redemption.js) calls loyalty.adjust internally with its own cancel reason and carries no /admin/loyalty/adjust route, so it isn't flagged.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------

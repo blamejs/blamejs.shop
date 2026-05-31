@@ -169,6 +169,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "splice the body with a replacer function via the shared spliceRaw / _spliceRaw helper, never html.replace(\"RAW_BODY…\", bodyHtml) — applied to both the edge (worker/render) and the container (lib/storefront.js) so the dual-render stays byte-consistent",
   },
+  {
+    bugClass: "admin loyalty points-adjustment route grants/deducts a customer balance without a required reason — writes an unattributed balance change the ledger can't explain",
+    detector: "loyalty-adjust-route-without-reason",
+    gate:     "codebase-patterns",
+    note:     "the POST /admin/loyalty/adjust route validates a required reason via _loyaltyReason(body.reason) and forwards it as the notes of loyalty.adjust({ customer_id, points, source, notes }); the primitive records the signed delta + reason in loyalty_transactions, so every grant/deduct is attributed",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the

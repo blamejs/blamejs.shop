@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.24",
+  "date": "2026-05-30",
+  "headline": "Manage the loyalty program from the admin console",
+  "summary": "The loyalty program was visible to customers at /account/loyalty — their points balance, tier, the ways to earn, and the rewards — but there was no way to configure it from the console, so it could not actually be run. A new Loyalty admin screen now manages the whole program: create and edit the rules that award points (and archive ones that should no longer apply), build and edit the rewards catalog (a reward must be active to appear to customers), and grant or deduct a specific customer's points balance. A points adjustment requires a reason and is written to the loyalty ledger, so every manual change is recorded.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Loyalty program administration", "body": "A Loyalty screen in the admin console manages earn rules (the events that award points and how many), the rewards catalog (what points can be redeemed for, with per-kind values), and per-customer point adjustments. Only active, non-archived rules and rewards appear to customers. A manual grant or deduction requires a reason and is recorded in the loyalty ledger alongside automatic earn and redeem activity, and an over-deduction or invalid adjustment is rejected without changing the balance. This completes a program that previously could be shown to shoppers but not configured." }
+      ]
+    }
+  ]
+}
