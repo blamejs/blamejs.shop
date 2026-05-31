@@ -218,6 +218,12 @@ var COVERAGE = [
     note:     "the POST /wishlist/share/:share_id/revoke route loads the session customer's links via wishlistSharing.listSharesForOwner(auth.customer_id) and refuses a share_id that isn't among them (clean 404 on an unknown / malformed / cross-customer id) before revokeShareLink({ link_id }); the sharing primitive revokes by id alone, so the route owns the ownership decision. The public GET /wishlist/shared/:token view resolves the wishlist only through viewShared(token) — never by a guessable wishlist/customer id — and renders product cards only, redacting the owner identity + private notes",
   },
   {
+    bugClass: "storefront gift-registry owner write route (add item / remove item / edit / close) mutates a registry by path slug without first asserting it belongs to the session customer (any signed-in shopper could add to / strip / edit / close another customer's registry by slug — IDOR)",
+    detector: "storefront-registry-owner-route-without-ownership-check",
+    gate:     "codebase-patterns",
+    note:     "every owner write route under /account/registry/:slug (items, items/:item_id/remove, edit, close) funnels through _ownedRegistry(slug, auth.customer_id), which loads via deps.giftRegistry.getRegistry and returns null unless reg.owner_customer_id === auth.customer_id (clean 404 on a foreign / unknown / malformed slug) before addItem / removeItem / update / closeRegistry; the gift-registry primitive mutates by slug alone, so the route owns the ownership decision. The create route keys the new owner on auth.customer_id directly (no :slug), and the public GET /registry/:slug giver view resolves only through getBySlug (never a guessable id), enforces the privacy gate in the route (a private registry 404s like an unknown slug), and surfaces items + aggregate counts only, never the owner identity / shipping address / per-buyer purchase rows",
+  },
+  {
     bugClass: "admin auto-discount value translator silently coerces an unrecognized value_kind to free_shipping instead of erroring — a typo'd value_kind from a JSON API client creates a store-wide free-shipping rule (the most generous kind) with no operator signal",
     detector: "admin-discount-value-kind-silent-default",
     gate:     "codebase-patterns",

@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.37",
+  "date": "2026-05-31",
+  "headline": "Gift registries — create one, share it, and let people mark gifts as bought",
+  "summary": "A customer can now create a gift registry for an occasion — a wedding, baby, or birthday — add the products they want with the quantity desired, and share a public link. Anyone with the link can open the registry without an account, see what is still needed, add an item to their own cart to buy it through normal checkout, or mark an item as already purchased so it stops showing as needed. Registries can be public, unlisted, or private, and a private registry is not viewable from its link. The shared page never reveals who owns the registry or who bought what, and is not indexed by search engines.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Gift registries", "body": "A new Registry section in the account area lets a customer create a registry (title, occasion, event date, and a public/unlisted/private visibility), add and remove the items they want with a desired quantity, edit its details, and close it. Each registry has a shareable public page at its own link where anyone — no account needed — can see the items and how many of each are still needed, add an item to their cart to buy it through the normal checkout, or mark an item as already purchased so the registry's progress updates. A private registry is not viewable from its link, the public page shows only the items (never the owner's identity, address, or who purchased what), and registry pages are excluded from search indexing." }
+      ]
+    }
+  ]
+}
