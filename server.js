@@ -662,6 +662,16 @@ async function main() {
         ? bShop.orderTracking.create({ order: order })
         : null;
 
+      // Order exchanges — the customer-requested same-value item SWAP
+      // lifecycle (distinct from refund-only returns). One shared instance
+      // backs both the customer request surface (/account/orders/:id/exchange
+      // + /account/exchanges) and the operator queue (/admin/exchanges). The
+      // `order` handle resolves the customer→order linkage so exchangesForCustomer
+      // is scoped to the requesting shopper's own orders.
+      var orderExchanges = (catalog && cart)
+        ? bShop.orderExchanges.create({ order: order })
+        : null;
+
       // Fulfillment ops — the warehouse-side surfaces over the order +
       // shipment data. Pick lists consolidate open orders into an aisle-
       // sequenced picker route (composing order.get + orderTracking for
@@ -992,6 +1002,7 @@ async function main() {
           productQa:     productQa,
           returns:       returns,
           supportTickets: supportTickets,
+          orderExchanges: orderExchanges,
           customers:     customers,
           storeCredit:      storeCredit,
           customerNotes:    customerNotes,
@@ -1142,6 +1153,11 @@ async function main() {
         if (returns) sfDeps.returns = returns;
         // Support tickets — the customer intake + thread (/account/support).
         if (supportTickets) sfDeps.supportTickets = supportTickets;
+        // Order exchanges — the customer request + status surface
+        // (/account/orders/:id/exchange + /account/exchanges). Wired with
+        // the shared order instance (sfDeps.order set below) for the
+        // ownership scope; the admin queue actions the FSM.
+        if (orderExchanges) sfDeps.orderExchanges = orderExchanges;
         if (collections) sfDeps.collections = collections;
         if (categoryNavigation) sfDeps.categoryNavigation = categoryNavigation;
         if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;
