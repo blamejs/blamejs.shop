@@ -2335,6 +2335,33 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "The storefront/worker head builders fill a LAYOUT template, then splice operator-supplied head fragments in at `RAW_META_KEYWORDS` (the CMS page's meta_keywords) and `RAW_ANNOUNCEMENT_BAR` (the sitewide announcement message). Both fragments are HTML-escaped at their build sites, but `$` is not one of the escaped characters — so when the splice used `assembled.replace(\"RAW_META_KEYWORDS\", metaKeywords)` / `.replace(\"RAW_ANNOUNCEMENT_BAR\", barHtml)`, the fragment was the REPLACEMENT STRING and `String.prototype.replace` gave its dollar sequences special meaning: `$&` re-emitted the placeholder token, `` $` `` spliced everything before the match (the page <head>) into the value, `$N` indexed a (non-existent) capture group. A keywords value or an announcement message carrying a `$` corrupted the head. The fix routes both head placeholders through the shared replacer-function helper `spliceRaw` (worker `_lib.js`) / `_spliceRaw` (lib/storefront.js), which copies the fragment verbatim with no dollar interpretation, on BOTH the edge and the container so the dual-render stays byte-consistent. The framework-fixed head placeholders (SRI digests, island `<script>` tags, robots meta) carry no `$`-bearing content and stay plain `.replace`. The detector matches a `.replace(\"RAW_META_KEYWORDS\"|\"RAW_ANNOUNCEMENT_BAR\", <non-function>)` shape in lib/ + worker/; every shipped splice of those two tokens is now a `spliceRaw(...)` call, so the clean tree is unflagged and a regression to the string-replacement form re-opens the class.",
   },
+  {
+    // The signed-in customer's store-credit wallet route
+    // (`GET /account/credit`) reads an account-bound balance + ledger.
+    // The store-credit primitive's balance / history / expiringWithin
+    // take a customer id alone — they carry no notion of the requesting
+    // customer — so the storefront route alone owns the session-scoping
+    // decision. The route MUST resolve the wallet from the SESSION
+    // customer id (`auth.customer_id`, from `_currentCustomer(req)`),
+    // never from a request-supplied id / query param. There is
+    // deliberately NO `:id` path segment: a route that read a
+    // customer id from `req.params` / `req.query` and passed it to
+    // `storeCredit.balance(...)` would let any signed-in shopper read
+    // another customer's balance + ledger by guessing their id (IDOR).
+    // The detector matches the `GET /account/credit` route registration
+    // and is exonerated only when the same file resolves the balance from
+    // `storeCredit.balance(auth.customer_id)` (the session-scoped read);
+    // dropping the session scoping (reading the id from a param instead)
+    // removes that token and trips this.
+    id: "storefront-store-credit-route-without-session-scope",
+    bugClassDeclared: true,
+    primitive: "the storefront `GET /account/credit` wallet route must resolve the balance + ledger from the SESSION customer id (`storeCredit.balance(auth.customer_id)` / `.history({ customer_id: auth.customer_id })` / `.expiringWithin({ customer_id: auth.customer_id })`, where `auth` comes from `_currentCustomer(req)`), never from a request-supplied id / query param — the store-credit primitive reads by customer id alone, and there is no `:id` path segment, so a route that read the id from `req.params` / `req.query` would let any signed-in shopper read another customer's balance by id (IDOR)",
+    regex: /router\.get\(\s*["']\/account\/credit["']/,
+    scanScope: "lib",
+    requires: /storeCredit\.balance\s*\(\s*auth\.customer_id\s*\)/,
+    allowlist: [],
+    reason: "The customer-facing store-credit wallet (/account/credit) is a READ-ONLY surface: the signed-in customer sees their current balance, an expiring-soon callout, and the credit/debit/expire ledger. The store-credit primitive stores `customer_id` on every ledger row but its balance / history / expiringWithin methods take a customer id alone — they have no notion of the requesting customer — so the storefront route owns the session-scoping decision. The route resolves the customer id from the signed-in session via `_currentCustomer(req)` (`auth.customer_id`) and passes ONLY that id to `deps.storeCredit.balance(auth.customer_id)` / `.history({ customer_id: auth.customer_id })` / `.expiringWithin({ customer_id: auth.customer_id })`. There is deliberately no `:id` path segment, and the route never reads a customer id from the query string or body, so a signed-in shopper can only ever see their OWN wallet. Granting / deducting credit is operator-only on the admin customer-detail screen — this surface writes nothing. Without the session-scoped read (e.g. reading a customer id from `req.params` / `req.query` and passing it to `storeCredit.balance(...)`), any authenticated shopper could read another customer's balance + ledger by guessing their id. The detector matches the `GET /account/credit` route registration and is exonerated only when the same file performs the `storeCredit.balance(auth.customer_id)` session-scoped read; dropping the session scoping removes that token and re-opens the IDOR.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
