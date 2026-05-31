@@ -343,6 +343,26 @@ async function _seed(engines) {
       try { await engines.customers.addPasskey(cust.id, { credential_id: "audit-cred-2", public_key: "k2", transports: "usb" }); } catch (_e) { /* */ }
       _note("customer auditcustomer@example.com (+2 passkeys)");
     });
+    // Per-customer satellites so the /admin/customers/:id detail screen
+    // renders with real store-credit, a CRM note, and a loyalty balance.
+    if (engines.storeCredit && refs.customer_id) {
+      await _try("customer store credit", async function () {
+        await engines.storeCredit.credit({
+          customer_id: refs.customer_id, amount_minor: 2500,
+          source: "goodwill", source_ref: "welcome credit",
+        });
+        _note("$25.00 store credit for the customer");
+      });
+    }
+    if (engines.customerNotes && refs.customer_id) {
+      await _try("customer note", async function () {
+        await engines.customerNotes.addNote({
+          customer_id: refs.customer_id, author: "operator",
+          body: "VIP — comp shipping where possible.", kind: "preference",
+        });
+        _note("1 CRM note for the customer");
+      });
+    }
     // A saved address for /account/addresses.
     if (engines.addresses && refs.customer_id) {
       await _try("customer saved address", async function () {
@@ -375,6 +395,9 @@ async function main() {
   var orderTracking      = bShop.orderTracking.create({ query: query, order: order });
   var shippingLabels     = bShop.shippingLabels.create({ query: query });
   var customers          = bShop.customers.create({ query: query });
+  var storeCredit        = bShop.storeCredit.create({ query: query });
+  var customerNotes      = bShop.customerNotes.create({ query: query, cursorSecret: "audit-customer-notes" });
+  var customerSegments   = bShop.customerSegments.create({ query: query, cursorSecret: "audit-customer-segments" });
   var reviews            = bShop.reviews.create({ query: query, cursorSecret: "audit-reviews" });
   var returns            = bShop.returns.create({ query: query, cursorSecret: "audit-returns" });
   var giftcards          = bShop.giftcards.create({ query: query });
@@ -441,6 +464,7 @@ async function main() {
     autoDiscount: autoDiscount, couponStacking: couponStacking, salesTaxFilings: salesTaxFilings,
     shippingLabels: shippingLabels, orderTracking: orderTracking, collections: collections,
     giftcards: giftcards, customers: customers, addresses: addresses,
+    storeCredit: storeCredit, customerNotes: customerNotes,
   });
 
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-audit-"));
@@ -541,6 +565,9 @@ async function main() {
         reviews:            reviews,
         returns:            returns,
         customers:          customers,
+        storeCredit:        storeCredit,
+        customerNotes:      customerNotes,
+        customerSegments:   customerSegments,
         giftcards:          giftcards,
         giftCardLedger:     giftCardLedger,
         webhooks:           webhooks,
