@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.32",
+  "date": "2026-05-31",
+  "headline": "Collection pages now page through every product instead of stopping at 24",
+  "summary": "A collection page showed only its first 24 products and provided no way to reach the rest, so any product past the 24th in a collection was silently unreachable. Collection pages now have previous/next pagination, matching the search results, so a collection of any size can be browsed in full. A shared link to a specific page keeps its position, while the page's canonical URL stays the plain collection address.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Collection pages paginate", "body": "A collection with more than 24 products was truncated at the first 24 with no way to see the others. Collection pages now carry previous/next pagination — the same control used on search results — so every product in a collection is reachable. The canonical URL remains the bare collection address on every page (so search engines see one collection page, not duplicates), while a shared link to a deeper page preserves its position." }
+      ]
+    }
+  ]
+}

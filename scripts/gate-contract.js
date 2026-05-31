@@ -217,6 +217,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "the /help/:slug reader + the /help/:slug/vote POST gate the article read on _kbPublishedArticle (loads via knowledgeBase.getArticle, returns null unless published === true && archived_at == null) so a draft / archived / unknown slug all 404 alike, and the view/vote recorders only run for a publicly-visible article; the admin authoring routes under /admin/help read every state on purpose and aren't in scope",
   },
+  {
+    bugClass: "storefront collection page renders only the first 24 members and threads no cursor — a collection with more than 24 products silently loses everything past the 24th, with no shopper-reachable path to the rest",
+    detector: "collection-route-without-cursor-pagination",
+    gate:     "codebase-patterns",
+    note:     "the GET /collections/:slug route threads a ?cursor= trail through collections.productsIn({ slug, limit, cursor }) and surfaces the lib's opaque forward next_cursor into renderCollection, which paints a prev/next nav reusing the search-pagination shell (rel=prev/next + disabled-state spans, no new CSS); productsIn returns at most one page with no total, so an un-cursored call caps the grid at the limit — a bad / stale cursor falls back to page 1 rather than 404/500, matching how /search clamps a bad ?page=, and the canonical stays the bare collection URL on every page",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
