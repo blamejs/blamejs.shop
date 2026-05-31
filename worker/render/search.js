@@ -312,6 +312,56 @@ function _renderActiveChips(facets, filters, q) {
   return "<div class=\"search-active-filters\" aria-label=\"Active filters\">\n" + chips + clearAll + "</div>\n";
 }
 
+// The fixed search page size — the number of result cards one page of
+// `/search` shows. Mirrors the container renderer's SEARCH_PAGE_SIZE.
+var SEARCH_PAGE_SIZE = 24;
+
+// `/search?...` URL for a specific results page — the query + active
+// filters carried forward (so paging preserves the facet state) with a
+// `page` param appended for any page past the first. Page 1 omits the
+// param. Mirrors the container renderer's `_searchPageUrl` byte-for-byte.
+function _searchPageUrl(q, filters, page) {
+  var base = _searchUrl(q, filters);
+  if (page <= 1) return base;
+  return base + (base.indexOf("?") === -1 ? "?" : "&") + "page=" + page;
+}
+
+var SEARCH_PAGE_LINK =
+  "<li class=\"search-pagination__page\"><a class=\"search-pagination__link\" href=\"{{href}}\"{{aria_current}}>{{n}}</a></li>\n";
+
+// Numbered prev/next pagination for the result grid. Renders nothing for
+// a single page (keeps the unpaginated render byte-identical). `total` is
+// the REAL match count, not the page slice length; `page` the 1-based
+// current page. Mirrors the container renderer's `_renderSearchPagination`
+// byte-for-byte.
+function _renderSearchPagination(q, filters, total, page, pageSize) {
+  var size = pageSize > 0 ? pageSize : SEARCH_PAGE_SIZE;
+  var totalPages = Math.max(1, Math.ceil(total / size));
+  if (totalPages <= 1) return "";
+  var cur = page < 1 ? 1 : (page > totalPages ? totalPages : page);
+  var prev = cur > 1
+    ? renderTemplate("<a class=\"search-pagination__link search-pagination__prev\" href=\"{{href}}\" rel=\"prev\">Previous</a>\n",
+        { href: _searchPageUrl(q, filters, cur - 1) })
+    : "<span class=\"search-pagination__link search-pagination__prev is-disabled\" aria-disabled=\"true\">Previous</span>\n";
+  var next = cur < totalPages
+    ? renderTemplate("<a class=\"search-pagination__link search-pagination__next\" href=\"{{href}}\" rel=\"next\">Next</a>\n",
+        { href: _searchPageUrl(q, filters, cur + 1) })
+    : "<span class=\"search-pagination__link search-pagination__next is-disabled\" aria-disabled=\"true\">Next</span>\n";
+  var pagesHtml = "";
+  for (var n = 1; n <= totalPages; n += 1) {
+    pagesHtml += renderTemplate(SEARCH_PAGE_LINK, {
+      href:         _searchPageUrl(q, filters, n),
+      aria_current: n === cur ? "RAW_ARIA" : "",
+      n:            String(n),
+    }).replace("RAW_ARIA", n === cur ? " aria-current=\"page\"" : "");
+  }
+  return "<nav class=\"search-pagination\" aria-label=\"Search results pages\">\n" +
+    prev +
+    "<ol class=\"search-pagination__pages\">\n" + pagesHtml + "</ol>\n" +
+    next +
+    "</nav>\n";
+}
+
 function _buildProductCard(p) {
   if (p.image_url) {
     return renderTemplate(PRODUCT_CARD_IMAGE, {
@@ -397,6 +447,13 @@ export function renderSearch(opts) {
     throw new TypeError("renderSearch: opts.version (non-empty string) required");
   }
   var products = opts.products;
+  // The result-count copy + page math run off the REAL match total — the
+  // count of every product matched, not the page slice length. A caller
+  // that threads no total (the parity test rendering one page directly)
+  // falls back to the page length so the unpaginated render is unchanged.
+  var pageSize   = (typeof opts.pageSize === "number" && opts.pageSize > 0) ? opts.pageSize : SEARCH_PAGE_SIZE;
+  var totalCount = (typeof opts.total === "number" && opts.total >= 0) ? opts.total : products.length;
+  var page       = (typeof opts.page === "number" && opts.page >= 1) ? Math.floor(opts.page) : 1;
   var qTrim = opts.q.trim();
   var title, summary, emptyHeading, emptyCopy;
   if (qTrim.length === 0) {
@@ -404,14 +461,14 @@ export function renderSearch(opts) {
     summary      = "Use the search box in the header to look for a product by title, SKU, or description.";
     emptyHeading = "What are you looking for?";
     emptyCopy    = "Type a query in the header search to find products by title, SKU, or description.";
-  } else if (products.length === 0) {
+  } else if (totalCount === 0) {
     title        = "No matches";
     summary      = "Nothing in the catalog matched “" + qTrim + "”.";
     emptyHeading = "We don't carry that yet";
     emptyCopy    = "Try a broader term, or browse every product on the home page.";
   } else {
     title   = "“" + qTrim + "”";
-    summary = "Showing " + products.length + " match" + (products.length === 1 ? "" : "es") + " for your query.";
+    summary = "Showing " + totalCount + " match" + (totalCount === 1 ? "" : "es") + " for your query.";
   }
   // Facet chrome — facets is the computed group/option/count list,
   // filters the validated applied-filters map. Both default to
@@ -464,6 +521,14 @@ export function renderSearch(opts) {
     }).join("\n");
     resultsInner = "<section class=\"search-grid\"><div class=\"grid\">" + cards + "</div></section>";
   }
+  // Pagination nav under the grid — `?page=N` links carrying the active
+  // query + facets so paging never drops the filter state. Renders nothing
+  // for a single page or the empty / no-query states. Driven by the real
+  // total, not the page slice length.
+  var paginationHtml = (qTrim.length > 0 && totalCount > 0)
+    ? _renderSearchPagination(opts.q, filters, totalCount, page, pageSize)
+    : "";
+  resultsInner += paginationHtml;
   var body;
   if (facetsHtml.length > 0) {
     body = header + correctionHtml + chipsHtml +

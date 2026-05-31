@@ -121,6 +121,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "scope every UPDATE media SET position by product_id (WHERE id = ? AND product_id = ?) so a crafted ordered_media_ids / media id can't renumber another product's hero/order",
   },
+  {
+    bugClass: "storefront search result-count rendered from the page-slice length instead of the real match total (count lies + surplus products unreachable)",
+    detector: "search-count-from-page-length",
+    gate:     "codebase-patterns",
+    note:     "drive the \"Showing N matches\" copy off the real total (searchFacets previewQuery total / the full narrowed-set length), not the rendered page slice's .length; window only the painted cards by ?page=N",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the

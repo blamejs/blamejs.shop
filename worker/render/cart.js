@@ -10,6 +10,7 @@ var LAYOUT =
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{og_description}}\">\n" +
   "  <link rel=\"canonical\" href=\"{{canonical_url}}\">\n" +
+  "RAW_ROBOTS_META" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
   "  <link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/favicon.png\">\n" +
   "  <link rel=\"apple-touch-icon\" href=\"/assets/brand/favicon.png\">\n" +
@@ -263,6 +264,9 @@ function _wrap(opts) {
     canonical_url:  canonicalUrl,
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
+    .replace("RAW_ROBOTS_META", (opts.robots === "noindex")
+      ? "  <meta name=\"robots\" content=\"noindex,nofollow\">\n"
+      : "")
     .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
@@ -355,6 +359,11 @@ export function renderCart(opts) {
     theme_css:  themeCss,
     version:    version,
     og_title:   "Cart — " + shopName,
+    // The cart is session-scoped + robots.txt-disallowed — stamp a noindex
+    // meta so the head matches the container cart and a directly-crawled
+    // cart URL is self-describing (paired with the x-robots-tag header the
+    // edge cart route sets).
+    robots:     "noindex",
     locale:         opts.locale,
     default_locale: opts.defaultLocale,
     chrome_overrides: opts.chromeOverrides,
