@@ -259,6 +259,42 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "the POST /products/:slug/preorder route resolves the reserving customer from the session via _currentCustomer(req) and forwards preorder.reserve({ campaign_slug, customer_id: auth.customer_id, quantity }) — the owner is the session id, never a body/query field; the campaign is resolved from the product's lead SKU (not a client slug), and the cancel route is independently ownership-scoped via _ownedReservation (404 on a foreign/unknown/malformed reservation before cancelReservation)",
   },
+  {
+    bugClass: "a share / public URL is built by trimming the route path off the canonical URL with a path-stripping .replace, instead of from the request origin — a POST that handles a share action lands on a different path than the link points at, so the trim mangles the link",
+    detector: "share-url-from-canonical-path-trim",
+    gate:     "codebase-patterns",
+    note:     "build the base from new URL(_requestUrls(req).canonical_url).origin (scheme + host, path-independent) rather than canonical_url.replace(/\\/<path>...$/, \"\"); the wishlist share link and the gift-registry share link both took the origin form after the path-trim broke each",
+  },
+  {
+    bugClass: "release tooling calls spawn/spawnSync with an args ARRAY together with shell:true (Node DEP0190) — with a shell the args array is concatenated onto the command line unescaped, so a token with a space/metacharacter is mis-split or injected",
+    detector: "spawn-shell-true-with-args-array",
+    gate:     "codebase-patterns",
+    note:     "when a shell is needed (a Windows .cmd shim — npm/npx/bash) build one per-token-quoted command STRING and pass NO args array; native executables spawn directly with the args array + shell:false",
+  },
+  {
+    bugClass: "order.listForCustomer emits next_cursor keyed off rows.length === limit without peeking one row past the page — the storefront \"Load more orders\" link then advertises a next page that renders empty when the order count is an exact multiple of the limit",
+    detector: "order-listforcustomer-cursor-without-peek",
+    gate:     "codebase-patterns",
+    note:     "fetch limit + 1, set hasMore = fetched.length > limit, slice the page back to limit (so the peeked row is never hydrated), and emit next_cursor only when hasMore — the cursor surfaces in a rendered Next/More control, so a phantom page is shopper-visible",
+  },
+  {
+    bugClass: "customers.list emits next_cursor keyed off rows.length === limit without peeking one row past the page — the admin customer-roster \"Next page\" link then advertises a next page that renders an empty table when the roster size is an exact multiple of the limit",
+    detector: "customers-list-cursor-without-peek",
+    gate:     "codebase-patterns",
+    note:     "fetch limit + 1, set hasMore = fetched.length > limit, slice the page back to limit, and emit next_cursor only when hasMore — the cursor drives the console's rendered \"Next page\" link, so a phantom page is operator-visible",
+  },
+  {
+    bugClass: "loyalty.history emits next_cursor keyed off rows.length === limit without peeking one row past the page — the storefront \"Older activity\" link then advertises a next page that renders empty when the transaction count is an exact multiple of the limit",
+    detector: "loyalty-history-cursor-without-peek",
+    gate:     "codebase-patterns",
+    note:     "fetch limit + 1, set hasMore = r.rows.length > limit, slice the page back to limit, and emit next_cursor only when hasMore — the cursor drives the /account/loyalty \"Older activity\" link, so a phantom page is shopper-visible",
+  },
+  {
+    bugClass: "storeCredit.history emits next_cursor keyed off rows.length === limit without peeking one row past the page — the storefront \"Older activity\" link then advertises a next page that renders empty when the ledger length is an exact multiple of the limit",
+    detector: "store-credit-history-cursor-without-peek",
+    gate:     "codebase-patterns",
+    note:     "fetch limit + 1, set hasMore = r.rows.length > limit, slice the page back to limit, and emit next_cursor only when hasMore — the cursor drives the /account/credit \"Older activity\" link, so a phantom page is shopper-visible",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
