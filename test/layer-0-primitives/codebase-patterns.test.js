@@ -2165,6 +2165,30 @@ var KNOWN_ANTIPATTERNS = [
     reason: "POST /orders/:id/cancel lets a customer cancel an unfulfilled order by firing the order FSM's `cancel` event (lib/order.js accepts it from pending | paid only). order.transition(id, event) moves the row by id — it has no notion of the requesting customer — so the route alone owns the ownership decision. Without a `customer_id` match against the signed-in session, any authenticated shopper could POST another customer's order id and cancel it (and a paid cancel leaves the operator to refund a charge they never authorized). The fix gates the transition behind `o.customer_id !== cancelAuth.customer_id` (false / guest-owned → clean 404, no act, no leak) and only attempts the FSM event for an owned, still-cancellable order. The detector matches the `deps.order.transition(id, \"cancel\")` shape and is exonerated only when the same file performs the `.customer_id !== <auth>.customer_id` assertion; a route that drops the guard re-opens the IDOR and trips this.",
   },
   {
+    // The signed-in customer's support-ticket routes (the thread view
+    // `GET /account/support/:id` and the reply `POST /account/support/:id/
+    // reply`) act on a ticket named in the path. The support primitive's
+    // get / thread / reply move a ticket by id alone — they carry no notion
+    // of the requesting customer — and the table stores `customer_id` on
+    // every ticket. So the storefront route alone owns the ownership
+    // decision: a customer reply route MUST first assert the ticket belongs
+    // to the session customer (`ticket.customer_id !== <auth>.customer_id`
+    // → clean 404 on a mismatch / guest-owned ticket), or any signed-in
+    // shopper could read or append to another customer's ticket by guessing
+    // its id (IDOR). The detector matches the reply route registration and
+    // is exonerated only when the same file performs the
+    // `.customer_id !== <auth>.customer_id` assertion; a route that drops
+    // the ownership gate trips this.
+    id: "storefront-support-reply-without-ownership-check",
+    bugClassDeclared: true,
+    primitive: "a storefront customer support route (`POST /account/support/:id/reply`, and the sibling thread view) must first assert the ticket belongs to the session customer (`ticket.customer_id !== <auth>.customer_id` → clean 404 on a mismatch / guest-owned ticket) — the support primitive's get / thread / reply move a ticket by id alone, so skipping the ownership check lets any signed-in shopper read or reply to another customer's ticket by id (IDOR)",
+    regex: /router\.post\(\s*["']\/account\/support\/:id\/reply["']/,
+    scanScope: "lib",
+    requires: /\.customer_id\s*!==\s*\w+\.customer_id/,
+    allowlist: [],
+    reason: "The customer support surface (/account/support) lets a signed-in shopper raise tickets, list their own, read a thread, and reply. The support primitive stores `customer_id` on each ticket but its get / thread / reply methods take a ticket id alone — they have no notion of the requesting customer — so the storefront route owns the ownership decision. Every per-ticket route funnels through an `_ownedTicket` helper that loads the ticket and refuses it (clean 404, no act, no leak) unless `ticket.customer_id === auth.customer_id`; a malformed id (guardUuid TypeError), an unknown ticket, and a ticket owned by someone else all 404 identically. Without that `customer_id` match any authenticated shopper could POST another customer's ticket id to the reply route and append to (or, via the view, read) a ticket that isn't theirs. The detector matches the `POST /account/support/:id/reply` route registration and is exonerated only when the same file performs the `.customer_id !== <auth>.customer_id` assertion; a route that drops the ownership gate re-opens the IDOR and trips this. (The list / create routes key on the session `customer_id` directly — they never load a path-named ticket — so they carry no IDOR surface and aren't matched.)",
+  },
+  {
     // The edge Worker serves storefront CMS pages at /pages/:slug. The
     // storefront_pages table holds three FSM states (draft / published /
     // archived); only `published` rows may reach a visitor. The edge read
