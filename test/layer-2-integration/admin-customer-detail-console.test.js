@@ -15,7 +15,12 @@
  *     no raw-error leak; the over-deduction is a 409 (route refuses before any
  *     write)
  *   - CUSTOMER NOTES: add a note -> it appears in the list; a blank body is a
- *     clean 4xx with nothing written
+ *     clean 4xx with nothing written. The full note lifecycle from the console:
+ *     EDIT (the new text persists), PIN (flagged pinned + sorts first), ARCHIVE
+ *     (drops from the default list, restored by UNARCHIVE). Ownership is scoped
+ *     to the path :id customer — a note belonging to a DIFFERENT customer can't
+ *     be edited / pinned / archived via this customer's id (a clean 404 with no
+ *     mutation); a bad/empty edit and an unknown note id are clean 4xx
  *   - SEGMENTS: read-only membership reflects a recompute (the primitive has no
  *     per-customer manual assign — membership is rule-derived)
  *   - an unknown / malformed customer id -> a clean 404
@@ -113,6 +118,14 @@ async function _run() {
   var ord1 = await _seedOrder(query, order, alice.id);
   await _seedOrder(query, order, alice.id);
   await loyalty.ensureAccount(alice.id);
+
+  // A SECOND customer with their own note — proves the per-note write routes
+  // are scoped to the path :id customer (Bob's note can't be mutated through
+  // Alice's id — the cross-customer IDOR guard).
+  var bob = await customers.register({ email: "bob@example.com", display_name: "Bob Baxter" });
+  var bobNote = await customerNotes.addNote({
+    customer_id: bob.id, author: "operator", body: "Bob's private note — do not touch", kind: "warning",
+  });
 
   // A segment Alice qualifies for after a recompute — proves read-only
   // membership reflects the rule-derived cache (the primitive has no manual
@@ -269,6 +282,131 @@ async function _run() {
     var blankNote = await _post(port, base + "/notes", jar, { kind: "general", body: "" });
     check("blank note redirect err",            blankNote.status === 303 && (blankNote.headers.location || "").indexOf("note_err=") !== -1);
     check("blank note: still one note",         (await customerNotes.notesForCustomer({ customer_id: alice.id, limit: 10 })).rows.length === 1);
+
+    // The note id we operate the lifecycle on (Alice's one note).
+    var aliceNoteId = notesAfter.rows[0].id;
+    var noteBase = base + "/notes/" + encodeURIComponent(aliceNoteId);
+    // The detail screen renders the per-note controls (edit / pin / archive).
+    var detailWithControls = await helpers.httpRequest({ port: port, path: base, jar: jar });
+    check("detail renders edit control",        detailWithControls.body.indexOf(encodeURIComponent(aliceNoteId) + "/edit") !== -1);
+    check("detail renders pin control",         detailWithControls.body.indexOf(encodeURIComponent(aliceNoteId) + "/pin") !== -1);
+    check("detail renders archive control",     detailWithControls.body.indexOf(encodeURIComponent(aliceNoteId) + "/archive") !== -1);
+
+    // ---- EDIT: the new text persists -----------------------------------
+    var editNote = await _post(port, noteBase + "/edit", jar, {
+      kind: "escalation", body: "VIP — comp shipping AND gift wrap",
+    });
+    check("edit note then 303",                 editNote.status === 303);
+    check("edit redirects saved",               (editNote.headers.location || "").indexOf("saved=1") !== -1);
+    var afterEdit = await customerNotes.getNote(aliceNoteId);
+    check("edit persisted the new body",        afterEdit.body === "VIP — comp shipping AND gift wrap");
+    check("edit persisted the new kind",        afterEdit.kind === "escalation");
+    var detailAfterEdit = await helpers.httpRequest({ port: port, path: base, jar: jar });
+    check("detail reflects the edited body",    detailAfterEdit.body.indexOf("VIP — comp shipping AND gift wrap") !== -1);
+
+    // A blank edit is a clean 4xx with NO partial write (the body is unchanged).
+    var blankEdit = await _post(port, noteBase + "/edit", jar, { kind: "general", body: "   " });
+    check("blank edit redirect err",            blankEdit.status === 303 && (blankEdit.headers.location || "").indexOf("note_err=") !== -1);
+    check("blank edit: no leak in redirect",    (blankEdit.headers.location || "").indexOf("customerNotes") === -1 && (blankEdit.headers.location || "").indexOf("SQLITE") === -1);
+    check("blank edit: body unchanged",         (await customerNotes.getNote(aliceNoteId)).body === "VIP — comp shipping AND gift wrap");
+    // The bearer JSON path: a blank edit is a clean 400.
+    var blankEditApi = await helpers.httpRequest({
+      port: port, path: noteBase + "/edit", method: "POST",
+      headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ body: "" }),
+    });
+    check("bearer blank edit then 400",         blankEditApi.status === 400);
+
+    // ---- PIN: flagged pinned, sorts first ------------------------------
+    // Add a SECOND note so pin-ordering is observable (the pinned one floats up).
+    await customerNotes.addNote({ customer_id: alice.id, author: "operator", body: "later free-form note", kind: "general" });
+    var pinNote = await _post(port, noteBase + "/pin", jar, {});
+    check("pin note then 303",                  pinNote.status === 303);
+    var afterPin = await customerNotes.getNote(aliceNoteId);
+    check("pin flagged the note pinned",        Number(afterPin.pinned) === 1);
+    var listPinned = await customerNotes.notesForCustomer({ customer_id: alice.id, limit: 10 });
+    check("pinned note sorts first",            listPinned.rows[0].id === aliceNoteId);
+    var detailAfterPin = await helpers.httpRequest({ port: port, path: base, jar: jar });
+    check("detail shows the Pinned pill",       detailAfterPin.body.indexOf("Pinned") !== -1);
+    check("detail offers Unpin once pinned",    detailAfterPin.body.indexOf(encodeURIComponent(aliceNoteId) + "/unpin") !== -1);
+    // Unpin restores the flag.
+    var unpinNote = await _post(port, noteBase + "/unpin", jar, {});
+    check("unpin note then 303",                unpinNote.status === 303);
+    check("unpin cleared the flag",             Number((await customerNotes.getNote(aliceNoteId)).pinned) === 0);
+
+    // ---- ARCHIVE: drops from the default list, UNARCHIVE restores ------
+    var archiveNote = await _post(port, noteBase + "/archive", jar, {});
+    check("archive note then 303",              archiveNote.status === 303);
+    check("archived note has a tombstone",      (await customerNotes.getNote(aliceNoteId)).archived_at != null);
+    var activeList = await customerNotes.notesForCustomer({ customer_id: alice.id, limit: 10 });
+    check("archived drops from default list",   activeList.rows.every(function (n) { return n.id !== aliceNoteId; }));
+    var archivedList = await customerNotes.notesForCustomer({ customer_id: alice.id, limit: 10, include_archived: true });
+    check("archived note in include_archived",  archivedList.rows.some(function (n) { return n.id === aliceNoteId; }));
+    // The detail screen hides the archived note by default; ?notes_archived=1 reveals it.
+    var detailDefault = await helpers.httpRequest({ port: port, path: base, jar: jar });
+    check("default detail hides archived note", detailDefault.body.indexOf("VIP — comp shipping AND gift wrap") === -1);
+    check("default detail offers Show archived", detailDefault.body.indexOf("notes_archived=1") !== -1);
+    var detailArchived = await helpers.httpRequest({ port: port, path: base + "?notes_archived=1", jar: jar });
+    check("archived view reveals the note",     detailArchived.body.indexOf("VIP — comp shipping AND gift wrap") !== -1);
+    check("archived view shows Archived pill",  detailArchived.body.indexOf("Archived") !== -1);
+    check("archived view offers Unarchive",     detailArchived.body.indexOf(encodeURIComponent(aliceNoteId) + "/unarchive") !== -1);
+    // Unarchive brings it back to the active list.
+    var unarchiveNote = await _post(port, noteBase + "/unarchive", jar, {});
+    check("unarchive note then 303",            unarchiveNote.status === 303);
+    check("unarchive cleared the tombstone",    (await customerNotes.getNote(aliceNoteId)).archived_at == null);
+    check("unarchived back in default list",    (await customerNotes.notesForCustomer({ customer_id: alice.id, limit: 10 })).rows.some(function (n) { return n.id === aliceNoteId; }));
+
+    // ---- bearer JSON contract on a lifecycle write ---------------------
+    var pinApi = await helpers.httpRequest({
+      port: port, path: noteBase + "/pin", method: "POST",
+      headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" }, body: "{}",
+    });
+    check("bearer pin then 200 JSON",           pinApi.status === 200 && (pinApi.headers["content-type"] || "").indexOf("application/json") === 0);
+    var pinJson = JSON.parse(pinApi.body);
+    check("bearer pin returns the note",        pinJson.id === aliceNoteId && Number(pinJson.pinned) === 1);
+    await _post(port, noteBase + "/unpin", jar, {});
+
+    // ---- IDOR: Bob's note can't be mutated through Alice's id ----------
+    // The note id is Bob's; the path customer is Alice. Every lifecycle write
+    // must 404 (note not on this customer) and leave Bob's note untouched.
+    var bobNoteViaAlice = base + "/notes/" + encodeURIComponent(bobNote.id);
+    var idorEdit = await helpers.httpRequest({
+      port: port, path: bobNoteViaAlice + "/edit", method: "POST",
+      headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ body: "hijacked by Alice's operator" }),
+    });
+    check("IDOR edit (bearer) then 404",        idorEdit.status === 404);
+    var idorPin = await helpers.httpRequest({
+      port: port, path: bobNoteViaAlice + "/pin", method: "POST",
+      headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" }, body: "{}",
+    });
+    check("IDOR pin (bearer) then 404",         idorPin.status === 404);
+    var idorArchive = await helpers.httpRequest({
+      port: port, path: bobNoteViaAlice + "/archive", method: "POST",
+      headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" }, body: "{}",
+    });
+    check("IDOR archive (bearer) then 404",     idorArchive.status === 404);
+    // The browser path refuses identically (303 to a note_err redirect, no mutation).
+    var idorEditHtml = await _post(port, bobNoteViaAlice + "/edit", jar, { body: "hijacked" });
+    check("IDOR edit (HTML) redirect err",      idorEditHtml.status === 303 && (idorEditHtml.headers.location || "").indexOf("note_err=") !== -1);
+    // Bob's note is byte-for-byte intact after every cross-customer attempt.
+    var bobAfter = await customerNotes.getNote(bobNote.id);
+    check("Bob's note body untouched",          bobAfter.body === "Bob's private note — do not touch");
+    check("Bob's note kind untouched",          bobAfter.kind === "warning");
+    check("Bob's note not pinned",              Number(bobAfter.pinned) === 0);
+    check("Bob's note not archived",            bobAfter.archived_at == null);
+
+    // ---- unknown / malformed note id under a valid customer -> clean 4xx
+    var unknownNote = await helpers.httpRequest({
+      port: port, path: base + "/notes/" + b.uuid.v7() + "/pin", method: "POST",
+      headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" }, body: "{}",
+    });
+    check("unknown note id then 404",           unknownNote.status === 404);
+    var malformedNote = await helpers.httpRequest({
+      port: port, path: base + "/notes/not-a-uuid/pin", method: "POST",
+      headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" }, body: "{}",
+    });
+    check("malformed note id then 400 (not 500)", malformedNote.status === 400);
 
     // ---- unknown / malformed customer id -> clean 404 ------------------
     var unknownId = b.uuid.v7();

@@ -229,6 +229,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "_segmentRules(body) coerces each numeric RFM field via _strictMinorInt(body[k], \"customerSegments\", k) and hands the typed rules object to customerSegments.defineSegment / update, which validate every rule key + value (known keys only, non-negative integers, the 10000-bps cap, min ≤ max coherence, the at-least-one-rule floor) and throw a TypeError the create + edit routes map to a clean 400; the form never assembles a rules_json string and writes it straight, so the primitive owns validation",
   },
+  {
+    bugClass: "admin per-note write route (edit/pin/archive) mutates a customer note by id alone without first asserting it belongs to the path :id customer — an operator on one customer's screen could edit/pin/retire another customer's note by id (cross-customer note IDOR)",
+    detector: "customer-note-write-route-without-ownership-check",
+    gate:     "codebase-patterns",
+    note:     "every /admin/customers/:id/notes/:noteId/{edit,pin,unpin,archive,unarchive} route funnels through _noteBelongsToCustomer(req.params.noteId, c.id) (loads via customerNotes.getNote, returns false unless note.customer_id === c.id → clean 404 on a missing/cross-customer note, 400 on a malformed id) before customerNotes.updateNote/pinNote/archiveNote; the note primitive mutates by id alone, so the route owns the ownership decision",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the

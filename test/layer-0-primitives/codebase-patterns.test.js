@@ -2447,6 +2447,31 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "`_segmentRules` translates the structured customer-segments create/edit form into the `rules` object the `customerSegments` primitive expects. Each console field (recency_days_max, frequency_orders_min, lifetime_orders_min/max, monetary_minor_min/max, aov_minor_min, refund_rate_bps_min/max) is optional; a blank field is omitted. The translator coerces every present field through `_strictMinorInt(body[k], \"customerSegments\", k)` (which refuses \"\", floats, and parseInt's loose \"12abc\" → 12) and hands the typed bag to `defineSegment({ slug, title, description, rules })` / `update(slug, { rules })`. The primitive's `_validateRules` then enforces the full discipline — only known rule keys, non-negative integers, the 10000-bps cap, min ≤ max coherence, and the \"at least one predicate\" floor — and throws a TypeError on any violation, which the create + edit routes map to a clean 400 (the browser path bounces to the form's err state, the bearer path to a problem-details 400). The risk if the translator regressed to building a `rules_json` string from the body and writing it straight (e.g. `JSON.stringify(body.rules)` into an INSERT, skipping defineSegment): the browser select is constrained to the numeric fields, but a JSON API client can post an unknown rule key, a non-integer value, or an empty rule set, and an unvalidated write would land a malformed / silently-empty segment in customer_segments — a segment that recompute populates with nobody, or that 500s a later evaluate(). The detector matches the `_segmentRules` definition and is exonerated only when the file coerces the numeric fields via `_strictMinorInt(body[...])`; dropping that composition (reaching for a raw rules_json passthrough) removes the required token and trips this.",
   },
+  {
+    // The admin per-note write routes under /admin/customers/:id/notes/:noteId
+    // (edit / pin / unpin / archive / unarchive) mutate a customer note. A
+    // note belongs to a customer, but the customerNotes update / pin / archive
+    // primitives move a row by note id alone — they carry no notion of which
+    // customer the operator is acting on — so every per-note write route MUST
+    // first assert the note belongs to the path :id customer before mutating
+    // it. Without that pairing an operator on customer A's screen could edit /
+    // pin / retire customer B's note by guessing its id (an IDOR). The route
+    // funnels every per-note write through `_noteBelongsToCustomer(noteId,
+    // customerId)`, which loads via customerNotes.getNote and refuses the
+    // mutation (clean 404 on a missing / cross-customer note, 400 on a
+    // malformed id) unless `note.customer_id === customerId`. The detector
+    // matches a per-note write-route path literal and is exonerated only when
+    // the same file composes the ownership helper; a route that drops the
+    // guard re-opens the IDOR and trips this.
+    id: "customer-note-write-route-without-ownership-check",
+    bugClassDeclared: true,
+    primitive: "every admin per-note write route under `/admin/customers/:id/notes/:noteId/...` (edit / pin / unpin / archive / unarchive) must first assert the note belongs to the path :id customer via `_noteBelongsToCustomer(req.params.noteId, c.id)` (loads through customerNotes.getNote, returns false unless `note.customer_id === c.id` → clean 404 on a missing / cross-customer note, 400 on a malformed id) before customerNotes.updateNote / pinNote / archiveNote — the note primitive mutates by note id alone, so skipping the ownership check lets an operator on one customer's screen edit / pin / retire another customer's note by id (IDOR)",
+    regex: /["']\/admin\/customers\/:id\/notes\/:noteId\/(?:edit|pin|unpin|archive|unarchive)["']/,
+    scanScope: "lib",
+    requires: /_noteBelongsToCustomer\s*\(/,
+    allowlist: [],
+    reason: "The customer-detail screen (/admin/customers/:id) carries the full customer-note lifecycle: add, then edit / pin / unpin / archive / unarchive each note. A customer note stores `customer_id` on its row, but the customerNotes update / pin / archive methods take a note id alone — they have no notion of the requesting customer — so the route owns the ownership decision. Every per-note write route registers under `/admin/customers/:id/notes/:noteId/...` and funnels through `_noteBelongsToCustomer(req.params.noteId, c.id)`, which loads the note via customerNotes.getNote and refuses the mutation unless `note.customer_id === c.id`: a malformed note id throws a TypeError inside getNote's UUID guard → a clean 400, a well-formed unknown id (or a note owned by a DIFFERENT customer) returns null / false → a clean 404, with nothing written either way. Without that match an operator viewing customer A could POST customer B's note id to the edit / pin / archive route and mutate a note that isn't on the screen they're acting from. The detector matches a per-note write-route path literal (`/admin/customers/:id/notes/:noteId/edit|pin|unpin|archive|unarchive`) and is exonerated only when the same file composes `_noteBelongsToCustomer(...)`; a route that drops the ownership gate re-opens the IDOR and trips this. The add route (`/admin/customers/:id/notes`, no :noteId) attaches a fresh note to the path customer and carries no cross-customer surface, so it isn't matched.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
