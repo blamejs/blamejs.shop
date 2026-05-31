@@ -381,6 +381,7 @@ async function main() {
   var giftCardLedger     = bShop.giftCardLedger.create({ query: query });
   var webhooks           = bShop.webhooks.create({ query: query });
   var collections        = bShop.collections.create({ query: query, catalog: catalog, cursorSecret: "audit-collections" });
+  var blog               = bShop.blogArticles.create({ query: query, cursorSecret: "audit-blog" });
   var quantityDiscounts  = bShop.quantityDiscounts.create({ query: query, catalog: catalog });
   var taxRates           = bShop.taxRates.create({ query: query });
   var shippingZones      = bShop.shippingZones.create({ query: query });
@@ -540,6 +541,7 @@ async function main() {
         giftCardLedger:     giftCardLedger,
         webhooks:           webhooks,
         collections:        collections,
+        blog:               blog,
         taxRates:           taxRates,
         shippingZones:      shippingZones,
         autoDiscount:       autoDiscount,
