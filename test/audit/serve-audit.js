@@ -419,6 +419,8 @@ async function main() {
   var discountAllocation = bShop.discountAllocation.create({ query: query });
   var salesTaxFilings    = bShop.salesTaxFilings.create({ query: query, taxRates: taxRates });
   var addresses          = bShop.addresses.create({ query: query });
+  var wishlist           = bShop.wishlist.create({ query: query, cursorSecret: "audit-wishlist" });
+  var wishlistSharing    = bShop.wishlistSharing.create({ query: query, wishlist: wishlist });
 
   // Tax + shipping checkout adapters. Tax: the configured US-CA rate via the
   // tax engine's rules; shipping: zone rates first, flat $6.95 fallback —
@@ -603,6 +605,8 @@ async function main() {
         config:             { shop_name: "Audit Shop" },
         customers:          customers,
         addresses:          addresses,
+        wishlist:           wishlist,
+        wishlistSharing:    wishlistSharing,
         orderTracking:      orderTracking,
         reviews:            reviews,
         returns:            returns,

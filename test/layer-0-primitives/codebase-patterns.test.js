@@ -2389,6 +2389,30 @@ var KNOWN_ANTIPATTERNS = [
     reason: "The customer-facing store-credit wallet (/account/credit) is a READ-ONLY surface: the signed-in customer sees their current balance, an expiring-soon callout, and the credit/debit/expire ledger. The store-credit primitive stores `customer_id` on every ledger row but its balance / history / expiringWithin methods take a customer id alone — they have no notion of the requesting customer — so the storefront route owns the session-scoping decision. The route resolves the customer id from the signed-in session via `_currentCustomer(req)` (`auth.customer_id`) and passes ONLY that id to `deps.storeCredit.balance(auth.customer_id)` / `.history({ customer_id: auth.customer_id })` / `.expiringWithin({ customer_id: auth.customer_id })`. There is deliberately no `:id` path segment, and the route never reads a customer id from the query string or body, so a signed-in shopper can only ever see their OWN wallet. Granting / deducting credit is operator-only on the admin customer-detail screen — this surface writes nothing. Without the session-scoped read (e.g. reading a customer id from `req.params` / `req.query` and passing it to `storeCredit.balance(...)`), any authenticated shopper could read another customer's balance + ledger by guessing their id. The detector matches the `GET /account/credit` route registration and is exonerated only when the same file performs the `storeCredit.balance(auth.customer_id)` session-scoped read; dropping the session scoping removes that token and re-opens the IDOR.",
   },
   {
+    // The storefront wishlist-share revoke route (`POST /wishlist/share/
+    // :share_id/revoke`) acts on a share link named in the path. The sharing
+    // primitive's `revokeShareLink({ link_id })` flips the link's revoked_at
+    // by id ALONE — it carries no notion of the requesting customer, and
+    // `wishlist_shares` stores `owner_customer_id` on every row. So the
+    // storefront route alone owns the ownership decision: it must first
+    // assert the link belongs to the session customer (load the session
+    // customer's links via `listSharesForOwner(auth.customer_id)` and refuse
+    // a share_id that isn't among them → clean 404), or any signed-in shopper
+    // could revoke another customer's share link by guessing its id (IDOR).
+    // The detector matches the revoke route registration and is exonerated
+    // only when the same file performs the session-scoped ownership read
+    // `listSharesForOwner(auth.customer_id)`; a route that revokes straight
+    // off the path id without that scope trips this.
+    id: "storefront-wishlist-share-revoke-without-ownership-check",
+    bugClassDeclared: true,
+    primitive: "the storefront `POST /wishlist/share/:share_id/revoke` route must first assert the share link belongs to the session customer — load the session customer's links via `deps.wishlistSharing.listSharesForOwner(auth.customer_id)` and refuse a `share_id` that isn't among them (clean 404) before `revokeShareLink({ link_id })` — because the sharing primitive revokes a link by id alone, so a route that revoked straight off the path id would let any signed-in shopper revoke another customer's share link by id (IDOR)",
+    regex: /router\.post\(\s*["']\/wishlist\/share\/:share_id\/revoke["']/,
+    scanScope: "lib",
+    requires: /listSharesForOwner\s*\(\s*auth\.customer_id\s*\)/,
+    allowlist: [],
+    reason: "The wishlist-sharing owner surface (on /account/wishlist) lets a signed-in shopper mint share links for their OWN wishlist, see their active links, and revoke one. The sharing primitive stores `owner_customer_id` on every `wishlist_shares` row, but `revokeShareLink({ link_id, reason })` flips `revoked_at` by id alone — it has no notion of the requesting customer — so the route owns the ownership decision. The revoke route resolves the session customer via `_currentCustomer(req)` (`auth.customer_id`), loads ONLY that customer's links via `deps.wishlistSharing.listSharesForOwner(auth.customer_id)`, and looks the path `share_id` up in that owned set; an unknown id, a malformed id, and a link owned by someone else all resolve identically to a clean 404 (no act, no leak) — only a link the session customer actually owns is revoked. The create route keys on `auth.customer_id` directly (it never names a path link id), so it carries no IDOR surface and isn't matched. Without the `listSharesForOwner(auth.customer_id)` ownership scope, any authenticated shopper could POST another customer's share id to the revoke route and kill a link that isn't theirs. The detector matches the revoke route registration and is exonerated only when the same file performs the session-scoped `listSharesForOwner(auth.customer_id)` read; dropping that scope re-opens the IDOR and trips this.",
+  },
+  {
     id: "admin-discount-value-kind-silent-default",
     bugClassDeclared: true,
     primitive: "the admin auto-discount form/JSON translator `_discountValue(body)` must THROW on an unrecognized `value_kind` (so the route maps it to a clean 400), never fall through to a default `{ kind: \"free_shipping\" }` — free shipping is the most generous discount kind, so a typo'd `value_kind` from a JSON API client (the browser select is constrained to the five valid kinds, but the API is not) silently coercing to free_shipping would create a store-wide free-shipping rule with no operator signal",
