@@ -115,6 +115,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "render the thumbnail strip as a focusable <ul.pdp__thumbs> of <label for> controls bound to hidden radios (no aria-hidden, no empty-<li> padding) so the gallery is a working no-JS CSS-:checked picker — exactly N thumbnails, no strip for a lone image",
   },
+  {
+    bugClass: "product media reorder/set-primary repositions another product's gallery row via an unscoped position UPDATE (cross-product display-order IDOR)",
+    detector: "media-reorder-unscoped-position-update",
+    gate:     "codebase-patterns",
+    note:     "scope every UPDATE media SET position by product_id (WHERE id = ? AND product_id = ?) so a crafted ordered_media_ids / media id can't renumber another product's hero/order",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the

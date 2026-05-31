@@ -2010,6 +2010,29 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason:    "The PDP gallery shipped decorative-only: the thumbnail strip was `aria-hidden` with non-interactive bare-<img> tiles, capped at four images, and padded short strips to four fixed slots with empty <li> — so a single-image product rendered three dashed missing-image squares and clicking a thumbnail did nothing. The functional replacement is a server-rendered, no-JS gallery: N hidden radios (first checked), a stack of N main <img> shown/hidden by the radios' `:checked` state in CSS, and N `<label for>` thumbnails (keyboard-focusable through the radio) that swap the visible image — no island, exactly N thumbnails, no strip at all for a lone image. Detector flags a re-introduced `aria-hidden` on the pdp__thumbs strip (it's interactive now and must reach assistive tech), a literal empty `<li></li>`, or the `while (...) push(\"<li></li>\")` slot-pad loop in either gallery builder.",
   },
+  {
+    // A media `position` rewrite is what reorder + set-primary do — they
+    // renumber the rows whose display order the PDP gallery reads (the first
+    // row is the hero). Every such UPDATE MUST scope its WHERE clause by
+    // `product_id`: without it, a crafted `ordered_media_ids` (or media id)
+    // could renumber a row belonging to ANOTHER product — a cross-product
+    // IDOR on display order. The regex matches an `UPDATE media SET position`
+    // statement whose SQL string body (up to its closing quote) does NOT
+    // mention `product_id`; the two shipped writes (catalog.media.reorder /
+    // setPrimary) both carry `AND product_id = ?` and so don't match.
+    id:        "media-reorder-unscoped-position-update",
+    bugClassDeclared: true,
+    primitive: "scope every `UPDATE media SET position` by product_id (e.g. `UPDATE media SET position = ?1 WHERE id = ?2 AND product_id = ?3`) — an unscoped position write lets a crafted media id / id-list renumber another product's gallery row (cross-product display-order IDOR)",
+    // Negative-lookahead over the statement body: match `UPDATE media SET
+    // position` only when no `product_id` appears before the SQL string
+    // literal's closing quote. A scoped write names product_id inside the
+    // same string and is not matched.
+    regex:     /UPDATE\s+media\s+SET\s+position\b(?:(?!product_id)[\s\S]){0,200}?["']\s*,/,
+    scanScope: "lib",
+    multiline: true,
+    allowlist: [],
+    reason:    "catalog.media.reorder + catalog.media.setPrimary renumber a product's media `position` to control which image the PDP gallery shows as the hero (media[0]) and in what order the rest follow. Because D1 has no cross-statement transaction over the HTTP bridge, the renumber is one UPDATE per row — and each MUST be scoped by product_id so a crafted `ordered_media_ids` (reorder) or a foreign media id (set-primary) can never reposition a row that belongs to another product, which would be a cross-product IDOR on display order. Both shipped writes carry `WHERE id = ?2 AND product_id = ?3`. The detector matches an `UPDATE media SET position` whose SQL string body reaches its closing quote without naming product_id, so a re-introduced unscoped write (`UPDATE media SET position = ?1 WHERE id = ?2`) trips it while the scoped form does not.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
