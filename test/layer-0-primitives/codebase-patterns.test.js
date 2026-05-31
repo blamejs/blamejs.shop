@@ -2074,6 +2074,30 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason:    "The customer-facing blog (/blog index, /blog/:slug, the RSS feed, the sitemap) reads ONLY rows with status='published'. The admin author flow creates every post as a draft (`blog.createDraft`) and keeps it off the storefront until a separate publish action runs, so an operator can review a post before it goes live. Folding a `blog.publish(...)` call into the create handler would defeat that review gate — the post would be live the moment it's created, with no draft state. The detector flags a createDraft immediately followed by a publish in the same handler; the shipped split (createDraft → PRG to the editor, publish only via POST /admin/blog/:slug/publish) carries no such proximity.",
   },
+  {
+    // The auto-discount console edit form coerces the rule edit into an
+    // updateRule patch via `_discountPatch`. autoDiscount.updateRule
+    // accepts `trigger` + `value` in its ALLOWED_PATCH_COLUMNS — those
+    // are the actual discount TERMS (the amount / percentage / threshold
+    // / BOGO quantities). A `_discountPatch` that forwards only title /
+    // priority / active drops the two terms columns: the operator can
+    // reprioritise or pause a rule from the console but cannot change
+    // what it discounts, a write-but-no-edit dormant gap (the bearer
+    // PATCH accepts the columns; the browser edit path silently omits
+    // them). The detector matches the helper definition and is exonerated
+    // by `requires` only when the same file forwards BOTH terms columns
+    // through the create-form vocabulary (`patch.trigger = _discountTrigger`
+    // and `patch.value = _discountValue`). A regression that strips either
+    // forward re-opens the gap and trips this.
+    id: "discount-patch-drops-trigger-or-value",
+    bugClassDeclared: true,
+    primitive: "the auto-discount edit coercion (`_discountPatch`) must forward the two TERMS columns autoDiscount.updateRule accepts — `patch.trigger = _discountTrigger(body)` and `patch.value = _discountValue(body)` — so an operator can change a rule's amount / percentage / threshold / BOGO terms from the console, not only its priority / active flag. Forwarding only title / priority / active leaves the terms editable solely over the bearer PATCH (a write-but-no-edit dormant gap)",
+    regex: /function\s+_discountPatch\s*\(/,
+    scanScope: "lib",
+    requires: /^(?=[\s\S]*patch\.trigger\s*=\s*_discountTrigger\s*\()(?=[\s\S]*patch\.value\s*=\s*_discountValue\s*\()/,
+    allowlist: [],
+    reason: "autoDiscount.updateRule's ALLOWED_PATCH_COLUMNS accepts trigger + value (the discount terms) alongside title / priority / active. The console's `_discountPatch` originally forwarded only title / priority / active, so the browser edit path could reprioritise or pause a rule but never change its amount / percentage / threshold / BOGO terms — those were reachable only over the bearer JSON PATCH. The fix re-uses the create form's `_discountTrigger` / `_discountValue` vocabulary (which throws a TypeError on a bad / missing required field, degrading a bad terms edit to a clean 400) so the detail-screen edit form forwards both terms columns. The detector matches the `_discountPatch` definition and is exonerated only when the same file forwards both `patch.trigger = _discountTrigger(...)` and `patch.value = _discountValue(...)`; dropping either forward re-opens the dormant gap and trips this.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------

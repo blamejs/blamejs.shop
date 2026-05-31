@@ -1,0 +1,17 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.19",
+  "date": "2026-05-30",
+  "headline": "Edit announcement bars, automatic-discount terms, and subscription plans from the console",
+  "summary": "Three admin entities could be created but only partly edited from the console — the rest of their fields were reachable only through the API, so changing them meant archive-and-recreate or a manual API call. Each now has a detail screen with the full edit form. An announcement bar can have its message, links, schedule, audience, and dismissibility changed in place. An automatic discount can have its actual terms changed — the amount, percentage, threshold, or buy-x-get-y values — not just its title, priority, and on/off state. A subscription plan can have its price, billing interval, trial length, active state, and variant edited. Create and archive behavior is unchanged.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        { "title": "Announcement bars are editable in place", "body": "A detail screen now lets you change an announcement's message, link, theme, audience, start/end schedule, and whether it can be dismissed — instead of archiving it and creating a new one (which lost the slug and any recorded dismissal state)." },
+        { "title": "Automatic-discount terms are editable from the console", "body": "The discount detail screen now edits the rule's trigger and value — the amount off, percent off, cart threshold, or buy-x-get-y terms — which previously could only be changed through the API. The inline priority and on/off controls are unchanged." },
+        { "title": "Subscription plans have an edit screen", "body": "A subscription plan's price, billing interval count, trial length, active state, and variant can now be edited from a detail screen. The Stripe-bound fields (the price id, interval unit, and currency) remain read-only, as they were always immutable." }
+      ]
+    }
+  ]
+}

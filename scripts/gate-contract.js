@@ -133,6 +133,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "the create handler calls blog.createDraft and stops; publishing is a separate operator-invoked action (POST /admin/blog/:slug/publish) so a post is reviewable as a draft before it goes live on /blog",
   },
+  {
+    bugClass: "admin discount edit coercion drops the trigger/value terms columns updateRule accepts (operator can reprioritise/pause but not change the discount terms from the console — a write-but-no-edit dormant gap)",
+    detector: "discount-patch-drops-trigger-or-value",
+    gate:     "codebase-patterns",
+    note:     "_discountPatch must forward patch.trigger = _discountTrigger(body) and patch.value = _discountValue(body) so the browser edit path reaches the same terms columns (amount/percentage/threshold/BOGO) as the bearer PATCH; both reuse the create form's validating vocabulary so a bad terms edit is a clean 400",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
