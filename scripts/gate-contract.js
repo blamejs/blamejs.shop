@@ -211,6 +211,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "_discountValue(body) throws a TypeError (\"autoDiscount: value_kind must be one of …\") on any value_kind outside percent_off / amount_off_total / amount_off_each / bogo / free_shipping, which the create + edit routes map to a clean 400 — matching the sibling _rewardValueJson / _earnDefineInput translators that pass the kind through for the backend validator; the browser select is constrained to the five valid kinds, so only the JSON API path could reach the old free_shipping fall-through",
   },
+  {
+    bugClass: "public help-center /help/:slug route serves a draft/archived knowledge-base article — knowledgeBase.getArticle returns an unpublished row (its publishedOnly arg is hard-coded false), so reading by slug alone pushes staged or retired help content live (unreviewed-content leak)",
+    detector: "help-article-route-without-published-filter",
+    gate:     "codebase-patterns",
+    note:     "the /help/:slug reader + the /help/:slug/vote POST gate the article read on _kbPublishedArticle (loads via knowledgeBase.getArticle, returns null unless published === true && archived_at == null) so a draft / archived / unknown slug all 404 alike, and the view/vote recorders only run for a publicly-visible article; the admin authoring routes under /admin/help read every state on purpose and aren't in scope",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the

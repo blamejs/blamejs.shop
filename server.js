@@ -726,6 +726,21 @@ async function main() {
         ? bShop.blogArticles.create({ cursorSecret: blogCursorSecret })
         : null;
 
+      // Knowledge base — the self-serve help center. The container serves
+      // the customer-facing /help index + /help/:slug reader (reading only
+      // published rows) and records the "was this helpful?" votes; the admin
+      // console authors the articles: create as draft, edit, publish /
+      // unpublish, archive. A draft / archived article is invisible to the
+      // storefront. Needs a cursor secret for the article-list pagination,
+      // derived like the other primitives so production never falls back to
+      // the dev-only placeholder.
+      var kbCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("knowledge-base-cursor", process.env.D1_BRIDGE_SECRET)
+        : "knowledge-base-cursor-secret-dev-only";
+      var knowledgeBase = (catalog && cart)
+        ? bShop.knowledgeBase.create({ cursorSecret: kbCursorSecret })
+        : null;
+
       // Storefront content pages — operator-authored Markdown documents
       // (About, Shipping, Returns, Privacy, Terms, the long tail every
       // shop needs) served at /pages/:slug. The edge Worker serves the
@@ -981,6 +996,7 @@ async function main() {
           announcementBar: announcementBar,
           customerSurveys: customerSurveys,
           blog:            blog,
+          knowledgeBase:   knowledgeBase,
           storefrontPages: storefrontPages,
           businessHours:   businessHours,
           taxRates:        taxRates,
@@ -1127,6 +1143,8 @@ async function main() {
         if (announcementBar) sfDeps.announcementBar = announcementBar;
         // Customer surveys — the token survey page + response submit.
         if (customerSurveys) sfDeps.customerSurveys = customerSurveys;
+        // Knowledge base — the public /help reader (index + article + vote).
+        if (knowledgeBase) sfDeps.knowledgeBase = knowledgeBase;
         // Business hours — the public /hours page.
         if (businessHours) sfDeps.businessHours = businessHours;
         // Bundles + quantity discounts — the PDP "Bundle & save" rail +
