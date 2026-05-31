@@ -2398,6 +2398,34 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "`_discountValue` translates the auto-discount create form (and the detail-screen edit form) into the typed `value` object the `autoDiscount` primitive expects — `{ kind: \"percent_off\", basis_points }`, `{ kind: \"amount_off_total\", minor }`, `{ kind: \"bogo\", buy_qty, get_qty }`, or `{ kind: \"free_shipping\" }`. Because it builds a kind-specific shape it must recognise the kind; an unrecognized `value_kind` is operator error. It originally fell through to `return { kind: \"free_shipping\" }` for ANY unrecognized kind. The browser select is constrained to the five valid kinds (and defaults to `percent_off`), so the form never hits the fall-through — but a JSON API client posting a typo (`value_kind: \"percentage\"`, `\"percent\"`, anything) would silently create a store-wide FREE-SHIPPING rule (the most generous kind) and return 201 with no error, a direct margin/revenue risk. The primitive's own validator never fires because the admin layer rewrote the bad kind to a VALID one before the object reached it. The sibling translators (`_rewardValueJson`, `_earnDefineInput`) pass the kind through verbatim so the backend validator catches a bad value with a clean 400; `_discountValue` now matches that discipline by THROWing a `TypeError` (\"autoDiscount: value_kind must be one of …\") on an unrecognized kind, which the create/edit routes already map to a clean 400 the same way a bad numeric field does. The detector matches the `_discountValue` definition and is exonerated only when the file carries the `value_kind must be one of` validation throw; reverting to the silent free_shipping default removes that token and trips the detector.",
   },
+  {
+    // The storefront collection page (`GET /collections/:slug`) rendered the
+    // grid from `collections.productsIn({ slug, limit: 24 })` with no cursor
+    // threaded and no pagination control — so a collection with more than 24
+    // members silently lost everything past the 24th, with no way for a
+    // shopper to reach it. `productsIn` is keyset/offset paginated: it
+    // returns an opaque, forward-only `next_cursor`, and the route now reads
+    // a `?cursor=` trail, threads its last cursor into `productsIn`, and
+    // surfaces `next_cursor` into `renderCollection` (which paints a prev/
+    // next nav reusing the search-pagination shell). This detector matches
+    // the `/collections/:slug` route registration and is exonerated only
+    // when the same file BOTH threads a cursor into a `productsIn(...)` call
+    // AND surfaces `next_cursor: result.next_cursor` into the render —
+    // dropping either re-introduces the silent 24-cap truncation and trips
+    // this.
+    id: "collection-route-without-cursor-pagination",
+    bugClassDeclared: true,
+    primitive: "the GET /collections/:slug route must thread a `?cursor=` trail through `collections.productsIn({ slug, limit, cursor })` and surface the lib's opaque forward `next_cursor` into renderCollection (which paints a prev/next nav) — `productsIn` returns at most one page (no total), so a route that calls it with no cursor and never surfaces next_cursor silently truncates a collection larger than one page, leaving every member past the page size unreachable; a bad / stale cursor falls back to page 1 (clean, link-followable) rather than 404/500, matching how /search treats a bad ?page=",
+    regex: /router\.get\(\s*["']\/collections\/:slug/,
+    scanScope: "lib",
+    // Exonerated only when the file BOTH threads a cursor into a productsIn
+    // call AND surfaces next_cursor into the render. Two lookaheads over the
+    // whole file (the `discount-patch-drops-trigger-or-value` shape): the
+    // fixed route carries both; stripping either re-opens the truncation.
+    requires: /^(?=[\s\S]*productsIn\s*\(\s*\{[^}]*\bcursor\s*:)(?=[\s\S]*next_cursor\s*:\s*result\.next_cursor)/,
+    allowlist: [],
+    reason: "GET /collections/:slug rendered only the first page of a collection: it called `collections.productsIn({ slug, limit: 24 })` with no cursor and passed the resulting rows to renderCollection, which had no pagination block. `productsIn` is keyset (manual collections, by position+id) / offset (smart collections) paginated and returns an opaque, forward-only `next_cursor` (null on the last page) — it never returns a total — so a single un-cursored call caps the page at the limit and discards the rest. A collection with more than 24 members therefore lost every product past the 24th with no shopper-reachable path to it. The fix reads a `?cursor=` trail (a comma-joined list of page-start cursors — cursor chars are base64url plus a `.` tag separator, so the comma join stays URL-safe), threads the trail's last cursor into `productsIn`, and surfaces `next_cursor` into renderCollection, which paints a prev/next nav reusing the search-pagination shell (`rel=\"prev\"/\"next\"` + disabled-state spans, so no new CSS ships). A bad / stale / tampered cursor surfaces as a TypeError naming the cursor; the route retries page 1 rather than 404/500, mirroring how /search clamps a bad ?page=. The canonical stays the bare collection URL on every page (query stripped), like search. The detector matches the route registration and is exonerated only when the same file BOTH threads a cursor into a `productsIn(... cursor: ...)` call AND surfaces `next_cursor: result.next_cursor` into the render; stripping either forward removes a required token and re-opens the silent truncation.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
