@@ -2186,6 +2186,34 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "The customer-facing storefront page (/pages/:slug) reads ONLY rows with status='published' — the storefront_pages FSM has draft (staged, not yet reviewed) and archived (retired) states that must stay off the public storefront. The edge read `getPublishedPageBySlug` constrains `WHERE slug = ?1 AND status = 'published'`, so a draft / archived / unknown slug all return null and render the same 404. A page read that selected by slug alone would serve whatever state the row is in, pushing an unreviewed draft or a deliberately-retired page live the moment its slug is guessed. The detector matches a `FROM storefront_pages ... WHERE ... slug =` read and is exonerated only when the same statement also carries `status = 'published'`; a slug-only read re-opens the leak and trips this. The published-slug list read (`listPublishedPageSlugs`) carries the same status predicate and is not flagged.",
   },
+  {
+    // A page's dynamic body (a blog post, a CMS page, a reflected search
+    // query) is spliced into the assembled HTML at a `RAW_BODY*`
+    // placeholder. `String.prototype.replace(token, replacementString)`
+    // gives the replacement STRING special meaning to `$` sequences — `$$`,
+    // `$&`, `` $` `` (the text before the match), `$'` (the text after the
+    // match), `$1`. A body that contains a dollar followed by a backtick
+    // would therefore splice the page HEAD into the body, and any other
+    // dollar sequence corrupts the output — HTML-escaping the body upstream
+    // does NOT neutralise `$` (it isn't one of `<>&"'`). The fix inserts the
+    // body via a REPLACER FUNCTION (the shared `spliceRaw` / `_spliceRaw`
+    // helper) so `String.replace` copies the fragment verbatim with no
+    // dollar interpretation. The detector matches a `.replace("RAW_BODY…",
+    // <dynamic>)` whose replacement is NOT a function literal; the
+    // spliceRaw-based sites are not `.replace(` calls and aren't flagged.
+    id: "raw-body-replace-string-dollar-injection",
+    bugClassDeclared: true,
+    primitive: "splice a dynamic page body into the assembled HTML with a REPLACER FUNCTION (the shared `spliceRaw` / `_spliceRaw` helper), never `html.replace(\"RAW_BODY…\", bodyHtml)` with the body as the replacement STRING — `String.replace`'s replacement string interprets `$$` / `$&` / `` $` `` / `$'` / `$N`, so a body carrying a `$` sequence (a blog/CMS post, a reflected search query) corrupts the output or leaks the page head into the body; the function-replacer form inserts the fragment verbatim",
+    // Match `.replace("RAW_BODY<TOKEN>", X)` where X does NOT begin with a
+    // `function` literal. The fixed code routes every dynamic-body swap
+    // through `spliceRaw(...)` (not a `.replace(` call), so the clean tree
+    // carries no match; a re-introduced direct string-replacement of a
+    // RAW_BODY token trips it.
+    regex: /\.replace\(\s*["']RAW_BODY[A-Z_]*["']\s*,\s*(?!function\b)/,
+    scanScope: "shop",
+    allowlist: [],
+    reason: "The storefront/worker renderers assemble a page by filling a LAYOUT template, then splicing the already-rendered body fragment in at a `RAW_BODY_PLACEHOLDER` / `RAW_BODY_HTML_PLACEHOLDER` token. The body is operator- or customer-supplied free text (a blog post, a CMS Markdown page, a reflected search query). When that splice used `assembled.replace(\"RAW_BODY_PLACEHOLDER\", body)`, the body was the REPLACEMENT STRING — and `String.prototype.replace` gives a replacement string special meaning to dollar sequences: `$$`, `$&`, `` $` `` (everything before the match — i.e. the entire page <head>), `$'` (everything after), `$N`. A body containing a dollar immediately followed by a backtick spliced the page head into the body; other dollar sequences silently corrupted the rendered HTML. HTML-escaping the body upstream does not help — `$` is not one of the escaped characters. The fix inserts the body through a REPLACER FUNCTION via the shared `spliceRaw` (worker `_lib.js`) / `_spliceRaw` (lib/storefront.js) helper, which copies the fragment verbatim with no dollar interpretation, on BOTH the edge and the container so the dual-render stays byte-consistent. The detector matches a `.replace(\"RAW_BODY…\", <non-function>)` shape in lib/ + worker/; every shipped body splice is now a `spliceRaw(...)` call (not a `.replace(`), so the clean tree is unflagged and a regression to the string-replacement form re-opens the class.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------

@@ -163,6 +163,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "scope the /pages/:slug edge read (getPublishedPageBySlug) by status='published' so a draft / archived / unknown slug all return null and 404 alike; only published pages reach a visitor",
   },
+  {
+    bugClass: "a dynamic page body (blog post / CMS page / reflected search query) spliced into the HTML via String.replace with the body as the replacement STRING — a `$`-bearing body triggers replacement-string dollar substitution ($&, $`, $', $N), leaking the page head into the body or corrupting the output",
+    detector: "raw-body-replace-string-dollar-injection",
+    gate:     "codebase-patterns",
+    note:     "splice the body with a replacer function via the shared spliceRaw / _spliceRaw helper, never html.replace(\"RAW_BODY…\", bodyHtml) — applied to both the edge (worker/render) and the container (lib/storefront.js) so the dual-render stays byte-consistent",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the

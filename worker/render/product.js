@@ -1,4 +1,4 @@
-import { renderTemplate, escapeHtml, escapeAttr, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher } from "./_lib.js";
+import { renderTemplate, escapeHtml, escapeAttr, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -655,7 +655,7 @@ function _wrap(opts) {
   var canonicalUrl  = opts.canonicalUrl   || "";
   var ogUrl         = opts.ogUrl          || canonicalUrl;
   var localized = _localizeLayout(opts);
-  return renderTemplate(localized, {
+  var assembled = renderTemplate(localized, {
     title:          opts.title,
     shop_name:      shopName,
     cart_count:     opts.cartCount == null ? 0 : opts.cartCount,
@@ -679,8 +679,11 @@ function _wrap(opts) {
       selected:    opts.currencySelected,
       note:        opts.currencyNote,
       redirect_to: opts.currencyRedirectTo,
-    }))
-    .replace("RAW_BODY_PLACEHOLDER", opts.body);
+    }));
+  // Splice the PDP body literally so a `$`-bearing fragment (a product
+  // description) can't trip `String.replace`'s dollar substitution. See
+  // `spliceRaw`.
+  return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", opts.body);
 }
 
 // PDP gallery markup — a no-JS, CSS-`:checked` picker. Byte-identical to

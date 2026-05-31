@@ -1,4 +1,4 @@
-import { renderTemplate, escapeAttr, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher } from "./_lib.js";
+import { renderTemplate, escapeAttr, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -249,7 +249,7 @@ function _wrap(opts) {
   var canonicalUrl  = opts.canonical_url   || "";
   var ogUrl         = opts.og_url          || canonicalUrl;
   var localized = _localizeLayout(opts);
-  return renderTemplate(localized, {
+  var assembled = renderTemplate(localized, {
     title:          opts.title,
     shop_name:      shopName,
     cart_count:     opts.cart_count == null ? 0 : opts.cart_count,
@@ -276,8 +276,10 @@ function _wrap(opts) {
       selected:    opts.currency_selected,
       note:        opts.currency_note,
       redirect_to: opts.currency_redirect_to,
-    }))
-    .replace("RAW_BODY_PLACEHOLDER", opts.body);
+    }));
+  // Splice the cart body literally so a `$`-bearing fragment can't trip
+  // `String.replace`'s dollar substitution. See `spliceRaw`.
+  return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", opts.body);
 }
 
 export function renderCart(opts) {

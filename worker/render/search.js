@@ -1,4 +1,4 @@
-import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher } from "./_lib.js";
+import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -10,6 +10,7 @@ var LAYOUT =
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{og_description}}\">\n" +
   "  <link rel=\"canonical\" href=\"{{canonical_url}}\">\n" +
+  "RAW_ROBOTS_META" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
   "  <link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/favicon.png\">\n" +
   "  <link rel=\"apple-touch-icon\" href=\"/assets/brand/favicon.png\">\n" +
@@ -408,7 +409,17 @@ function _wrap(opts) {
   var canonicalUrl  = opts.canonical_url   || "";
   var ogUrl         = opts.og_url          || canonicalUrl;
   var localized = _localizeLayout(opts);
-  return renderTemplate(localized, {
+  // Per-page robots directive. `noindex,follow` keeps internal search
+  // result URLs (one per query + facet combination — thin/duplicate
+  // surfaces) out of the index while still letting crawlers follow the
+  // product links they list. Mirrors the container's RAW_ROBOTS_META
+  // handling so the two substrates emit the same meta.
+  var robotsMeta = (opts.robots === "noindex,follow")
+    ? "  <meta name=\"robots\" content=\"noindex,follow\">\n"
+    : (opts.robots === "noindex")
+      ? "  <meta name=\"robots\" content=\"noindex,nofollow\">\n"
+      : "";
+  var assembled = renderTemplate(localized, {
     title:          opts.title,
     shop_name:      shopName,
     cart_count:     opts.cart_count == null ? 0 : opts.cart_count,
@@ -423,6 +434,7 @@ function _wrap(opts) {
     canonical_url:  canonicalUrl,
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
+    .replace("RAW_ROBOTS_META", robotsMeta)
     .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
@@ -432,8 +444,10 @@ function _wrap(opts) {
       selected:    opts.currency_selected,
       note:        opts.currency_note,
       redirect_to: opts.currency_redirect_to,
-    }))
-    .replace("RAW_BODY_PLACEHOLDER", opts.body);
+    }));
+  // Splice the search body literally so a reflected query containing a
+  // `$` sequence can't trip `String.replace`'s dollar substitution.
+  return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", opts.body);
 }
 
 export function renderSearch(opts) {
@@ -553,6 +567,10 @@ export function renderSearch(opts) {
     og_description: metaDescription,
     canonical_url:  opts.canonicalUrl,
     og_url:         opts.ogUrl,
+    // Internal search results are thin/duplicate indexable URLs (one per
+    // query + facet combination) — keep them out of the index but let
+    // crawlers follow the product links they list.
+    robots:     "noindex,follow",
     version:    opts.version,
     locale:           opts.locale,
     default_locale:   opts.defaultLocale,
