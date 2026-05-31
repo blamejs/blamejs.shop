@@ -188,6 +188,12 @@ var COVERAGE = [
     note:     "every per-ticket route (/account/support/:id and /account/support/:id/reply) funnels through _ownedTicket, which loads the ticket via supportTickets.get and refuses it (clean 404 on a malformed id, an unknown ticket, or a ticket owned by someone else) unless ticket.customer_id === auth.customer_id; the support primitive moves a ticket by id alone, so the route owns the ownership decision",
   },
   {
+    bugClass: "storefront customer exchange route (request POST / status view) acts on a path-named order/exchange without first asserting the parent order belongs to the session customer (any signed-in shopper could open or read an exchange against another customer's order by id — IDOR)",
+    detector: "storefront-exchange-request-without-ownership-check",
+    gate:     "codebase-patterns",
+    note:     "the request form + POST under /account/orders/:order_id/exchange funnel through _ownedOrderForExchange and the /account/exchanges/:id status view through _ownedExchange — both load the parent order via deps.order.get and refuse (clean 404 on a malformed id, an unknown order/exchange, or a foreign-owned one) unless order.customer_id === auth.customer_id; the order-exchanges row carries no customer_id, so ownership is asserted transitively through the order and the route owns the decision",
+  },
+  {
     bugClass: "storefront og:image / twitter:image / Product+Article JSON-LD image emitted as a relative `/assets/...` URL — social-share crawlers (Facebook / Slack / Twitter / iMessage) and Google's rich result fetch it from a different origin, so the share preview renders no image",
     detector: "og-image-relative-without-absolutize",
     gate:     "codebase-patterns",

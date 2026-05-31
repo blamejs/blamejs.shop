@@ -401,6 +401,7 @@ async function main() {
   var reviews            = bShop.reviews.create({ query: query, cursorSecret: "audit-reviews" });
   var returns            = bShop.returns.create({ query: query, cursorSecret: "audit-returns" });
   var supportTickets     = bShop.supportTickets.create({ query: query, cursorSecret: "audit-support" });
+  var orderExchanges     = bShop.orderExchanges.create({ query: query, order: order });
   var giftcards          = bShop.giftcards.create({ query: query });
   var giftCardLedger     = bShop.giftCardLedger.create({ query: query });
   var webhooks           = bShop.webhooks.create({ query: query });
@@ -569,6 +570,7 @@ async function main() {
         reviews:            reviews,
         returns:            returns,
         supportTickets:     supportTickets,
+        orderExchanges:     orderExchanges,
         customers:          customers,
         storeCredit:        storeCredit,
         customerNotes:      customerNotes,
@@ -611,6 +613,7 @@ async function main() {
         reviews:            reviews,
         returns:            returns,
         supportTickets:     supportTickets,
+        orderExchanges:     orderExchanges,
         collections:        collections,
         knowledgeBase:      knowledgeBase,
         giftcards:          giftcards,

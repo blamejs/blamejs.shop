@@ -2189,6 +2189,31 @@ var KNOWN_ANTIPATTERNS = [
     reason: "The customer support surface (/account/support) lets a signed-in shopper raise tickets, list their own, read a thread, and reply. The support primitive stores `customer_id` on each ticket but its get / thread / reply methods take a ticket id alone — they have no notion of the requesting customer — so the storefront route owns the ownership decision. Every per-ticket route funnels through an `_ownedTicket` helper that loads the ticket and refuses it (clean 404, no act, no leak) unless `ticket.customer_id === auth.customer_id`; a malformed id (guardUuid TypeError), an unknown ticket, and a ticket owned by someone else all 404 identically. Without that `customer_id` match any authenticated shopper could POST another customer's ticket id to the reply route and append to (or, via the view, read) a ticket that isn't theirs. The detector matches the `POST /account/support/:id/reply` route registration and is exonerated only when the same file performs the `.customer_id !== <auth>.customer_id` assertion; a route that drops the ownership gate re-opens the IDOR and trips this. (The list / create routes key on the session `customer_id` directly — they never load a path-named ticket — so they carry no IDOR surface and aren't matched.)",
   },
   {
+    // The signed-in customer's exchange routes act on an order / exchange
+    // named in the path: the request form + POST under
+    // `/account/orders/:order_id/exchange` and the status detail
+    // `/account/exchanges/:id`. The order-exchanges primitive moves a row
+    // by id alone (requestExchange takes an order_id, getExchange a row id)
+    // and the order_exchanges table carries `order_id` but NO `customer_id`
+    // — the customer→order linkage lives on the order. So the storefront
+    // route alone owns the ownership decision: it MUST load the parent
+    // order and refuse (clean 404) unless `order.customer_id !==
+    // <auth>.customer_id` is false. Skip that, and any signed-in shopper
+    // could open an exchange against — or read the status of — another
+    // customer's order by guessing its id (IDOR). The detector matches the
+    // exchange-request POST route registration and is exonerated only when
+    // the same file performs the `.customer_id !== <auth>.customer_id`
+    // ownership assertion; a route that drops the gate trips this.
+    id: "storefront-exchange-request-without-ownership-check",
+    bugClassDeclared: true,
+    primitive: "a storefront customer exchange route (`POST /account/orders/:order_id/exchange`, and the sibling /account/exchanges/:id status view) must first assert the target order belongs to the session customer (`order.customer_id !== <auth>.customer_id` → clean 404 on a mismatch / guest-owned order) — the order-exchanges primitive requests/reads by id alone and the row carries no customer_id, so skipping the ownership check lets any signed-in shopper open or read an exchange against another customer's order by id (IDOR)",
+    regex: /router\.post\(\s*["']\/account\/orders\/:order_id\/exchange["']/,
+    scanScope: "lib",
+    requires: /\.customer_id\s*!==\s*\w+\.customer_id/,
+    allowlist: [],
+    reason: "The customer exchange surface lets a signed-in shopper request a same-value item swap against one of their own orders (/account/orders/:order_id/exchange) and track its status (/account/exchanges, /account/exchanges/:id). The order-exchanges primitive moves a row by id alone — requestExchange validates an order_id, getExchange a row id — and the order_exchanges table stores `order_id` but no `customer_id`, so ownership is asserted transitively through the parent order. The request form + POST funnel through `_ownedOrderForExchange` (loads the order via deps.order.get, refuses unless order.customer_id === auth.customer_id) and the status detail through `_ownedExchange` (loads the exchange, then its parent order, refuses on the same comparison); a malformed id (guardUuid TypeError), an unknown order/exchange, and a foreign-owned one all 404 identically with no leak. Without that `customer_id` match any authenticated shopper could POST another customer's order id and open an exchange against it (or read a stranger's exchange status by guessing its id). The detector matches the `POST /account/orders/:order_id/exchange` route registration and is exonerated only when the same file performs the `.customer_id !== <auth>.customer_id` assertion; a route that drops the gate re-opens the IDOR and trips this. (The list route keys on exchangesForCustomer(auth.customer_id), which resolves the customer→order linkage through the order primitive — it never loads a path-named row — so it carries no IDOR surface.)",
+  },
+  {
     // The edge Worker serves storefront CMS pages at /pages/:slug. The
     // storefront_pages table holds three FSM states (draft / published /
     // archived); only `published` rows may reach a visitor. The edge read
