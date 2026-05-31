@@ -18,6 +18,7 @@ import {
 import { renderFeed } from "./render/feed.js";
 import { renderSitemap } from "./render/sitemap.js";
 import { renderBlogList, renderBlogArticle } from "./render/blog.js";
+import { renderStorefrontPage } from "./render/pages.js";
 import { renderCart } from "./render/cart.js";
 import { minifyHtml as _minify, assetUrl as _assetUrl } from "./render/_lib.js";
 import {
@@ -38,6 +39,7 @@ import {
   listPublishedBlogSlugs,
   listBlogArticles,
   getBlogArticleBySlug,
+  getPublishedPageBySlug,
   getBundlesForProduct,
   getQtyBreaksForSku,
   listRelatedProducts,
@@ -971,6 +973,14 @@ async function _edgeRender(request, env, url) {
     const slug = decodeURIComponent(path.slice("/blog/".length));
     return await _edgeBlogArticle(request, env, url, version, shopName, slug);
   }
+  if (path.startsWith("/pages/") && path.length > "/pages/".length) {
+    const slug = decodeURIComponent(path.slice("/pages/".length));
+    // A page slug is a single path segment. A sub-path under a page slug
+    // isn't a content page — fall through to the container rather than
+    // 404-ing it here.
+    if (slug.indexOf("/") !== -1) return null;
+    return await _edgePage(request, env, url, version, shopName, slug);
+  }
   return null;
 }
 
@@ -1071,6 +1081,43 @@ async function _edgeBlogArticle(request, env, _url, version, shopName, slug) {
     return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/blog/:slug", e, request, env, version, shopName);
+  }
+}
+
+// Storefront CMS page at /pages/:slug. Reads ONLY published rows
+// (getPublishedPageBySlug filters on status='published'), so a draft /
+// archived / unknown slug renders the same 404 as a missing product —
+// staged and retired copy stays off the public storefront. The 404 is
+// cacheable (short TTL) so a crawler doesn't hammer the origin on a bad
+// link, while staying short enough that a freshly-published page appears
+// quickly.
+async function _edgePage(request, env, _url, version, shopName, slug) {
+  try {
+    const page = await getPublishedPageBySlug(env.DB, slug);
+    if (!page) {
+      const html = renderNotFound({
+        what:     "page",
+        shopName: shopName,
+        version:  version,
+      });
+      return new Response(request.method === "HEAD" ? null : html, {
+        status:  404,
+        headers: _withSecurityHeaders({
+          "content-type":  "text/html; charset=utf-8",
+          "cache-control": "public, max-age=60, s-maxage=300, must-revalidate",
+        }),
+      });
+    }
+    const html = renderStorefrontPage({
+      page:     page,
+      shopName: shopName,
+      version:  version,
+      canonicalUrl: _url.origin + _url.pathname,
+      announcement: await resolveAnnouncement(env.DB, {}),
+    });
+    return _html(html, request.method, env);
+  } catch (e) {
+    return _edgeError("/pages/:slug", e, request, env, version, shopName);
   }
 }
 

@@ -692,6 +692,15 @@ async function main() {
         ? bShop.blogArticles.create({ cursorSecret: blogCursorSecret })
         : null;
 
+      // Storefront content pages — operator-authored Markdown documents
+      // (About, Shipping, Returns, Privacy, Terms, the long tail every
+      // shop needs) served at /pages/:slug. The edge Worker serves the
+      // customer-facing page, reading only published rows; the admin
+      // console authors them: create as draft, edit, publish / unpublish,
+      // archive / restore. A draft is invisible to the storefront until
+      // it's published.
+      var storefrontPages = (catalog && cart) ? bShop.storefrontPages.create({}) : null;
+
       // Business hours — operator-defined open/close schedules surfaced on a
       // public /hours page (week grid + live open/closed) and managed from
       // the admin console. Timezone-aware; holidays + one-off exceptions
@@ -934,6 +943,7 @@ async function main() {
           announcementBar: announcementBar,
           customerSurveys: customerSurveys,
           blog:            blog,
+          storefrontPages: storefrontPages,
           businessHours:   businessHours,
           taxRates:        taxRates,
           shippingZones:   shippingZones,

@@ -157,6 +157,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "compare order.customer_id against the session customer's id (clean 404 on a mismatch / guest-owned order) before deps.order.transition(id, \"cancel\"); the order primitive transitions by id alone, so the route owns the ownership decision",
   },
+  {
+    bugClass: "edge storefront page read serves a draft/archived CMS page — a SELECT from storefront_pages by slug with no status='published' predicate pushes staged or retired copy live (unreviewed-content leak)",
+    detector: "storefront-page-read-without-published-filter",
+    gate:     "codebase-patterns",
+    note:     "scope the /pages/:slug edge read (getPublishedPageBySlug) by status='published' so a draft / archived / unknown slug all return null and 404 alike; only published pages reach a visitor",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
