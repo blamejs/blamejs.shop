@@ -1,0 +1,16 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.31",
+  "date": "2026-05-31",
+  "headline": "A public help center, authored from the admin console",
+  "summary": "The knowledge-base backend was built but had no pages, so there was no way to publish help content or for a shopper to read it. There is now a Help center at /help: a browsable index of published articles grouped by category, and an article page that renders the article, shows a breadcrumb trail in search results, and lets a reader mark whether it was helpful. Operators get a Help center screen in the admin console to write articles, save them as drafts, publish them, and archive them. Article text is written in a small Markdown subset and is fully escaped on the page, and only published, non-archived articles are publicly reachable.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Help center for shoppers", "body": "A new /help section lists published articles by category and renders each article at /help/:slug with a breadcrumb (carried into search results as BreadcrumbList structured data) and a \"Was this helpful?\" control. Article bodies are written in a Markdown subset and escaped on output, and a draft, archived, or unknown article returns a clean 404 — only published articles are ever publicly reachable." },
+        { "title": "Help center authoring in the admin console", "body": "A Help center screen lets operators write articles (slug, title, category, body), keep them as drafts, publish or unpublish them, and archive ones that should no longer appear. The list filters by all/published/drafts and shows each article's view count and helpfulness tally, so the team can see what readers are using and which articles need work." }
+      ]
+    }
+  ]
+}

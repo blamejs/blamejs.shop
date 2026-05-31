@@ -2211,6 +2211,32 @@ var KNOWN_ANTIPATTERNS = [
     reason: "The customer-facing storefront page (/pages/:slug) reads ONLY rows with status='published' — the storefront_pages FSM has draft (staged, not yet reviewed) and archived (retired) states that must stay off the public storefront. The edge read `getPublishedPageBySlug` constrains `WHERE slug = ?1 AND status = 'published'`, so a draft / archived / unknown slug all return null and render the same 404. A page read that selected by slug alone would serve whatever state the row is in, pushing an unreviewed draft or a deliberately-retired page live the moment its slug is guessed. The detector matches a `FROM storefront_pages ... WHERE ... slug =` read and is exonerated only when the same statement also carries `status = 'published'`; a slug-only read re-opens the leak and trips this. The published-slug list read (`listPublishedPageSlugs`) carries the same status predicate and is not flagged.",
   },
   {
+    // The container storefront serves the public help center at /help/:slug.
+    // The knowledgeBase article FSM has draft (`published = 0`, staged) and
+    // archived (a soft-delete tombstone) states; only a published, non-
+    // archived article may reach a visitor. The primitive's `getArticle`
+    // returns a DRAFT row (it filters archived, but NOT unpublished — its
+    // publishedOnly arg is hard-coded false), so the public route MUST gate
+    // the read on a published check before it renders or records a view/vote.
+    // Every /help read + vote route funnels through `_kbPublishedArticle`,
+    // which loads via getArticle and returns null unless `published === true`
+    // and `archived_at == null` — so a draft / archived / unknown slug all
+    // 404 identically. A /help/:slug route that rendered straight off
+    // `kb.getArticle` with no published gate would push a staged draft live
+    // the moment its slug is guessed — the same unreviewed-content leak the
+    // blog + CMS-page reads guard against. The detector matches a /help/:slug
+    // route registration and is exonerated only when the same file composes
+    // `_kbPublishedArticle`; a route that drops the gate re-opens the leak.
+    id: "help-article-route-without-published-filter",
+    bugClassDeclared: true,
+    primitive: "the public /help/:slug reader + vote routes must gate the article read on a published check via `_kbPublishedArticle` (loads through knowledgeBase.getArticle, returns null unless `published === true` && `archived_at == null`) so a draft / archived / unknown slug all 404 alike — the knowledgeBase getArticle returns a draft row (its publishedOnly arg is hard-coded false), so serving an article by slug alone would push staged or retired help content live",
+    regex: /router\.(?:get|post)\(\s*["']\/help\/:slug/,
+    scanScope: "lib",
+    requires: /_kbPublishedArticle\s*\(/,
+    allowlist: [],
+    reason: "The customer-facing help center (/help/:slug + the /help/:slug/vote POST) reads ONLY published, non-archived articles — the knowledgeBase FSM has a draft state (`published = 0`, staged and not yet reviewed) and an archived tombstone (soft-deleted, retired) that must stay off the public storefront. The primitive's `getArticle` is NOT status-filtered for publication (its internal `_readWithFallback` is called with publishedOnly=false, so it returns a draft row; it does filter archived to null), so the route owns the published decision. Every /help read + vote route funnels through `_kbPublishedArticle(slug)`, which loads the row via getArticle and returns null unless `published === true` and `archived_at == null` — so a draft, an archived tombstone, and an unknown slug all return null and render the same 404, and the view/vote recorders only ever run for a publicly-visible article. A /help/:slug route that rendered straight off `kb.getArticle` (or `listArticles` without `published_only`) would serve whatever state the row is in, pushing an unreviewed draft live the moment its slug is guessed — the same unreviewed-content leak the blog (`getPublishedBlogArticle`) and CMS-page (`getPublishedPageBySlug`) reads guard against. The detector matches a `router.get|post(\"/help/:slug…\")` registration and is exonerated only when the same file composes `_kbPublishedArticle(...)`; a route that drops the published gate re-opens the leak and trips this. The admin authoring routes live under /admin/help (a different prefix) and read every state on purpose, so they aren't matched.",
+  },
+  {
     // A page's dynamic body (a blog post, a CMS page, a reflected search
     // query) is spliced into the assembled HTML at a `RAW_BODY*`
     // placeholder. `String.prototype.replace(token, replacementString)`

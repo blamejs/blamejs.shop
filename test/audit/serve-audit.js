@@ -406,6 +406,7 @@ async function main() {
   var webhooks           = bShop.webhooks.create({ query: query });
   var collections        = bShop.collections.create({ query: query, catalog: catalog, cursorSecret: "audit-collections" });
   var blog               = bShop.blogArticles.create({ query: query, cursorSecret: "audit-blog" });
+  var knowledgeBase      = bShop.knowledgeBase.create({ query: query, cursorSecret: "audit-knowledge-base" });
   var storefrontPages    = bShop.storefrontPages.create({ query: query });
   var quantityDiscounts  = bShop.quantityDiscounts.create({ query: query, catalog: catalog });
   var loyalty            = bShop.loyalty.create({ query: query });
@@ -575,6 +576,7 @@ async function main() {
         webhooks:           webhooks,
         collections:        collections,
         blog:               blog,
+        knowledgeBase:      knowledgeBase,
         storefrontPages:    storefrontPages,
         taxRates:           taxRates,
         shippingZones:      shippingZones,
@@ -606,6 +608,7 @@ async function main() {
         returns:            returns,
         supportTickets:     supportTickets,
         collections:        collections,
+        knowledgeBase:      knowledgeBase,
         giftcards:          giftcards,
         quantityDiscounts:  quantityDiscounts,
         storeCredit:        storeCredit,
