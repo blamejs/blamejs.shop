@@ -2142,6 +2142,28 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "POST /admin/products/:id/media/:mid/primary promotes a media row to the gallery hero. catalog.media.setPrimary(mid) reorders by the media row's OWN product_id, so it is IDOR-safe at the DB layer — but the route originally ignored the :id path segment entirely, so a request could name product A in the path while :mid pointed at product B's media, and the action would silently apply to B. That makes the path lie about what it touched. The fix asserts `_mediaBelongsToProduct(req.params.mid, req.params.id)` first (false → clean 404 / ?err=1 with no leak; a malformed id still throws TypeError → 400), so the path is self-consistent. The detector matches a `catalog.media.setPrimary(req.params.mid)` call and is exonerated only when the same file performs the product-pairing assertion; a route that drops the guard re-opens the gap and trips this.",
   },
+  {
+    // A storefront customer-facing order mutation — the cancel route fires
+    // the order FSM's `cancel` event via `deps.order.transition(id,
+    // "cancel")`. The order primitive transitions by id alone (it does not
+    // know which customer is signed in), so a route that calls it WITHOUT
+    // first asserting the order belongs to the session customer is a
+    // straight IDOR: any signed-in shopper could cancel any order by id.
+    // The route must compare `order.customer_id` against the session
+    // customer's id (clean 404 on a mismatch / guest-owned order, never
+    // act + never leak) before the transition. The detector matches the
+    // `deps.order.transition(<id>, "cancel"` shape and is exonerated only
+    // when the same file carries the `.customer_id !== <auth>.customer_id`
+    // ownership comparison; a route that drops the guard trips this.
+    id: "storefront-order-cancel-without-ownership-check",
+    bugClassDeclared: true,
+    primitive: "a storefront `deps.order.transition(orderId, \"cancel\")` route must first assert the order belongs to the session customer (`order.customer_id !== <auth>.customer_id` → clean 404 on a mismatch / guest-owned order) — the order primitive transitions by id alone, so skipping the ownership check lets any signed-in shopper cancel any order by id (IDOR)",
+    regex: /deps\.order\.transition\s*\(\s*[\w$.]+\s*,\s*["']cancel["']/,
+    scanScope: "lib",
+    requires: /\.customer_id\s*!==\s*\w+\.customer_id/,
+    allowlist: [],
+    reason: "POST /orders/:id/cancel lets a customer cancel an unfulfilled order by firing the order FSM's `cancel` event (lib/order.js accepts it from pending | paid only). order.transition(id, event) moves the row by id — it has no notion of the requesting customer — so the route alone owns the ownership decision. Without a `customer_id` match against the signed-in session, any authenticated shopper could POST another customer's order id and cancel it (and a paid cancel leaves the operator to refund a charge they never authorized). The fix gates the transition behind `o.customer_id !== cancelAuth.customer_id` (false / guest-owned → clean 404, no act, no leak) and only attempts the FSM event for an owned, still-cancellable order. The detector matches the `deps.order.transition(id, \"cancel\")` shape and is exonerated only when the same file performs the `.customer_id !== <auth>.customer_id` assertion; a route that drops the guard re-opens the IDOR and trips this.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
