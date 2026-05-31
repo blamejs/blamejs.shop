@@ -526,6 +526,19 @@ async function main() {
         ? bShop.returns.create({ cursorSecret: returnsCursorSecret })
         : null;
 
+      // Support tickets — the customer-service ticketing surface. Opts in
+      // the customer intake (/account/support) + the operator queue
+      // (/admin/support). One instance shared by both surfaces. The
+      // listForCustomer pagination cursor is HMAC-tagged, so the primitive
+      // demands a cursorSecret in production (it throws at boot otherwise);
+      // derive it from the bridge secret like every other shop cursor.
+      var supportCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("support-tickets-cursor", process.env.D1_BRIDGE_SECRET)
+        : "support-tickets-cursor-secret-dev-only";
+      var supportTickets = (catalog && cart)
+        ? bShop.supportTickets.create({ cursorSecret: supportCursorSecret })
+        : null;
+
       // Loyalty — customer points balance + tier, the earn rules that
       // mint points on order events, and the reward catalog customers
       // redeem against. Three composed instances sharing one ledger:
@@ -955,6 +968,7 @@ async function main() {
           reviews:       reviews,
           productQa:     productQa,
           returns:       returns,
+          supportTickets: supportTickets,
           customers:     customers,
           storeCredit:      storeCredit,
           customerNotes:    customerNotes,
@@ -1100,6 +1114,8 @@ async function main() {
         if (addresses) sfDeps.addresses = addresses;
         if (cookieConsent) sfDeps.cookieConsent = cookieConsent;
         if (returns) sfDeps.returns = returns;
+        // Support tickets — the customer intake + thread (/account/support).
+        if (supportTickets) sfDeps.supportTickets = supportTickets;
         if (collections) sfDeps.collections = collections;
         if (categoryNavigation) sfDeps.categoryNavigation = categoryNavigation;
         if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;

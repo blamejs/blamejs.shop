@@ -181,6 +181,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "the POST /admin/customers/:id/store-credit route validates a required reason via _storeCreditReason(body.reason) and forwards it into the store-credit ledger (source_ref on storeCredit.credit for a grant, the reason column of storeCredit.expire for a deduct); the route is scoped to the :id customer and refuses an over-deduction as a clean 409 before any write, so every grant/deduct is attributed and bounded by the available balance",
   },
+  {
+    bugClass: "storefront customer support route (thread view / reply) acts on a path-named ticket without first asserting the ticket belongs to the session customer (any signed-in shopper could read or reply to another customer's ticket by id — IDOR)",
+    detector: "storefront-support-reply-without-ownership-check",
+    gate:     "codebase-patterns",
+    note:     "every per-ticket route (/account/support/:id and /account/support/:id/reply) funnels through _ownedTicket, which loads the ticket via supportTickets.get and refuses it (clean 404 on a malformed id, an unknown ticket, or a ticket owned by someone else) unless ticket.customer_id === auth.customer_id; the support primitive moves a ticket by id alone, so the route owns the ownership decision",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
