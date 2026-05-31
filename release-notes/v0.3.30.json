@@ -1,6 +1,6 @@
 {
   "$schema": "../scripts/release-notes-schema.json",
-  "version": "0.3.29",
+  "version": "0.3.30",
   "date": "2026-05-31",
   "headline": "An unrecognized automatic-discount type is now rejected instead of silently becoming free shipping",
   "summary": "When defining or editing an automatic discount over the API, an unrecognized discount type was silently turned into a free-shipping rule — the most generous kind — and accepted without any error. A discount sent over the API with a type outside the supported set (percent off, amount off the total, amount off each item, buy-X-get-Y, or free shipping) is now rejected with a clear error, so a typo can no longer create a store-wide free-shipping rule by accident. The admin form was never affected, because its type selector only offers the supported values.",
