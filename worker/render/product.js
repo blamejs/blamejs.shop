@@ -817,6 +817,96 @@ function _pdpShippingNote(availability) {
          "See our <a href=\"/terms\">shipping &amp; returns policy</a>.</p>";
 }
 
+// Pre-order CTA — replaces the add-to-cart buy box on a PDP whose lead SKU has
+// an OPEN pre-order campaign. Mirrors the container
+// (`lib/storefront.js#_buildPreorderCta`). `preorder` is the resolved shape:
+// { product_slug, release_date_iso, remaining_units (null = unlimited),
+// max_units_available, full_price_str, deposit_str (null when no deposit),
+// sold_out, reserve_form }. The reserve POST is CSRF-protected + auth-gated,
+// so the POST FORM is rendered ONLY by the container (`reserve_form: true`,
+// where the `_csrf` token is injected); the edge sets `reserve_form: false`
+// and renders a sign-in affordance instead of a token-less form. A signed-in
+// customer's session-cookie request skips the edge cache and reaches the
+// container form, so they always get the real (tokened) form; an anonymous
+// edge visitor can't reserve anyway. Both substrates resolve the campaign from
+// a live D1 read (the edge PDP is served no-store), so the info is consistent.
+function _buildPreorderCta(preorder, escAttr) {
+  var soldOut = !!preorder.sold_out;
+  var remaining = preorder.remaining_units;
+  var availLine = remaining == null
+    ? "<p class=\"pdp__preorder-avail\" role=\"status\">Open for pre-order.</p>"
+    : (remaining > 0
+        ? "<p class=\"pdp__preorder-avail\" role=\"status\"><span class=\"dot dot--live\" aria-hidden=\"true\"></span> " + escAttr(String(remaining)) + " of " + escAttr(String(preorder.max_units_available)) + " reservations remaining.</p>"
+        : "<p class=\"pdp__preorder-avail\" role=\"status\">All reservations are spoken for.</p>");
+  var depositLine = preorder.deposit_str
+    ? "<p class=\"pdp__preorder-deposit\">Reserve with a " + escAttr(preorder.deposit_str) + " deposit · " + escAttr(preorder.full_price_str) + " total at launch.</p>"
+    : "<p class=\"pdp__preorder-deposit\">No payment due now · " + escAttr(preorder.full_price_str) + " charged when it ships.</p>";
+  var head =
+    "<div class=\"pdp__buybox pdp__buybox--preorder\">\n" +
+    "        <p class=\"pdp__badge pdp__badge--preorder\">Pre-order · ships " + escAttr(preorder.release_date_iso) + "</p>\n" +
+    "        <p class=\"featured-product__price\">" + escAttr(preorder.full_price_str) + "</p>\n" +
+    "        " + availLine + "\n" +
+    "        " + depositLine + "\n";
+  if (soldOut) {
+    return head +
+           "        <button type=\"submit\" class=\"btn-primary cart-page__checkout\" disabled aria-disabled=\"true\">Pre-orders full</button>\n" +
+           "        <p class=\"pdp__soldout-note\" role=\"status\">Every pre-order reservation has been claimed.</p>\n" +
+           "      </div>";
+  }
+  // The edge never carries a per-session CSRF token, so it renders a sign-in
+  // affordance — NEVER the reserve POST form. The container twin
+  // (lib/storefront.js#_buildPreorderCta) renders the real, token-injected
+  // form for a signed-in customer (whose session-cookie request skips the
+  // edge cache and reaches the container). `preorder.reserve_form` is always
+  // false here; the form branch lives only in the container builder so this
+  // file ships no token-less edge POST form.
+  return head +
+         "        <a class=\"btn-primary cart-page__checkout\" href=\"/account/login\">Sign in to reserve</a>\n" +
+         "        <p class=\"pdp__preorder-note\">A reservation holds your unit. We charge through secure checkout when it launches.</p>\n" +
+         "      </div>";
+}
+
+// Build the renderProduct `preorder` opts shape from a campaign row + the
+// per-campaign reserved/cap counts + a price formatter. Returns null unless
+// the campaign is OPEN (status 'active'). Mirrors the container
+// (`lib/storefront.js#preorderCtaShape`). `remainingUnits` is `max - reserved`
+// (or null for an unlimited campaign); `fmt(minor, currency)` is the page
+// formatter; `slug` is the product slug. `reserve_form` is FALSE at the edge —
+// the edge render carries no per-session CSRF token, so it shows a sign-in
+// affordance instead of a token-less POST form (the container sets it true).
+export function preorderCtaShape(campaign, remainingUnits, fmt, slug) {
+  if (!campaign || campaign.status !== "active") return null;
+  var max = campaign.max_units_available == null ? null : campaign.max_units_available;
+  var deposit = Number(campaign.deposit_minor) || 0;
+  return {
+    product_slug:        slug,
+    release_date_iso:    new Date(Number(campaign.launch_at)).toISOString().slice(0, 10),
+    remaining_units:     remainingUnits,
+    max_units_available: max,
+    full_price_str:      fmt(campaign.full_price_minor, campaign.currency),
+    deposit_str:         deposit > 0 ? fmt(deposit, campaign.currency) : null,
+    sold_out:            remainingUnits != null && remainingUnits <= 0,
+    reserve_form:        false,
+  };
+}
+
+// The reserve-PRG banner, keyed off the closed ?preorder marker set so a
+// forged query can never inject copy. Mirrors the container
+// (`lib/storefront.js#_buildPreorderNotice`) byte-for-byte.
+var _PREORDER_NOTICES = {
+  reserved:    { kind: "ok",    copy: "Reserved. We'll email you when it ships and charge your card through secure checkout." },
+  unavailable: { kind: "error", copy: "This pre-order couldn't be reserved — it may be full or closed. Nothing was charged." },
+  closed:      { kind: "error", copy: "This pre-order is no longer open." },
+};
+function _buildPreorderNotice(marker) {
+  var n = marker && Object.prototype.hasOwnProperty.call(_PREORDER_NOTICES, marker)
+    ? _PREORDER_NOTICES[marker] : null;
+  if (!n) return "";
+  var cls = n.kind === "error" ? "form-notice form-notice--error" : "form-notice form-notice--ok";
+  var role = n.kind === "error" ? "alert" : "status";
+  return "<p class=\"" + cls + "\" role=\"" + role + "\">" + escapeHtml(n.copy) + "</p>\n      ";
+}
+
 export function renderProduct(opts) {
   if (!opts || !opts.product) throw new TypeError("renderProduct: opts.product required");
   if (!opts.variants) throw new TypeError("renderProduct: opts.variants required");
@@ -876,7 +966,22 @@ export function renderProduct(opts) {
   // edge handler threads `opts.inventory` (per-SKU stock map); absent it,
   // the product reads as in stock (never-block stance).
   var availability = _resolveAvailability(variants, opts.inventory);
-  var buyboxHtml = _buildBuyBox(rendered, escapeHtml, availability);
+  // An OPEN pre-order campaign for the lead SKU swaps the add-to-cart buy box
+  // for the reservation CTA — mirrors the container so the dual render stays
+  // consistent. The edge handler threads `opts.preorderCampaign`
+  // ({ campaign, remaining_units }) from a live D1 read; the shape is built
+  // here with the page's own `fmt` so the CTA prices match the buy-box prices.
+  // Absent a campaign (or a non-active one), the standard buy box renders.
+  var preorderShape = opts.preorderCampaign
+    ? preorderCtaShape(opts.preorderCampaign.campaign, opts.preorderCampaign.remaining_units, fmt, product.slug)
+    : null;
+  var buyboxHtml = preorderShape
+    ? _buildPreorderCta(preorderShape, escapeHtml)
+    : _buildBuyBox(rendered, escapeHtml, availability);
+  // The reserve PRG lands the shopper back on the PDP with a fixed
+  // ?preorder=<reserved|unavailable|closed> marker; the banner prepends the
+  // buy box. Mirrors the container so the dual render agrees on this URL.
+  buyboxHtml = _buildPreorderNotice(opts.preorderNotice) + buyboxHtml;
   var availabilityHtml = _buildAvailability(availability);
   var shippingNoteHtml = _pdpShippingNote(availability);
 

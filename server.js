@@ -657,6 +657,73 @@ async function main() {
         ? bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals })
         : null;
 
+      // Pre-orders — reservations against a SKU that isn't released yet. ONE
+      // shared instance backs the storefront PDP reserve CTA + the customer
+      // /account/preorders surface AND the admin campaign console. The shared
+      // `order` handle is wired in so launchCampaign's convertReservationToOrder
+      // lands a real order (the customer then pays it through normal checkout —
+      // the reservation itself never charges). Boot stays resilient: every
+      // route that reads it degrades gracefully if the preorder tables haven't
+      // been migrated.
+      //
+      // The preorder primitive calls `orderHandle.createFromCart({ customer_id,
+      // lines: [{ sku, variant_id, quantity, unit_price_minor, currency }],
+      // preorder_reservation_id, preorder_campaign_slug })` — a per-line shape
+      // the order primitive's own createFromCart (which expects cart_id /
+      // session_id / totals / ship_to / lines[].qty+unit_amount_minor) doesn't
+      // accept directly. This thin adapter bridges the two: it computes the
+      // order totals from the reserved line(s), synthesizes a cart/session id
+      // for the converted-at-launch order, and forwards a valid createFromCart
+      // input — composition over patching either primitive. The order lands in
+      // `pending` (unpaid); the customer pays it through normal Stripe-gated
+      // checkout, so the reservation→order conversion never charges.
+      var preorderOrderAdapter = (order && cart && catalog) ? {
+        createFromCart: async function (input) {
+          var lines = (input && input.lines) || [];
+          var currency = (lines[0] && lines[0].currency) || "USD";
+          var subtotal = 0;
+          var orderLines = [];
+          for (var li = 0; li < lines.length; li += 1) {
+            var l = lines[li];
+            var qty = Number(l.quantity) || 0;
+            var unit = Number(l.unit_price_minor) || 0;
+            subtotal += qty * unit;
+            // order_lines.variant_id is NOT NULL; the campaign may carry no
+            // variant_id (it pivots on SKU). Resolve the variant from the SKU
+            // so the converted order line references a real variant row.
+            var variantId = l.variant_id;
+            if (variantId == null) {
+              var vrow = await catalog.variants.bySku(l.sku);
+              variantId = vrow ? vrow.id : null;
+            }
+            orderLines.push({ variant_id: variantId, sku: l.sku, qty: qty, unit_amount_minor: unit, unit_currency: l.currency || currency });
+          }
+          // The orders row carries a NOT NULL cart_id with a FK to carts — mint
+          // a fresh cart bound to a synthesized session for the converted order
+          // so the FK holds (a launch conversion has no live shopper session;
+          // the reservation pre-dates the cart).
+          var sessionId = b.uuid.v7();
+          var madeCart = await cart.create(sessionId, { currency: currency });
+          return await order.createFromCart({
+            cart_id:           madeCart.id,
+            session_id:        sessionId,
+            customer_id:       input.customer_id,
+            currency:          currency,
+            lines:             orderLines,
+            subtotal_minor:    subtotal,
+            discount_minor:    0,
+            tax_minor:         0,
+            shipping_minor:    0,
+            grand_total_minor: subtotal,
+            ship_to:           { country: "US" },
+            reason:            "preorder-launch:" + (input.preorder_campaign_slug || ""),
+          });
+        },
+      } : null;
+      var preorder = (catalog && cart)
+        ? bShop.preorder.create({ order: preorderOrderAdapter || undefined })
+        : null;
+
       // Order tracking — the post-handoff shipment + carrier-event ledger.
       // Wired with the shared `order` instance so marking a shipment
       // delivered also drives the parent order's FSM to `delivered` without a
@@ -1011,6 +1078,7 @@ async function main() {
           returns:       returns,
           supportTickets: supportTickets,
           orderExchanges: orderExchanges,
+          preorder:      preorder,
           customers:     customers,
           storeCredit:      storeCredit,
           customerNotes:    customerNotes,
@@ -1198,6 +1266,9 @@ async function main() {
         // (set in the Stripe block below).
         if (subscriptions) sfDeps.subscriptions = subscriptions;
         if (subscriptionControls) sfDeps.subscriptionControls = subscriptionControls;
+        // Pre-orders — the PDP reserve CTA + the /account/preorders surface.
+        // The shared instance also backs the admin campaign console.
+        if (preorder) sfDeps.preorder = preorder;
         // Gift cards — the customer balance-check page (/gift-cards) and
         // the redeem-at-checkout credit. Wired regardless of Stripe; the
         // balance page needs only the card primitive.

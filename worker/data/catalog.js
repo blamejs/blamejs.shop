@@ -954,3 +954,43 @@ export async function getQtyBreaksForSku(DB, sku, unitMinor, currency, money) {
   return out;
 }
 
+// The OPEN pre-order campaign for a SKU — the edge mirror of the container
+// product route's campaign read (lib/preorder.js#getCampaign). Returns the
+// campaign row plus the resolved `remaining_units` (max - reserved, or null
+// for an unlimited campaign) when the SKU has a status='active' campaign;
+// null otherwise. A not-yet-released SKU isn't normally in the catalog as a
+// buyable variant, so the PDP keys the pre-order CTA off this read. Picks the
+// most recently updated active campaign when more than one names the SKU.
+// Missing-table-resilient (returns null so the PDP renders the standard buy
+// box on a deploy without the migration). One indexed read on the edge's live
+// D1 (the PDP is served no-store, so there's no cache-staleness to manage).
+export async function getOpenPreorderForSku(DB, sku) {
+  if (typeof sku !== "string" || !sku.length) return null;
+  try {
+    var row = await DB
+      .prepare(
+        "SELECT * FROM preorder_campaigns WHERE sku = ?1 AND status = 'active' " +
+        "ORDER BY updated_at DESC, slug DESC LIMIT 1"
+      )
+      .bind(sku)
+      .first();
+    if (!row) return null;
+    var remaining = null;
+    if (row.max_units_available != null) {
+      remaining = Number(row.max_units_available) - Number(row.units_reserved);
+      if (remaining < 0) remaining = 0;
+    }
+    return { campaign: row, remaining_units: remaining };
+  } catch (e) {
+    // allow:edge-handler-catch-returns-null — this is a DATA-layer read with a
+    // nullable contract (null = "no open campaign for this SKU"), not an edge
+    // request handler. A missing preorder_campaigns table (a deploy predating
+    // the migration) is functionally "no campaign", so it degrades to the same
+    // null the not-found path returns, mirroring the sibling reads
+    // (listInventoryForSkus / getBundlesForProduct degrade to {} / []). A real
+    // (non-missing-table) error still propagates to the handler's own catch.
+    if (e && /no such table/i.test(e.message || "")) return null;
+    throw e;
+  }
+}
+

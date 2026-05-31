@@ -402,6 +402,36 @@ async function main() {
   var returns            = bShop.returns.create({ query: query, cursorSecret: "audit-returns" });
   var supportTickets     = bShop.supportTickets.create({ query: query, cursorSecret: "audit-support" });
   var orderExchanges     = bShop.orderExchanges.create({ query: query, order: order });
+  // Bridge the preorder primitive's per-line createFromCart call into the
+  // order primitive's signature (cart/session id + totals + ship_to), so a
+  // launch-time conversion lands a real pending order the customer pays
+  // through checkout. Mirrors the adapter in server.js.
+  var preorderOrderAdapter = {
+    createFromCart: async function (input) {
+      var lines = (input && input.lines) || [];
+      var currency = (lines[0] && lines[0].currency) || "USD";
+      var subtotal = 0;
+      var orderLines = [];
+      for (var li = 0; li < lines.length; li += 1) {
+        var l = lines[li];
+        var qty = Number(l.quantity) || 0;
+        var unit = Number(l.unit_price_minor) || 0;
+        subtotal += qty * unit;
+        var variantId = l.variant_id;
+        if (variantId == null) { var vrow = await catalog.variants.bySku(l.sku); variantId = vrow ? vrow.id : null; }
+        orderLines.push({ variant_id: variantId, sku: l.sku, qty: qty, unit_amount_minor: unit, unit_currency: l.currency || currency });
+      }
+      var sessionId = b.uuid.v7();
+      var madeCart = await cart.create(sessionId, { currency: currency });
+      return await order.createFromCart({
+        cart_id: madeCart.id, session_id: sessionId, customer_id: input.customer_id,
+        currency: currency, lines: orderLines,
+        subtotal_minor: subtotal, discount_minor: 0, tax_minor: 0, shipping_minor: 0, grand_total_minor: subtotal,
+        ship_to: { country: "US" }, reason: "preorder-launch:" + (input.preorder_campaign_slug || ""),
+      });
+    },
+  };
+  var preorder           = bShop.preorder.create({ query: query, order: preorderOrderAdapter });
   var giftcards          = bShop.giftcards.create({ query: query });
   var giftCardLedger     = bShop.giftCardLedger.create({ query: query });
   var webhooks           = bShop.webhooks.create({ query: query });
@@ -572,6 +602,7 @@ async function main() {
         returns:            returns,
         supportTickets:     supportTickets,
         orderExchanges:     orderExchanges,
+        preorder:           preorder,
         customers:          customers,
         storeCredit:        storeCredit,
         customerNotes:      customerNotes,
@@ -616,6 +647,7 @@ async function main() {
         returns:            returns,
         supportTickets:     supportTickets,
         orderExchanges:     orderExchanges,
+        preorder:           preorder,
         collections:        collections,
         knowledgeBase:      knowledgeBase,
         giftcards:          giftcards,
