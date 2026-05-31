@@ -2098,6 +2098,50 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "autoDiscount.updateRule's ALLOWED_PATCH_COLUMNS accepts trigger + value (the discount terms) alongside title / priority / active. The console's `_discountPatch` originally forwarded only title / priority / active, so the browser edit path could reprioritise or pause a rule but never change its amount / percentage / threshold / BOGO terms — those were reachable only over the bearer JSON PATCH. The fix re-uses the create form's `_discountTrigger` / `_discountValue` vocabulary (which throws a TypeError on a bad / missing required field, degrading a bad terms edit to a clean 400) so the detail-screen edit form forwards both terms columns. The detector matches the `_discountPatch` definition and is exonerated only when the same file forwards both `patch.trigger = _discountTrigger(...)` and `patch.value = _discountValue(...)`; dropping either forward re-opens the dormant gap and trips this.",
   },
+  {
+    // The edge Worker serves /assets/* straight from R2, and the media
+    // upload path writes arbitrary operator-supplied bytes into that bucket.
+    // So an asset leaves the bucket with a content-type the operator
+    // DECLARED, not one the edge verified. The asset Response MUST carry the
+    // protective header set (X-Content-Type-Options: nosniff so a mis-typed
+    // upload can't be MIME-sniffed into something executable, plus a
+    // Cross-Origin-Resource-Policy and — for SVG — a script-sandboxing CSP);
+    // those are stamped by `_hardenAssetResponse(headers)` right before the
+    // Response is built. The detector matches the asset Response shape
+    // (`new Response(obj.body`) and is exonerated only when the same file
+    // defines + applies the hardener — a re-introduced asset response that
+    // skips the hardener trips it.
+    id: "r2-asset-response-without-nosniff-hardening",
+    bugClassDeclared: true,
+    primitive: "stamp every R2-served asset Response with the protective headers via `_hardenAssetResponse(headers)` before `new Response(obj.body, { headers })` — X-Content-Type-Options: nosniff on every asset, Cross-Origin-Resource-Policy: same-origin, and a `default-src 'none'; style-src 'unsafe-inline'; sandbox` CSP on image/svg+xml so a directly-navigated upload can't MIME-sniff into an executable type, be embedded cross-origin, or run script",
+    regex: /new\s+Response\s*\(\s*obj\.body\b/,
+    scanScope: "worker",
+    requires: /_hardenAssetResponse\s*\(\s*headers\s*\)\s*;[\s\S]{0,160}?new\s+Response\s*\(\s*obj\.body\b/,
+    multiline: true,
+    allowlist: [],
+    reason: "worker/index.js streams R2 objects to the browser on the /assets/* path. R2 holds operator-uploaded media (the admin upload-from-URL + upload-file routes write the bytes), and the object's content-type is whatever the operator declared — so without protective headers a browser can MIME-sniff a mis-typed upload into text/html / a script, embed the bytes cross-origin, or (for image/svg+xml opened by direct navigation) run embedded script in the site's own origin even though the upload path sanitizes SVG. The fix stamps X-Content-Type-Options: nosniff + Cross-Origin-Resource-Policy: same-origin on every asset and a `default-src 'none'; style-src 'unsafe-inline'; sandbox` CSP on SVG via `_hardenAssetResponse(headers)` immediately before the asset Response is built. The detector matches the `new Response(obj.body` asset-stream shape and is exonerated only when the same file applies the hardener right before it; an asset response that skips the hardener (dropping nosniff/CORP/the SVG sandbox) trips this.",
+  },
+  {
+    // An admin media route whose path carries BOTH a product id (:id) and a
+    // media id (:mid) — `/admin/products/:id/media/:mid/...` — must assert
+    // the media row actually belongs to that product before acting on it.
+    // catalog.media.setPrimary scopes its reorder by the media row's OWN
+    // product_id, so a handler that calls it with `req.params.mid` while
+    // ignoring `req.params.id` would act on whatever product owns :mid —
+    // letting a request name product A in the path while reordering product
+    // B's gallery. The route must gate on `_mediaBelongsToProduct(mid, id)`
+    // (or equivalent product_id assertion) first, returning a clean 404 on a
+    // mismatch. The detector matches a setPrimary call passing only `mid` and
+    // is exonerated when the same file asserts the pairing.
+    id: "admin-media-mid-route-ignores-id-segment",
+    bugClassDeclared: true,
+    primitive: "a `/admin/products/:id/media/:mid/...` route must assert the media row belongs to the :id product (`_mediaBelongsToProduct(req.params.mid, req.params.id)` → clean 404 on a mismatch) before catalog.media.setPrimary(req.params.mid) — the primitive scopes by the row's own product_id, so ignoring the :id path segment lets a request name one product while acting on another's media (an honesty/scope gap)",
+    regex: /catalog\.media\.setPrimary\s*\(\s*req\.params\.mid\s*\)/,
+    scanScope: "lib",
+    requires: /_mediaBelongsToProduct\s*\(/,
+    allowlist: [],
+    reason: "POST /admin/products/:id/media/:mid/primary promotes a media row to the gallery hero. catalog.media.setPrimary(mid) reorders by the media row's OWN product_id, so it is IDOR-safe at the DB layer — but the route originally ignored the :id path segment entirely, so a request could name product A in the path while :mid pointed at product B's media, and the action would silently apply to B. That makes the path lie about what it touched. The fix asserts `_mediaBelongsToProduct(req.params.mid, req.params.id)` first (false → clean 404 / ?err=1 with no leak; a malformed id still throws TypeError → 400), so the path is self-consistent. The detector matches a `catalog.media.setPrimary(req.params.mid)` call and is exonerated only when the same file performs the product-pairing assertion; a route that drops the guard re-opens the gap and trips this.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
