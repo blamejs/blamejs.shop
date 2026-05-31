@@ -2426,6 +2426,27 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "GET /collections/:slug rendered only the first page of a collection: it called `collections.productsIn({ slug, limit: 24 })` with no cursor and passed the resulting rows to renderCollection, which had no pagination block. `productsIn` is keyset (manual collections, by position+id) / offset (smart collections) paginated and returns an opaque, forward-only `next_cursor` (null on the last page) — it never returns a total — so a single un-cursored call caps the page at the limit and discards the rest. A collection with more than 24 members therefore lost every product past the 24th with no shopper-reachable path to it. The fix reads a `?cursor=` trail (a comma-joined list of page-start cursors — cursor chars are base64url plus a `.` tag separator, so the comma join stays URL-safe), threads the trail's last cursor into `productsIn`, and surfaces `next_cursor` into renderCollection, which paints a prev/next nav reusing the search-pagination shell (`rel=\"prev\"/\"next\"` + disabled-state spans, so no new CSS ships). A bad / stale / tampered cursor surfaces as a TypeError naming the cursor; the route retries page 1 rather than 404/500, mirroring how /search clamps a bad ?page=. The canonical stays the bare collection URL on every page (query stripped), like search. The detector matches the route registration and is exonerated only when the same file BOTH threads a cursor into a `productsIn(... cursor: ...)` call AND surfaces `next_cursor: result.next_cursor` into the render; stripping either forward removes a required token and re-opens the silent truncation.",
   },
+  {
+    // The admin customer-segments create/edit form translator must shape the
+    // segment's `rules` object by coercing each numeric RFM field through the
+    // strict integer reader and hand the typed bag to defineSegment / update,
+    // which own validation (unknown rule key, bad integer, bps cap, min ≤ max
+    // coherence, the "at least one rule" floor). It must NEVER build a
+    // rules_json blob and persist it straight from the body — that would
+    // bypass the primitive's validator, letting a malformed / unknown / empty
+    // rule reach the customer_segments table unchecked (a silently-empty
+    // segment, or a 500 on a later evaluate). The browser form is constrained
+    // to the numeric fields, but a JSON API client is not, so the validation
+    // has to live in the primitive the translator composes, not in the form.
+    id: "segment-rules-form-without-primitive-validation",
+    bugClassDeclared: true,
+    primitive: "the admin customer-segments form translator `_segmentRules(body)` must coerce each numeric RFM field with `_strictMinorInt(...)` and pass the resulting `rules` object to customerSegments.defineSegment / update (which validate every rule key + value and throw a TypeError the route maps to a clean 400) — it must never assemble a rules_json string from the body and write it directly, which would bypass the primitive's validator and let a malformed / unknown / empty rule reach the customer_segments table unchecked",
+    regex: /function _segmentRules\b/,
+    scanScope: "lib",
+    requires: /_strictMinorInt\s*\(\s*body\[/,
+    allowlist: [],
+    reason: "`_segmentRules` translates the structured customer-segments create/edit form into the `rules` object the `customerSegments` primitive expects. Each console field (recency_days_max, frequency_orders_min, lifetime_orders_min/max, monetary_minor_min/max, aov_minor_min, refund_rate_bps_min/max) is optional; a blank field is omitted. The translator coerces every present field through `_strictMinorInt(body[k], \"customerSegments\", k)` (which refuses \"\", floats, and parseInt's loose \"12abc\" → 12) and hands the typed bag to `defineSegment({ slug, title, description, rules })` / `update(slug, { rules })`. The primitive's `_validateRules` then enforces the full discipline — only known rule keys, non-negative integers, the 10000-bps cap, min ≤ max coherence, and the \"at least one predicate\" floor — and throws a TypeError on any violation, which the create + edit routes map to a clean 400 (the browser path bounces to the form's err state, the bearer path to a problem-details 400). The risk if the translator regressed to building a `rules_json` string from the body and writing it straight (e.g. `JSON.stringify(body.rules)` into an INSERT, skipping defineSegment): the browser select is constrained to the numeric fields, but a JSON API client can post an unknown rule key, a non-integer value, or an empty rule set, and an unvalidated write would land a malformed / silently-empty segment in customer_segments — a segment that recompute populates with nobody, or that 500s a later evaluate(). The detector matches the `_segmentRules` definition and is exonerated only when the file coerces the numeric fields via `_strictMinorInt(body[...])`; dropping that composition (reaching for a raw rules_json passthrough) removes the required token and trips this.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
