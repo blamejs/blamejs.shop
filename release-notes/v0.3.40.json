@@ -1,0 +1,15 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.40",
+  "date": "2026-05-31",
+  "headline": "Return shipping labels — operators issue one, customers download and track it",
+  "summary": "After a return was approved there was no way to give the customer a shipping label or for them to follow the parcel back. Operators can now issue a return label on an approved return from the admin console — entering the carrier, tracking number, and the label link generated in their carrier account — and post tracking updates as the parcel moves. The customer sees the label on their return: they can open or print it, see the carrier and tracking number, and follow the scan history, with the return marked received once it arrives back. A customer can only see and download the label for their own return.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        { "title": "Return shipping labels and tracking", "body": "Opening a return in the account area now shows its detail, and once a label has been issued the customer can open or print the return label, see the carrier and tracking number, and follow the parcel's scan history — all scoped so a customer only ever sees their own return. On the operator side, an approved return gains an Issue return label form (carrier, service level, weight, the carrier label link, tracking number, and cost) and controls to mark the parcel shipped, in transit, delivered, or held with an exception; marking it delivered records the return as received. The label link is required to be a secure URL, and the customer download is served without exposing that link in the page." }
+      ]
+    }
+  ]
+}

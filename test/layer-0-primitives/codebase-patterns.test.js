@@ -2217,6 +2217,35 @@ var KNOWN_ANTIPATTERNS = [
     reason: "The customer exchange surface lets a signed-in shopper request a same-value item swap against one of their own orders (/account/orders/:order_id/exchange) and track its status (/account/exchanges, /account/exchanges/:id). The order-exchanges primitive moves a row by id alone — requestExchange validates an order_id, getExchange a row id — and the order_exchanges table stores `order_id` but no `customer_id`, so ownership is asserted transitively through the parent order. The request form + POST funnel through `_ownedOrderForExchange` (loads the order via deps.order.get, refuses unless order.customer_id === auth.customer_id) and the status detail through `_ownedExchange` (loads the exchange, then its parent order, refuses on the same comparison); a malformed id (guardUuid TypeError), an unknown order/exchange, and a foreign-owned one all 404 identically with no leak. Without that `customer_id` match any authenticated shopper could POST another customer's order id and open an exchange against it (or read a stranger's exchange status by guessing its id). The detector matches the `POST /account/orders/:order_id/exchange` route registration and is exonerated only when the same file performs the `.customer_id !== <auth>.customer_id` assertion; a route that drops the gate re-opens the IDOR and trips this. (The list route keys on exchangesForCustomer(auth.customer_id), which resolves the customer→order linkage through the order primitive — it never loads a path-named row — so it carries no IDOR surface.)",
   },
   {
+    // The signed-in customer's return-label routes act on a return named in
+    // the path: the return status detail `/account/returns/:id` and the
+    // label-download redirect `/account/returns/:id/label`. The
+    // return-labels primitive resolves a label + its tracking by a return /
+    // label id alone (labelForReturn takes a return id, eventsForLabel a
+    // label id, getLabel a label id) — none of them know the requesting
+    // customer. A return label belongs to a return, which belongs to a
+    // customer (return_authorizations carries `customer_id`), so the
+    // storefront route alone owns the ownership decision: it MUST load the
+    // RETURN and refuse (clean 404) unless `return.customer_id !==
+    // <auth>.customer_id` is false, BEFORE resolving the label / tracking /
+    // download. Skip that, and any signed-in shopper could read another
+    // customer's return label + tracking — or download its prepaid label —
+    // by guessing the return id (IDOR). The detector matches the
+    // `/account/returns/:id` + `/account/returns/:id/label` route
+    // registrations and is exonerated only when the same file routes the
+    // read through `_ownedReturn(` (which performs the `.customer_id !==
+    // <auth>.customer_id` assertion); a route that resolves a label/return
+    // by id alone trips this.
+    id: "storefront-return-label-route-without-ownership-check",
+    bugClassDeclared: true,
+    primitive: "a storefront customer return-label route (`/account/returns/:id` status detail, `/account/returns/:id/label` download) must first load the return and assert it belongs to the session customer via `_ownedReturn` (`return.customer_id !== <auth>.customer_id` → clean 404 on a mismatch / unknown / malformed id) BEFORE resolving the label, its tracking events, or the label_url — the return-labels primitive reads a label + timeline by a return/label id alone and a return label belongs to a return which belongs to a customer, so skipping the ownership check lets any signed-in shopper read or download another customer's return label by guessing the return id (IDOR)",
+    regex: /router\.get\(\s*["']\/account\/returns\/:id(?:\/label)?["']/,
+    scanScope: "lib",
+    requires: /_ownedReturn\s*\(\s*req\s*,\s*res\s*,\s*auth\s*\)/,
+    allowlist: [],
+    reason: "The customer returns surface lets a signed-in shopper view one of their own returns (/account/returns/:id) and download its prepaid return-shipping label (/account/returns/:id/label). The return-labels primitive reads a label and its carrier-scan timeline by id alone — labelForReturn(return_id), eventsForLabel(label_id), getLabel(label_id) — and has no notion of the requesting customer. A return label belongs to a return, and the return_authorizations row carries `customer_id`, so ownership is a single comparison the storefront route owns. Both routes funnel through `_ownedReturn(req, res, auth)`, which loads the return via deps.returns.get and refuses it (clean 404, no leak) unless `return.customer_id === auth.customer_id` — a malformed id (guardUuid TypeError), an unknown return, and a return owned by someone else all 404 identically — BEFORE the route ever calls labelForReturn / eventsForLabel or reads label_url. The download route then redirects to the carrier label asset resolved through that owned return; the label_url is never emitted or served by a bare label id. Without that ownership gate any authenticated shopper could read another customer's return label + tracking, or pull down their prepaid label, by guessing the return id. The detector matches the `/account/returns/:id` and `/account/returns/:id/label` route registrations and is exonerated only when the same file routes the read through `_ownedReturn(req, res, auth)`; a route that resolves a label/return by id alone re-opens the IDOR and trips this. (The list route /account/returns keys on listForCustomer(auth.customer_id) and never loads a path-named return, so it carries no IDOR surface and isn't matched.)",
+  },
+  {
     // The edge Worker serves storefront CMS pages at /pages/:slug. The
     // storefront_pages table holds three FSM states (draft / published /
     // archived); only `published` rows may reach a visitor. The edge read
@@ -2712,6 +2741,36 @@ var KNOWN_ANTIPATTERNS = [
     requires: /hasMore\s*=\s*[\w.]+\.length\s*>\s*limit/,
     allowlist: [],
     reason: "storeCredit.history paginates the customer's store-credit ledger (newest first, cursor on occurred_at) and its `next_cursor` drives the storefront \"Older activity\" link on /account/credit. Emitting the cursor whenever the page came back full (`rows.length === limit`) advertises a next page that does not exist when the ledger length is an exact multiple of the page size — following the cursor queries `occurred_at < <oldest>` and renders an empty page. The method fetches `limit + 1` rows, sets `hasMore = r.rows.length > limit`, slices the page back to `limit`, and emits the cursor only when `hasMore`. The detector anchors on the file-unique storeCredit.history input-validation throw and is exonerated by the whole-file peek token `hasMore = <rows>.length > limit`; a regression that drops the peek removes that token and trips this.",
+  },
+  {
+    // The admin return-label issuance route records an operator-funded prepaid
+    // return label against an approved return. The return-labels primitive
+    // (returnLabels.issueLabel) owns ALL of the validation that keeps the
+    // label safe + the customer download surface honest: the carrier /
+    // service_level / tracking_number bounds + control-byte refusal, the
+    // weight + cost integer shapes, the ISO-4217 currency check, the
+    // approved-only RMA-status refusal, and — the load-bearing one — the
+    // HTTPS-only label_url gate (b.safeUrl, which rejects a javascript: /
+    // credentialed / non-https target). The storefront's /account/returns/:id
+    // /label download redirects the shopper straight at that stored
+    // label_url, so a route that hand-rolled an `INSERT INTO return_labels`
+    // instead of composing issueLabel could land an unvalidated label_url in
+    // the column and turn the customer download into an open redirect /
+    // scheme-injection sink. The detector matches the POST
+    // /admin/returns/:id/label issuance route and is exonerated only when the
+    // same file composes returnLabels.issueLabel; a route that builds the
+    // label row by hand re-opens the class.
+    id: "admin-return-label-issue-without-primitive",
+    bugClassDeclared: true,
+    primitive: "the admin POST /admin/returns/:id/label issuance route must compose `returnLabels.issueLabel({ return_id, carrier, service_level, weight_grams, label_url, tracking_number, cost_minor, currency })` — the primitive owns every validation gate (carrier/service/tracking bounds, weight/cost integer shapes, ISO-4217 currency, the approved-only RMA-status refusal, and the HTTPS-only label_url check via b.safeUrl), and the storefront download route redirects the shopper at the stored label_url, so a hand-rolled INSERT INTO return_labels could land an unvalidated label_url (javascript: / non-https / credentialed) and turn the customer download into a scheme-injection / open-redirect sink",
+    // Match the issuance route registration (the tracking-update routes carry
+    // a further /label/<verb> path segment and aren't matched). Anchored with
+    // a closing quote so /label/shipped etc. don't match.
+    regex: /router\.post\(\s*["']\/admin\/returns\/:id\/label["']/,
+    scanScope: "lib",
+    requires: /returnLabels\.issueLabel\s*\(/,
+    allowlist: [],
+    reason: "POST /admin/returns/:id/label lets an operator record a prepaid return-shipping label against an approved return from the console. The return-labels primitive's issueLabel is the single validation funnel: it bounds the carrier / service_level / tracking_number (length + control-byte refusal), demands a positive-integer weight_grams + a non-negative cost_minor, checks the currency against the ISO-4217 shape, refuses unless the underlying return_authorizations row is in `approved` status (a pending/rejected/received claim must never consume operator postage), and runs label_url through b.safeUrl (ALLOW_HTTP_TLS) so a javascript: / data: / credentialed / non-https target is rejected before it ever reaches the return_labels.label_url column. The customer surface (GET /account/returns/:id/label) redirects the shopper straight at that stored label_url, so the column is a redirect target — a route that built the row with a hand-rolled `INSERT INTO return_labels (...) VALUES (...)` instead of composing issueLabel would bypass the scheme gate and the approved-only rule, turning the shopper download into a scheme-injection / open-redirect sink and letting a label be funded against an un-triaged claim. The detector matches the issuance route registration and is exonerated only when the same file composes `returnLabels.issueLabel(...)`; a route that hand-rolls the label insert re-opens the class. The tracking-update routes (/admin/returns/:id/label/shipped|in-transit|delivered|exception) carry a further path segment so they aren't matched, and they compose the primitive's mark-* methods for the same reason.",
   },
 ];
 
