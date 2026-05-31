@@ -223,6 +223,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "the GET /collections/:slug route threads a ?cursor= trail through collections.productsIn({ slug, limit, cursor }) and surfaces the lib's opaque forward next_cursor into renderCollection, which paints a prev/next nav reusing the search-pagination shell (rel=prev/next + disabled-state spans, no new CSS); productsIn returns at most one page with no total, so an un-cursored call caps the grid at the limit — a bad / stale cursor falls back to page 1 rather than 404/500, matching how /search clamps a bad ?page=, and the canonical stays the bare collection URL on every page",
   },
+  {
+    bugClass: "admin customer-segments create/edit form translator builds the segment rules from the request body and persists them without composing the primitive's validator — a JSON API client could land an unknown rule key, a non-integer value, or an empty rule set in customer_segments (a silently-empty segment or a 500 on a later evaluate)",
+    detector: "segment-rules-form-without-primitive-validation",
+    gate:     "codebase-patterns",
+    note:     "_segmentRules(body) coerces each numeric RFM field via _strictMinorInt(body[k], \"customerSegments\", k) and hands the typed rules object to customerSegments.defineSegment / update, which validate every rule key + value (known keys only, non-negative integers, the 10000-bps cap, min ≤ max coherence, the at-least-one-rule floor) and throw a TypeError the create + edit routes map to a clean 400; the form never assembles a rules_json string and writes it straight, so the primitive owns validation",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
