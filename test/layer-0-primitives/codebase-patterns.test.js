@@ -2164,6 +2164,28 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "POST /orders/:id/cancel lets a customer cancel an unfulfilled order by firing the order FSM's `cancel` event (lib/order.js accepts it from pending | paid only). order.transition(id, event) moves the row by id — it has no notion of the requesting customer — so the route alone owns the ownership decision. Without a `customer_id` match against the signed-in session, any authenticated shopper could POST another customer's order id and cancel it (and a paid cancel leaves the operator to refund a charge they never authorized). The fix gates the transition behind `o.customer_id !== cancelAuth.customer_id` (false / guest-owned → clean 404, no act, no leak) and only attempts the FSM event for an owned, still-cancellable order. The detector matches the `deps.order.transition(id, \"cancel\")` shape and is exonerated only when the same file performs the `.customer_id !== <auth>.customer_id` assertion; a route that drops the guard re-opens the IDOR and trips this.",
   },
+  {
+    // The edge Worker serves storefront CMS pages at /pages/:slug. The
+    // storefront_pages table holds three FSM states (draft / published /
+    // archived); only `published` rows may reach a visitor. The edge read
+    // for a single page MUST scope its SELECT by status='published', so a
+    // staged draft or a retired (archived) page returns null and 404s
+    // exactly like an unknown slug. A page read written `SELECT ... FROM
+    // storefront_pages WHERE slug = ?` with no status predicate would
+    // serve a draft the operator hasn't reviewed — the same dormant-
+    // backend / unreviewed-content-leak gap the blog guards against. The
+    // detector matches a storefront_pages SELECT-by-slug and is exonerated
+    // only when the same statement also constrains status='published'.
+    id: "storefront-page-read-without-published-filter",
+    bugClassDeclared: true,
+    primitive: "the edge storefront page read (`getPublishedPageBySlug`) must scope its `SELECT ... FROM storefront_pages WHERE slug = ?` by `status = 'published'` so a draft / archived page returns null and 404s like an unknown slug — serving a page row by slug alone would push staged or retired copy live, the same unreviewed-content leak the blog read guards against",
+    regex: /FROM\s+storefront_pages\b[\s\S]{0,160}?\bWHERE\b[\s\S]{0,160}?\bslug\s*=/,
+    scanScope: "worker",
+    multiline: true,
+    requires: /FROM\s+storefront_pages\b[\s\S]{0,200}?status\s*=\s*'published'/,
+    allowlist: [],
+    reason: "The customer-facing storefront page (/pages/:slug) reads ONLY rows with status='published' — the storefront_pages FSM has draft (staged, not yet reviewed) and archived (retired) states that must stay off the public storefront. The edge read `getPublishedPageBySlug` constrains `WHERE slug = ?1 AND status = 'published'`, so a draft / archived / unknown slug all return null and render the same 404. A page read that selected by slug alone would serve whatever state the row is in, pushing an unreviewed draft or a deliberately-retired page live the moment its slug is guessed. The detector matches a `FROM storefront_pages ... WHERE ... slug =` read and is exonerated only when the same statement also carries `status = 'published'`; a slug-only read re-opens the leak and trips this. The published-slug list read (`listPublishedPageSlugs`) carries the same status predicate and is not flagged.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------

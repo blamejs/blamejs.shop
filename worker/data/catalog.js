@@ -542,6 +542,52 @@ export async function recentBlogArticles(DB, opts) {
   }
 }
 
+// Single published storefront CMS page by slug. The storefront page
+// route (/pages/:slug) serves ONLY published rows — a draft or archived
+// slug returns null so it 404s exactly like an unknown slug, keeping
+// staged / retired copy off the public storefront. Returns the full row
+// (body Markdown + meta) for the page render. Resilient to a missing
+// `storefront_pages` table — operators who haven't applied migration
+// `0059` get null instead of a D1 error reaching the route.
+export async function getPublishedPageBySlug(DB, slug) {
+  if (typeof slug !== "string" || slug.length === 0) return null;
+  var row = null;
+  try {
+    row = await DB
+      .prepare(
+        "SELECT * FROM storefront_pages " +
+        "WHERE slug = ?1 AND status = 'published'"
+      )
+      .bind(slug)
+      .first();
+  } catch (e) {
+    if (!(e && /no such table/i.test(e.message || ""))) throw e;
+  }
+  return row || null;
+}
+
+// Published storefront-page slugs, newest-published-first. Used by the
+// sitemap surface so the operator's published pages are discoverable.
+// Published-only, matching the page route's visibility gate. Missing-
+// table-resilient (see `getPublishedPageBySlug`).
+export async function listPublishedPageSlugs(DB) {
+  try {
+    var res = await DB
+      .prepare(
+        "SELECT slug, COALESCE(updated_at, published_at) AS updated_at " +
+        "FROM storefront_pages WHERE status = 'published' " +
+        "ORDER BY published_at DESC, slug ASC LIMIT 50000"
+      )
+      .bind()
+      .all();
+    var rows = (res && res.results) ? res.results : [];
+    return { rows: rows };
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return { rows: [] };
+    throw e;
+  }
+}
+
 export async function listMediaForProduct(DB, productId) {
   if (typeof productId !== "string" || productId.length === 0) return { rows: [] };
   var res = await DB
