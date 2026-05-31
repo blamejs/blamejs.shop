@@ -952,6 +952,9 @@ async function main() {
           discountAllocation: discountAllocation,
           salesTaxFilings: salesTaxFilings,
           quantityDiscounts: quantityDiscounts,
+          loyalty:           loyalty,
+          loyaltyEarnRules:  loyaltyEarnRules,
+          loyaltyRedemption: loyaltyRedemption,
           // Integration state map for /admin/integrations — "enabled" |
           // "action" (credentials present, a one-time operator action
           // still required) | "off". admin.js never reads process.env.
