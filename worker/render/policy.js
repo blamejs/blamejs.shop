@@ -1,7 +1,7 @@
 // Static policy pages (privacy, terms). Composed off a minimal
 // layout that doesn't carry the storefront hero / marquee / catalog
 // chrome — these are read-once legal docs, not a commerce surface.
-import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag } from "./_lib.js";
+import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, spliceRaw } from "./_lib.js";
 import b from "../b.js";
 
 var LAYOUT =
@@ -62,7 +62,7 @@ var LAYOUT =
 function _wrap(opts, bodyHtml) {
   var shopName = opts.shopName || "blamejs.shop";
   var themeCss = opts.themeCss  || assetUrl("css/main.css");
-  return renderTemplate(LAYOUT, {
+  var assembled = renderTemplate(LAYOUT, {
     title:            opts.title,
     title_h1:         opts.title,
     shop_name:        shopName,
@@ -78,8 +78,10 @@ function _wrap(opts, bodyHtml) {
     .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
-    .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "")
-    .replace("RAW_BODY_PLACEHOLDER", bodyHtml);
+    .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "");
+  // Splice the body literally so a `$`-bearing fragment can't trip
+  // `String.replace`'s dollar substitution. See `spliceRaw`.
+  return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", bodyHtml);
 }
 
 var PRIVACY_BODY =

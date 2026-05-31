@@ -13,7 +13,7 @@
 // in the body never passes through; any `<` lands as `&lt;`. The two
 // substrates render the same body byte-for-byte so the page reads the
 // same whether it's served from the edge or the container.
-import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag } from "./_lib.js";
+import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, spliceRaw } from "./_lib.js";
 import b from "../b.js";
 
 var LAYOUT =
@@ -280,7 +280,7 @@ export function renderStorefrontPage(opts) {
     : "";
   var bodyHtml = _renderMarkdown(page.body || "");
 
-  return renderTemplate(LAYOUT, {
+  var assembled = renderTemplate(LAYOUT, {
     title:            title,
     title_h1:         title,
     og_title:         title + " — " + shopName,
@@ -298,6 +298,9 @@ export function renderStorefrontPage(opts) {
     .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
-    .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "")
-    .replace("RAW_BODY_PLACEHOLDER", bodyHtml);
+    .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "");
+  // The body is operator-authored Markdown rendered to safe HTML at its
+  // own build site; splice it literally so a `$`-bearing body can't trip
+  // `String.replace`'s dollar substitution. See `spliceRaw`.
+  return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", bodyHtml);
 }

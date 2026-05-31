@@ -5,7 +5,7 @@
 // but it's file-backed; inline-string body needs a separate path).
 // Operators who want markdown formatting compose `b.template`
 // elsewhere and pass the rendered HTML in.
-import { renderTemplate, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag } from "./_lib.js";
+import { renderTemplate, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, spliceRaw } from "./_lib.js";
 import b from "../b.js";
 
 var LAYOUT =
@@ -68,7 +68,7 @@ var LAYOUT =
 function _wrap(opts, bodyHtml) {
   var shopName = opts.shopName || "blamejs.shop";
   var themeCss = opts.themeCss || assetUrl("css/main.css");
-  return renderTemplate(LAYOUT, {
+  var wrapped = renderTemplate(LAYOUT, {
     title:             opts.title,
     shop_name:         shopName,
     shop_name_rss:     shopName,
@@ -86,8 +86,10 @@ function _wrap(opts, bodyHtml) {
     .replace("RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
-    .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "")
-    .replace("RAW_BODY_PLACEHOLDER", bodyHtml);
+    .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "");
+  // The body is the rendered article/list markup; splice it literally so a
+  // `$`-bearing body can't trip `String.replace`'s dollar substitution.
+  return spliceRaw(wrapped, "RAW_BODY_PLACEHOLDER", bodyHtml);
 }
 
 function _isoDate(epochMs) {
@@ -174,11 +176,13 @@ export function renderBlogArticle(opts) {
   }
   var shopName = opts.shopName || "blamejs.shop";
   var bodyHtml = _paragraphsFromPlainText(article.body || "");
-  var articleHtml = renderTemplate(ARTICLE_TPL, {
+  // Splice the rendered body paragraphs literally so a `$`-bearing post
+  // body can't trip `String.replace`'s dollar substitution. See `spliceRaw`.
+  var articleHtml = spliceRaw(renderTemplate(ARTICLE_TPL, {
     title:  article.title,
     author: article.author_id,
     date:   _isoDate(article.published_at),
-  }).replace("RAW_BODY_HTML_PLACEHOLDER", bodyHtml);
+  }), "RAW_BODY_HTML_PLACEHOLDER", bodyHtml);
 
   // Schema.org Article JSON-LD. Google's article-rich-result panel
   // reads `headline`, `datePublished`, `dateModified`, `image`,

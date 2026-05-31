@@ -48,6 +48,23 @@ export function escapeHtml(s) {
   return b.template.escapeHtml(s);
 }
 
+// Splice a fully-rendered HTML fragment into `html` at the first
+// occurrence of a literal `RAW_*` token, inserting the fragment LITERALLY.
+//
+// `String.prototype.replace(token, replacementString)` gives the
+// replacement string special meaning to `$` sequences — `$$`, `$&`,
+// `` $` `` (the text before the match), `$'` (the text after the match),
+// `$1`. A page/blog body that contains a dollar followed by a backtick
+// would otherwise splice the page HEAD into the body, and any other
+// dollar sequence corrupts the output. The fragment is already
+// escaped/rendered at its own build site, so this is purely about the
+// replace mechanics: a REPLACER FUNCTION makes `String.replace` insert
+// the return value verbatim, with no dollar interpretation. Mirrors the
+// container's `_spliceRaw` so the two substrates stay byte-identical.
+export function spliceRaw(html, token, fragment) {
+  return html.replace(token, function () { return fragment == null ? "" : String(fragment); });
+}
+
 export function escapeAttr(s) {
   return b.template.escapeHtml(s);
 }
