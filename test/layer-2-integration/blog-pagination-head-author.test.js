@@ -106,33 +106,35 @@ function _pagerRegion(html) {
 }
 
 async function _run() {
-  // ---- route-source contracts (hold even without driving the Worker) -----
+  // ---- route-source contracts (full-tree only) --------------------------
+  // worker/index.js is EXCLUDED from the container build context, so reading
+  // it would ENOENT in the in-image smoke run. Guard the source read so the
+  // in-image run skips these (the full-tree GH smoke still pins Fix 1+2); the
+  // route behaviour is additionally driven end-to-end in the GH run.
   var indexPath = path.resolve(__dirname, "..", "..", "worker", "index.js");
-  var indexSrc  = fs.readFileSync(indexPath, "utf8");
+  if (fs.existsSync(indexPath)) {
+    var indexSrc = fs.readFileSync(indexPath, "utf8");
 
-  // FIX 1: the /blog route reads ?page, peeks limit+1, and threads offset +
-  // hasNext into the renderer.
-  check("route: blog list peeks one past the page (BLOG_PAGE_SIZE + 1)",
-    /listBlogArticles\([\s\S]{0,160}?limit:\s*BLOG_PAGE_SIZE\s*\+\s*1/.test(indexSrc));
-  check("route: blog list threads a computed offset",
-    /offset:\s*offset/.test(indexSrc) && /\(page\s*-\s*1\)\s*\*\s*BLOG_PAGE_SIZE/.test(indexSrc));
-  check("route: blog list derives hasNext from the peeked row count",
-    /hasNext\s*=\s*result\.rows\.length\s*>\s*BLOG_PAGE_SIZE/.test(indexSrc));
-  check("route: blog list slices the peeked row off before render",
-    /result\.rows\.slice\(0,\s*BLOG_PAGE_SIZE\)/.test(indexSrc));
+    // FIX 1: the /blog route reads ?page, peeks limit+1, and threads offset +
+    // hasNext into the renderer.
+    check("route: blog list peeks one past the page (BLOG_PAGE_SIZE + 1)",
+      /listBlogArticles\([\s\S]{0,160}?limit:\s*BLOG_PAGE_SIZE\s*\+\s*1/.test(indexSrc));
+    check("route: blog list threads a computed offset",
+      /offset:\s*offset/.test(indexSrc) && /\(page\s*-\s*1\)\s*\*\s*BLOG_PAGE_SIZE/.test(indexSrc));
+    check("route: blog list derives hasNext from the peeked row count",
+      /hasNext\s*=\s*result\.rows\.length\s*>\s*BLOG_PAGE_SIZE/.test(indexSrc));
+    check("route: blog list slices the peeked row off before render",
+      /result\.rows\.slice\(0,\s*BLOG_PAGE_SIZE\)/.test(indexSrc));
 
-  // FIX 2: BOTH the blog-post 404 and the product 404 guard the body on HEAD.
-  // Count the guarded 404 Response forms — the two cacheable 404s
-  // (max-age=60 … must-revalidate) must each carry the HEAD guard.
-  var guarded404 = indexSrc.match(
-    /new Response\(\s*request\.method === "HEAD" \? null : html,\s*\{\s*status:\s*404/g
-  ) || [];
-  check("route: at least the blog-post + product 404s guard the body on HEAD (>= 2 guarded 404 responses)",
-    guarded404.length >= 2);
-  // And no cacheable 404 ships an unconditional body — a `new Response(html, { status: 404`
-  // with no HEAD guard is the regression shape.
-  check("route: no 404 Response ships an unconditional body",
-    /new Response\(\s*html,\s*\{\s*status:\s*404/.test(indexSrc) === false);
+    // FIX 2: BOTH the blog-post 404 and the product 404 guard the body on HEAD.
+    var guarded404 = indexSrc.match(
+      /new Response\(\s*request\.method === "HEAD" \? null : html,\s*\{\s*status:\s*404/g
+    ) || [];
+    check("route: at least the blog-post + product 404s guard the body on HEAD (>= 2 guarded 404 responses)",
+      guarded404.length >= 2);
+    check("route: no 404 Response ships an unconditional body",
+      /new Response\(\s*html,\s*\{\s*status:\s*404/.test(indexSrc) === false);
+  }
 
   // ---- edge renderer contracts -------------------------------------------
   var renderDir = path.resolve(__dirname, "..", "..", "worker", "render");
