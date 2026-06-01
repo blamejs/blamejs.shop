@@ -21,6 +21,9 @@
  *   - responseToCustomer FSM: one reply per rating; second call refused;
  *     response_html escaped
  *   - topPositive / topNegative ordering across a mixed score set
+ *   - listFlagged moderation queue: surfaces every flagged comment
+ *     regardless of score (a flagged top-rated row is not hidden),
+ *     excludes unflagged rows, honours the optional window + limit
  *   - validation surface: every entry point refuses bad input shape
  */
 
@@ -439,6 +442,62 @@ async function _topRatings() {
   check("topNegative empty window",            Array.isArray(emptyBot) && emptyBot.length === 0);
 }
 
+// ---- listFlagged (moderation queue) ------------------------------------
+
+async function _listFlagged() {
+  var f = _factory();
+  var actorId = _uuid();
+
+  // A flagged comment on a TOP-scoring rating (5/5/5) — exactly the case a
+  // score-capped "lowest-scored" list would hide. listFlagged must surface
+  // it so the moderation queue is never blind to a flagged high rating.
+  var hi = await f.rate.submitRating({
+    order_id: _uuid(), customer_id: _uuid(),
+    shipping_rating: 5, packaging_rating: 5, recommend_rating: 5,
+    comment: "Perfect delivery, but the note was abusive.",
+  });
+  await f.rate.flagComment({ rating_id: hi.id, reason: "Abusive note.", flagged_by: actorId });
+
+  // A flagged comment on a low-scoring rating (carries an XSS payload).
+  var lo = await f.rate.submitRating({
+    order_id: _uuid(), customer_id: _uuid(),
+    shipping_rating: 1, packaging_rating: 1, recommend_rating: 2,
+    comment: "Terrible. <script>x</script>",
+  });
+  await f.rate.flagComment({ rating_id: lo.id, reason: "Spam.", flagged_by: actorId });
+
+  // An UNFLAGGED rating with a comment — must NOT appear in the queue.
+  await f.rate.submitRating({
+    order_id: _uuid(), customer_id: _uuid(),
+    shipping_rating: 3, packaging_rating: 3, recommend_rating: 3,
+    comment: "It was fine.",
+  });
+
+  var flagged = await f.rate.listFlagged();
+  var ids = flagged.map(function (r) { return r.id; });
+  check("listFlagged returns both flagged",        flagged.length === 2);
+  check("listFlagged includes the high-score row", ids.indexOf(hi.id) !== -1);
+  check("listFlagged includes the low-score row",  ids.indexOf(lo.id) !== -1);
+  check("listFlagged every row is flagged",        flagged.every(function (r) { return r.comment_flagged === true; }));
+  check("listFlagged exposes escaped comment",     flagged.every(function (r) { return r.comment_html.indexOf("<script>") === -1; }));
+
+  // Window filter: a window far in the past excludes everything; a window
+  // covering now includes both flagged rows.
+  var none = await f.rate.listFlagged({ from: 1, to: 2 });
+  check("listFlagged past window empty",           Array.isArray(none) && none.length === 0);
+  var now = Date.now();
+  var inWin = await f.rate.listFlagged({ from: now - 60000, to: now + 60000 });
+  check("listFlagged current window both",         inWin.length === 2);
+
+  // limit clamps the queue.
+  var one = await f.rate.listFlagged({ limit: 1 });
+  check("listFlagged limit clamps",                one.length === 1);
+
+  // Validation: inverted window + bad limit refused.
+  await assert.rejects(f.rate.listFlagged({ from: 200, to: 100 }), /from must be <= to/);
+  await assert.rejects(f.rate.listFlagged({ limit: 0 }),           /limit/);
+}
+
 // ---- validation surface ------------------------------------------------
 
 async function _validationSurface() {
@@ -511,6 +570,7 @@ async function run() {
   await _aggregateMath();
   await _flagAndRespond();
   await _topRatings();
+  await _listFlagged();
   await _validationSurface();
   await _exportedConstants();
 }

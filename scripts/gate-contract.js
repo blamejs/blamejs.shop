@@ -337,6 +337,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "the GET /admin/exports/download route streams orderExport.csvForRange / orderExport.ndjsonForRange — the primitive RFC-4180-quotes every cell AND prefixes any cell with a dangerous leading metacharacter (= / + / - / @) with `'` (signed numerics like +15.00 exempted), so the formula-injection vector is neutralized before the bytes reach the file; the route never assembles the CSV by hand from raw order fields",
   },
+  {
+    bugClass: "order-ratings render path splices the RAW customer comment / operator reply into the HTML instead of the primitive's pre-escaped comment_html / response_html — a customer's stored <script>/onerror comment then executes on their order page and on the operator's moderation screen (stored XSS)",
+    detector: "order-rating-render-raw-comment-not-escaped-html",
+    gate:     "codebase-patterns",
+    note:     "the customer order page (_orderRatingDisplay, lib/storefront.js) and the admin moderation queue (_ratingCard, lib/admin.js) splice the primitive's pre-escaped comment_html / response_html fields (b.template.escapeHtml at the render layer), never the raw comment / response_text; the raw fields exist only for export/analytics and never reach an HTML sink",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the
