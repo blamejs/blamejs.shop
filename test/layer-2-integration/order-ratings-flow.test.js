@@ -219,6 +219,24 @@ async function _run() {
       (badValue.headers["location"] || "").indexOf("rate_err=value") !== -1);
     check("bad value wrote no rating row",        (await orderRatings.getRating({ order_id: buyerOrderId })) === null);
 
+    // ---- partial / non-integer values are rejected, not silently coerced -
+    // parseInt would turn a crafted "5abc"→5 and "1.9"→1; the whole-string
+    // check sends both to the clean "value" correction so no value the
+    // shopper never chose is persisted.
+    var partialNum = await helpers.httpRequest({
+      port: sf.port, path: "/orders/" + buyerOrderId + "/rate", method: "POST", jar: buyerJar,
+      form: { shipping_rating: "5abc", packaging_rating: "5", recommend_rating: "5" },
+    });
+    check("partial-numeric rating → 303 correction", partialNum.status === 303 &&
+      (partialNum.headers["location"] || "").indexOf("rate_err=value") !== -1);
+    var fractional = await helpers.httpRequest({
+      port: sf.port, path: "/orders/" + buyerOrderId + "/rate", method: "POST", jar: buyerJar,
+      form: { shipping_rating: "1.9", packaging_rating: "5", recommend_rating: "5" },
+    });
+    check("fractional rating → 303 correction",   fractional.status === 303 &&
+      (fractional.headers["location"] || "").indexOf("rate_err=value") !== -1);
+    check("partial/fractional wrote no rating row", (await orderRatings.getRating({ order_id: buyerOrderId })) === null);
+
     // ---- happy path: rate the owned, delivered order --------------------
     var rateOk = await helpers.httpRequest({
       port: sf.port, path: "/orders/" + buyerOrderId + "/rate", method: "POST", jar: buyerJar,
@@ -257,6 +275,26 @@ async function _run() {
     check("xss order page → 200",                xssPage.status === 200);
     check("customer page renders the comment ESCAPED", xssPage.body.indexOf(XSS_ESCAPED) !== -1);
     check("customer page never renders the raw payload", xssPage.body.indexOf(XSS_PAYLOAD) === -1);
+
+    // ---- graceful degradation: a failing ratings read (e.g. the table is
+    // not migrated on a deploy) hides the form so its POST can't 500 -------
+    var degradeOrderId = await _seedOrder(query, buyer, variant.id, variant.sku, "delivered");
+    var throwingRatings = {
+      getRating:    async function () { throw new Error("no such table: order_ratings"); },
+      submitRating: async function () { throw new Error("no such table: order_ratings"); },
+    };
+    var sfDegraded = await _bootStorefront({
+      catalog: catalog, cart: cart, order: order, customers: customers,
+      orderRatings: throwingRatings, checkout: checkout, default_shipping_id: "std", shop_name: "Rate Shop",
+    });
+    try {
+      var degradedPage = await helpers.httpRequest({ port: sfDegraded.port, path: "/orders/" + degradeOrderId, jar: buyerJar });
+      check("failing ratings read → order page still 200", degradedPage.status === 200);
+      check("failing ratings read hides the rating form",  degradedPage.body.indexOf("/orders/" + degradeOrderId + "/rate") === -1);
+      check("failing ratings read leaks no raw error",     degradedPage.body.indexOf("no such table") === -1 && degradedPage.body.indexOf("at Object.") === -1);
+    } finally {
+      await _teardown(sfDegraded);
+    }
 
     // ===================== admin moderation surface =====================
     var adminJar = helpers.cookieJar();
