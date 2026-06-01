@@ -282,6 +282,7 @@ This is the minimum-viable security posture for a production deployment. The fra
 - [ ] Confirm `vault: { mode: "wrapped" }` in the app's config (not `"plaintext"`)
 - [ ] Store the passphrase in a secret manager (1Password / Vault / AWS Secrets Manager / sops) — never in git, never in shell history
 - [ ] Rotate the vault passphrase quarterly: `blamejs vault rotate`
+- [ ] When rotating the vault *keypair* (not just the passphrase) with `b.vaultRotate.rotate`, first re-seal every AAD-backed store you use via its hook (`b.agent.idempotency.reseal` / `b.agent.orchestrator.reseal` / `b.agent.snapshot.reseal` / the `b.agent.tenant` `AAD_ROTATION` reseal paths) and re-wrap tenant archives with `b.archive.rewrapTenant`, then pass `externalAadResealed` naming each re-sealed store (or `true` if you use none of them). Rotation refuses rather than silently orphaning a store it cannot reach, and its round-trip verify decrypts AAD-sealed cells under the new keypair and flags any that still open under the old one. Declare the rotation to each cluster node with `acceptVaultKeyRotation: true` so the membership adopts the new fingerprint instead of reporting `VAULT_KEY_DRIFT`
 - [ ] In FIPS / regulated deployments, run `b.crypto.selfTest()` at start-up as a power-on integrity gate — it KATs SHA3/SHAKE against NIST FIPS 202 vectors and pairwise-tests ML-KEM-1024 / ML-DSA-87 / SLH-DSA-SHAKE-256f, throwing `crypto/self-test-failed` (fail closed) if the crypto stack is broken
 
 **Audit chain**
@@ -305,6 +306,11 @@ This is the minimum-viable security posture for a production deployment. The fra
 - [ ] Wire `b.tenantQuota.create({ db, tenantField, defaultBytesCap, perTenantBytesCap })` and call `assert(tenantId)` before INSERT/UPDATE — refuses writes when a tenant exceeds their byte cap (SOC 2 CC6.1 + ISO 27001 A.8.1.5)
 - [ ] Wire `b.tenantQuota.budget({ tenantField, perTenantQpsCap, perTenantTotalRowsRead })` for tenant-scoped query rate-limiting — replaces global `maxRowsPerQuery` for multi-tenant scenarios
 - [ ] Wrap query results with `b.tenantQuota.instrumentQuery({ rows, tenantField, tenantId })` — emits `db.tenant.crossover` when a row's tenant disagrees with the operator-claimed tenant (RLS-bypass detection)
+
+**LLM / AI integration** (only if the app calls an LLM or serves model output)
+- [ ] Classify retrieved RAG context with `b.ai.input.classifyWithSources` (untrusted sources escalate on a single signal) rather than trusting model input, and assemble prompts with `b.ai.prompt.template` so untrusted context / user text is fenced in a per-render crypto-nonce boundary it cannot forge (OWASP LLM01:2025)
+- [ ] Pass model output through `b.ai.output.sanitize` before rendering / fetching / logging it — it gates markdown-image and link URLs against SSRF (the EchoLeak class, CVE-2025-32711) and flags SQL / command shapes — and `b.ai.output.redact` to strip PII / secret disclosures (OWASP LLM05:2025 + LLM02:2025)
+- [ ] When signing C2PA content credentials, attach an RFC 3161 timestamp (`b.contentCredentials.signCose({ timestamp })`) so the manifest stays verifiable after its signing certificate expires, and verify inbound manifests with `b.contentCredentials.verifyCose` supplying `timestampTrustAnchorsPem`
 
 **mTLS** (only if using `b.mtlsCa` for service-to-service auth)
 - [ ] Boot the CA with `--sealed-mode required` so the CA private key is vault-sealed before hitting disk
@@ -366,6 +372,7 @@ This is the minimum-viable security posture for a production deployment. The fra
 - [ ] Issue at least one `b.honeytoken` canary per high-value surface (admin API key shape, unused admin URL, fake DB row ID) and wire alerting on `honeytoken.tripped` audit rows to your on-call channel — any positive lookup is by definition unauthorized
 - [ ] For incident-response runbooks: pre-wire `b.atoKillSwitch.trigger({ userId, reason, actor })` into your SOC tooling so a confirmed compromise is a single call rather than a multi-step manual cleanup
 - [ ] For DSR-receiving operators: stand up `b.dsr.create({ ticketStore, posture, identityResolver })` and wire `query` / `erase` callbacks for every personal-data source — the framework owns deadline computation, audit emission, and ticket state; the operator owns the storage backend and the per-source data path
+- [ ] For EdTech / K-12 deployments handling student data: pin a student-data posture (`ferpa` / `ca-sopipa`), grant consent under `purpose: "educational-only"` (which refuses a `legitimate_interests` lawful basis at `b.consent.grant` time per the FERPA school-official exception / SOPIPA), and record an annual third-party review with `b.privacy.vendorReview()` for every processor that touches student PII
 - [ ] For DORA-scoped financial entities: wire `b.dora.create({ audit })` at the incident-classification step; the framework's three-stage report-shape (initial / intermediate / final) maps to Commission Delegated Regulation 2024/1772
 - [ ] For SEC-registered issuers: feed material cybersecurity incidents through `b.secCyber.eightKArtifact({ ... })` to produce the Form 8-K Item 1.05 disclosure within the 4-business-day window
 - [ ] For SMS-marketing operators: capture and audit consent via `b.tcpa10dlc.recordConsent({ phone, campaignId, consentText, signature })` BEFORE the first message — TCPA penalties are $500-$1,500 per violation

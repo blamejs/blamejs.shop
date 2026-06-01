@@ -59,6 +59,7 @@ var WORKER_ROOT    = path.resolve(__dirname, "..", "..", "worker");
 var TEST_ROOT      = path.resolve(__dirname, "..", "..", "test");
 var SCRIPTS_ROOT   = path.resolve(__dirname, "..", "..", "scripts");
 var WORKFLOWS_ROOT = path.resolve(__dirname, "..", "..", ".github", "workflows");
+var SERVER_FILE    = path.resolve(__dirname, "..", "..", "server.js");
 
 function _walk(dir, files) {
   files = files || [];
@@ -79,6 +80,9 @@ function _libFiles()    { return _walk(LIB_ROOT);    }
 function _workerFiles() { return _walk(WORKER_ROOT); }
 function _scriptFiles() { return _walk(SCRIPTS_ROOT); }
 function _shopFiles()   { return _walk(LIB_ROOT).concat(_walk(WORKER_ROOT)); }
+// The repo-root entry point (server.js) wires the HTTP routes + error
+// mapping and isn't under lib/ or worker/, so no other scope reaches it.
+function _serverFiles() { return fs.existsSync(SERVER_FILE) ? [SERVER_FILE] : []; }
 function _testFiles() { return _walk(TEST_ROOT).filter(function (f) {
   return /\.test\.js$/.test(f) || /\/helpers\/[^_].*\.js$/.test(f.replace(/\\/g, "/"));
 }); }
@@ -112,6 +116,7 @@ function _scan(regex, scope, opts) {
             : scope === "worker"    ? _workerFiles()
             : scope === "scripts"   ? _scriptFiles()
             : scope === "shop"      ? _shopFiles()
+            : scope === "server"    ? _serverFiles()
             :                         _libFiles();
   var matches = [];
   // `matchOn: "basename"` — apply the regex against each file's
@@ -1906,6 +1911,34 @@ var KNOWN_ANTIPATTERNS = [
     // route through an admin-module helper.
     allowlist: ["lib/storefront.js"],
     reason:    "POST /admin/products with a duplicate slug via the cookie/HTML form returned a 400 page whose error banner contained the raw `UNIQUE constraint failed: products.slug` — the bearer JSON path was hardened (the _wrap chokepoint), but the htmlHandler branch passed the caught error's message straight into `renderAdminProducts({ notice: (e && e.message) })`. Every admin HTML notice/banner built from a thrown error must route through the shared _safeNotice classifier so the cookie and bearer surfaces can never diverge: TypeError → its (operator-safe) validation message verbatim; UNIQUE/FOREIGN KEY → a generic in-use / referenced-record message; CHECK/NOT NULL → a generic missing-or-invalid message; SyntaxError → \"Invalid input.\"; anything else → a generic message with the raw text recorded server-side via the framework audit. Detector flags any `notice: <expr with e.message / (e && e.message) / String(e)>` on a single line; the good shapes (`notice: _safeNotice(e, ...).message`, `notice: n.message`) carry no bare `e.message` in the notice value and are not matched. The storefront's TypeError-guarded form renders are exempted via allowlist (they enforce the same no-leak guarantee through an explicit `instanceof TypeError` branch with a `throw e` fall-through).",
+  },
+  {
+    // The PUBLIC, UNAUTHENTICATED catalog API sibling of
+    // admin-5xx-echoes-raw-error-message: server.js's _problemFromError
+    // maps a thrown error to an RFC 9457 problem document for the
+    // anonymous GET /api/catalog/products[/:slug] routes. A TypeError is
+    // a client-shape validation error whose message is operator-safe, so
+    // it surfaces as a 400 with its detail intact. Any OTHER error is a
+    // 500 — and b.problemDetails.fromError copies err.message verbatim
+    // into the problem `detail`, which the D1 layer builds from the raw
+    // upstream string ("query failed — UNIQUE constraint failed:
+    // products.slug"). The 5xx body MUST carry a generic detail; the raw
+    // message is recorded server-side via b.audit.safeEmit
+    // (outcome:"failure") so an operator can correlate but the anonymous
+    // caller never sees the storage-engine internals. The detector
+    // anchors on the file-unique _problemFromError helper and is
+    // exonerated only when the same function records the raw message via
+    // the catalog-API audit action; a regression that drops the scrub
+    // (passing e.message straight into a status:500 fromError) removes
+    // that token and trips this.
+    id:        "public-api-5xx-echoes-raw-error-message",
+    bugClassDeclared: true,
+    primitive: "the public catalog API's _problemFromError (server.js) must scrub the 5xx detail — a non-TypeError records `e.message` server-side via b.audit.safeEmit(outcome:\"failure\") and returns a GENERIC detail (\"Something went wrong — please try again.\"); only a TypeError (client-shape validation) may surface its message as a 400. Never pass the raw message into a status:500 b.problemDetails.fromError on an unauthenticated route — the D1 layer wraps the upstream constraint/SQL string into err.message and fromError copies it verbatim into the body",
+    regex:     /\bfunction\s+_problemFromError\s*\(/,
+    scanScope: "server",
+    requires:  /shop_catalog_api\.request\.error/,
+    allowlist: [],
+    reason:    "GET /api/catalog/products and GET /api/catalog/products/:slug are public + unauthenticated; their catch routed every non-TypeError through `b.problemDetails.fromError(e, { status: 500 })`, and fromError copies `err.message` verbatim into the problem `detail`. The shop D1 layer (lib/externaldb-d1.js) builds errors carrying the raw upstream string (`externaldbD1: query failed — UNIQUE constraint failed: products.slug`), so a storage fault leaked SQLite internals to an anonymous caller — the same class the admin side fixed (lib/admin.js _safeNotice). _problemFromError now mirrors that discipline: a TypeError surfaces its (operator-safe) validation message as a 400, and any other error is a 500 whose body carries a fixed generic detail while the raw message is recorded server-side via `b.audit.safeEmit({ action: \"shop_catalog_api.request.error\", outcome: \"failure\", metadata: { message } })`. The detector anchors on the file-unique `_problemFromError` definition (server.js is reached via the dedicated `server` scope) and is exonerated by the whole-file presence of the `shop_catalog_api.request.error` audit token, which lives only in the scrubbed branch; reverting to a raw-message 500 removes that token and trips the detector.",
   },
   {
     // Issuing a gift card binds a money balance to a currency. The

@@ -74,6 +74,12 @@ var COVERAGE = [
     note:     "every admin HTML notice/banner built from a thrown error routes through _safeNotice; the cookie path can never diverge from the bearer path on what it reveals",
   },
   {
+    bugClass: "public catalog API 5xx leaks raw DB/error text to an anonymous caller — _problemFromError (server.js) passes a non-TypeError's e.message into a status:500 problemDetails.fromError, which copies it verbatim into the body, and the D1 layer wraps the upstream constraint/SQL string into err.message",
+    detector: "public-api-5xx-echoes-raw-error-message",
+    gate:     "codebase-patterns",
+    note:     "_problemFromError surfaces a TypeError's validation message as a 400 but scrubs every other error to a generic 500 detail, recording the raw message server-side via b.audit.safeEmit(action:\"shop_catalog_api.request.error\", outcome:\"failure\"); the unauthenticated GET /api/catalog/products[/:slug] routes never echo storage-engine internals (mirrors admin _safeNotice)",
+  },
+  {
     bugClass: "operator-supplied outbound webhook URL enables SSRF",
     detector: "outbound-webhook-url-without-ssrf-guard",
     gate:     "codebase-patterns",
