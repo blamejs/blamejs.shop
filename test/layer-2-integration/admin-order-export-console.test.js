@@ -227,6 +227,22 @@ async function _run() {
     });
     check("malformed cancel id → 400",           badCancel.status === 400);
 
+    // Bearer cancel of a syntactically valid UUID that names no job → 404
+    // (distinct from the malformed-id 400) so API clients can tell a
+    // missing job from a bad id.
+    var missingCancel = await helpers.httpRequest({
+      port: port, path: "/admin/exports/" + b.uuid.v7() + "/cancel", method: "POST", headers: bearer,
+    });
+    check("missing cancel id → 404",             missingCancel.status === 404);
+
+    // Bearer cancel of the already-cancelled job → 409 conflict: the FSM
+    // refuses a cancel from a terminal state, surfaced as a coded conflict
+    // (never a 400 or a 500).
+    var bearerReCancel = await helpers.httpRequest({
+      port: port, path: "/admin/exports/" + encodeURIComponent(jobId) + "/cancel", method: "POST", headers: bearer,
+    });
+    check("bearer cancel of terminal job → 409", bearerReCancel.status === 409);
+
     // ---- auth gate: anon → sign-in form, never data ----
     var anon = await helpers.httpRequest({ port: port, path: "/admin/exports" });
     check("anon exports → login form",           anon.body.indexOf("Admin API key") !== -1);
