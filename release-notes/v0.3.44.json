@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.44",
+  "date": "2026-05-31",
+  "headline": "Customers can rate a delivered order, and the admin console moderates and replies",
+  "summary": "There was no way for a customer to give feedback on how an order was fulfilled, and no way for an operator to act on it. Customers can now rate one of their own delivered orders on shipping, packaging, and how likely they are to recommend you, with an optional comment. The admin console gets a Ratings screen with a moderation queue of every flagged comment plus the most recent ratings, where an operator can flag a comment or post one public reply that the customer then sees on their order page. A customer can only rate an order they own, and every comment and reply is HTML-escaped wherever it is shown, so feedback text can't inject markup into another shopper's or an operator's page.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Order ratings",
+          "body": "A customer viewing one of their own orders can rate it on three axes — shipping, packaging, and likelihood to recommend (1 to 5) — and optionally leave a comment. Each order can be rated once. The rating, and any public reply from the store, appear on the customer's order page. A customer can only rate an order tied to their own account; the rating is always recorded against the signed-in customer, never a value taken from the request."
+        },
+        {
+          "title": "Ratings moderation in the admin console",
+          "body": "A new Ratings screen lists recent ratings with their scores and comments, alongside a moderation queue that surfaces every flagged comment regardless of its score, so a flagged comment on an otherwise high rating is never hidden. An operator can flag a comment for moderation and post a single public reply to a rating, which is then shown to the customer. Comments and replies are HTML-escaped everywhere they are rendered."
+        }
+      ]
+    }
+  ]
+}

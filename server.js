@@ -785,6 +785,16 @@ async function main() {
         ? bShop.orderExchanges.create({ order: order })
         : null;
 
+      // Order ratings — per-order shipping/packaging/recommend feedback. One
+      // shared instance backs both the customer surface (the rating form +
+      // display on /orders/:id) and the operator moderation queue
+      // (/admin/ratings). Reads/writes the order_ratings table via the shared
+      // externalDb query handle; every route that reads it degrades to "no
+      // rating panel" if the table hasn't been migrated.
+      var orderRatings = (catalog && cart)
+        ? bShop.orderRatings.create({})
+        : null;
+
       // Fulfillment ops — the warehouse-side surfaces over the order +
       // shipment data. Pick lists consolidate open orders into an aisle-
       // sequenced picker route (composing order.get + orderTracking for
@@ -1132,6 +1142,7 @@ async function main() {
           returnLabels:  returnLabels,
           supportTickets: supportTickets,
           orderExchanges: orderExchanges,
+          orderRatings:  orderRatings,
           preorder:      preorder,
           customers:     customers,
           storeCredit:      storeCredit,
@@ -1290,6 +1301,11 @@ async function main() {
         // the shared order instance (sfDeps.order set below) for the
         // ownership scope; the admin queue actions the FSM.
         if (orderExchanges) sfDeps.orderExchanges = orderExchanges;
+        // Order ratings — the post-purchase rating form + display on the
+        // customer's own order page (/orders/:id). The SAME instance the
+        // admin moderation queue acts on, so a flagged comment is suppressed
+        // for the customer and an operator reply appears on their order page.
+        if (orderRatings) sfDeps.orderRatings = orderRatings;
         if (collections) sfDeps.collections = collections;
         if (categoryNavigation) sfDeps.categoryNavigation = categoryNavigation;
         if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;

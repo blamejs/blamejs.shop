@@ -2913,6 +2913,35 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "GET /admin/exports/download lets an operator pull the full row-level order set for a date range as a CSV or NDJSON file. The exported cells include customer-controlled free text — the shipping-address fields (line1 / line2 / city / region) the order-export projection reads out of ship_to_json — so the output is squarely in the OWASP CSV-injection threat model: a cell beginning with = / + / - / @ (or a tab / CR) is interpreted as a formula when the file is opened in a spreadsheet, executing attacker-chosen content on the operator's machine. The orderExport primitive's csvForRange is the single safe funnel: it wraps every cell in RFC-4180 quotes AND prefixes any cell with a dangerous leading metacharacter with a `'` so the spreadsheet treats it as literal text (signed numerics like +15.00 / -3.50 are the deliberate exemption — they're legitimate amounts). ndjsonForRange has no spreadsheet-formula surface but shares the same projection. A download route that hand-rolled the serialization — building the header + rows by hand, or feeding the unprojected order rows straight into b.csv.stringify — would bypass the formula-injection neutralization and turn a routine export into a code-execution vector for whoever opens the file. The detector matches the /admin/exports/download route registration and is exonerated only when the same file composes orderExport.csvForRange / orderExport.ndjsonForRange; a route that hand-rolls the CSV re-opens the class.",
   },
+  {
+    // The order-ratings render path (the customer order page's rating
+    // display + the admin moderation queue's rating cards) shows two pieces
+    // of customer/operator free text: the rating COMMENT a customer typed
+    // and the operator's public REPLY. Both reach the page un-trusted. The
+    // order-ratings primitive already exposes PRE-ESCAPED forms of each —
+    // `comment_html` and `response_html`, run through b.template.escapeHtml
+    // at the primitive's render layer — alongside the raw `comment` /
+    // `response_text` (the latter exist for export / analytics consumers
+    // that want the original bytes). The render layer MUST splice the
+    // pre-escaped `_html` fields; splicing the RAW `comment` / `response_text`
+    // straight into the HTML concatenation re-introduces stored XSS (a
+    // customer types `<script>…</script>` / `"><img onerror=…>` as their
+    // comment, and it executes on the order page + the operator's moderation
+    // screen). The detector matches a raw `.comment` (NOT `.comment_html` /
+    // `.comment_flagged`) or `.response_text` field adjacent to a string-
+    // concatenation `+` — the HTML-build shape; the shipped renderers splice
+    // only `.comment_html` / `.response_html`, and the raw fields appear only
+    // as object-property reads (the submitRating input, never `+`-adjacent),
+    // so the clean tree carries no match and a regression to the raw field
+    // trips this.
+    id: "order-rating-render-raw-comment-not-escaped-html",
+    bugClassDeclared: true,
+    primitive: "render the order-rating comment + operator reply from the primitive's PRE-ESCAPED `comment_html` / `response_html` fields (escaped via b.template.escapeHtml at the primitive's render layer), NEVER the raw `comment` / `response_text` — splicing the raw customer/operator free text into the HTML concatenation re-introduces stored XSS on the customer order page + the admin moderation screen; the raw fields exist only for export/analytics consumers and must never reach an HTML sink",
+    regex: /(?:\+\s*\w+\.(?:comment(?!_)|response_text)\b|\w+\.(?:comment(?!_)|response_text)\b\s*\+)/,
+    scanScope: "shop",
+    allowlist: [],
+    reason: "The order-ratings feature renders two pieces of un-trusted free text to a page: the COMMENT a customer left on their order rating, and the operator's public REPLY. Both are stored verbatim (the primitive refuses control bytes but keeps the original characters, so a `<script>`/`onerror` payload survives to the read). The order-ratings primitive's decode step exposes a PRE-ESCAPED form of each — `comment_html` and `response_html`, each `b.template.escapeHtml(raw)` — next to the raw `comment` / `response_text` (raw retained for the export / analytics path). The customer order page (lib/storefront.js `_orderRatingDisplay`) and the admin moderation queue (lib/admin.js `_ratingCard`) BOTH splice the `_html` fields into their markup and never touch the raw fields, so the customer's typed payload renders inert. A renderer that spliced the raw `comment` / `response_text` straight into the HTML concatenation (`\"<p>\" + rating.comment + \"</p>\"`) would re-open stored XSS — the payload executes on the order page the customer revisits AND on the operator's moderation screen. The detector matches a raw `.comment` (negative-lookahead excludes `comment_html` / `comment_flagged`) or `.response_text` field adjacent to a string-concatenation `+` (the HTML-build shape); the raw fields legitimately appear elsewhere only as object-property reads (the submitRating call's `comment:` input, the `typeof body.comment` shape check) which are never `+`-adjacent, so the clean tree is unflagged and a regression to splicing the raw field trips this. Re-escaping the already-escaped `_html` field is the opposite, harmless mistake (visible entities, no XSS) and is out of scope.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------

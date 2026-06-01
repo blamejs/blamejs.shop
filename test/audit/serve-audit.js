@@ -375,6 +375,36 @@ async function _seed(engines) {
         _note("1 saved address for the customer");
       });
     }
+    // A rated order owned by the customer so /admin/ratings + the customer
+    // order page have a real rating to render. The order is a direct-SQL
+    // insert owned by the seeded customer (the checkout-confirmed order is a
+    // guest order with no customer_id, which can't be rated).
+    if (engines.orderRatings && refs.customer_id) {
+      await _try("rated order", async function () {
+        var db = engines.query._db;
+        if (!db) return;
+        var ratedOrderId = b.uuid.v7();
+        var ratedCartId  = b.uuid.v7();
+        var ratedSession = b.uuid.v7();
+        var nowTs = Date.now();
+        db.prepare(
+          "INSERT INTO carts (id, session_id, customer_id, currency, status, created_at, updated_at, expires_at) " +
+          "VALUES (?1, ?2, ?3, 'USD', 'converted', ?4, ?4, ?5)"
+        ).run(ratedCartId, ratedSession, refs.customer_id, nowTs, nowTs + 86400000);
+        db.prepare(
+          "INSERT INTO orders (id, cart_id, customer_id, session_id, status, currency, " +
+          "subtotal_minor, discount_minor, tax_minor, shipping_minor, grand_total_minor, " +
+          "ship_to_json, created_at, updated_at) " +
+          "VALUES (?1, ?2, ?3, ?4, 'delivered', 'USD', 5000, 0, 0, 0, 5000, '{\"country\":\"US\"}', ?5, ?5)"
+        ).run(ratedOrderId, ratedCartId, refs.customer_id, ratedSession, nowTs);
+        await engines.orderRatings.submitRating({
+          order_id: ratedOrderId, customer_id: refs.customer_id,
+          shipping_rating: 2, packaging_rating: 3, recommend_rating: 2,
+          comment: "Box arrived a bit dented but the product was fine.",
+        });
+        _note("1 rated order (delivered) for the customer");
+      });
+    }
   }
 
   return { seeded: seeded, refs: refs };
@@ -403,6 +433,7 @@ async function main() {
   var returnLabels       = bShop.returnLabels.create({ query: query, returns: returns });
   var supportTickets     = bShop.supportTickets.create({ query: query, cursorSecret: "audit-support" });
   var orderExchanges     = bShop.orderExchanges.create({ query: query, order: order });
+  var orderRatings       = bShop.orderRatings.create({ query: query });
   var orderExport        = bShop.orderExport.create({ query: query, order: order, cursorSecret: "audit-order-export" });
   // Bridge the preorder primitive's per-line createFromCart call into the
   // order primitive's signature (cart/session id + totals + ship_to), so a
@@ -503,6 +534,7 @@ async function main() {
     shippingLabels: shippingLabels, orderTracking: orderTracking, collections: collections,
     giftcards: giftcards, customers: customers, addresses: addresses,
     storeCredit: storeCredit, customerNotes: customerNotes,
+    orderRatings: orderRatings,
   });
 
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-audit-"));
@@ -605,6 +637,7 @@ async function main() {
         returnLabels:       returnLabels,
         supportTickets:     supportTickets,
         orderExchanges:     orderExchanges,
+        orderRatings:       orderRatings,
         orderExport:        orderExport,
         preorder:           preorder,
         customers:          customers,
@@ -652,6 +685,7 @@ async function main() {
         returnLabels:       returnLabels,
         supportTickets:     supportTickets,
         orderExchanges:     orderExchanges,
+        orderRatings:       orderRatings,
         preorder:           preorder,
         collections:        collections,
         knowledgeBase:      knowledgeBase,
