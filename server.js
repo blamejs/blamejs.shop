@@ -132,6 +132,34 @@ async function _zoneShippingRates(shippingZones, ctx) {
   return out;
 }
 
+// Convert a thrown error from the PUBLIC, UNAUTHENTICATED catalog API
+// (GET /api/catalog/products[/:slug]) to an RFC 9457 problem document
+// and send it. A TypeError is a client-shape (validation) error whose
+// message is operator-safe — surface it as a 400 with its detail intact.
+// Any OTHER error is a 500: its raw message can carry storage-engine /
+// parser internals (the D1 layer wraps the upstream string, e.g.
+// "query failed — UNIQUE constraint failed: products.slug"), so the
+// anonymous caller must NOT see it. The 5xx body carries a GENERIC
+// detail; the raw message is recorded server-side via the framework
+// audit (drop-silent, outcome:"failure") so an operator can correlate.
+// Mirrors lib/admin.js _safeNotice.
+function _problemFromError(res, e) {
+  if (e instanceof TypeError) {
+    return b.problemDetails.respond(res, b.problemDetails.fromError(e, { status: 400 }));
+  }
+  b.audit.safeEmit({
+    action:   "shop_catalog_api.request.error",
+    outcome:  "failure",
+    metadata: { message: (e && e.message) || String(e) },
+  });
+  b.problemDetails.send(res, {
+    type:   "/problems/internal-error",
+    title:  "Internal Server Error",
+    status: 500,
+    detail: "Something went wrong — please try again.",
+  });
+}
+
 async function main() {
   // createApp's secure defaults unlock TWO wrapped components at boot — the
   // vault AND the audit-signing keypair — and the framework reads their
@@ -1451,15 +1479,13 @@ async function main() {
       // lands — until then writes are operator-only via direct
       // D1 access or the wrangler CLI.
       if (catalog) {
-        // Helper: convert a thrown error to an RFC 9457 problem
-        // document and send it. TypeError surfaces as a 400; any
-        // other Error is a 500 with a stable problem `type` URN so
-        // operators can grep for it.
-        function _problemFromError(res, e) {
-          var status = e instanceof TypeError ? 400 : 500;
-          var problem = b.problemDetails.fromError(e, { status: status });
-          b.problemDetails.respond(res, problem);
-        }
+        // Audit namespace for the read-only catalog API. Registered once
+        // so the 5xx error-recording path below files under a registered
+        // namespace; safeEmit is drop-silent so a missing registration
+        // would degrade gracefully, but registering keeps the audit chain
+        // explicit.
+        try { b.audit.registerNamespace("shop_catalog_api"); } catch (_e) { /* idempotent */ }
+
         r.get("/api/catalog/products", async function (req, res) {
           try {
             var url    = new URL(req.url, "http://localhost");
@@ -1526,4 +1552,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { _zoneShippingRates: _zoneShippingRates };
+module.exports = { _zoneShippingRates: _zoneShippingRates, _problemFromError: _problemFromError };
