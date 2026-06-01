@@ -331,6 +331,12 @@ var COVERAGE = [
     gate:     "codebase-patterns",
     note:     "the POST /admin/returns/:id/label route composes returnLabels.issueLabel({ return_id, carrier, service_level, weight_grams, label_url, tracking_number, cost_minor, currency }) — the primitive owns the carrier/service/tracking bounds, the weight/cost integer shapes, the ISO-4217 currency check, the approved-only refusal, and the HTTPS-only label_url validation (b.safeUrl); the storefront GET /account/returns/:id/label download redirects the shopper at the stored label_url, so the column is a redirect target the route must never populate with a hand-rolled insert. The tracking-update routes (/label/shipped|in-transit|delivered|exception) compose the matching mark-* methods",
   },
+  {
+    bugClass: "admin order-export download route hand-rolls CSV serialization from raw order fields instead of composing the CSV-injection-safe primitive — the exported shipping-address cells are customer-controlled free text, so a cell beginning with = / + / - / @ executes as a spreadsheet formula on the operator's machine (OWASP CSV injection)",
+    detector: "admin-order-export-download-without-primitive",
+    gate:     "codebase-patterns",
+    note:     "the GET /admin/exports/download route streams orderExport.csvForRange / orderExport.ndjsonForRange — the primitive RFC-4180-quotes every cell AND prefixes any cell with a dangerous leading metacharacter (= / + / - / @) with `'` (signed numerics like +15.00 exempted), so the formula-injection vector is neutralized before the bytes reach the file; the route never assembles the CSV by hand from raw order fields",
+  },
 ];
 
 // The release-pipeline stages each declared gate maps to, plus the

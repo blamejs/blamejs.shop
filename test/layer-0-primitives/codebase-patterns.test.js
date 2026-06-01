@@ -2883,6 +2883,36 @@ var KNOWN_ANTIPATTERNS = [
     allowlist: [],
     reason: "POST /admin/returns/:id/label lets an operator record a prepaid return-shipping label against an approved return from the console. The return-labels primitive's issueLabel is the single validation funnel: it bounds the carrier / service_level / tracking_number (length + control-byte refusal), demands a positive-integer weight_grams + a non-negative cost_minor, checks the currency against the ISO-4217 shape, refuses unless the underlying return_authorizations row is in `approved` status (a pending/rejected/received claim must never consume operator postage), and runs label_url through b.safeUrl (ALLOW_HTTP_TLS) so a javascript: / data: / credentialed / non-https target is rejected before it ever reaches the return_labels.label_url column. The customer surface (GET /account/returns/:id/label) redirects the shopper straight at that stored label_url, so the column is a redirect target — a route that built the row with a hand-rolled `INSERT INTO return_labels (...) VALUES (...)` instead of composing issueLabel would bypass the scheme gate and the approved-only rule, turning the shopper download into a scheme-injection / open-redirect sink and letting a label be funded against an un-triaged claim. The detector matches the issuance route registration and is exonerated only when the same file composes `returnLabels.issueLabel(...)`; a route that hand-rolls the label insert re-opens the class. The tracking-update routes (/admin/returns/:id/label/shipped|in-transit|delivered|exception) carry a further path segment so they aren't matched, and they compose the primitive's mark-* methods for the same reason.",
   },
+  {
+    // The admin order-export download route streams the full row-level
+    // order set for a date range to a CSV / NDJSON file. The cell content
+    // includes customer-controlled free text — the shipping-address fields
+    // (line1 / line2 / city / region) sourced from the order's ship_to_json
+    // — which is exactly the OWASP "CSV Injection" vector: a cell beginning
+    // with = / + / - / @ executes as a formula when the file is opened in
+    // Excel or Sheets. The orderExport primitive's csvForRange owns that
+    // defense (it RFC-4180-quotes every cell AND prefixes a leading
+    // metacharacter with `'`, exempting signed numerics like +15.00), so
+    // the download route MUST compose csvForRange / ndjsonForRange and
+    // never hand-roll the serialization from raw order fields. A route that
+    // assembled the CSV itself (a manual header join + per-row cell
+    // concatenation, or b.csv.stringify fed straight from the unprojected
+    // order rows) would bypass the formula-injection neutralization and
+    // ship a spreadsheet that runs an attacker's formula on the operator's
+    // machine. The detector matches the /admin/exports/download route
+    // registration and is exonerated only when the same file composes the
+    // injection-safe primitive (csvForRange / ndjsonForRange).
+    id: "admin-order-export-download-without-primitive",
+    bugClassDeclared: true,
+    primitive: "the admin GET /admin/exports/download route must stream the orderExport primitive's csvForRange / ndjsonForRange output — the primitive RFC-4180-quotes every cell AND neutralizes the spreadsheet-formula-injection vector (a leading = / + / - / @ cell is prefixed with `'`, signed numerics exempted), and the order rows carry customer-controlled free text (the ship_to_json shipping-address fields), so a route that hand-rolled the CSV from raw order fields would ship a formula-injection sink an operator opens in Excel / Sheets",
+    // Match the download route registration. The export screen + the
+    // dedicated /download route both register under /admin/exports/download.
+    regex: /router\.get\(\s*["']\/admin\/exports\/download["']/,
+    scanScope: "lib",
+    requires: /orderExport\.(?:csvForRange|ndjsonForRange)\s*\(/,
+    allowlist: [],
+    reason: "GET /admin/exports/download lets an operator pull the full row-level order set for a date range as a CSV or NDJSON file. The exported cells include customer-controlled free text — the shipping-address fields (line1 / line2 / city / region) the order-export projection reads out of ship_to_json — so the output is squarely in the OWASP CSV-injection threat model: a cell beginning with = / + / - / @ (or a tab / CR) is interpreted as a formula when the file is opened in a spreadsheet, executing attacker-chosen content on the operator's machine. The orderExport primitive's csvForRange is the single safe funnel: it wraps every cell in RFC-4180 quotes AND prefixes any cell with a dangerous leading metacharacter with a `'` so the spreadsheet treats it as literal text (signed numerics like +15.00 / -3.50 are the deliberate exemption — they're legitimate amounts). ndjsonForRange has no spreadsheet-formula surface but shares the same projection. A download route that hand-rolled the serialization — building the header + rows by hand, or feeding the unprojected order rows straight into b.csv.stringify — would bypass the formula-injection neutralization and turn a routine export into a code-execution vector for whoever opens the file. The detector matches the /admin/exports/download route registration and is exonerated only when the same file composes orderExport.csvForRange / orderExport.ndjsonForRange; a route that hand-rolls the CSV re-opens the class.",
+  },
 ];
 
 // ---- expand existing detector scopes to include worker/ ----------------
