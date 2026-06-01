@@ -195,7 +195,12 @@ async function _run() {
 async function _seedRefundableReturn(query, returns) {
   var now = Date.now();
   var cartId = b.uuid.v7(), orderId = b.uuid.v7(), lineId = b.uuid.v7();
-  var intent = "pi_test_" + orderId.slice(0, 12);
+  // Derive the captured-intent id from the FULL order id, not a 12-char
+  // prefix: a v7 UUID's leading characters are the millisecond timestamp,
+  // so two seeds in the same millisecond would share a prefix and collide
+  // on the orders.payment_intent_id UNIQUE constraint. The full id carries
+  // the random bits, so every seed gets a distinct intent.
+  var intent = "pi_test_" + orderId;
   await query(
     "INSERT INTO carts (id, session_id, customer_id, currency, status, created_at, updated_at, expires_at) " +
     "VALUES (?1, ?2, NULL, 'USD', 'converted', ?3, ?3, ?4)",
