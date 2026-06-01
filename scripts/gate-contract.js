@@ -254,6 +254,24 @@ var COVERAGE = [
     note:     "the GET /collections/:slug route threads a ?cursor= trail through collections.productsIn({ slug, limit, cursor }) and surfaces the lib's opaque forward next_cursor into renderCollection, which paints a prev/next nav reusing the search-pagination shell (rel=prev/next + disabled-state spans, no new CSS); productsIn returns at most one page with no total, so an un-cursored call caps the grid at the limit — a bad / stale cursor falls back to page 1 rather than 404/500, matching how /search clamps a bad ?page=, and the canonical stays the bare collection URL on every page",
   },
   {
+    bugClass: "edge /blog index fetches a fixed 12-post page with no offset and renders no pager — a blog with more than 12 published posts silently loses on-site reachability to every post past the 12th (it stays in sitemap.xml so Google-discoverable, but a human browsing /blog dead-ends)",
+    detector: "blog-list-route-without-pagination",
+    gate:     "codebase-patterns",
+    note:     "the _edgeBlogList route reads ?page=N, threads offset = (page-1)*BLOG_PAGE_SIZE into listBlogArticles({ limit: BLOG_PAGE_SIZE + 1, offset }), peeks one row past the page (hasNext = result.rows.length > BLOG_PAGE_SIZE), slices the peeked row off, and surfaces hasNext into renderBlogList, which paints a prev/next nav reusing the search-pagination shell (rel=prev/next + disabled-state spans, no new CSS); listBlogArticles exposes no total, so the peek prevents a phantom Next link, a garbage ?page degrades to page 1, and the canonical stays the bare /blog URL",
+  },
+  {
+    bugClass: "edge blog renderers surface the internal author_id (an operator/user id, not a public display name) straight into the byline + the Article JSON-LD author Google reads — the blog model carries no author display-name column, so the id leaks on the public storefront and in structured data",
+    detector: "blog-byline-from-raw-author-id",
+    gate:     "codebase-patterns",
+    note:     "render the list-card byline, the article byline, and the Article JSON-LD author.name from a byline derived from shopName (the cleanest non-leaking source — there is no blog_authors table or author display-name column to resolve), never the raw article.author_id; the JSON-LD author is typed Organization since the shop is the publisher",
+  },
+  {
+    bugClass: "edge 404 (missing blog post / product) returns a full rendered body on a HEAD request — a spec violation that wastes bytes on every crawler HEAD probe of a dead link",
+    detector: "edge-404-response-body-on-head",
+    gate:     "codebase-patterns",
+    note:     "every edge 404 Response guards its body with request.method === \"HEAD\" ? null : html (matching the page-404 + empty-cart paths), keeping the 404 status + short-TTL cache headers; the unconditional new Response(html, { status: 404 }) form is the regression shape",
+  },
+  {
     bugClass: "admin customer-segments create/edit form translator builds the segment rules from the request body and persists them without composing the primitive's validator — a JSON API client could land an unknown rule key, a non-integer value, or an empty rule set in customer_segments (a silently-empty segment or a 500 on a later evaluate)",
     detector: "segment-rules-form-without-primitive-validation",
     gate:     "codebase-patterns",

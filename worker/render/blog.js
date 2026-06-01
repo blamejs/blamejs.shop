@@ -130,10 +130,52 @@ var ARTICLE_CARD_TPL =
   "  <a class=\"blog-card__cta\" href=\"/blog/{{slug_cta}}\">Read more →</a>\n" +
   "</article>\n";
 
+// `/blog?page=N` URL for a given 1-based page. Page 1 is the bare
+// `/blog` URL so the index has one canonical address; later pages carry
+// the `?page=` param. Mirrors the search/collection renderers' page-URL
+// helpers (page 1 omits the param).
+function _blogPageUrl(page) {
+  return page <= 1 ? "/blog" : "/blog?page=" + page;
+}
+
+// Prev/next pagination for the blog index. The blog data layer
+// (`listBlogArticles`) is offset-paginated and exposes no total, so the
+// nav is a prev/next pair — the collection-page shape — not the numbered
+// `/search` UI. Reuses the `search-pagination` shell + `rel="prev"/"next"`
+// + disabled-state spans so no new CSS ships. Renders nothing when there
+// is neither a previous page (page 1) nor a next page (`hasNext` false) —
+// a single-page blog stays byte-identical to the unpaginated render.
+// `hasNext` is the route's peek-one-past-the-page result, so the last
+// page never links to an empty one.
+function _renderBlogPagination(page, hasNext) {
+  var cur = page > 1 ? page : 1;
+  var hasPrev = cur > 1;
+  if (!hasPrev && !hasNext) return "";
+  var prev = hasPrev
+    ? renderTemplate("<a class=\"search-pagination__link search-pagination__prev\" href=\"{{href}}\" rel=\"prev\">Previous</a>\n",
+        { href: _blogPageUrl(cur - 1) })
+    : "<span class=\"search-pagination__link search-pagination__prev is-disabled\" aria-disabled=\"true\">Previous</span>\n";
+  var next = hasNext
+    ? renderTemplate("<a class=\"search-pagination__link search-pagination__next\" href=\"{{href}}\" rel=\"next\">Next</a>\n",
+        { href: _blogPageUrl(cur + 1) })
+    : "<span class=\"search-pagination__link search-pagination__next is-disabled\" aria-disabled=\"true\">Next</span>\n";
+  return "<nav class=\"search-pagination blog-pagination\" aria-label=\"Blog pages\">\n" +
+    prev +
+    next +
+    "</nav>\n";
+}
+
 export function renderBlogList(opts) {
   opts = opts || {};
   var articles = Array.isArray(opts.articles) ? opts.articles : [];
   var shopName = opts.shopName || "blamejs.shop";
+  // The byline shows the shop name, never the raw internal `author_id`
+  // (an operator/user id, not a public display name). The blog model
+  // carries no author display-name column, so the shop name is the
+  // cleanest non-leaking source.
+  var byline   = b.template.escapeHtml(shopName);
+  var page     = (typeof opts.page === "number" && opts.page > 1) ? Math.floor(opts.page) : 1;
+  var hasNext  = !!opts.hasNext;
   var heading = articles.length === 0
     ? "<section class=\"blog-empty\"><p class=\"eyebrow\">Blog</p><h1>No posts yet.</h1><p>The blog is open but nothing's been published yet. Check back, or subscribe to the <a href=\"/feed.xml\">RSS feed</a>.</p></section>"
     : "<section class=\"blog-list-head\"><p class=\"eyebrow\">Blog</p><h1>" + b.template.escapeHtml(shopName) + " blog</h1><p>Editorial posts from the operator. <a href=\"/feed.xml\">RSS feed</a>.</p></section>";
@@ -146,12 +188,15 @@ export function renderBlogList(opts) {
       slug_href: slugEnc,
       slug_cta:  slugEnc,
       title:     a.title,
-      author:    a.author_id,
+      author:    byline,
       date:      _isoDate(a.published_at),
       lede:      lede,
     });
   }).join("\n");
-  var body = heading + (articles.length === 0 ? "" : "<section class=\"blog-list\">" + cards + "</section>");
+  var pager = articles.length === 0 ? "" : _renderBlogPagination(page, hasNext);
+  var body = heading +
+    (articles.length === 0 ? "" : "<section class=\"blog-list\">" + cards + "</section>") +
+    pager;
   return _wrap({
     title:        "Blog",
     description:  "Editorial posts from " + shopName + ".",
@@ -185,12 +230,18 @@ export function renderBlogArticle(opts) {
     throw new TypeError("renderBlogArticle: opts.article required");
   }
   var shopName = opts.shopName || "blamejs.shop";
+  // The byline shows the shop name, never the raw internal `author_id`
+  // (an operator/user id, not a public display name). The blog model
+  // carries no author display-name column, so the shop name is the
+  // cleanest non-leaking source — surfaced in both the on-page byline
+  // and the Article JSON-LD author Google reads.
+  var byline   = shopName;
   var bodyHtml = _paragraphsFromPlainText(article.body || "");
   // Splice the rendered body paragraphs literally so a `$`-bearing post
   // body can't trip `String.replace`'s dollar substitution. See `spliceRaw`.
   var articleHtml = spliceRaw(renderTemplate(ARTICLE_TPL, {
     title:  article.title,
-    author: article.author_id,
+    author: byline,
     date:   _isoDate(article.published_at),
   }), "RAW_BODY_HTML_PLACEHOLDER", bodyHtml);
 
@@ -213,7 +264,7 @@ export function renderBlogArticle(opts) {
     "image":         [ogImage],
     "datePublished": Number.isInteger(article.published_at) ? new Date(article.published_at).toISOString() : undefined,
     "dateModified":  Number.isInteger(article.updated_at)   ? new Date(article.updated_at).toISOString()   : undefined,
-    "author":        { "@type": "Person", "name": article.author_id },
+    "author":        { "@type": "Organization", "name": byline },
     "description":   article.meta_description || String(article.body || "").slice(0, 240),
   });
 

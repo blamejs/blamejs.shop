@@ -2573,6 +2573,84 @@ var KNOWN_ANTIPATTERNS = [
     reason: "GET /collections/:slug rendered only the first page of a collection: it called `collections.productsIn({ slug, limit: 24 })` with no cursor and passed the resulting rows to renderCollection, which had no pagination block. `productsIn` is keyset (manual collections, by position+id) / offset (smart collections) paginated and returns an opaque, forward-only `next_cursor` (null on the last page) — it never returns a total — so a single un-cursored call caps the page at the limit and discards the rest. A collection with more than 24 members therefore lost every product past the 24th with no shopper-reachable path to it. The fix reads a `?cursor=` trail (a comma-joined list of page-start cursors — cursor chars are base64url plus a `.` tag separator, so the comma join stays URL-safe), threads the trail's last cursor into `productsIn`, and surfaces `next_cursor` into renderCollection, which paints a prev/next nav reusing the search-pagination shell (`rel=\"prev\"/\"next\"` + disabled-state spans, so no new CSS ships). A bad / stale / tampered cursor surfaces as a TypeError naming the cursor; the route retries page 1 rather than 404/500, mirroring how /search clamps a bad ?page=. The canonical stays the bare collection URL on every page (query stripped), like search. The detector matches the route registration and is exonerated only when the same file BOTH threads a cursor into a `productsIn(... cursor: ...)` call AND surfaces `next_cursor: result.next_cursor` into the render; stripping either forward removes a required token and re-opens the silent truncation.",
   },
   {
+    // The edge blog index (`_edgeBlogList` in worker/index.js) fetched a
+    // single fixed `listBlogArticles({ limit: 12 })` page and rendered it
+    // with no pager — so a blog with more than 12 published posts silently
+    // lost on-site reachability to every post past the 12th (the surplus
+    // stays in sitemap.xml, so Google-discoverable, but a human browsing
+    // /blog hits a dead end). `listBlogArticles` is offset-paginated and
+    // exposes NO total, so the route reads `?page=N`, threads the matching
+    // offset, peeks one row past the page (`limit: BLOG_PAGE_SIZE + 1`) to
+    // know whether a real next page exists, slices the peeked row off, and
+    // surfaces `hasNext` into renderBlogList (which paints a prev/next nav
+    // reusing the search-pagination shell). This detector matches the
+    // `_edgeBlogList` definition and is exonerated only when the same file
+    // BOTH peeks `limit: BLOG_PAGE_SIZE + 1` AND derives `hasNext` from the
+    // peeked row count — dropping either re-introduces the silent 12-cap
+    // truncation (or advertises a phantom next page) and trips this.
+    id: "blog-list-route-without-pagination",
+    bugClassDeclared: true,
+    primitive: "the edge `_edgeBlogList` route must read `?page=N`, thread the matching offset into `listBlogArticles({ limit: BLOG_PAGE_SIZE + 1, offset })`, peek one row past the page to set `hasNext = result.rows.length > BLOG_PAGE_SIZE`, slice the peeked row off, and surface `hasNext` into renderBlogList (which paints a prev/next nav reusing the search-pagination shell) — `listBlogArticles` returns at most one page and exposes no total, so a route that fetches a fixed `{ limit: 12 }` with no offset and renders no pager silently truncates a blog larger than one page, leaving every post past the page size unreachable on-site; a garbage `?page` degrades to page 1 (clean, link-followable) rather than 500, matching how /search + /collections treat a bad pagination param",
+    regex: /function _edgeBlogList\b/,
+    scanScope: "worker",
+    // Exonerated only when the file BOTH peeks one row past the page AND
+    // derives hasNext from the peeked count. Two lookaheads over the whole
+    // file (the `discount-patch-drops-trigger-or-value` shape): the fixed
+    // route carries both; stripping either re-opens the truncation.
+    requires: /^(?=[\s\S]*limit:\s*BLOG_PAGE_SIZE\s*\+\s*1)(?=[\s\S]*hasNext\s*=\s*[\w.]+\.rows\.length\s*>\s*BLOG_PAGE_SIZE)/,
+    allowlist: [],
+    reason: "The edge `/blog` index (`_edgeBlogList` in worker/index.js) called `listBlogArticles(env.DB, { limit: 12 })` once, with no offset, and passed the rows to renderBlogList, which emitted the cards and no pager. `listBlogArticles` applies `LIMIT ?1 OFFSET ?2` and returns at most one page — it never returns a total — so the single un-offset call capped the index at 12 and discarded the rest. A blog with more than 12 published posts therefore lost every post past the 12th to on-site browsing (the surplus stays in sitemap.xml / feed.xml, so a crawler still finds it, but a human browsing /blog dead-ends). The fix reads a `?page=N` param (defensive parser — a missing / non-integer / sub-1 value reads as page 1), computes `offset = (page - 1) * BLOG_PAGE_SIZE`, fetches `limit: BLOG_PAGE_SIZE + 1` to peek one row past the page, sets `hasNext = result.rows.length > BLOG_PAGE_SIZE`, slices the page back to BLOG_PAGE_SIZE (so the peeked row is never rendered), and surfaces `page` + `hasNext` into renderBlogList, which paints a prev/next nav reusing the search-pagination shell (`rel=\"prev\"/\"next\"` + disabled-state spans, so no new CSS ships). Peeking one past the page means the Next link is advertised only when a real next page exists — never a phantom page that renders empty, the same lesson the order/loyalty/store-credit/customers cursor peeks encode. A garbage `?page` degrades to page 1 rather than 500, mirroring how /search + /collections clamp a bad pagination param; the canonical stays the bare /blog URL. The detector matches the `_edgeBlogList` definition and is exonerated only when the same file BOTH peeks `limit: BLOG_PAGE_SIZE + 1` AND derives `hasNext` from the peeked row count; dropping either re-opens the silent truncation and trips this.",
+  },
+  {
+    // The edge blog renderers (worker/render/blog.js) surfaced the internal
+    // `author_id` (an operator/user id, NOT a public display name) straight
+    // into the public byline + the Article JSON-LD author Google reads. The
+    // blog model carries no author display-name column and no blog_authors
+    // table (author_id is a free-form reference into the operator's own
+    // authors directory the primitive doesn't own), so there is no name to
+    // resolve at the edge — the byline must fall back to the shop name
+    // rather than leak the id. The detector matches an `author: <x>.author_id`
+    // / `"name": <x>.author_id` shape (the byline / JSON-LD author binding)
+    // in the blog renderer and is exonerated when the file routes the byline
+    // through a `byline` variable derived from shopName instead; binding the
+    // raw author_id back into either surface re-opens the leak.
+    id: "blog-byline-from-raw-author-id",
+    bugClassDeclared: true,
+    primitive: "the edge blog renderers (worker/render/blog.js) must render the byline + the Article JSON-LD `author` name from the shop name (a `byline` derived from `shopName`), never the raw internal `author_id` — the blog model carries no author display-name column / blog_authors table (author_id is a free-form reference the primitive doesn't own), so surfacing `author_id` leaks an operator/user id into the public byline and the structured-data author Google reads; the shop-name fallback is the cleanest non-leaking source",
+    regex: /(?:\bauthor|"name")\s*:\s*\w+\.author_id\b/,
+    scanScope: "worker",
+    // The RSS feed's `<author>` element (worker/render/feed.js) is a distinct
+    // surface: RSS `<author>` conventionally carries an email address, not a
+    // display name, and it is not the human-read public byline / structured-
+    // data author this bug class is about. It legitimately keeps author_id
+    // and is out of scope.
+    allowlist: ["worker/render/feed.js"],
+    reason: "worker/render/blog.js renders the storefront blog: the list card byline (`By {{author}}`), the article byline, and the Article JSON-LD `author.name`. All three originally bound `article.author_id` / `a.author_id` directly. `author_id` is the blog model's internal reference into the operator's authors directory — a free-form id (a user / operator id), not a public display name; the blog_articles table carries no author display-name column and there is no blog_authors table the edge could join (the blog primitive deliberately does not own the author entity). So the id has no name source to resolve at the edge, and binding it into the byline surfaced an opaque internal id in the public byline AND in the structured-data author name Google reads for the article rich result (a correctness/UX/SEO gap — it's escaped, so not XSS). The fix derives a `byline` from `shopName` (already threaded into every blog render) and uses it for the list card byline, the article byline, and the JSON-LD author name (typed `Organization`, since the shop is the publisher); the raw `author_id` is no longer surfaced on any public blog surface. The RSS feed `<author>` element is a separate surface (RSS author conventionally expects an email) and is out of this detector's scope. The detector matches an `author: <x>.author_id` / `\"name\": <x>.author_id` binding in worker/ and is exonerated when the renderer routes the byline through a shopName-derived `byline` variable instead; rebinding the raw author_id into the byline or the JSON-LD author re-opens the leak and trips this.",
+  },
+  {
+    // A cacheable edge 404 (the blog-post / product not-found paths, served
+    // with `status: 404` + a short-TTL cache-control) must guard its body on
+    // a HEAD request — `new Response(request.method === "HEAD" ? null : html,
+    // { status: 404, ... })` — so a HEAD probe to a missing resource gets the
+    // 404 status + headers with no body (HTTP spec: a HEAD response carries no
+    // message body). The page-404 + empty-cart paths already carry this guard;
+    // the blog-post + product 404s shipped an unconditional `new Response(html,
+    // { status: 404, ... })` that returned the full body on a crawler HEAD.
+    // The detector matches the unconditional-body 404 Response shape in
+    // worker/; every shipped 404 now carries the HEAD guard, so the clean tree
+    // is unflagged and a regression to the bare-body form re-opens the class.
+    id: "edge-404-response-body-on-head",
+    bugClassDeclared: true,
+    primitive: "an edge 404 Response must guard its body on a HEAD request — `new Response(request.method === \"HEAD\" ? null : html, { status: 404, ... })` — so a HEAD to a missing blog post / product / page returns the 404 status + headers with no body (a HEAD response carries no message body per the HTTP spec, and a crawler HEAD-probing dead links shouldn't be shipped a full rendered 404 body); never `new Response(html, { status: 404, ... })` with the body sent unconditionally",
+    // The 404 Response spans lines (`new Response(html, {\n  status: 404`), so
+    // this is a whole-file (multiline) scan, not a per-line one.
+    regex: /new Response\(\s*html,\s*\{\s*status:\s*404\b/,
+    multiline: true,
+    scanScope: "worker",
+    allowlist: [],
+    reason: "The edge renders its own 404 inline (no container hop) for a missing blog post, product, or CMS page — a short-TTL cacheable `status: 404` so a crawler hitting many stale slugs doesn't re-render each, with `must-revalidate` so the answer flips back to a real page once the resource returns. A HEAD request to a missing resource must get that 404 status + headers with NO body: the HTTP spec says a response to HEAD carries no message body, and a well-behaved crawler HEAD-probes dead links to check for 404s — shipping it a full rendered 404 body wastes bytes on every probe. The page-404 (`_edgePage`) and empty-cart paths already guarded the body with `request.method === \"HEAD\" ? null : html`; the blog-post (`_edgeBlogArticle`) and product (`_edgeProduct`) 404s shipped an unconditional `new Response(html, { status: 404, ... })` that returned the body on HEAD. The fix applies the same `request.method === \"HEAD\" ? null : html` guard to both, keeping the 404 status + headers. The detector matches the unconditional-body 404 Response shape (`new Response(html, { status: 404`) in worker/; every shipped edge 404 now passes `request.method === \"HEAD\" ? null : html` as the body, so the clean tree carries no match, and a regression to the bare-body form re-opens the class and trips this.",
+  },
+  {
     // The admin customer-segments create/edit form translator must shape the
     // segment's `rules` object by coercing each numeric RFM field through the
     // strict integer reader and hand the typed bag to defineSegment / update,

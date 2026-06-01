@@ -1039,13 +1039,37 @@ async function _edgeCartEmpty(request, env, version, shopName) {
   }
 }
 
+const BLOG_PAGE_SIZE = 12;
+
+// Read the 1-based `?page=N` index page off the request URL. A missing,
+// non-integer, or sub-1 value reads as page 1 (the canonical first page).
+// Defensive request-shape reader — returns the safe default for any
+// garbage rather than 500-ing, matching how /search + /collections treat a
+// bad pagination param.
+function _blogPageParam(url) {
+  const raw = url && url.searchParams ? url.searchParams.get("page") : null;
+  if (raw == null || !/^[0-9]{1,9}$/.test(raw)) return 1;
+  const n = parseInt(raw, 10);
+  return n >= 1 ? n : 1;
+}
+
 async function _edgeBlogList(request, env, _url, version, shopName) {
   try {
-    const page = await listBlogArticles(env.DB, { limit: 12 });
+    const page   = _blogPageParam(_url);
+    const offset = (page - 1) * BLOG_PAGE_SIZE;
+    // Peek one row past the page so the pager advertises a Next link only
+    // when a real next page exists — never a phantom one that renders empty
+    // (the blog data layer exposes no total). The peeked row is sliced off
+    // before render.
+    const result  = await listBlogArticles(env.DB, { limit: BLOG_PAGE_SIZE + 1, offset: offset });
+    const hasNext = result.rows.length > BLOG_PAGE_SIZE;
+    const rows    = hasNext ? result.rows.slice(0, BLOG_PAGE_SIZE) : result.rows;
     const html = renderBlogList({
-      articles: page.rows,
+      articles: rows,
       shopName: shopName,
       version:  version,
+      page:     page,
+      hasNext:  hasNext,
       canonicalUrl: _url.origin + _url.pathname,
       announcement: await resolveAnnouncement(env.DB, {}),
     });
@@ -1064,7 +1088,7 @@ async function _edgeBlogArticle(request, env, _url, version, shopName, slug) {
         shopName: shopName,
         version:  version,
       });
-      return new Response(html, {
+      return new Response(request.method === "HEAD" ? null : html, {
         status:  404,
         headers: _withSecurityHeaders({
           "content-type":  "text/html; charset=utf-8",
@@ -1323,7 +1347,7 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
         shopName: shopName,
         version:  version,
       });
-      return new Response(html, {
+      return new Response(request.method === "HEAD" ? null : html, {
         status:  404,
         headers: _withSecurityHeaders({
           "content-type":  "text/html; charset=utf-8",
