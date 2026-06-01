@@ -814,6 +814,20 @@ async function main() {
         ? b.crypto.namespaceHash("sales-reports-cursor", process.env.D1_BRIDGE_SECRET)
         : "sales-reports-cursor-secret-dev-only";
       var salesReports  = (catalog && cart) ? bShop.salesReports.create({ cursorSecret: salesReportsCursorSecret }) : null;
+
+      // Order export — bulk date-range CSV / NDJSON dump of the orders
+      // table for the admin /admin/exports screen, plus the scheduled-
+      // export job queue a background worker drains. Reads the orders
+      // table via the shared externalDb query handle; the cursor HMAC key
+      // for the resumable stream + the scheduled-export pagination is
+      // derived like the other primitives so production never falls back
+      // to the dev-only placeholder.
+      var orderExportCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("order-export-cursor", process.env.D1_BRIDGE_SECRET)
+        : "order-export-cursor-secret-dev-only";
+      var orderExport   = (catalog && cart)
+        ? bShop.orderExport.create({ order: order, cursorSecret: orderExportCursorSecret })
+        : null;
       var printReceipts = (catalog && cart) ? bShop.printReceipts.create({ order: order }) : null;
       var packingSlips  = (catalog && cart) ? bShop.packingSlips.create({ order: order }) : null;
 
@@ -1105,6 +1119,7 @@ async function main() {
           shippingLabels: shippingLabels,
           splitShipments: splitShipments,
           salesReports:  salesReports,
+          orderExport:   orderExport,
           printReceipts: printReceipts,
           packingSlips:  packingSlips,
           payment:       payment,

@@ -403,6 +403,7 @@ async function main() {
   var returnLabels       = bShop.returnLabels.create({ query: query, returns: returns });
   var supportTickets     = bShop.supportTickets.create({ query: query, cursorSecret: "audit-support" });
   var orderExchanges     = bShop.orderExchanges.create({ query: query, order: order });
+  var orderExport        = bShop.orderExport.create({ query: query, order: order, cursorSecret: "audit-order-export" });
   // Bridge the preorder primitive's per-line createFromCart call into the
   // order primitive's signature (cart/session id + totals + ship_to), so a
   // launch-time conversion lands a real pending order the customer pays
@@ -604,6 +605,7 @@ async function main() {
         returnLabels:       returnLabels,
         supportTickets:     supportTickets,
         orderExchanges:     orderExchanges,
+        orderExport:        orderExport,
         preorder:           preorder,
         customers:          customers,
         storeCredit:        storeCredit,
