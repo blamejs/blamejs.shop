@@ -93,6 +93,12 @@ async function _run() {
       r.post("/account/login", function (_req, res) { res.json({ ok: true }); });
       // The exempt payment webhook.
       r.post("/api/webhooks/stripe", function (_req, res) { res.json({ ok: true }); });
+      // Order-mutation POST (cancel/rate/reorder) — tight-budget via the
+      // /orders/ prefix, POST-only carve-out.
+      r.post("/orders/abc/cancel", function (_req, res) { res.json({ ok: true }); });
+      // Order confirmation GET — a shopper reloads it freely; must NOT be
+      // throttled (the POST-only carve-out).
+      r.get("/orders/abc", function (_req, res) { res.json({ ok: true }); });
     },
   });
 
@@ -227,6 +233,33 @@ async function _run() {
       jar: jar, form: { u: "a" },
     });
     check("(e) POST carrying a foreign Origin IS refused cross-origin (403)", foreignOrigin.status === 403);
+
+    // ---- (f) Order-mutation POSTs are tight-budgeted; the GET is not -
+    //
+    // /orders/:id/cancel|rate|reorder are state-changing POSTs now under the
+    // tight 10/min per-(IP+path) budget (the /orders/ prefix). A spray of 15
+    // rapid cancels from one IP: ~10 pass, the rest 429 — the same shape as
+    // the login spray. Crucially, the order CONFIRMATION GET (/orders/:id) a
+    // shopper reloads is NOT throttled (the POST-only carve-out), so 15 rapid
+    // GETs from the SAME IP all pass — the assertion that catches a regression
+    // where someone forgets the carve-out and throttles the confirmation page.
+    var orderIp = "198.51.100.41";
+    var cancel2xx = 0, cancel429 = 0;
+    for (var oc = 0; oc < 15; oc += 1) {
+      var oR = await httpRequest({ port: port, method: "POST", path: "/orders/abc/cancel", headers: _hdr(orderIp, nav), form: { x: "1" } });
+      if (oR.status === 429) cancel429 += 1;
+      else if (oR.status >= 200 && oR.status < 300) cancel2xx += 1;
+    }
+    check("(f) order cancel spray: ~10 pass before the tight cap", cancel2xx >= 1 && cancel2xx <= 10);
+    check("(f) order cancel spray: excess POSTs are 429", cancel429 >= 4);
+
+    var orderGetIp = "198.51.100.42";
+    var getThrottled = 0;
+    for (var og = 0; og < 15; og += 1) {
+      var gR = await httpRequest({ port: port, path: "/orders/abc", headers: _hdr(orderGetIp, nav) });
+      if (gR.status === 429) getThrottled += 1;
+    }
+    check("(f) order confirmation GET is NOT throttled (POST-only carve-out)", getThrottled === 0);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }

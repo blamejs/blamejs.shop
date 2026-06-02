@@ -147,9 +147,41 @@ function _edgeParity() {
     !/\b(?:document-write|unsized-media|oversized-images)=\?[01]\b/i.test(src));
 }
 
+// SEC-3 — the edge HSTS is a full two-year max-age (matching the container's
+// vendored default) so the two substrates are HSTS-consistent AND the edge
+// response clears the 1-year HSTS-preload-list minimum. Source-read parity,
+// guarded by existsSync (worker/ is absent in the in-image smoke; an
+// unguarded read bricks the deploy).
+function _edgeHsts() {
+  var workerIndexPath = nodePath.resolve(__dirname, "..", "..", "worker", "index.js");
+  if (!nodeFs.existsSync(workerIndexPath)) return;
+  var src = nodeFs.readFileSync(workerIndexPath, "utf8");
+
+  // The edge HSTS header value is the full 2-year (63072000s) max-age with
+  // includeSubDomains + preload.
+  check("(c) edge HSTS is max-age=63072000 (2y), includeSubDomains, preload",
+    /"strict-transport-security"\s*:\s*"max-age=63072000;\s*includeSubDomains;\s*preload"/.test(src));
+  // The old 180-day value must be GONE — a regression back to it would drop
+  // the edge below the preload minimum.
+  check("(c) edge HSTS no longer carries the old 180-day max-age (15552000)",
+    src.indexOf("max-age=15552000") === -1);
+
+  // Container parity: the shop leaves the vendored securityHeaders `hsts` at
+  // its default (server.js passes only documentPolicy), and that default IS
+  // 2-year (max-age=63072000) — so an https container response carries the
+  // same value the edge now sends. Assert against the vendored source so the
+  // parity is two-sided and independent of the protocol-detection plumbing.
+  var vendoredSrc = nodeFs.readFileSync(
+    nodePath.resolve(__dirname, "..", "..", "lib", "vendor", "blamejs",
+      "lib", "middleware", "security-headers.js"), "utf8");
+  check("(c) container vendored HSTS default is 2-year (parity with edge)",
+    /opts\.hsts === undefined\s*\?\s*"max-age=63072000;\s*includeSubDomains;\s*preload"/.test(vendoredSrc));
+}
+
 async function _run() {
   await _container();
   _edgeParity();
+  _edgeHsts();
 }
 
 module.exports = { run: _run };

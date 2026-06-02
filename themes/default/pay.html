@@ -3,23 +3,15 @@
 <section>
   <h2>Payment</h2>
   <p>Order {{ order_id }} · {{ grand_total }}</p>
-  <div id="payment-element" style="margin:1.5rem 0;"></div>
-  <button id="submit" type="button">Pay {{ grand_total }}</button>
-  <p id="payment-message" style="color: var(--accent); margin-top: 1rem; min-height: 1.5rem;"></p>
+  <div id="pay-island" data-pk="{{ pk }}" data-cs="{{ client_secret }}" data-order="{{ order_id }}">
+    <div id="express-checkout" hidden>
+      <div id="express-checkout-element"></div>
+    </div>
+    <div id="payment-element" style="margin:1.5rem 0;"></div>
+    <button id="submit" type="button">Pay {{ grand_total }}</button>
+    <p id="payment-message" style="color: var(--accent); margin-top: 1rem; min-height: 1.5rem;"></p>
+  </div>
   <script src="https://js.stripe.com/v3/"></script>
-  <script>
-    (function () {
-      var stripe = Stripe({{{ pk_json }}});
-      var elements = stripe.elements({ clientSecret: {{{ client_secret_json }}}, appearance: { theme: "stripe" } });
-      var paymentElement = elements.create("payment");
-      paymentElement.mount("#payment-element");
-      document.getElementById("submit").addEventListener("click", function () {
-        document.getElementById("payment-message").textContent = "Processing...";
-        stripe.confirmPayment({ elements: elements, confirmParams: { return_url: window.location.origin + "/orders/{{ order_id }}" } }).then(function (result) {
-          if (result.error) { document.getElementById("payment-message").textContent = result.error.message || "Payment failed."; }
-        });
-      });
-    })();
-  </script>
+  <script src="{{ pay_script }}" defer></script>
 </section>
 {% endblock %}

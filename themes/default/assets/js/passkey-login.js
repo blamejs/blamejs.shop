@@ -25,6 +25,13 @@
   function _csrfToken() {
     return (document.cookie.match(/(?:^|; )(?:__Host-csrf|csrf)=([^;]+)/) || [])[1] || "";
   }
+  // When a CAPTCHA widget is on the page (operator-configured), captcha.js
+  // exposes the solved token via window.__captchaToken(); include it in the
+  // begin body so the server verifies it before issuing a challenge. Absent
+  // a widget this resolves to "" and the server-side gate is a no-op.
+  function _captchaToken() {
+    return (typeof window.__captchaToken === "function") ? window.__captchaToken() : "";
+  }
   var form = document.getElementById("login-form");
   var msg  = document.getElementById("login-message");
   if (!form) return;
@@ -32,7 +39,7 @@
     ev.preventDefault();
     msg.textContent = "Requesting challenge...";
     try {
-      var beginR = await fetch("/account/passkey/login-begin", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "X-CSRF-Token": _csrfToken() }, body: JSON.stringify({ email: document.getElementById("email").value }) });
+      var beginR = await fetch("/account/passkey/login-begin", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "X-CSRF-Token": _csrfToken() }, body: JSON.stringify({ email: document.getElementById("email").value, captcha_token: _captchaToken() }) });
       if (!beginR.ok) { msg.textContent = "Sign-in unavailable."; return; }
       var options = await beginR.json();
       options.challenge = _b64uToBuf(options.challenge);
