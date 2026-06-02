@@ -122,6 +122,16 @@ async function _run() {
     var bad = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", method: "POST", jar: jarA, form: { street_line1: "x", city: "y", postal_code: "z", country: "US" } });
     check("add missing field then 400",         bad.status === 400);
     check("add validation notice shown",        bad.body.indexOf("form-notice--error") !== -1);
+    // WCAG 3.3.1/3.3.3 — the rejected field is marked, not just the banner.
+    check("rejected field marked aria-invalid", bad.body.indexOf("aria-invalid=\"true\"") !== -1);
+    check("aria-describedby wires the field",   bad.body.indexOf("aria-describedby=\"addr-err-recipient_name\"") !== -1);
+    check("per-field error span present",        bad.body.indexOf("id=\"addr-err-recipient_name\"") !== -1 && bad.body.indexOf("form-field__error") !== -1);
+
+    // A DIFFERENT field fails (bad country) → marker targets country, not
+    // recipient_name — proves the extractor marks the actually-rejected field.
+    var badCountry = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", method: "POST", jar: jarA, form: { recipient_name: "x", street_line1: "x", city: "y", postal_code: "z", country: "ZZZ" } });
+    check("bad country then 400",                badCountry.status === 400);
+    check("country field marked, not recipient", badCountry.body.indexOf("aria-describedby=\"addr-err-country\"") !== -1 && badCountry.body.indexOf("addr-err-recipient_name") === -1);
 
     // Add a valid address.
     var add = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", method: "POST", jar: jarA, form: Object.assign({ is_default_shipping: "1" }, ADDR_FORM) });
@@ -135,6 +145,9 @@ async function _run() {
     var list = await helpers.httpRequest({ port: handle.port, path: "/account/addresses", jar: jarA });
     check("list shows the recipient",           list.body.indexOf("Ada Lovelace") !== -1);
     check("list shows default badge",           list.body.indexOf("Default shipping") !== -1);
+    // No-error path is byte-clean: a successful render carries no field marker.
+    check("clean render has no aria-invalid",    list.body.indexOf("aria-invalid") === -1);
+    check("clean add render has no aria-invalid", empty.body.indexOf("aria-invalid") === -1);
 
     // Edit form pre-fills.
     var editForm = await helpers.httpRequest({ port: handle.port, path: "/account/addresses/" + addrId + "/edit", jar: jarA });

@@ -147,6 +147,10 @@ async function _run() {
     });
     check("submit empty body → 400",               badPost.status === 400);
     check("submit empty body → notice shown",      badPost.body.indexOf("form-notice--error") !== -1);
+    // WCAG 3.3.1/3.3.3 — the rejected body textarea is marked + wired.
+    check("empty body → aria-invalid on textarea",  badPost.body.indexOf("aria-invalid=\"true\"") !== -1);
+    check("empty body → error span wired",          badPost.body.indexOf("id=\"qa-err-body\"") !== -1 && badPost.body.indexOf("aria-describedby=\"qa-err-body\"") !== -1);
+    check("clean Q&A form GET has no aria-invalid",  askerForm.body.indexOf("aria-invalid") === -1);
 
     // POST submit, valid → 200 thanks; question lands pending.
     var ok = await helpers.httpRequest({

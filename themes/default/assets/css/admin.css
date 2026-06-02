@@ -117,6 +117,10 @@ section h2 { font-size:1.15rem; letter-spacing:-0.01em; margin-bottom:1.1rem; }
 @media (max-width: 56rem) { .two-col { grid-template-columns:1fr; } }
 
 /* ---- tables ------------------------------------------------------ */
+/* Wrap wide data tables so a narrow viewport scrolls the table, not the
+   page (WCAG 1.4.10 reflow). The base table keeps width:100% so it fills
+   the wrap on wide screens and overflows only when it must. */
+.table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
 table { width:100%; border-collapse:collapse; font-size:.9rem; }
 thead th { text-align:left; padding:.7rem .75rem; border-bottom:2px solid var(--hair-strong); font-family:var(--font-mono); font-weight:400; font-size:.72rem; letter-spacing:.05em; text-transform:uppercase; color:var(--mute); }
 tbody td, tbody th { padding:.7rem .75rem; border-bottom:1px solid var(--hair-2); color:var(--ink-2); }
