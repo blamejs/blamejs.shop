@@ -136,6 +136,18 @@ async function _runLayer(layerNum, layerName) {
   console.log("  " + _padRight("asset-manifest-in-sync", 40) + " (ok)");
   _shellGate("vendor-drift", "bash scripts/vendor-update.sh --check");
   console.log("  " + _padRight("vendor-drift", 40) + " (ok)");
+  // Vendored-tree integrity — recompute every vendored file's SHA-256 and
+  // compare it against the per-file hashes pinned in lib/vendor/MANIFEST.json
+  // (via the framework's own b.configDrift.verifyVendorIntegrity). A
+  // hand-edit to any vendored source — or a refresh that forgot to
+  // re-stamp — fails here. A `node` script, so it uses `_gate` (like the
+  // other vendor/changelog checks) and runs in BOTH the full-tree smoke and
+  // the worker-excluded in-image container smoke (lib/vendor/ ships in the
+  // image; only worker/ is excluded). Cross-OS deterministic: the vendored
+  // tree is pinned `-text binary` in .gitattributes, so its bytes are
+  // identical on every checkout (Windows/macOS/Linux).
+  _gate("vendor-integrity", "check-vendor-integrity.js", []);
+  console.log("  " + _padRight("vendor-integrity", 40) + " (ok)");
   // Worker-syntax check — walks every reachable file under worker/
   // tracking string / template / comment / regex state and asserts
   // braces / parens / brackets balance at EOF. Catches the
