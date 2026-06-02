@@ -23,6 +23,7 @@ import { renderCart } from "./render/cart.js";
 import { minifyHtml as _minify, assetUrl as _assetUrl } from "./render/_lib.js";
 import {
   listActiveProducts,
+  listActiveCollections,
   getProductBySlug,
   searchFacetableProducts,
   loadSearchFacets,
@@ -1191,8 +1192,16 @@ async function _edgeHome(request, env, _url, version, shopName) {
   try {
     const page = await listActiveProducts(env.DB, { limit: 24, currency: "USD" });
     const ann = await resolveAnnouncement(env.DB, {});
+    // Featured-collections band data — active collections, newest-curated
+    // first, capped at 6. Best-effort: a band read failure degrades to no
+    // band, never blocking the cached home page. The band drops itself when
+    // the list is empty. Cache-safe: operator-curated, identical for all.
+    let collections = [];
+    try { collections = await listActiveCollections(env.DB, { limit: 6 }); }
+    catch (_e) { collections = []; }
     const html = renderHome(Object.assign({
       products:  page.rows,
+      collections: collections,
       shopName:  shopName,
       cartCount: 0,
       version:   version,

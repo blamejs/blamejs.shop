@@ -82,6 +82,25 @@ export async function listActiveProducts(DB, opts) {
   return { rows: rows };
 }
 
+// Active (non-archived) collections for the home "Featured collections"
+// band — newest-curated first (updated_at DESC, slug DESC), matching the
+// container's collections.list order so the dual-rendered band shows the
+// same collections. Returns the raw rows ({ slug, title, description, … });
+// the renderer escapes + caps to 6.
+export async function listActiveCollections(DB, opts) {
+  opts = opts || {};
+  var limit = _clampLimit(opts.limit);
+  var res = await DB
+    .prepare(
+      "SELECT slug, title, description, hero_image_url " +
+      "FROM collections WHERE archived_at IS NULL " +
+      "ORDER BY updated_at DESC, slug DESC LIMIT ?1"
+    )
+    .bind(limit)
+    .all();
+  return (res && res.results) ? res.results : [];
+}
+
 export async function getProductBySlug(DB, slug) {
   if (typeof slug !== "string" || slug.length === 0) return null;
   var row = await DB

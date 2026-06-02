@@ -147,6 +147,20 @@ async function _run() {
     check("home contains seeded product title",     home.body.indexOf("Widget Pro") !== -1);
     check("home contains product link",             home.body.indexOf("/products/widget-pro") !== -1);
     check("home renders starting price",            home.body.indexOf("$29.99") !== -1);
+    // UX-3: the dead ?sort=new / ?sort=sale links are gone from the footer.
+    check("home has no dead ?sort=new link",        home.body.indexOf("?sort=new") === -1);
+    check("home has no dead ?sort=sale link",       home.body.indexOf("?sort=sale") === -1);
+    // UX-4 conditional omission: this app is mounted WITHOUT a collections
+    // or categoryNavigation dep, so the header nav omits those links (the
+    // route-level gate). The footer's static Collections column link is a
+    // separate concern and is unaffected; assert on the nav-scoped class.
+    check("home header omits Collections nav link (no dep)",
+      home.body.indexOf("<a class=\"site-nav__link\" href=\"/collections\">") === -1);
+    check("home header omits Categories nav link (no dep)",
+      home.body.indexOf("<a class=\"site-nav__link\" href=\"/categories\">") === -1);
+    // UX-2: the mobile disclosure is present regardless of the deps.
+    check("home header carries the mobile nav disclosure",
+      home.body.indexOf("<details class=\"site-nav__menu\">") !== -1);
 
     // GET /products/widget-pro — variant SKU + price visible
     var pdp = await helpers.httpRequest({ port: handle.port, path: "/products/widget-pro", jar: jar });
@@ -286,4 +300,63 @@ async function _run() {
   }
 }
 
-module.exports = { run: _run };
+// UX-1 + UX-4 route wiring: boot the app WITH a collections dep so the
+// home "Featured collections" band resolves real collections and the
+// header renders the Collections nav link. The band links to the real
+// /collections/<slug> (not a static /search?q= tile). Uses the same app
+// harness; a minimal collections stub provides the one method the home
+// handler calls (`list`). `helpers.waitUntil` is unused here — the boot is
+// awaited and the request is synchronous round-trip; no async readiness gap.
+async function _bootAppWithCollections(catalog, cart, collections) {
+  var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-shop-l2c-"));
+  var app = await b.createApp({
+    dataDir: dataDir,
+    vault:      { mode: "plaintext" },
+    db:         { atRest: "plain", auditSigning: { mode: "plaintext" } },
+    middleware: { botGuard: false, rateLimit: false },
+    routes: function (r) {
+      r.use(b.middleware.bodyParser());
+      bShop.storefront.mount(r, { catalog: catalog, cart: cart, collections: collections });
+    },
+  });
+  var bound = await app.listen({ port: 0, host: "127.0.0.1" });
+  return { app: app, port: bound.port, dataDir: dataDir };
+}
+
+async function _runCollectionsBand() {
+  var query   = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query });
+  var cart    = bShop.cart.create({ query: query, catalog: catalog });
+  await _seedCatalog(catalog);
+
+  // Minimal collections stub — the home handler calls only `list`.
+  var collectionsDep = {
+    list: async function (_input) {
+      return [{ slug: "winter-sale", title: "Winter Sale", description: "Seasonal markdowns." }];
+    },
+    get: async function () { return null; },
+    productsIn: async function () { return { rows: [], next_cursor: null }; },
+  };
+  var handle = await _bootAppWithCollections(catalog, cart, collectionsDep);
+  try {
+    var home = await helpers.httpRequest({ port: handle.port, path: "/" });
+    check("wired home returns 200",                 home.status === 200);
+    // UX-1: the band links the real collection slug, not a /search?q= tile.
+    check("wired home band links real collection",  home.body.indexOf("href=\"/collections/winter-sale\"") !== -1);
+    check("wired home band shows the operator title", home.body.indexOf("<h3>Winter Sale</h3>") !== -1);
+    check("wired home band shows the description",    home.body.indexOf("<p>Seasonal markdowns.</p>") !== -1);
+    check("wired home dropped the static search tiles", home.body.indexOf("/search?q=tee") === -1);
+    // UX-4: with the dep wired, the header now carries the Collections link.
+    check("wired home header has Collections nav link",
+      home.body.indexOf("<a class=\"site-nav__link\" href=\"/collections\">") !== -1);
+  } finally {
+    await _teardown(handle);
+  }
+}
+
+async function run() {
+  await _run();
+  await _runCollectionsBand();
+}
+
+module.exports = { run: run };

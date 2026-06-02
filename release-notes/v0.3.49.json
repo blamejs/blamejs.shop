@@ -1,0 +1,38 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.49",
+  "date": "2026-06-02",
+  "headline": "Real collection tiles on the home page, a working mobile nav, Collections/Categories in the header, and From-price on multi-variant products",
+  "summary": "The home page's 'Featured collections' band linked to fixed keyword searches that landed on empty results unless a product happened to contain those words, the header navigation disappeared entirely on phones with no menu to replace it, and the two real catalog-browse surfaces (Collections and Categories) were reachable only from the footer. This release resolves those: the home tiles now render the store's actual collections with real links, the header gains a no-JavaScript mobile menu, and Collections and Categories appear in the primary nav. Multi-variant products now show a 'From <lowest price>' headline instead of always showing the first variant's price, the non-functional 'New arrivals'/'On sale' sort links are removed, and two small accessibility fixes land (the survey required-field marker and a dark color-scheme hint for native form controls).",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Home 'Featured collections' tiles render real collections",
+          "body": "The featured-collections band on the home page now lists the store's actual collections with links to each collection page, instead of fixed keyword searches that could land on an empty results page. If no collections are defined, the band is omitted rather than shown empty. Both the cached and dynamically rendered home pages produce identical markup."
+        },
+        {
+          "title": "Mobile navigation menu (no JavaScript required)",
+          "body": "On narrow screens the header now offers a disclosure menu that reveals the navigation links, which previously vanished entirely below a tablet width. It is a pure-CSS menu, so it works with JavaScript disabled."
+        },
+        {
+          "title": "Collections and Categories in the header navigation",
+          "body": "The two catalog-browse surfaces — Collections and Categories — are now in the primary header navigation (and inside the mobile menu), not only in the footer."
+        },
+        {
+          "title": "Multi-variant products show a 'From' price",
+          "body": "A product whose variants differ in price now shows a 'From <lowest price>' headline so the prominent price is no longer misleading when a shopper selects a different variant; each variant chip still shows its own exact price."
+        },
+        {
+          "title": "Removed non-functional sort links",
+          "body": "The 'New arrivals' and 'On sale' links did nothing — the home page does not yet support sorting — so they have been removed rather than left as dead controls. They will return if and when catalog sorting is added."
+        },
+        {
+          "title": "Accessibility: survey required marker and dark color-scheme",
+          "body": "The survey form's required-field marker is now announced correctly to screen readers, and the theme declares a dark color-scheme so native form controls, scrollbars, and autofill render correctly on the dark surface."
+        }
+      ]
+    }
+  ]
+}

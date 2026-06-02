@@ -40,8 +40,11 @@ export var CHROME_DEFAULTS = Object.freeze({
   search_submit:      "Search",
 
   nav_shop:           "Shop",
+  nav_collections:    "Collections",
+  nav_categories:     "Categories",
   nav_framework:      "Framework",
   nav_account:        "Account",
+  nav_menu:           "Menu",
   nav_cart_aria:      "Cart, {count} items",
 
   newsletter_eyebrow: "Stay in the loop",
@@ -56,8 +59,6 @@ export var CHROME_DEFAULTS = Object.freeze({
   footer_shop_all:        "All products",
   footer_shop_collections: "Collections",
   footer_shop_categories: "Categories",
-  footer_shop_new:        "New arrivals",
-  footer_shop_sale:       "On sale",
   footer_shop_compare:    "Compare",
   footer_shop_cart:       "Cart",
   footer_shop_shipping:   "Shipping & returns",

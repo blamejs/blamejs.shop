@@ -39,6 +39,10 @@
 }
 
 :root {
+  /* Paint UA-rendered surfaces (form controls, scrollbars,
+     prefers-color-scheme defaults) dark to match the dark-violet admin
+     identity. */
+  color-scheme: dark;
   /* brand violet ramp (sampled from the logo) */
   --violet:#AD38DB; --violet-light:#B247DC; --violet-deep:#732A8D;
   /* neutral near-black canvas + elevation tiers — violet is the accent,
