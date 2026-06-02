@@ -13,6 +13,8 @@
 
 var assert = require("node:assert");
 var http   = require("node:http");
+var nodeFs = require("node:fs");
+var { DatabaseSync } = require("node:sqlite");
 
 var _checks = 0;
 
@@ -51,6 +53,56 @@ async function waitUntilEqual(getter, expected, opts) {
     var actual = await getter();
     return JSON.stringify(actual) === JSON.stringify(expected);
   }, opts);
+}
+
+// ---- in-memory D1 query (layer-1 SQL fixtures) -------------------------
+//
+// A `{ rows, rowCount }` async query backed by an in-memory node:sqlite
+// database loaded from one or more real D1 migration files. The same
+// SQL the live D1 bridge sees runs here, so every CHECK / UNIQUE / FK
+// declared in the schema is exercised end-to-end and a shipped
+// statement that breaks the schema surfaces in the test, not the live
+// hop. This is the shared form catalog.test.js, catalog-batch.test.js,
+// and search-decorate-parity.test.js all use — pass the migration file
+// paths the fixture needs (e.g. `0001_catalog.sql`, `0043_collections.sql`).
+//
+// Returns `{ query, db }`: `query(sql, params)` is the catalog/primitive
+// `create({ query })` handle; `db` is the raw DatabaseSync handle for a
+// test that needs a D1-style `prepare().bind().all()` shim over the same
+// data (the edge↔container parity tests build that shim off `db`).
+
+// Split a migration file on bare `;` (outside comments) so each
+// statement runs via prepare().run() — mirrors how D1 receives
+// statements over the Worker bridge (one prepared statement at a time).
+function _splitSchema(text) {
+  var noComments = text.replace(/--[^\n]*\n/g, "\n");
+  return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
+}
+
+function memD1Query(migrationPaths) {
+  var paths = Array.isArray(migrationPaths) ? migrationPaths : [migrationPaths];
+  var db = new DatabaseSync(":memory:");
+  db.prepare("PRAGMA foreign_keys = ON").run();
+  for (var p = 0; p < paths.length; p += 1) {
+    var schema = nodeFs.readFileSync(paths[p], "utf8");
+    var stmts = _splitSchema(schema);
+    for (var i = 0; i < stmts.length; i += 1) db.prepare(stmts[i]).run();
+  }
+  function query(sql, params) {
+    var stmt = db.prepare(sql);
+    var verb = sql.replace(/^\s+|\s*--[^\n]*\n/g, "").trim().split(/\s+/)[0].toUpperCase();
+    if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
+      var info = stmt.run.apply(stmt, params || []);
+      return Promise.resolve({
+        rows:      [],
+        rowCount:  Number(info.changes),
+        lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null,
+      });
+    }
+    var rows = stmt.all.apply(stmt, params || []);
+    return Promise.resolve({ rows: rows, rowCount: rows.length });
+  }
+  return { query: query, db: db };
 }
 
 // ---- HTTP integration-test client + cookie jar -------------------------
@@ -220,6 +272,7 @@ module.exports = {
   getChecks:      getChecks,
   waitUntil:      waitUntil,
   waitUntilEqual: waitUntilEqual,
+  memD1Query:     memD1Query,
   cookieJar:      cookieJar,
   httpRequest:    httpRequest,
   sealedCookie:   sealedCookie,

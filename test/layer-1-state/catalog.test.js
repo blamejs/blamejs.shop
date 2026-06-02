@@ -23,9 +23,7 @@
  *   - FK cascade on variant delete
  */
 
-var nodeFs   = require("node:fs");
 var nodePath = require("node:path");
-var { DatabaseSync } = require("node:sqlite");
 
 var bShop   = require("../../lib");
 var helpers = require("../helpers");
@@ -34,37 +32,12 @@ var assert  = helpers.assert;
 
 var MIGRATION_PATH = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0001_catalog.sql");
 
-// Split the migration file on bare `;` (outside comments) and run each
-// statement via prepare().run(). Avoids relying on the multi-statement
-// runner so the test mirrors how D1 receives statements over the
-// Worker bridge (one prepared statement at a time).
-function _splitSchema(text) {
-  var noComments = text.replace(/--[^\n]*\n/g, "\n");
-  return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
-}
-
+// In-memory node:sqlite query loaded from the live D1 migration, the
+// shared `helpers.memD1Query` form (so this test and the batched-read
+// tests exercise the same fixture). Returns the `{ rows, rowCount }`
+// async query the catalog `create({ query })` factory binds.
 function _makeQuery() {
-  var db = new DatabaseSync(":memory:");
-  db.prepare("PRAGMA foreign_keys = ON").run();
-  var schema = nodeFs.readFileSync(MIGRATION_PATH, "utf8");
-  var stmts = _splitSchema(schema);
-  for (var i = 0; i < stmts.length; i += 1) {
-    db.prepare(stmts[i]).run();
-  }
-  return async function (sql, params) {
-    var stmt = db.prepare(sql);
-    var verb = sql.replace(/^\s+|\s*--[^\n]*\n/g, "").trim().split(/\s+/)[0].toUpperCase();
-    if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
-      var info = stmt.run.apply(stmt, params || []);
-      return {
-        rows:      [],
-        rowCount:  Number(info.changes),
-        lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null,
-      };
-    }
-    var rows = stmt.all.apply(stmt, params || []);
-    return { rows: rows, rowCount: rows.length };
-  };
+  return helpers.memD1Query(MIGRATION_PATH).query;
 }
 
 async function _products() {
