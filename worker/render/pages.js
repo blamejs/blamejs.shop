@@ -14,11 +14,12 @@
 // substrates render the same body byte-for-byte so the page reads the
 // same whether it's served from the edge or the container.
 import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, spliceRaw } from "./_lib.js";
+import { dirFor, alternateLinks } from "./chrome-i18n.js";
 import b from "../b.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
-  "<html lang=\"en\">\n" +
+  "<html lang=\"{{lang}}\" dir=\"{{dir}}\">\n" +
   "<head>\n" +
   "  <meta charset=\"utf-8\">\n" +
   "  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n" +
@@ -26,9 +27,11 @@ var LAYOUT =
   "  <meta name=\"description\" content=\"{{description}}\">\n" +
   "  RAW_META_KEYWORDS" +
   "  <link rel=\"canonical\" href=\"{{canonical_url}}\">\n" +
+  "RAW_HREFLANG" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
   "  <link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/favicon.png\">\n" +
   "  <link rel=\"apple-touch-icon\" href=\"/assets/brand/favicon.png\">\n" +
+  "  <link rel=\"manifest\" href=\"/manifest.webmanifest\">\n" +
   "  <meta name=\"theme-color\" content=\"#08080a\">\n" +
   "  <link rel=\"stylesheet\" href=\"{{theme_css}}\"RAW_CSS_INTEGRITY>\n" +
   "  <meta name=\"robots\" content=\"index, follow\">\n" +
@@ -292,6 +295,9 @@ export function renderStorefrontPage(opts) {
     ? "<meta name=\"keywords\" content=\"" + b.template.escapeHtml(String(page.meta_keywords)) + "\">\n"
     : "";
   var bodyHtml = _renderMarkdown(page.body || "");
+  // The edge serves the storefront's DEFAULT locale; `<html lang/dir>`
+  // localizes to it (the page chrome stays English literals).
+  var locale   = opts.locale || opts.defaultLocale || "en";
 
   var assembled = renderTemplate(LAYOUT, {
     title:            title,
@@ -301,6 +307,8 @@ export function renderStorefrontPage(opts) {
     shop_name_footer: shopName,
     description:      metaDesc,
     theme_css:        themeCss,
+    lang:             locale,
+    dir:              dirFor(locale),
     eyebrow:          "Information",
     layout:           _layoutClass(page.layout),
     updated:          _isoDate(page.updated_at != null ? Number(page.updated_at) : null),
@@ -316,6 +324,13 @@ export function renderStorefrontPage(opts) {
   // remaining placeholders below carry only framework-fixed literals (SRI
   // digests, island `<script>` tags), so they stay plain `.replace`.
   assembled = spliceRaw(assembled, "RAW_META_KEYWORDS", metaKeywords);
+  assembled = spliceRaw(assembled, "RAW_HREFLANG", alternateLinks({
+    host:             opts.host,
+    path:             opts.path,
+    defaultLocale:    opts.defaultLocale || "en",
+    supportedLocales: opts.supportedLocales,
+    strategy:         opts.localeStrategy,
+  }));
   assembled = spliceRaw(assembled, "RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null));
   assembled = assembled
     .replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))

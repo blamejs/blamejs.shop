@@ -1,5 +1,5 @@
 import { renderTemplate, escapeHtml, escapeAttr, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw, absoluteBase, absolutizeOgImage } from "./_lib.js";
-import { resolveChrome, dirFor, localizeLayout } from "./chrome-i18n.js";
+import { resolveChrome, dirFor, localizeLayout, alternateLinks } from "./chrome-i18n.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
@@ -10,9 +10,11 @@ var LAYOUT =
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{og_description}}\">\n" +
   "  <link rel=\"canonical\" href=\"{{canonical_url}}\">\n" +
+  "RAW_HREFLANG" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
   "  <link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/favicon.png\">\n" +
   "  <link rel=\"apple-touch-icon\" href=\"/assets/brand/favicon.png\">\n" +
+  "  <link rel=\"manifest\" href=\"/manifest.webmanifest\">\n" +
   "  <meta name=\"theme-color\" content=\"#08080a\">\n" +
   "  <link rel=\"stylesheet\" href=\"{{theme_css}}\"RAW_CSS_INTEGRITY>\n" +
   "  <meta property=\"og:type\" content=\"{{og_type}}\">\n" +
@@ -583,6 +585,46 @@ function _buildProductQa(questions, ctaHtml) {
          "</section>";
 }
 
+// QAPage JSON-LD from the PDP's published Q&A threads — the byte-identical
+// twin of the container's `lib/storefront.js#_buildQaPageJsonLd` (a parity
+// test pins the two). Emitted only when at least one question has at least
+// one answer (Google rejects a QAPage Question with neither an
+// `acceptedAnswer` nor a `suggestedAnswer`). The first answer is the
+// `acceptedAnswer`; the rest are `suggestedAnswer`. `q.body` / `a.body` are
+// operator/customer free text — `jsonLdScript` JSON.stringify's them
+// (neutralizing quotes + the `</script` breakout), so they are NOT
+// additionally HTML-escaped (JSON-LD is not HTML, per the jsonLdScript
+// contract). Returns "" when nothing is rich-result-eligible.
+function _buildQaPageJsonLd(questions) {
+  questions = questions || [];
+  var mainEntity = [];
+  for (var i = 0; i < questions.length; i += 1) {
+    var q = questions[i];
+    var answers = (q && q.answers) || [];
+    if (answers.length === 0) continue;
+    var question = {
+      "@type":       "Question",
+      "name":        String(q.body),
+      "answerCount": answers.length,
+      "acceptedAnswer": { "@type": "Answer", "text": String(answers[0].body) },
+    };
+    if (answers.length > 1) {
+      var suggested = [];
+      for (var j = 1; j < answers.length; j += 1) {
+        suggested.push({ "@type": "Answer", "text": String(answers[j].body) });
+      }
+      question.suggestedAnswer = suggested;
+    }
+    mainEntity.push(question);
+  }
+  if (mainEntity.length === 0) return "";
+  return jsonLdScript({
+    "@context":   "https://schema.org",
+    "@type":      "QAPage",
+    "mainEntity": mainEntity,
+  });
+}
+
 // Builds the PDP "Bundle & save" rail. `offers` carry pre-formatted
 // price strings (the edge renderer formats the minor-unit figures from
 // `worker/data/catalog.js#getBundlesForProduct` before calling this) so
@@ -717,6 +759,13 @@ function _wrap(opts) {
     canonical_url:  canonicalUrl,
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(opts.themeCss))
+    .replace("RAW_HREFLANG", alternateLinks({
+      host:             opts.host,
+      path:             opts.path,
+      defaultLocale:    opts.defaultLocale || "en",
+      supportedLocales: opts.supportedLocales,
+      strategy:         opts.localeStrategy,
+    }))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
     .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "")
@@ -1149,7 +1198,10 @@ export function renderProduct(opts) {
       { "@type": "ListItem", "position": 2, "name": product.title, "item": absBase + "/products/" + product.slug },
     ],
   });
-  jsonLd = (jsonLd || "") + breadcrumbJsonLd;
+  // QAPage JSON-LD from the published Q&A (empty string when no question is
+  // answered — Google rejects an answerless QAPage). Mirrors the container.
+  var qaPageJsonLd = _buildQaPageJsonLd(qaQuestions);
+  jsonLd = (jsonLd || "") + breadcrumbJsonLd + qaPageJsonLd;
 
   return _wrap({
     title:         product.title,
@@ -1166,6 +1218,10 @@ export function renderProduct(opts) {
     locale:           opts.locale,
     defaultLocale:    opts.defaultLocale,
     chromeOverrides:  opts.chromeOverrides,
+    host:             opts.host,
+    path:             opts.path,
+    supportedLocales: opts.supportedLocales,
+    localeStrategy:   opts.localeStrategy,
     body:          body + (jsonLd || ""),
     announcement:        opts.announcement,
     currencyOptions:     opts.currencyOptions,

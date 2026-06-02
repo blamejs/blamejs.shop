@@ -539,7 +539,7 @@ async function main() {
             locales:       supportedLocales,
             overrides:     chromeOverrides,
           }),
-          localeOptions: { defaultLocale: defaultLocale, locales: localeList },
+          localeOptions: { defaultLocale: defaultLocale, locales: localeList, strategy: activePolicy.strategy },
         };
       }
     } catch (_e) { /* no locale policy / unmigrated table — English baseline */ }
@@ -1158,6 +1158,25 @@ async function main() {
       // it's published.
       var storefrontPages = (catalog && cart) ? bShop.storefrontPages.create({}) : null;
 
+      // robots.txt crawl policy — operator-defined per-bot Allow / Disallow
+      // stanzas + sitemap declarations, served on the public /robots.txt
+      // route. Absent any defined rules the storefront keeps its hardcoded
+      // Disallow set (the route falls back), so a fresh deploy still ships a
+      // safe robots.txt.
+      var robotsConfig = (catalog && cart) ? bShop.robotsConfig.create({}) : null;
+
+      // PWA manifest + service worker — the operator override for the
+      // installable-app chrome served at /manifest.webmanifest + /sw.js.
+      // Absent an active row the storefront serves a shipped default (the
+      // route falls back), so the `<link rel="manifest">` in every layout
+      // never 404s. Cursor secret derived like the other paginated lists.
+      var pwaManifestCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("pwa-manifest-cursor", process.env.D1_BRIDGE_SECRET)
+        : "pwa-manifest-cursor-secret-dev-only";
+      var pwaManifest = (catalog && cart)
+        ? bShop.pwaManifest.create({ cursorSecret: pwaManifestCursorSecret })
+        : null;
+
       // Business hours — operator-defined open/close schedules surfaced on a
       // public /hours page (week grid + live open/closed) and managed from
       // the admin console. Timezone-aware; holidays + one-off exceptions
@@ -1628,6 +1647,16 @@ async function main() {
         if (customerSurveys) sfDeps.customerSurveys = customerSurveys;
         // Knowledge base — the public /help reader (index + article + vote).
         if (knowledgeBase) sfDeps.knowledgeBase = knowledgeBase;
+        // Storefront CMS pages — the sitemap reads published page slugs from
+        // here (the /pages/:slug render is edge-served). Without this dep the
+        // sitemap simply omits CMS pages.
+        if (storefrontPages) sfDeps.storefrontPages = storefrontPages;
+        // robots.txt crawl policy — drives /robots.txt when the operator has
+        // defined per-bot rules (else the route keeps its hardcoded Disallow
+        // set). pwaManifest — the operator override for /manifest.webmanifest
+        // + /sw.js (else the route serves the shipped default).
+        if (robotsConfig) sfDeps.robotsConfig = robotsConfig;
+        if (pwaManifest) sfDeps.pwaManifest = pwaManifest;
         // Business hours — the public /hours page.
         if (businessHours) sfDeps.businessHours = businessHours;
         // Bundles + quantity discounts — the PDP "Bundle & save" rail +

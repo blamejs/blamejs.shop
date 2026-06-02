@@ -1,5 +1,5 @@
 import { renderTemplate, escapeHtml, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw, absolutizeOgImage } from "./_lib.js";
-import { resolveChrome, dirFor, localizeLayout } from "./chrome-i18n.js";
+import { resolveChrome, dirFor, localizeLayout, alternateLinks } from "./chrome-i18n.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
@@ -10,9 +10,11 @@ var LAYOUT =
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{og_description}}\">\n" +
   "  <link rel=\"canonical\" href=\"{{canonical_url}}\">\n" +
+  "RAW_HREFLANG" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
   "  <link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/favicon.png\">\n" +
   "  <link rel=\"apple-touch-icon\" href=\"/assets/brand/favicon.png\">\n" +
+  "  <link rel=\"manifest\" href=\"/manifest.webmanifest\">\n" +
   "  <meta name=\"theme-color\" content=\"#08080a\">\n" +
   "  <link rel=\"stylesheet\" href=\"{{theme_css}}\"RAW_CSS_INTEGRITY>\n" +
   "  <meta property=\"og:type\" content=\"{{og_type}}\">\n" +
@@ -431,6 +433,13 @@ function _wrap(opts) {
     canonical_url:  canonicalUrl,
     body:           "RAW_BODY_PLACEHOLDER",
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
+    .replace("RAW_HREFLANG", alternateLinks({
+      host:             opts.host,
+      path:             opts.path,
+      defaultLocale:    opts.default_locale || "en",
+      supportedLocales: opts.supported_locales,
+      strategy:         opts.locale_strategy,
+    }))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
     .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "")
@@ -558,6 +567,10 @@ export function renderHome(opts) {
     locale:         opts.locale,
     default_locale: opts.defaultLocale,
     chrome_overrides: opts.chromeOverrides,
+    host:              opts.host,
+    path:              opts.path,
+    supported_locales: opts.supportedLocales,
+    locale_strategy:   opts.localeStrategy,
     currency_options:     opts.currencyOptions,
     currency_selected:    opts.currencySelected,
     currency_note:        opts.currencyNote,

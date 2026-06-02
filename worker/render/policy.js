@@ -2,20 +2,23 @@
 // layout that doesn't carry the storefront hero / marquee / catalog
 // chrome — these are read-once legal docs, not a commerce surface.
 import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, spliceRaw } from "./_lib.js";
+import { dirFor, alternateLinks } from "./chrome-i18n.js";
 import b from "../b.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
-  "<html lang=\"en\">\n" +
+  "<html lang=\"{{lang}}\" dir=\"{{dir}}\">\n" +
   "<head>\n" +
   "  <meta charset=\"utf-8\">\n" +
   "  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n" +
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{description}}\">\n" +
   "  <link rel=\"canonical\" href=\"{{canonical_url}}\">\n" +
+  "RAW_HREFLANG" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
   "  <link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/favicon.png\">\n" +
   "  <link rel=\"apple-touch-icon\" href=\"/assets/brand/favicon.png\">\n" +
+  "  <link rel=\"manifest\" href=\"/manifest.webmanifest\">\n" +
   "  <meta name=\"theme-color\" content=\"#08080a\">\n" +
   "  <link rel=\"stylesheet\" href=\"{{theme_css}}\"RAW_CSS_INTEGRITY>\n" +
   "  <meta name=\"robots\" content=\"index, follow\">\n" +
@@ -75,6 +78,9 @@ var LAYOUT =
 function _wrap(opts, bodyHtml) {
   var shopName = opts.shopName || "blamejs.shop";
   var themeCss = opts.themeCss  || assetUrl("css/main.css");
+  // The edge serves the storefront's DEFAULT locale; `<html lang/dir>`
+  // localizes to it (the legal-page copy stays English literals).
+  var locale = opts.locale || opts.defaultLocale || "en";
   var assembled = renderTemplate(LAYOUT, {
     title:            opts.title,
     title_h1:         opts.title,
@@ -82,12 +88,21 @@ function _wrap(opts, bodyHtml) {
     shop_name_footer: shopName,
     description:      opts.description,
     theme_css:        themeCss,
+    lang:             locale,
+    dir:              dirFor(locale),
     eyebrow:          opts.eyebrow,
     lede:             opts.lede,
     updated:          opts.updated,
     canonical_url:    opts.canonicalUrl || "",
     year:             String(new Date().getUTCFullYear()),
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
+    .replace("RAW_HREFLANG", alternateLinks({
+      host:             opts.host,
+      path:             opts.path,
+      defaultLocale:    opts.defaultLocale || "en",
+      supportedLocales: opts.supportedLocales,
+      strategy:         opts.localeStrategy,
+    }))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
     .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "");
@@ -136,6 +151,12 @@ export function renderPrivacy(opts) {
     themeCss:    opts.themeCss,
     version:     opts.version,
     canonicalUrl: opts.canonicalUrl,
+    locale:           opts.locale,
+    defaultLocale:    opts.defaultLocale,
+    host:             opts.host,
+    path:             opts.path,
+    supportedLocales: opts.supportedLocales,
+    localeStrategy:   opts.localeStrategy,
   }, PRIVACY_BODY);
 }
 
@@ -151,6 +172,12 @@ export function renderTerms(opts) {
     themeCss:    opts.themeCss,
     version:     opts.version,
     canonicalUrl: opts.canonicalUrl,
+    locale:           opts.locale,
+    defaultLocale:    opts.defaultLocale,
+    host:             opts.host,
+    path:             opts.path,
+    supportedLocales: opts.supportedLocales,
+    localeStrategy:   opts.localeStrategy,
   }, TERMS_BODY);
 }
 

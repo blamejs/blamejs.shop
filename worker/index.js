@@ -20,7 +20,7 @@ import { renderSitemap } from "./render/sitemap.js";
 import { renderBlogList, renderBlogArticle } from "./render/blog.js";
 import { renderStorefrontPage } from "./render/pages.js";
 import { renderCart } from "./render/cart.js";
-import { minifyHtml as _minify, assetUrl as _assetUrl } from "./render/_lib.js";
+import { minifyHtml as _minify, assetUrl as _assetUrl, PWA_DEFAULT_MANIFEST, PWA_DEFAULT_SW } from "./render/_lib.js";
 import {
   listActiveProducts,
   listActiveCollections,
@@ -37,6 +37,9 @@ import {
   getWishlistCount,
   recentBlogArticles,
   listActiveProductSlugs,
+  listActiveCollectionSlugs,
+  listActiveCategorySlugs,
+  listPublishedPageSlugs,
   listPublishedBlogSlugs,
   listBlogArticles,
   getBlogArticleBySlug,
@@ -410,11 +413,18 @@ export default {
     //     noisy). An R2-uploaded robots.txt under <ASSET_PREFIX>
     //     would have already won above; this only catches the bare
     //     `/robots.txt` request when no asset overrides it. The
-    //     response is intentionally minimal — operators who want a
-    //     richer policy upload one into R2.
+    //     Disallow set matches the container's robots.txt so the edge
+    //     and container agree on which session/operator routes stay
+    //     out of the crawl. Operators who want a richer per-bot policy
+    //     define rules via robotsConfig (served by the container) or
+    //     upload a robots.txt into R2.
     if (pathname === "/robots.txt" && (request.method === "GET" || request.method === "HEAD")) {
+      const robotsOrigin = url.origin;
       return new Response(
-        "User-agent: *\nAllow: /\nSitemap: https://blamejs.shop/sitemap.xml\n",
+        "User-agent: *\nAllow: /\n" +
+        "Disallow: /admin\nDisallow: /cart\nDisallow: /checkout\n" +
+        "Disallow: /pay/\nDisallow: /orders/\nDisallow: /account\n" +
+        "Sitemap: " + robotsOrigin + "/sitemap.xml\n",
         {
           status:  200,
           headers: {
@@ -431,18 +441,18 @@ export default {
     //     content only changes on a code push.
     if ((request.method === "GET" || request.method === "HEAD")) {
       if (pathname === "/privacy") {
-        return _staticHtml(renderPrivacy({
+        return _staticHtml(renderPrivacy(Object.assign({
           shopName: env.SHOP_NAME    || "blamejs.shop",
           version:  env.WORKER_VERSION || "0.0.0",
           canonicalUrl: url.origin + url.pathname,
-        }), request.method, env, request);
+        }, _localeRenderOpts(env, url))), request.method, env, request);
       }
       if (pathname === "/terms") {
-        return _staticHtml(renderTerms({
+        return _staticHtml(renderTerms(Object.assign({
           shopName: env.SHOP_NAME    || "blamejs.shop",
           version:  env.WORKER_VERSION || "0.0.0",
           canonicalUrl: url.origin + url.pathname,
-        }), request.method, env, request);
+        }, _localeRenderOpts(env, url))), request.method, env, request);
       }
       if (pathname === "/SECURITY.md") {
         return Response.redirect("https://github.com/blamejs/blamejs.shop/blob/main/SECURITY.md", 302);
@@ -452,15 +462,24 @@ export default {
       }
       if (pathname === "/sitemap.xml") {
         try {
-          const [products, blogPosts] = await Promise.all([
+          // Each read is independently missing-table-resilient at the data
+          // layer (an unmigrated table → empty rows), so a partial schema
+          // drops those URLs rather than 503-ing the whole sitemap.
+          const [products, collections, categories, pages, blogPosts] = await Promise.all([
             listActiveProductSlugs(env.DB),
+            listActiveCollectionSlugs(env.DB),
+            listActiveCategorySlugs(env.DB),
+            listPublishedPageSlugs(env.DB),
             listPublishedBlogSlugs(env.DB),
           ]);
           const origin = b.safeUrl.parse(env.D1_BRIDGE_URL || "https://blamejs.shop").href.replace(/\/$/, "");
           const xml = renderSitemap({
-            origin:    origin,
-            products:  products.rows,
-            blogPosts: blogPosts.rows,
+            origin:      origin,
+            products:    products.rows,
+            collections: collections.rows,
+            categories:  categories.rows,
+            pages:       pages.rows,
+            blogPosts:   blogPosts.rows,
           });
           return new Response(xml, {
             status:  200,
@@ -480,6 +499,50 @@ export default {
             }),
           });
         }
+      }
+      if (pathname === "/manifest.webmanifest") {
+        // The edge serves the SHIPPED DEFAULT manifest — byte-identical to
+        // the container's default fallback (a parity test pins them). The
+        // edge can't read the DB-backed pwaManifest override; an operator
+        // customization rides the container render path. This keeps the
+        // `<link rel="manifest">` in every cached layout from 404-ing.
+        if (request.method === "HEAD") {
+          return new Response(null, {
+            status:  200,
+            headers: _withSecurityHeaders({
+              "content-type":  "application/manifest+json; charset=utf-8",
+              "cache-control": "public, max-age=3600",
+            }),
+          });
+        }
+        return new Response(PWA_DEFAULT_MANIFEST, {
+          status:  200,
+          headers: _withSecurityHeaders({
+            "content-type":  "application/manifest+json; charset=utf-8",
+            "cache-control": "public, max-age=3600",
+          }),
+        });
+      }
+      if (pathname === "/sw.js") {
+        // The shipped default service worker (pass-through navigation
+        // fallback) — byte-identical to the container default. Served
+        // same-origin under the strict `script-src 'self'` CSP.
+        if (request.method === "HEAD") {
+          return new Response(null, {
+            status:  200,
+            headers: _withSecurityHeaders({
+              "content-type":  "text/javascript; charset=utf-8",
+              "cache-control": "public, max-age=3600",
+            }),
+          });
+        }
+        return new Response(PWA_DEFAULT_SW, {
+          status:  200,
+          headers: _withSecurityHeaders({
+            "content-type":  "text/javascript; charset=utf-8",
+            "cache-control": "public, max-age=3600",
+          }),
+        });
       }
       if (pathname === "/.well-known/security.txt") {
         // RFC 9116 §2.5 — every line ends with CRLF; the Expires
@@ -1024,9 +1087,9 @@ async function _edgeCartEmpty(request, env, version, shopName) {
     // /cart is a session-bound surface even when the guest cart is
     // empty — crawlers indexing it dilute search results with
     // empty-state pages and produce stale "Your cart is empty"
-    // snippets in SERPs. The robots-tag header tells well-behaved
-    // crawlers to skip indexing; robots.txt also Disallows the
-    // route as belt-and-suspenders.
+    // snippets in SERPs. The `x-robots-tag: noindex,nofollow` header
+    // set below is the indexing defense; the edge + container
+    // robots.txt also `Disallow: /cart` to match.
     const headers = _withSecurityHeaders({
       "content-type":  "text/html; charset=utf-8",
       "cache-control": "no-store",
@@ -1065,7 +1128,7 @@ async function _edgeBlogList(request, env, _url, version, shopName) {
     const result  = await listBlogArticles(env.DB, { limit: BLOG_PAGE_SIZE + 1, offset: offset });
     const hasNext = result.rows.length > BLOG_PAGE_SIZE;
     const rows    = hasNext ? result.rows.slice(0, BLOG_PAGE_SIZE) : result.rows;
-    const html = renderBlogList({
+    const html = renderBlogList(Object.assign({
       articles: rows,
       shopName: shopName,
       version:  version,
@@ -1073,7 +1136,7 @@ async function _edgeBlogList(request, env, _url, version, shopName) {
       hasNext:  hasNext,
       canonicalUrl: _url.origin + _url.pathname,
       announcement: await resolveAnnouncement(env.DB, {}),
-    });
+    }, _localeRenderOpts(env, _url)));
     return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/blog", e, request, env, version, shopName);
@@ -1097,13 +1160,13 @@ async function _edgeBlogArticle(request, env, _url, version, shopName, slug) {
         }),
       });
     }
-    const html = renderBlogArticle({
+    const html = renderBlogArticle(Object.assign({
       article:  article,
       shopName: shopName,
       version:  version,
       canonicalUrl: _url.origin + _url.pathname,
       announcement: await resolveAnnouncement(env.DB, {}),
-    });
+    }, _localeRenderOpts(env, _url)));
     return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/blog/:slug", e, request, env, version, shopName);
@@ -1134,13 +1197,13 @@ async function _edgePage(request, env, _url, version, shopName, slug) {
         }),
       });
     }
-    const html = renderStorefrontPage({
+    const html = renderStorefrontPage(Object.assign({
       page:     page,
       shopName: shopName,
       version:  version,
       canonicalUrl: _url.origin + _url.pathname,
       announcement: await resolveAnnouncement(env.DB, {}),
-    });
+    }, _localeRenderOpts(env, _url)));
     return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/pages/:slug", e, request, env, version, shopName);
@@ -1188,6 +1251,26 @@ function _canonicalRenderOpts(url) {
   };
 }
 
+// Locale render opts for the edge `<html lang/dir>` localization + the
+// hreflang alternates. The edge serves the storefront's DEFAULT locale
+// only, so `defaultLocale` drives `<html lang>`; hreflang is emitted only
+// for a URL-shaped policy (`SHOP_LOCALE_STRATEGY` = url_prefix / subdomain)
+// with a supported list of two or more locales. `host` + `path` come from
+// the live request URL so the alternates carry the host the visitor
+// reached. A non-URL strategy / single-locale store yields no hreflang
+// (the renderers' `alternateLinks` returns "" for those inputs).
+function _localeRenderOpts(env, url) {
+  var supported = String((env && env.SHOP_LOCALES) || "")
+    .split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  return {
+    defaultLocale:    (env && env.SHOP_DEFAULT_LOCALE) || "en",
+    supportedLocales: supported,
+    localeStrategy:   (env && env.SHOP_LOCALE_STRATEGY) || null,
+    host:             (url && typeof url.host === "string") ? url.host : null,
+    path:             (url && typeof url.pathname === "string") ? url.pathname : null,
+  };
+}
+
 async function _edgeHome(request, env, _url, version, shopName) {
   try {
     const page = await listActiveProducts(env.DB, { limit: 24, currency: "USD" });
@@ -1209,7 +1292,7 @@ async function _edgeHome(request, env, _url, version, shopName) {
       // The edge serves the storefront's default locale; any explicit
       // locale choice bypasses the edge to the container.
       defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
-    }, _canonicalRenderOpts(_url), _currencyRenderOpts(env, _url)));
+    }, _localeRenderOpts(env, _url), _canonicalRenderOpts(_url), _currencyRenderOpts(env, _url)));
     return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/", e, request, env, version, shopName);
@@ -1336,7 +1419,7 @@ async function _edgeSearch(request, env, url, version, shopName) {
       version:        version,
       defaultLocale:  env.SHOP_DEFAULT_LOCALE || "en",
       announcement:   await resolveAnnouncement(env.DB, {}),
-    }, _canonicalRenderOpts(url), _currencyRenderOpts(env, url)));
+    }, _localeRenderOpts(env, url), _canonicalRenderOpts(url), _currencyRenderOpts(env, url)));
     return _html(html, request.method, env);
   } catch (e) {
     return _edgeError("/search", e, request, env, version, shopName);
@@ -1458,7 +1541,7 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
       cartCount:     0,
       version:       version,
       defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
-    }, _canonicalRenderOpts(url), _currencyRenderOpts(env, url)));
+    }, _localeRenderOpts(env, url), _canonicalRenderOpts(url), _currencyRenderOpts(env, url)));
     // Hero-image preload — the PDP's LCP element is almost always the
     // first media row's image. Preloading it via Link rel=preload
     // tells Cloudflare's Early Hints to include the asset URL in the
