@@ -42,8 +42,8 @@
       "fingerprinted": "js/pay.e174b69ddffbbfe4.js"
     },
     "js/paypal-checkout.js": {
-      "integrity": "sha384-jgpqYd3IojRZ3DkHjlo0QMsnYXBK6EOV7+c4ciny2Kd3fzDtIfcxwDberx5P63FJ",
-      "fingerprinted": "js/paypal-checkout.dabb9e1314891654.js"
+      "integrity": "sha384-LI6y/1z0Y9F8Kx8RhW4EwY2WqJPXLwJozCXqnhDT+dTckLHyvhly0SsRpH0bsdui",
+      "fingerprinted": "js/paypal-checkout.b05ab5572cc3728f.js"
     }
   }
 }

@@ -205,7 +205,7 @@ async function _http() {
     var cartResp = await httpRequest({ port: port, path: "/cart", headers: _hdr() });
     var cartCsp = cartResp.headers["content-security-policy"] || "";
     check("(d) NON-pay /cart response carries the STRICT default (no js.stripe.com)",
-      cartCsp.length > 0 && cartCsp.indexOf("https://js.stripe.com") === -1);
+      cartCsp.length > 0 && !/js\.stripe\.com/.test(cartCsp));
     check("(d) NON-pay /cart response keeps require-trusted-types-for 'script'",
       cartCsp.indexOf("require-trusted-types-for 'script'") !== -1);
     check("(d) NON-pay /cart script-src is bare 'self' (global CSP NOT weakened)",

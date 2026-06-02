@@ -40,7 +40,7 @@
       return fetch("/checkout/paypal/create", {
         method: "POST", credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(vals()),
+        body: JSON.stringify(Object.assign({}, vals(), { captcha_token: window.__captchaToken ? window.__captchaToken() : "" })),
       }).then(function (r) { return r.json(); }).then(function (d) {
         if (!d.id) { throw new Error(d.error || "create failed"); }
         return d.id;
