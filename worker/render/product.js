@@ -50,8 +50,21 @@ var LAYOUT =
   "        </div>\n" +
   "      </form>\n" +
   "      <nav class=\"site-nav\" aria-label=\"Primary\">\n" +
-  "        <a class=\"site-nav__link\" href=\"/\">{{nav_shop}}</a>\n" +
-  "        <a class=\"site-nav__link\" href=\"/#framework\">{{nav_framework}}</a>\n" +
+  "        <div class=\"site-nav__links\">\n" +
+  "          <a class=\"site-nav__link\" href=\"/\">{{nav_shop}}</a>\n" +
+  "          <a class=\"site-nav__link\" href=\"/collections\">{{nav_collections}}</a>\n" +
+  "          <a class=\"site-nav__link\" href=\"/categories\">{{nav_categories}}</a>\n" +
+  "          <a class=\"site-nav__link\" href=\"/#framework\">{{nav_framework}}</a>\n" +
+  "        </div>\n" +
+  "        <details class=\"site-nav__menu\">\n" +
+  "          <summary class=\"site-nav__menu-toggle\" aria-label=\"{{nav_menu}}\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" aria-hidden=\"true\"><path d=\"M4 7h16M4 12h16M4 17h16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\"/></svg><span class=\"site-nav__menu-label\">{{nav_menu}}</span></summary>\n" +
+  "          <div class=\"site-nav__drawer\">\n" +
+  "            <a class=\"site-nav__link\" href=\"/\">{{nav_shop}}</a>\n" +
+  "            <a class=\"site-nav__link\" href=\"/collections\">{{nav_collections}}</a>\n" +
+  "            <a class=\"site-nav__link\" href=\"/categories\">{{nav_categories}}</a>\n" +
+  "            <a class=\"site-nav__link\" href=\"/#framework\">{{nav_framework}}</a>\n" +
+  "          </div>\n" +
+  "        </details>\n" +
   "        <a class=\"site-nav__icon\" href=\"/account\" aria-label=\"{{nav_account}}\"><svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" aria-hidden=\"true\"><path d=\"M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\"/></svg></a>\n" +
   "        <a class=\"cart-pill\" href=\"/cart\" aria-label=\"{{nav_cart_aria}}\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path d=\"M3 4h2l2.4 12.1a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 1.95-1.55L21 8H6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><circle cx=\"10\" cy=\"21\" r=\"1.4\" fill=\"currentColor\"/><circle cx=\"17\" cy=\"21\" r=\"1.4\" fill=\"currentColor\"/></svg><span class=\"cart-pill__count\">{{cart_count}}</span></a>\n" +
   "      </nav>\n" +
@@ -92,8 +105,6 @@ var LAYOUT =
   "          <li><a href=\"/\">{{footer_shop_all}}</a></li>\n" +
   "          <li><a href=\"/collections\">{{footer_shop_collections}}</a></li>\n" +
   "          <li><a href=\"/categories\">{{footer_shop_categories}}</a></li>\n" +
-  "          <li><a href=\"/?sort=new\">{{footer_shop_new}}</a></li>\n" +
-  "          <li><a href=\"/?sort=sale\">{{footer_shop_sale}}</a></li>\n" +
   "          <li><a href=\"/compare\">{{footer_shop_compare}}</a></li>\n" +
   "          <li><a href=\"/cart\">{{footer_shop_cart}}</a></li>\n" +
   "          <li><a href=\"/terms\">{{footer_shop_shipping}}</a></li>\n" +
@@ -167,7 +178,36 @@ var VARIANT_ROW =
 // (lib/storefront.js#_buildBuyBox) byte-for-byte.
 var BUYBOX_CHIP_LIMIT = 12;
 
-function _buildBuyBox(variants, escAttr, availability) {
+// Compute the PDP buy-box headline price string — edge mirror of
+// lib/storefront.js#_buildHeadlinePrice. Multi-variant products with >1
+// distinct price read "From <lowest>" (min over integer amount_minor,
+// formatted once via `fmt`); single-variant / no-price / all-equal-price
+// keep the lead variant's exact formatted price. Byte-identical to the
+// container.
+function _buildHeadlinePrice(rendered, variants, prices, fmt) {
+  var leadPrice = (rendered[0] && rendered[0].price) || "—";
+  if (!Array.isArray(rendered) || rendered.length <= 1) return leadPrice;
+  var lowMinor = null;
+  var lowCurrency = null;
+  for (var i = 0; i < variants.length; i += 1) {
+    var p = prices && prices[variants[i].id];
+    if (!p || !Number.isInteger(p.amount_minor)) continue;
+    if (lowMinor === null || p.amount_minor < lowMinor) {
+      lowMinor = p.amount_minor;
+      lowCurrency = p.currency || "USD";
+    }
+  }
+  if (lowMinor === null) return leadPrice;
+  var allEqual = true;
+  for (var j = 0; j < variants.length; j += 1) {
+    var pj = prices && prices[variants[j].id];
+    if (pj && Number.isInteger(pj.amount_minor) && pj.amount_minor !== lowMinor) { allEqual = false; break; }
+  }
+  if (allEqual) return leadPrice;
+  return "From " + fmt(lowMinor, lowCurrency);
+}
+
+function _buildBuyBox(variants, escAttr, availability, headlinePrice) {
   var inStock = !availability || availability.in_stock !== false;
   if (!variants || variants.length === 0) {
     return "<div class=\"pdp__variants\">\n" +
@@ -243,8 +283,9 @@ function _buildBuyBox(variants, escAttr, availability) {
     ? "<button type=\"submit\" class=\"btn-primary cart-page__checkout\">$ add to cart</button>"
     : soldOutBtn;
 
+  var headline = (headlinePrice != null && headlinePrice !== "") ? headlinePrice : lead.price;
   return "<div class=\"pdp__buybox\">\n" +
-         "        <p class=\"featured-product__price\">" + escAttr(lead.price) + "</p>\n" +
+         "        <p class=\"featured-product__price\">" + escAttr(headline) + "</p>\n" +
          "        <form method=\"post\" action=\"/cart/lines\">\n" +
          "          " + variantBlock + "\n" +
          "          <label class=\"pdp__variants-title\" for=\"buybox-qty\">Quantity</label>\n" +
@@ -975,9 +1016,13 @@ export function renderProduct(opts) {
   var preorderShape = opts.preorderCampaign
     ? preorderCtaShape(opts.preorderCampaign.campaign, opts.preorderCampaign.remaining_units, fmt, product.slug)
     : null;
+  // Multi-variant headline price — "From <lowest>"; mirrors the container.
+  // Min over integer amount_minor, formatted once via `fmt` (never over
+  // formatted strings). See lib/storefront.js#_buildHeadlinePrice.
+  var headlinePrice = _buildHeadlinePrice(rendered, variants, prices, fmt);
   var buyboxHtml = preorderShape
     ? _buildPreorderCta(preorderShape, escapeHtml)
-    : _buildBuyBox(rendered, escapeHtml, availability);
+    : _buildBuyBox(rendered, escapeHtml, availability, headlinePrice);
   // The reserve PRG lands the shopper back on the PDP with a fixed
   // ?preorder=<reserved|unavailable|closed> marker; the banner prepends the
   // buy box. Mirrors the container so the dual render agrees on this URL.

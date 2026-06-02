@@ -42,6 +42,11 @@
 }
 
 :root {
+  /* Paint UA-rendered surfaces (form controls, scrollbars,
+     prefers-color-scheme defaults) dark to match the dark-violet
+     identity, so a date picker / select / scrollbar isn't a bright
+     light-mode rectangle against the near-black canvas. */
+  color-scheme: dark;
   /* =================================================================
      PRIMITIVE LAYER — raw brand values. Components never read these
      directly; they read the SEMANTIC aliases below. Edit a primitive
@@ -475,6 +480,13 @@ hr { border: 0; border-top: 1px solid var(--border); margin: var(--space-6) 0; }
   margin-left: var(--space-1);
 }
 .cart-pill:hover .cart-pill__count { background: var(--color-accent-hover); color: var(--white); }
+
+/* ---- primary-nav disclosure ------------------------------------- */
+/* The inline link row is the wide-viewport surface; the <details> menu
+   is the narrow-viewport surface (the CSS swaps them at <=48rem). On
+   wide screens the disclosure toggle is hidden and the links sit inline. */
+.site-nav__links { display: inline-flex; align-items: center; gap: var(--space-3); }
+.site-nav__menu { display: none; }
 
 /* ---- main scaffold ---------------------------------------------- */
 main {
@@ -2765,7 +2777,44 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   }
   .brand { grid-area: brand; }
   .site-nav { grid-area: nav; gap: var(--space-2); }
-  .site-nav__link { display: none; }
+  /* The inline link row collapses; the <details> disclosure becomes the
+     nav surface. (Scoped to the row group so the drawer's
+     `.site-nav__link` items stay visible — see the disclosure rules below.) */
+  .site-nav__links { display: none; }
+  .site-nav__menu { display: block; position: relative; }
+  .site-nav__menu-toggle {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    min-height: 44px; min-width: 44px;          /* WCAG 2.5.5 target */
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-pill);
+    color: var(--text-muted);
+    cursor: pointer; list-style: none;
+  }
+  .site-nav__menu-toggle::-webkit-details-marker { display: none; }
+  .site-nav__menu-toggle:hover { color: var(--text); }
+  .site-nav__menu-label {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .site-nav__drawer {
+    position: absolute; right: 0; top: calc(100% + var(--space-1));
+    z-index: 20;
+    display: flex; flex-direction: column;
+    min-width: 12rem;
+    padding: var(--space-2);
+    background: var(--surface-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--glow-soft);
+  }
+  .site-nav__drawer .site-nav__link {
+    display: block;
+    min-height: 44px;
+    display: flex; align-items: center;
+  }
   .site-search { grid-area: search; max-width: 100%; }
   .section-head--with-link { grid-template-columns: 1fr; }
   .hero__stats { grid-template-columns: repeat(2, 1fr); }

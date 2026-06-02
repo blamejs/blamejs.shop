@@ -42,17 +42,171 @@ async function _home() {
 }
 
 async function _homeEmpty() {
-  var html = storefront.renderHome({ products: [], shop_name: "Acme" });
-  // Empty catalog still ships the storefront shell + hero + supporting
-  // sections — visitors see a designed surface, not a placeholder.
+  // Empty catalog + a wired collection: the storefront shell + hero +
+  // supporting sections render, and the dynamic collections band shows the
+  // real collection (the band is data-driven now, not a static grid).
+  var html = storefront.renderHome({
+    products: [],
+    collections: [{ slug: "sale", title: "On Sale", description: "Markdowns and clearance." }],
+    shop_name: "Acme",
+  });
   check("empty home renders dark hero",            html.indexOf("class=\"hero hero--dark\"") !== -1);
   check("empty home has hero code preview",         html.indexOf("class=\"hero__card\"") !== -1);
   check("empty home shows marquee",                 html.indexOf("class=\"marquee\"") !== -1);
-  check("empty home shows collections",            html.indexOf("class=\"collections__grid\"") !== -1);
+  check("empty home shows collections band",       html.indexOf("class=\"collections__grid\"") !== -1);
   check("empty home shows framework band",         html.indexOf("class=\"framework-band\"") !== -1);
   check("empty home renders catalog section",      html.indexOf("class=\"catalog-section\"") !== -1);
   check("empty home shows admin curl snippet",      html.indexOf("class=\"catalog-empty__code\"") !== -1);
   check("empty home anchors at #catalog",          html.indexOf("id=\"catalog\"") !== -1);
+}
+
+// UX-1: the home "Featured collections" band is built from real operator
+// collections — links to /collections/<slug>, shows operator titles +
+// descriptions, rotates the decorative art by index, and DROPS the whole
+// band when there are zero collections. The old static /search?q= tiles
+// are gone. Operator title/description is cross-customer free-text rendered
+// to every visitor, so every value is escaped at the sink (binding XSS rule).
+async function _homeCollectionsBand() {
+  var html = storefront.renderHome({
+    products: [{ slug: "a", title: "Prod A", starting_price_minor: 1999, starting_price_currency: "USD" }],
+    collections: [
+      { slug: "sale", title: "On Sale", description: "Markdowns and clearance." },
+      { slug: "new-in", title: "New In", description: "" },
+    ],
+    shop_name: "Acme",
+  });
+  check("band links to the real collection slug",   html.indexOf("href=\"/collections/sale\"") !== -1 &&
+                                                     html.indexOf("href=\"/collections/new-in\"") !== -1);
+  check("band shows operator collection titles",     html.indexOf("<h3>On Sale</h3>") !== -1 &&
+                                                     html.indexOf("<h3>New In</h3>") !== -1);
+  check("band shows the description when present",    html.indexOf("<p>Markdowns and clearance.</p>") !== -1);
+  check("band omits empty description paragraph",     html.indexOf("<h3>New In</h3>\n        <p>") === -1);
+  check("band keeps the collections grid + heading",  html.indexOf("class=\"collections__grid\"") !== -1 &&
+                                                      html.indexOf("Browse the catalog by collection.") !== -1);
+  check("band rotates the decorative art by index",   html.indexOf("collection-card__art--1") !== -1 &&
+                                                      html.indexOf("collection-card__art--2") !== -1);
+  // The old hardcoded search-query tiles are gone.
+  check("band no longer links /search?q= tiles",      html.indexOf("/search?q=tee") === -1 &&
+                                                      html.indexOf("/search?q=license") === -1);
+
+  // Zero collections → the whole band section is dropped (no empty band).
+  var none = storefront.renderHome({
+    products: [{ slug: "a", title: "Prod A", starting_price_minor: 1999, starting_price_currency: "USD" }],
+    collections: [],
+    shop_name: "Acme",
+  });
+  check("zero collections drops the band section",    none.indexOf("class=\"collections\"") === -1 &&
+                                                      none.indexOf("class=\"collections__grid\"") === -1);
+  // Missing collections opt behaves like an empty list.
+  var omitted = storefront.renderHome({ products: [], shop_name: "Acme" });
+  check("omitting collections opt drops the band",    omitted.indexOf("class=\"collections__grid\"") === -1);
+
+  // XSS: a <script>/onerror payload in the operator title/description is
+  // escaped — no live tag survives to the rendered page.
+  var xss = storefront.renderHome({
+    products: [],
+    collections: [{ slug: "x", title: "<script>alert(1)</script>", description: "\"><img src=x onerror=alert(2)>" }],
+    shop_name: "Acme",
+  });
+  check("band escapes a <script> title",              xss.indexOf("<script>alert(1)</script>") === -1 &&
+                                                      xss.indexOf("&lt;script&gt;alert(1)") !== -1);
+  check("band escapes an onerror img description",    /<img src=x onerror=/.test(xss) === false);
+}
+
+// UX-2 + UX-4: the header nav carries the desktop link row + a CSP-safe
+// <details>/<summary> disclosure (the mobile menu, no JS), with Collections
+// + Categories links. A pure render (renderHome, unmounted) shows the full
+// nav; the route-level conditional only suppresses the links when the mount
+// explicitly lacks the dep (asserted in the layer-2 route test).
+async function _primaryNav() {
+  var html = storefront.renderHome({ products: [], collections: [], shop_name: "Acme" });
+  check("nav has the desktop link row",         html.indexOf("<div class=\"site-nav__links\">") !== -1);
+  check("nav has Collections link",             html.indexOf("<a class=\"site-nav__link\" href=\"/collections\">Collections</a>") !== -1);
+  check("nav has Categories link",              html.indexOf("<a class=\"site-nav__link\" href=\"/categories\">Categories</a>") !== -1);
+  check("nav keeps Shop + Framework links",     html.indexOf("href=\"/\">Shop</a>") !== -1 &&
+                                                html.indexOf("href=\"/#framework\">Framework</a>") !== -1);
+  // The disclosure is a pure-CSS <details>/<summary> — no JS, CSP-safe.
+  check("nav has the <details> disclosure",     html.indexOf("<details class=\"site-nav__menu\">") !== -1);
+  check("nav summary carries the Menu label",   html.indexOf("<summary class=\"site-nav__menu-toggle\" aria-label=\"Menu\">") !== -1 &&
+                                                html.indexOf("<span class=\"site-nav__menu-label\">Menu</span>") !== -1);
+  // The disclosure drawer lists the same hrefs as the desktop row so a
+  // mobile visitor reaches the full nav.
+  check("disclosure drawer lists the same links", html.indexOf("<div class=\"site-nav__drawer\">") !== -1);
+  // The nav-scoped link (with the site-nav__link class) appears twice — once
+  // in the desktop row, once in the drawer. (The footer's plain Collections
+  // link carries no site-nav__link class, so it doesn't inflate the count.)
+  function _count(h, n) { var c = 0, i = 0; while ((i = h.indexOf(n, i)) !== -1) { c += 1; i += n.length; } return c; }
+  check("drawer mirrors the row (each link twice)", _count(html, "<a class=\"site-nav__link\" href=\"/collections\">Collections</a>") === 2 &&
+                                                    _count(html, "<a class=\"site-nav__link\" href=\"/categories\">Categories</a>") === 2);
+  // The cart pill the cart-count island reads/writes stays intact.
+  check("nav preserves the cart-pill count node", html.indexOf("<span class=\"cart-pill__count\">") !== -1);
+}
+
+// UX-5: a multi-variant headline reads "From <lowest>" so it never
+// advertises a price that isn't the cheapest buyable variant — even when
+// variants[0] is the EXPENSIVE one. Single-variant + all-equal-price keep
+// the exact figure. The minimum is taken over integer minor-units, not
+// over formatted strings.
+async function _fromPriceHeadline() {
+  // variants[0] is the expensive one (v0=4999, v1=1999) → "From $19.99".
+  var multi = storefront.renderProduct({
+    product:  { slug: "p", title: "P", description: "" },
+    variants: [{ id: "v0", sku: "A", title: "A" }, { id: "v1", sku: "B", title: "B" }],
+    prices:   { v0: { amount_minor: 4999, currency: "USD" }, v1: { amount_minor: 1999, currency: "USD" } },
+    shop_name: "Acme",
+  });
+  var hi = multi.indexOf("<p class=\"featured-product__price\">");
+  var headline = multi.slice(hi, multi.indexOf("</p>", hi));
+  check("multi-variant headline reads From <lowest>", headline.indexOf("From $19.99") !== -1);
+  check("multi-variant headline is NOT the lead price", headline.indexOf("$49.99") === -1);
+
+  // Single variant → exact price, no "From".
+  var single = storefront.renderProduct({
+    product:  { slug: "p", title: "P", description: "" },
+    variants: [{ id: "v0", sku: "A", title: "A" }],
+    prices:   { v0: { amount_minor: 4999, currency: "USD" } },
+    shop_name: "Acme",
+  });
+  var si = single.indexOf("<p class=\"featured-product__price\">");
+  var sHead = single.slice(si, single.indexOf("</p>", si));
+  check("single-variant headline is the exact price",  sHead.indexOf("$49.99") !== -1);
+  check("single-variant headline has no From prefix",  sHead.indexOf("From ") === -1);
+
+  // Multi-variant, all equal → exact price, no "From" (noise otherwise).
+  var equal = storefront.renderProduct({
+    product:  { slug: "p", title: "P", description: "" },
+    variants: [{ id: "v0", sku: "A", title: "A" }, { id: "v1", sku: "B", title: "B" }],
+    prices:   { v0: { amount_minor: 2999, currency: "USD" }, v1: { amount_minor: 2999, currency: "USD" } },
+    shop_name: "Acme",
+  });
+  var ei = equal.indexOf("<p class=\"featured-product__price\">");
+  var eHead = equal.slice(ei, equal.indexOf("</p>", ei));
+  check("all-equal-price headline is the exact price",  eHead.indexOf("$29.99") !== -1);
+  check("all-equal-price headline has no From prefix",  eHead.indexOf("From ") === -1);
+}
+
+// UX-9: the survey required marker uses the accessible screen-reader
+// pattern (aria-hidden visual star + .sr-only "(required)"), replacing the
+// old <abbr title="Required">. Asserted through renderSurveyPage (which
+// wraps _surveyQuestion).
+async function _surveyRequiredMarker() {
+  var html = storefront.renderSurveyPage({
+    state:  "form",
+    token:  "tok-1",
+    survey: { title: "Feedback", questions: [{ id: "q1", kind: "text", label: "Your name", required: true }] },
+    shop_name: "Acme",
+  });
+  check("survey marker has the aria-hidden visual star", html.indexOf("<span class=\"survey-req\" aria-hidden=\"true\">*</span>") !== -1);
+  check("survey marker has the sr-only (required) text",  html.indexOf("<span class=\"sr-only\">(required)</span>") !== -1);
+  check("survey marker drops the old abbr title",         html.indexOf("title=\"Required\"") === -1);
+  // A non-required question carries no marker.
+  var optional = storefront.renderSurveyPage({
+    state:  "form",
+    token:  "tok-2",
+    survey: { title: "Feedback", questions: [{ id: "q1", kind: "text", label: "Optional note", required: false }] },
+    shop_name: "Acme",
+  });
+  check("optional question carries no required marker",   optional.indexOf("class=\"survey-req\"") === -1);
 }
 
 async function _product() {
@@ -340,6 +494,104 @@ async function _productAvailabilityParity() {
   var eLow = edgeProduct.renderProduct(Object.assign({}, base, lowInv, { shopName: "Acme", version: "test" }));
   check("edge + container low-stock badge is byte-identical",  _availBlock(cLow) === _availBlock(eLow));
   check("container low-stock badge shows Only 3 left",          (_availBlock(cLow) || "").indexOf("Only 3 left") !== -1);
+}
+
+// Dual-render parity for the home collections band + the primary nav.
+// The container builds the band + nav from operator data; the edge builds
+// them from D1. For the SAME inputs the two markup blocks must be byte-
+// identical (the edge renders Collections/Categories unconditionally — the
+// container does too on a pure unmounted render, so the headers match).
+// The edge home.js import is fs.existsSync-guarded — worker/ is excluded
+// from the container build context, so an unguarded import would brick the
+// in-image smoke + every deploy.
+async function _homeBandNavParity() {
+  var fs       = require("fs");
+  var path     = require("path");
+  var nodeModule = require("node:module");
+  var nodeUrl    = require("node:url");
+
+  var edgeHomePath = path.join(__dirname, "..", "..", "worker", "render", "home.js");
+  if (!fs.existsSync(edgeHomePath)) return;
+  nodeModule.registerHooks({
+    resolve: function (spec, ctx, next) {
+      var r = next(spec, ctx);
+      if (r.url && r.url.slice(-5) === ".json") r.importAttributes = { type: "json" };
+      return r;
+    },
+  });
+  var edgeHome = await import(nodeUrl.pathToFileURL(edgeHomePath).href);
+
+  var cols = [
+    { slug: "sale",   title: "On Sale", description: "Markdowns & clearance." },
+    { slug: "new-in", title: "New In",  description: "" },
+  ];
+  var cHtml = storefront.renderHome({ products: [], collections: cols, shop_name: "Acme" });
+  var eHtml = edgeHome.renderHome({ products: [], collections: cols, shopName: "Acme", version: "test" });
+
+  function _bandBlock(html) {
+    var start = html.indexOf("<section class=\"collections\"");
+    if (start === -1) return null;
+    var end = html.indexOf("</section>", start);
+    return end === -1 ? null : html.slice(start, end + "</section>".length);
+  }
+  function _navBlock(html) {
+    var start = html.indexOf("<nav class=\"site-nav\"");
+    if (start === -1) return null;
+    var end = html.indexOf("</nav>", start);
+    return end === -1 ? null : html.slice(start, end + "</nav>".length);
+  }
+  var cBand = _bandBlock(cHtml), eBand = _bandBlock(eHtml);
+  check("container home emits the collections band",  cBand !== null);
+  check("edge home emits the collections band",        eBand !== null);
+  check("edge + container collections band is byte-identical", cBand === eBand);
+
+  var cNav = _navBlock(cHtml), eNav = _navBlock(eHtml);
+  check("container home emits the primary nav",        cNav !== null);
+  check("edge home emits the primary nav",              eNav !== null);
+  check("edge + container primary nav is byte-identical", cNav === eNav);
+
+  // The XSS payload survives byte-identically (escaped) on both substrates.
+  var xssCols = [{ slug: "x", title: "<script>alert(1)</script>", description: "\"><img src=x onerror=y>" }];
+  var cXss = _bandBlock(storefront.renderHome({ products: [], collections: xssCols, shop_name: "Acme" }));
+  var eXss = _bandBlock(edgeHome.renderHome({ products: [], collections: xssCols, shopName: "Acme", version: "test" }));
+  check("edge + container escape the band payload identically", cXss === eXss);
+  check("band payload has no live <script>/onerror on either",  /<script>alert\(1\)/.test(cXss || "") === false &&
+                                                                /<img src=x onerror=/.test(cXss || "") === false);
+}
+
+// Dual-render parity for the UX-5 "From <lowest>" buy-box headline: the
+// container + edge must emit the same headline price string for the same
+// multi-variant inputs.
+async function _fromPriceParity() {
+  var fs       = require("fs");
+  var path     = require("path");
+  var nodeModule = require("node:module");
+  var nodeUrl    = require("node:url");
+
+  var edgeProductPath = path.join(__dirname, "..", "..", "worker", "render", "product.js");
+  if (!fs.existsSync(edgeProductPath)) return;
+  nodeModule.registerHooks({
+    resolve: function (spec, ctx, next) {
+      var r = next(spec, ctx);
+      if (r.url && r.url.slice(-5) === ".json") r.importAttributes = { type: "json" };
+      return r;
+    },
+  });
+  var edgeProduct = await import(nodeUrl.pathToFileURL(edgeProductPath).href);
+
+  var base = {
+    product:  { slug: "p", title: "P", description: "d" },
+    variants: [{ id: "v0", sku: "A", title: "A" }, { id: "v1", sku: "B", title: "B" }],
+    prices:   { v0: { amount_minor: 4999, currency: "USD" }, v1: { amount_minor: 1999, currency: "USD" } },
+  };
+  function _headline(html) {
+    var i = html.indexOf("<p class=\"featured-product__price\">");
+    return i === -1 ? null : html.slice(i, html.indexOf("</p>", i) + 4);
+  }
+  var cH = _headline(storefront.renderProduct(Object.assign({}, base, { shop_name: "Acme" })));
+  var eH = _headline(edgeProduct.renderProduct(Object.assign({}, base, { shopName: "Acme", version: "test" })));
+  check("container From-price headline present",  (cH || "").indexOf("From $19.99") !== -1);
+  check("edge + container From-price headline is byte-identical", cH === eH);
 }
 
 // Dual-render parity + functional shape for the no-JS image gallery. A
@@ -1254,6 +1506,12 @@ async function _subscriptionSelfManage() {
 async function run() {
   await _home();
   await _homeEmpty();
+  await _homeCollectionsBand();
+  await _homeBandNavParity();
+  await _primaryNav();
+  await _fromPriceHeadline();
+  await _fromPriceParity();
+  await _surveyRequiredMarker();
   await _product();
   await _productAvailability();
   await _productNoVariants();

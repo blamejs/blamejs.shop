@@ -27,8 +27,21 @@ var LAYOUT =
   "    <div class=\"site-header__inner\">\n" +
   "      <a href=\"/\" class=\"brand\" aria-label=\"{{shop_name}}\"><img src=\"/assets/brand/logo.png\" alt=\"{{shop_name}}\"></a>\n" +
   "      <nav class=\"site-nav\" aria-label=\"Primary\">\n" +
-  "        <a class=\"site-nav__link\" href=\"/\">Shop</a>\n" +
-  "        <a class=\"site-nav__link\" href=\"/cart\">Cart</a>\n" +
+  "        <div class=\"site-nav__links\">\n" +
+  "          <a class=\"site-nav__link\" href=\"/\">Shop</a>\n" +
+  "          <a class=\"site-nav__link\" href=\"/collections\">Collections</a>\n" +
+  "          <a class=\"site-nav__link\" href=\"/categories\">Categories</a>\n" +
+  "          <a class=\"site-nav__link\" href=\"/cart\">Cart</a>\n" +
+  "        </div>\n" +
+  "        <details class=\"site-nav__menu\">\n" +
+  "          <summary class=\"site-nav__menu-toggle\" aria-label=\"Menu\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" aria-hidden=\"true\"><path d=\"M4 7h16M4 12h16M4 17h16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\"/></svg><span class=\"site-nav__menu-label\">Menu</span></summary>\n" +
+  "          <div class=\"site-nav__drawer\">\n" +
+  "            <a class=\"site-nav__link\" href=\"/\">Shop</a>\n" +
+  "            <a class=\"site-nav__link\" href=\"/collections\">Collections</a>\n" +
+  "            <a class=\"site-nav__link\" href=\"/categories\">Categories</a>\n" +
+  "            <a class=\"site-nav__link\" href=\"/cart\">Cart</a>\n" +
+  "          </div>\n" +
+  "        </details>\n" +
   "      </nav>\n" +
   "    </div>\n" +
   "  </header>\n" +

@@ -51,8 +51,21 @@ var LAYOUT =
   "        </div>\n" +
   "      </form>\n" +
   "      <nav class=\"site-nav\" aria-label=\"Primary\">\n" +
-  "        <a class=\"site-nav__link\" href=\"/\">{{nav_shop}}</a>\n" +
-  "        <a class=\"site-nav__link\" href=\"/#framework\">{{nav_framework}}</a>\n" +
+  "        <div class=\"site-nav__links\">\n" +
+  "          <a class=\"site-nav__link\" href=\"/\">{{nav_shop}}</a>\n" +
+  "          <a class=\"site-nav__link\" href=\"/collections\">{{nav_collections}}</a>\n" +
+  "          <a class=\"site-nav__link\" href=\"/categories\">{{nav_categories}}</a>\n" +
+  "          <a class=\"site-nav__link\" href=\"/#framework\">{{nav_framework}}</a>\n" +
+  "        </div>\n" +
+  "        <details class=\"site-nav__menu\">\n" +
+  "          <summary class=\"site-nav__menu-toggle\" aria-label=\"{{nav_menu}}\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" aria-hidden=\"true\"><path d=\"M4 7h16M4 12h16M4 17h16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\"/></svg><span class=\"site-nav__menu-label\">{{nav_menu}}</span></summary>\n" +
+  "          <div class=\"site-nav__drawer\">\n" +
+  "            <a class=\"site-nav__link\" href=\"/\">{{nav_shop}}</a>\n" +
+  "            <a class=\"site-nav__link\" href=\"/collections\">{{nav_collections}}</a>\n" +
+  "            <a class=\"site-nav__link\" href=\"/categories\">{{nav_categories}}</a>\n" +
+  "            <a class=\"site-nav__link\" href=\"/#framework\">{{nav_framework}}</a>\n" +
+  "          </div>\n" +
+  "        </details>\n" +
   "        <a class=\"site-nav__icon\" href=\"/account\" aria-label=\"{{nav_account}}\"><svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" aria-hidden=\"true\"><path d=\"M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\"/></svg></a>\n" +
   "        <a class=\"cart-pill\" href=\"/cart\" aria-label=\"{{nav_cart_aria}}\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path d=\"M3 4h2l2.4 12.1a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 1.95-1.55L21 8H6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><circle cx=\"10\" cy=\"21\" r=\"1.4\" fill=\"currentColor\"/><circle cx=\"17\" cy=\"21\" r=\"1.4\" fill=\"currentColor\"/></svg><span class=\"cart-pill__count\">{{cart_count}}</span></a>\n" +
   "      </nav>\n" +
@@ -93,8 +106,6 @@ var LAYOUT =
   "          <li><a href=\"/\">{{footer_shop_all}}</a></li>\n" +
   "          <li><a href=\"/collections\">{{footer_shop_collections}}</a></li>\n" +
   "          <li><a href=\"/categories\">{{footer_shop_categories}}</a></li>\n" +
-  "          <li><a href=\"/?sort=new\">{{footer_shop_new}}</a></li>\n" +
-  "          <li><a href=\"/?sort=sale\">{{footer_shop_sale}}</a></li>\n" +
   "          <li><a href=\"/compare\">{{footer_shop_compare}}</a></li>\n" +
   "          <li><a href=\"/cart\">{{footer_shop_cart}}</a></li>\n" +
   "          <li><a href=\"/terms\">{{footer_shop_shipping}}</a></li>\n" +

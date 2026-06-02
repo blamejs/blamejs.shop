@@ -50,8 +50,21 @@ var LAYOUT =
   "        </div>\n" +
   "      </form>\n" +
   "      <nav class=\"site-nav\" aria-label=\"Primary\">\n" +
-  "        <a class=\"site-nav__link\" href=\"/\">{{nav_shop}}</a>\n" +
-  "        <a class=\"site-nav__link\" href=\"/#framework\">{{nav_framework}}</a>\n" +
+  "        <div class=\"site-nav__links\">\n" +
+  "          <a class=\"site-nav__link\" href=\"/\">{{nav_shop}}</a>\n" +
+  "          <a class=\"site-nav__link\" href=\"/collections\">{{nav_collections}}</a>\n" +
+  "          <a class=\"site-nav__link\" href=\"/categories\">{{nav_categories}}</a>\n" +
+  "          <a class=\"site-nav__link\" href=\"/#framework\">{{nav_framework}}</a>\n" +
+  "        </div>\n" +
+  "        <details class=\"site-nav__menu\">\n" +
+  "          <summary class=\"site-nav__menu-toggle\" aria-label=\"{{nav_menu}}\"><svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" aria-hidden=\"true\"><path d=\"M4 7h16M4 12h16M4 17h16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\"/></svg><span class=\"site-nav__menu-label\">{{nav_menu}}</span></summary>\n" +
+  "          <div class=\"site-nav__drawer\">\n" +
+  "            <a class=\"site-nav__link\" href=\"/\">{{nav_shop}}</a>\n" +
+  "            <a class=\"site-nav__link\" href=\"/collections\">{{nav_collections}}</a>\n" +
+  "            <a class=\"site-nav__link\" href=\"/categories\">{{nav_categories}}</a>\n" +
+  "            <a class=\"site-nav__link\" href=\"/#framework\">{{nav_framework}}</a>\n" +
+  "          </div>\n" +
+  "        </details>\n" +
   "        <a class=\"site-nav__icon\" href=\"/account\" aria-label=\"{{nav_account}}\"><svg viewBox=\"0 0 24 24\" width=\"20\" height=\"20\" aria-hidden=\"true\"><path d=\"M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\"/></svg></a>\n" +
   "        <a class=\"cart-pill\" href=\"/cart\" aria-label=\"{{nav_cart_aria}}\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path d=\"M3 4h2l2.4 12.1a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 1.95-1.55L21 8H6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><circle cx=\"10\" cy=\"21\" r=\"1.4\" fill=\"currentColor\"/><circle cx=\"17\" cy=\"21\" r=\"1.4\" fill=\"currentColor\"/></svg><span class=\"cart-pill__count\">{{cart_count}}</span></a>\n" +
   "      </nav>\n" +
@@ -92,8 +105,6 @@ var LAYOUT =
   "          <li><a href=\"/\">{{footer_shop_all}}</a></li>\n" +
   "          <li><a href=\"/collections\">{{footer_shop_collections}}</a></li>\n" +
   "          <li><a href=\"/categories\">{{footer_shop_categories}}</a></li>\n" +
-  "          <li><a href=\"/?sort=new\">{{footer_shop_new}}</a></li>\n" +
-  "          <li><a href=\"/?sort=sale\">{{footer_shop_sale}}</a></li>\n" +
   "          <li><a href=\"/compare\">{{footer_shop_compare}}</a></li>\n" +
   "          <li><a href=\"/cart\">{{footer_shop_cart}}</a></li>\n" +
   "          <li><a href=\"/terms\">{{footer_shop_shipping}}</a></li>\n" +
@@ -175,6 +186,52 @@ function _buildProductCard(p) {
   });
 }
 
+// Home "Featured collections" band — the six decorative card-art SVGs
+// lifted verbatim from the prior static band, indexed 1..6. Kept byte-
+// identical to lib/storefront.js#COLLECTION_BAND_ART so the dual render
+// agrees.
+var COLLECTION_BAND_ART = [
+  "<div class=\"collection-card__art collection-card__art--1\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M70 38 C74 44 86 44 90 38 L104 44 L112 58 L100 64 L96 58 L96 92 L64 92 L64 58 L60 64 L48 58 L56 44 Z\"/><path d=\"M71 40 C75 47 85 47 89 40\" stroke=\"#732A8D\" stroke-width=\"2\"/><path d=\"M73 76 H87\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-dasharray=\"2 3\"/></svg></div>",
+  "<div class=\"collection-card__art collection-card__art--2\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"58\" y=\"38\" width=\"44\" height=\"44\" rx=\"4\"/><rect x=\"70\" y=\"50\" width=\"20\" height=\"20\" rx=\"2\" stroke=\"#732A8D\"/><circle cx=\"80\" cy=\"60\" r=\"3\" fill=\"#AD38DB\" stroke=\"none\"/><path d=\"M66 38 V30 M76 38 V30 M86 38 V30 M96 38 V30\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M66 82 V90 M76 82 V90 M86 82 V90 M96 82 V90\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M58 48 H50 M58 60 H50 M58 72 H50\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M102 48 H110 M102 60 H110 M102 72 H110\" stroke=\"currentColor\" stroke-width=\"2\"/></svg></div>",
+  "<div class=\"collection-card__art collection-card__art--3\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M60 74 C50 74 48 62 57 59 C56 47 73 43 79 53 C88 47 100 54 97 64 C107 65 107 74 99 74 Z\" stroke=\"#732A8D\"/><path d=\"M78 60 V86\"/><path d=\"M70 78 L78 88 L86 78\"/><path d=\"M64 98 H92\" stroke=\"currentColor\" stroke-width=\"2\"/></svg></div>",
+  "<div class=\"collection-card__art collection-card__art--4\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M56 50 A26 26 0 0 1 104 56\"/><path d=\"M104 70 A26 26 0 0 1 56 64\"/><path d=\"M104 42 L106 57 L91 55\" stroke=\"#AD38DB\"/><path d=\"M56 78 L54 63 L69 65\" stroke=\"#AD38DB\"/><circle cx=\"80\" cy=\"60\" r=\"6\" stroke=\"#732A8D\"/><circle cx=\"80\" cy=\"60\" r=\"1.6\" fill=\"currentColor\" stroke=\"none\"/></svg></div>",
+  "<div class=\"collection-card__art collection-card__art--5\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M86 36 L106 44 L106 64 L86 72 L66 64 L66 44 Z\" stroke=\"#732A8D\"/><path d=\"M66 44 L86 52 L106 44 M86 52 V72\" stroke=\"#732A8D\"/><path d=\"M70 56 L90 64 L90 88 L70 96 L50 88 L50 64 Z\"/><path d=\"M50 64 L70 72 L90 64 M70 72 V96\"/><path d=\"M70 72 V96\" stroke=\"currentColor\" stroke-width=\"2\"/></svg></div>",
+  "<div class=\"collection-card__art collection-card__art--6\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"48\" y=\"48\" width=\"64\" height=\"42\" rx=\"6\"/><path d=\"M80 48 V90\" stroke=\"#732A8D\"/><path d=\"M80 48 C71 36 56 39 62 49 C57 52 61 57 71 53 C76 51 80 50 80 48 Z\"/><path d=\"M80 48 C89 36 104 39 98 49 C103 52 99 57 89 53 C84 51 80 50 80 48 Z\"/><circle cx=\"80\" cy=\"48\" r=\"2.4\" fill=\"#AD38DB\" stroke=\"none\"/><rect x=\"56\" y=\"70\" width=\"11\" height=\"8\" rx=\"1.6\" stroke=\"currentColor\" stroke-width=\"1.8\"/></svg></div>",
+];
+
+// Home "Featured collections" band builder — edge mirror of
+// lib/storefront.js#_buildCollectionsBand. The edge serves operator-
+// curated, per-everyone-identical collections, so the band is cache-safe
+// (no per-session content). Operator slug/title/description are escaped at
+// the sink. Returns "" for an empty list so the caller drops the section.
+// Byte-identical to the container builder.
+function _buildCollectionsBand(collections) {
+  var cols = Array.isArray(collections) ? collections.slice(0, 6) : [];
+  if (cols.length === 0) return "";
+  var cards = "";
+  for (var i = 0; i < cols.length; i += 1) {
+    var c = cols[i];
+    var art = COLLECTION_BAND_ART[i % COLLECTION_BAND_ART.length];
+    cards +=
+      "    <a class=\"collection-card\" href=\"/collections/" + escapeHtml(c.slug) + "\">\n" +
+      "      " + art + "\n" +
+      "      <div class=\"collection-card__meta\">\n" +
+      "        <h3>" + escapeHtml(c.title) + "</h3>\n" +
+      (c.description ? "        <p>" + escapeHtml(c.description) + "</p>\n" : "") +
+      "      </div>\n" +
+      "    </a>\n";
+  }
+  return "<section class=\"collections\" aria-labelledby=\"collections-title\">\n" +
+    "  <header class=\"section-head\">\n" +
+    "    <p class=\"eyebrow\">Featured collections</p>\n" +
+    "    <h2 id=\"collections-title\" class=\"section-head__title\">Browse the catalog by collection.</h2>\n" +
+    "  </header>\n" +
+    "  <div class=\"collections__grid\">\n" +
+    cards +
+    "  </div>\n" +
+    "</section>\n";
+}
+
 function _buildHomeHero(version) {
   return "<section class=\"hero hero--dark\">\n" +
     "  <div class=\"hero__bg\" aria-hidden=\"true\">\n" +
@@ -253,57 +310,7 @@ function _buildHomeHero(version) {
     "\n" +
     "RAW_FEATURED_CALLOUT\n" +
     "\n" +
-    "<section class=\"collections\" aria-labelledby=\"collections-title\">\n" +
-    "  <header class=\"section-head\">\n" +
-    "    <p class=\"eyebrow\">Featured collections</p>\n" +
-    "    <h2 id=\"collections-title\" class=\"section-head__title\">Shaped for a storefront that ships from day one.</h2>\n" +
-    "    <p class=\"section-head__lede\">Drop products into any of these starting categories — or define your own taxonomy through the catalog admin and the framework will server-render the grids, filters, and PDP routes for free.</p>\n" +
-    "  </header>\n" +
-    "  <div class=\"collections__grid\">\n" +
-    "    <a class=\"collection-card\" href=\"/search?q=tee\">\n" +
-    "      <div class=\"collection-card__art collection-card__art--1\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M70 38 C74 44 86 44 90 38 L104 44 L112 58 L100 64 L96 58 L96 92 L64 92 L64 58 L60 64 L48 58 L56 44 Z\"/><path d=\"M71 40 C75 47 85 47 89 40\" stroke=\"#732A8D\" stroke-width=\"2\"/><path d=\"M73 76 H87\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-dasharray=\"2 3\"/></svg></div>\n" +
-    "      <div class=\"collection-card__meta\">\n" +
-    "        <h3>Apparel</h3>\n" +
-    "        <p>Sized, colored, inventoried.</p>\n" +
-    "      </div>\n" +
-    "    </a>\n" +
-    "    <a class=\"collection-card\" href=\"/search?q=edge\">\n" +
-    "      <div class=\"collection-card__art collection-card__art--2\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"58\" y=\"38\" width=\"44\" height=\"44\" rx=\"4\"/><rect x=\"70\" y=\"50\" width=\"20\" height=\"20\" rx=\"2\" stroke=\"#732A8D\"/><circle cx=\"80\" cy=\"60\" r=\"3\" fill=\"#AD38DB\" stroke=\"none\"/><path d=\"M66 38 V30 M76 38 V30 M86 38 V30 M96 38 V30\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M66 82 V90 M76 82 V90 M86 82 V90 M96 82 V90\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M58 48 H50 M58 60 H50 M58 72 H50\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M102 48 H110 M102 60 H110 M102 72 H110\" stroke=\"currentColor\" stroke-width=\"2\"/></svg></div>\n" +
-    "      <div class=\"collection-card__meta\">\n" +
-    "        <h3>Hardware</h3>\n" +
-    "        <p>Serialized, warranty-tracked.</p>\n" +
-    "      </div>\n" +
-    "    </a>\n" +
-    "    <a class=\"collection-card\" href=\"/search?q=license\">\n" +
-    "      <div class=\"collection-card__art collection-card__art--3\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M60 74 C50 74 48 62 57 59 C56 47 73 43 79 53 C88 47 100 54 97 64 C107 65 107 74 99 74 Z\" stroke=\"#732A8D\"/><path d=\"M78 60 V86\"/><path d=\"M70 78 L78 88 L86 78\"/><path d=\"M64 98 H92\" stroke=\"currentColor\" stroke-width=\"2\"/></svg></div>\n" +
-    "      <div class=\"collection-card__meta\">\n" +
-    "        <h3>Digital</h3>\n" +
-    "        <p>License-key fulfillment.</p>\n" +
-    "      </div>\n" +
-    "    </a>\n" +
-    "    <a class=\"collection-card\" href=\"/search?q=subscription\">\n" +
-    "      <div class=\"collection-card__art collection-card__art--4\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M56 50 A26 26 0 0 1 104 56\"/><path d=\"M104 70 A26 26 0 0 1 56 64\"/><path d=\"M104 42 L106 57 L91 55\" stroke=\"#AD38DB\"/><path d=\"M56 78 L54 63 L69 65\" stroke=\"#AD38DB\"/><circle cx=\"80\" cy=\"60\" r=\"6\" stroke=\"#732A8D\"/><circle cx=\"80\" cy=\"60\" r=\"1.6\" fill=\"currentColor\" stroke=\"none\"/></svg></div>\n" +
-    "      <div class=\"collection-card__meta\">\n" +
-    "        <h3>Subscriptions</h3>\n" +
-    "        <p>Stripe-backed recurring.</p>\n" +
-    "      </div>\n" +
-    "    </a>\n" +
-    "    <a class=\"collection-card\" href=\"/search?q=bundle\">\n" +
-    "      <div class=\"collection-card__art collection-card__art--5\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M86 36 L106 44 L106 64 L86 72 L66 64 L66 44 Z\" stroke=\"#732A8D\"/><path d=\"M66 44 L86 52 L106 44 M86 52 V72\" stroke=\"#732A8D\"/><path d=\"M70 56 L90 64 L90 88 L70 96 L50 88 L50 64 Z\"/><path d=\"M50 64 L70 72 L90 64 M70 72 V96\"/><path d=\"M70 72 V96\" stroke=\"currentColor\" stroke-width=\"2\"/></svg></div>\n" +
-    "      <div class=\"collection-card__meta\">\n" +
-    "        <h3>Bundles</h3>\n" +
-    "        <p>Composite SKUs, atomic stock.</p>\n" +
-    "      </div>\n" +
-    "    </a>\n" +
-    "    <a class=\"collection-card\" href=\"/search?q=gift\">\n" +
-    "      <div class=\"collection-card__art collection-card__art--6\" aria-hidden=\"true\"><svg class=\"collection-card__icon\" viewBox=\"0 0 160 120\" fill=\"none\" stroke=\"#AD38DB\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"48\" y=\"48\" width=\"64\" height=\"42\" rx=\"6\"/><path d=\"M80 48 V90\" stroke=\"#732A8D\"/><path d=\"M80 48 C71 36 56 39 62 49 C57 52 61 57 71 53 C76 51 80 50 80 48 Z\"/><path d=\"M80 48 C89 36 104 39 98 49 C103 52 99 57 89 53 C84 51 80 50 80 48 Z\"/><circle cx=\"80\" cy=\"48\" r=\"2.4\" fill=\"#AD38DB\" stroke=\"none\"/><rect x=\"56\" y=\"70\" width=\"11\" height=\"8\" rx=\"1.6\" stroke=\"currentColor\" stroke-width=\"1.8\"/></svg></div>\n" +
-    "      <div class=\"collection-card__meta\">\n" +
-    "        <h3>Gift cards</h3>\n" +
-    "        <p>PQC-signed redemption codes.</p>\n" +
-    "      </div>\n" +
-    "    </a>\n" +
-    "  </div>\n" +
-    "</section>\n" +
+    "RAW_COLLECTIONS_BAND\n" +
     "\n" +
     "<section id=\"framework\" class=\"framework-band\" aria-labelledby=\"framework-title\">\n" +
     "  <div class=\"framework-band__inner\">\n" +
@@ -363,13 +370,12 @@ var CATALOG_EMPTY =
 
 var CATALOG_HEAD =
   "<section id=\"catalog\" class=\"catalog-section\">\n" +
-  "  <header class=\"section-head section-head--with-link\">\n" +
+  "  <header class=\"section-head\">\n" +
   "    <div>\n" +
   "      <p class=\"eyebrow\">Catalog</p>\n" +
   "      <h2 class=\"section-head__title\">Products in store</h2>\n" +
   "      <p class=\"section-head__lede\">Server-rendered listings — every card, price, and link arrived on the wire as complete HTML.</p>\n" +
   "    </div>\n" +
-  "    <a class=\"link-arrow\" href=\"/?sort=new\">New arrivals <span aria-hidden=\"true\">→</span></a>\n" +
   "  </header>\n" +
   "  <div class=\"grid\">{{cards}}</div>\n" +
   "</section>\n";
@@ -503,8 +509,15 @@ export function renderHome(opts) {
       "</section>";
   }
 
-  var hero = renderTemplate(_buildHomeHero(version), { product_count: heroProductCount })
-    .replace("RAW_FEATURED_CALLOUT", featuredHtml);
+  // Featured-collections band — operator collections (active, newest
+  // first, capped at 6); dropped entirely when there are none. Spliced
+  // raw (replacer-function form, $-safe) since the operator slug/title/
+  // description are escaped at the band's own sink. Mirrors the container.
+  var collectionsBand = _buildCollectionsBand(opts.collections || []);
+  var hero = spliceRaw(
+    renderTemplate(_buildHomeHero(version), { product_count: heroProductCount })
+      .replace("RAW_FEATURED_CALLOUT", featuredHtml),
+    "RAW_COLLECTIONS_BAND", collectionsBand);
 
   // Schema.org Organization + WebSite JSON-LD. The Organization
   // block surfaces in Google's knowledge-panel results (logo +
