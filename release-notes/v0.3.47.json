@@ -1,0 +1,26 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.47",
+  "date": "2026-06-01",
+  "headline": "Admin product detail, collections list, and order shipment panels load with fewer database round trips",
+  "summary": "Three admin-console screens re-derived data with one database query per item: the product-detail screen ran a query per variant per currency for current and historical prices, the collections list pulled up to 200 member rows for each collection just to count them, and the order-detail shipment panel hydrated each shipment and its labels sequentially. These now read in batched or parallel queries. The displayed data is unchanged, with one correctness improvement: a manual collection with more than 200 members now shows its true product count instead of a number capped at 200.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Batched admin product-detail price hydration",
+          "body": "The admin product-detail screen now loads every variant's current and historical prices across all currencies in a single batched query instead of one query per variant per currency. The screen renders identically."
+        },
+        {
+          "title": "Collections list counts without pulling member rows",
+          "body": "The admin collections list now counts a manual collection's members with a COUNT query instead of fetching up to 200 member rows per collection. A manual collection with more than 200 members now shows its true count (previously the displayed count was capped at 200); rule-based collections keep their existing bounded preview count."
+        },
+        {
+          "title": "Parallel shipment hydration on order detail",
+          "body": "The order-detail shipment panel now hydrates each shipment and its labels in parallel rather than one after another, so an order with several shipments opens faster."
+        }
+      ]
+    }
+  ]
+}
