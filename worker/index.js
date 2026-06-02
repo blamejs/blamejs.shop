@@ -798,6 +798,69 @@ export default {
           console.error("stock-alert-sweep failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
         }
       })());
+
+      // Wishlist alert sweep — event-driven "saved item dropped / restocked"
+      // emails. A SEPARATE ctx.waitUntil so a slow sweep never blocks the
+      // others. The container handler self-gates cadence (one real sweep
+      // every few hours), so this is a cheap call most ticks. Inert
+      // (enabled:false) on a deploy with no mailer.
+      ctx.waitUntil((async function () {
+        try {
+          var wlaUrl = new URL("/_/wishlist-alerts-sweep", "http://shop.container");
+          var wlaReq = new Request(wlaUrl.toString(), {
+            method:  "POST",
+            headers: {
+              "content-type":       "application/json; charset=utf-8",
+              "x-d1-bridge-secret": env.D1_BRIDGE_SECRET || "",
+            },
+            body: "{}",
+          });
+          await _shopContainer(env).fetch(wlaReq);
+        } catch (e) {
+          console.error("wishlist-alerts-sweep failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        }
+      })());
+
+      // Wishlist digest sweep — the periodic rollup. dispatchTick self-
+      // limits via next_dispatch_at <= now, so a minute-fire only picks up
+      // due enrollments (cheap). SEPARATE ctx.waitUntil; inert without a
+      // mailer.
+      ctx.waitUntil((async function () {
+        try {
+          var wldUrl = new URL("/_/wishlist-digest-sweep", "http://shop.container");
+          var wldReq = new Request(wldUrl.toString(), {
+            method:  "POST",
+            headers: {
+              "content-type":       "application/json; charset=utf-8",
+              "x-d1-bridge-secret": env.D1_BRIDGE_SECRET || "",
+            },
+            body: "{}",
+          });
+          await _shopContainer(env).fetch(wldReq);
+        } catch (e) {
+          console.error("wishlist-digest-sweep failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        }
+      })());
+
+      // Customer-portal magic-link expiry — flips stale issued tokens to
+      // expired so the FSM audit column stays durable. Cheap bounded
+      // UPDATE; SEPARATE ctx.waitUntil.
+      ctx.waitUntil((async function () {
+        try {
+          var cpUrl = new URL("/_/customer-portal-expire", "http://shop.container");
+          var cpReq = new Request(cpUrl.toString(), {
+            method:  "POST",
+            headers: {
+              "content-type":       "application/json; charset=utf-8",
+              "x-d1-bridge-secret": env.D1_BRIDGE_SECRET || "",
+            },
+            body: "{}",
+          });
+          await _shopContainer(env).fetch(cpReq);
+        } catch (e) {
+          console.error("customer-portal-expire failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        }
+      })());
     }
 
     if (env.EDGE_RENDER !== "on") return;

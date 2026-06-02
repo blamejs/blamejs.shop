@@ -504,6 +504,79 @@ async function _scanAndDispatchSkipsWithoutEmailResolver() {
   check("email handle never called",                   emailStub.calls.length === 0);
 }
 
+// Money-precision: the dispatched email price strings come from
+// pricing.format (locale + zero-decimal aware), NOT a hand-rolled
+// /100 + concat. A JPY price drop must render "¥3,000" (no minor
+// unit) — the float-money path would have produced the wrong
+// "30 JPY". Seeds a JPY-priced variant via a per-customer currency
+// resolver so prices.current(variant, "JPY") is what the scanner reads.
+async function _dispatchedEmailUsesPricingFormat() {
+  var customerId = _uuid();
+  var query    = _makeQuery();
+  var catalog  = bShop.catalog.create({ query: query });
+  var wishlist = bShop.wishlist.create({ query: query });
+  var emailStub = _stubEmail();
+  var alerts = wishlistAlerts.create({
+    query:    query,
+    wishlist: wishlist,
+    catalog:  catalog,
+    email:    emailStub.handle,
+    emailForCustomer: async function () { return "yen@example.com"; },
+    currencyForCustomer: function () { return "JPY"; },
+  });
+  await alerts.defineAlertPolicy({
+    slug: "drop-jpy", trigger: "price_drop", threshold: { percent_off_bps_min: 1000 },
+  });
+  // Seed a JPY-priced variant: baseline 5000 JPY → 3000 JPY (40% off).
+  var prod = await catalog.products.create({ slug: "yen-widget", title: "Yen Widget", status: "active" });
+  var variant = await catalog.variants.create(prod.id, { sku: "SKU-JPY" });
+  await catalog.prices.set(variant.id, { currency: "JPY", amount_minor: 5000 });
+  await catalog.prices.set(variant.id, { currency: "JPY", amount_minor: 3000 });
+  await catalog.inventory.create(variant.sku, { stock_on_hand: 10 });
+  await wishlist.add({ customer_id: customerId, product_id: prod.id, variant_id: variant.id });
+
+  var rv = await alerts.scanAndDispatch({});
+  check("JPY price drop fires",                  rv.sent === 1);
+  check("JPY new_price is yen-formatted",        emailStub.calls[0].new_price === "¥3,000");
+  check("JPY old_price is yen-formatted",        emailStub.calls[0].old_price === "¥5,000");
+  check("JPY new_price has NO float fraction",   emailStub.calls[0].new_price.indexOf(".") === -1);
+}
+
+// isUnsubscribedFromTrigger (now exported) reads the opt-out state; the
+// new resubscribeToAlertKind verb inverts unsubscribeFromAlertKind.
+async function _optOutReadAndResubscribe() {
+  var customerId = _uuid();
+  var w = _wire();
+  check("starts subscribed (no opt-out row)",
+    (await w.alerts.isUnsubscribedFromTrigger(customerId, "price_drop")) === false);
+
+  await w.alerts.unsubscribeFromAlertKind({ customer_id: customerId, trigger: "price_drop" });
+  check("isUnsubscribedFromTrigger true after opt-out",
+    (await w.alerts.isUnsubscribedFromTrigger(customerId, "price_drop")) === true);
+  // Per-trigger: a different trigger is unaffected.
+  check("other trigger still subscribed",
+    (await w.alerts.isUnsubscribedFromTrigger(customerId, "back_in_stock")) === false);
+
+  var re = await w.alerts.resubscribeToAlertKind({ customer_id: customerId, trigger: "price_drop" });
+  check("resubscribe returns resubscribed",      re.status === "resubscribed");
+  check("isUnsubscribedFromTrigger false after resubscribe",
+    (await w.alerts.isUnsubscribedFromTrigger(customerId, "price_drop")) === false);
+
+  // Idempotent — re-subscribing when already subscribed is a no-op.
+  var re2 = await w.alerts.resubscribeToAlertKind({ customer_id: customerId, trigger: "price_drop" });
+  check("re-resubscribe returns already-subscribed", re2.status === "already-subscribed");
+
+  // Bad input refused (same validation as unsubscribe).
+  await assert.rejects(
+    w.alerts.resubscribeToAlertKind({ customer_id: "not-a-uuid", trigger: "price_drop" }),
+    /customer_id/,
+  );
+  await assert.rejects(
+    w.alerts.resubscribeToAlertKind({ customer_id: _uuid(), trigger: "bogus" }),
+    /trigger must be/,
+  );
+}
+
 async function run() {
   await _defineAlertPolicyPersistsAndRefusesRedefine();
   await _scanAndDispatchFiresOnPriceDrop();
@@ -514,6 +587,8 @@ async function run() {
   await _markAlertSentUpdatesChannel();
   await _customerAlertHistoryPaginates();
   await _scanAndDispatchSkipsWithoutEmailResolver();
+  await _dispatchedEmailUsesPricingFormat();
+  await _optOutReadAndResubscribe();
   await _refusalsAndFactoryShape();
 }
 

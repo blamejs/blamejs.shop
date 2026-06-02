@@ -198,6 +198,20 @@ node -e "
   emails are stored hash-only (`b.crypto.namespaceHash`), and the
   account leaderboard exposes rank plus initials only, never an email or
   account id.
+- **Email magic-link sign-in is single-use and hashed-at-rest.** The
+  optional *Email me a sign-in link* path (mounts only when a mailer is
+  configured) mints a 256-bit token whose plaintext is emailed once and
+  never persisted — only its `namespaceHash` digest is stored. Redemption
+  re-hashes the submitted token, compares in constant time, and flips the
+  row to `consumed` under a `status = 'issued'` guard, so a token works
+  exactly once (a replayed link bounces to login). Tokens carry a short
+  default lifetime (15 minutes) re-checked at redeem time, and a
+  background tick durably expires stale rows. The request form is not an
+  account-existence oracle: a known and an unknown address return the
+  identical "if an account exists we've emailed a link" confirmation, and
+  an unknown / expired / reused token bounces to login identically. On
+  success the sealed `shop_auth` session cookie is set the same way the
+  passkey and OAuth paths set it; passkey and social login are unchanged.
 - **Privileged actions are recorded and reviewable.** Every mutating
   admin action and every catalog-API error is appended to a
   tamper-evident, hash-chained audit log (the framework's `b.audit`
