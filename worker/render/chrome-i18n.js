@@ -134,6 +134,105 @@ export function dirFor(locale) {
   return RTL_LANGUAGES.has(primary) ? "rtl" : "ltr";
 }
 
+// BCP-47 tag envelope — the same shape lib/locale-router.js's LOCALE_RE
+// accepts. A tag that fails this gate is dropped (never reaches an href),
+// so a poked supported-list value can't inject markup.
+var _LOCALE_TAG_RE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
+
+// Hostname envelope — bare host, no port. Defensive request-shape reader:
+// a malformed host returns "" (no hreflang) rather than throwing into the
+// render path.
+var _HOST_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
+
+// Strip a leading `/<locale>` path segment when present. Mirrors
+// lib/locale-router.js#_urlPrefixCandidate's leading-segment detection.
+function _stripLeadingLocaleSegment(path) {
+  var rest = path.charAt(0) === "/" ? path.slice(1) : path;
+  if (!rest.length) return null;
+  var slash = rest.indexOf("/");
+  var seg = slash === -1 ? rest : rest.slice(0, slash);
+  if (!seg.length || seg.length > 35 || !_LOCALE_TAG_RE.test(seg)) return null;
+  return seg;
+}
+
+function _stripLeadingLocaleSubdomain(host) {
+  if (host.indexOf(".") === -1) return null;
+  var first = host.slice(0, host.indexOf("."));
+  if (!first.length || first.length > 35 || !_LOCALE_TAG_RE.test(first)) return null;
+  return first;
+}
+
+// Build the canonical URL for `locale` under a URL-shaped strategy. The
+// byte-identical mirror of lib/locale-router.js#_canonicalForUrl — a
+// parity test pins the two so they never drift. Returns null for a
+// non-URL strategy (the caller emits no hreflang then).
+function _canonicalForLocale(host, path, locale, strategy) {
+  var lc = String(locale).toLowerCase();
+  if (strategy === "url_prefix") {
+    var prefix = _stripLeadingLocaleSegment(path);
+    var rest;
+    if (prefix) {
+      rest = path.slice(1 + prefix.length);
+      if (rest.length === 0) rest = "/";
+    } else {
+      rest = path;
+    }
+    if (rest.charAt(0) !== "/") rest = "/" + rest;
+    return "https://" + host + "/" + lc + (rest === "/" ? "" : rest);
+  }
+  if (strategy === "subdomain") {
+    var sub = _stripLeadingLocaleSubdomain(host);
+    var apex = sub ? host.slice(sub.length + 1) : host;
+    return "https://" + lc + "." + apex + path;
+  }
+  return null;
+}
+
+// Build the `<link rel="alternate" hreflang>` block (with `x-default`) for
+// a URL-shaped locale policy. Returns "" when the strategy is not
+// url_prefix/subdomain, the supported list has fewer than two entries, or
+// the host/path is malformed — so a single-locale or cookie-strategy store
+// (and a hostile Host header) emits nothing. The href math is the
+// byte-identical mirror of the container's, pinned by a parity test.
+//
+// Locale tags pass the envelope regex above and host/path are validated;
+// every value is still escapeHtml'd defense-in-depth, matching the
+// announcementBar href discipline.
+export function alternateLinks(opts) {
+  opts = opts || {};
+  var strategy = opts.strategy;
+  if (strategy !== "url_prefix" && strategy !== "subdomain") return "";
+  var supported = Array.isArray(opts.supportedLocales) ? opts.supportedLocales : [];
+  if (supported.length < 2) return "";
+  var defaultLocale = opts.defaultLocale;
+  if (typeof defaultLocale !== "string" || !_LOCALE_TAG_RE.test(defaultLocale)) return "";
+  if (typeof opts.host !== "string" || typeof opts.path !== "string") return "";
+  var host = opts.host.toLowerCase();
+  var colon = host.indexOf(":");
+  if (colon !== -1) host = host.slice(0, colon);
+  if (!host.length || host.length > 253 || !_HOST_RE.test(host)) return "";
+  var path = opts.path;
+  if (!path.length || path.length > 2048 || path.charAt(0) !== "/") return "";
+  if (/[\x00-\x1f\x7f]/.test(path)) return "";
+
+  var out = "";
+  for (var i = 0; i < supported.length; i += 1) {
+    var tag = supported[i];
+    if (typeof tag !== "string" || !_LOCALE_TAG_RE.test(tag)) continue;
+    var href = _canonicalForLocale(host, path, tag, strategy);
+    if (href == null) continue;
+    out += "  <link rel=\"alternate\" hreflang=\"" + escapeHtml(tag) +
+      "\" href=\"" + escapeHtml(href) + "\">\n";
+  }
+  if (!out) return "";
+  var xDefault = _canonicalForLocale(host, path, defaultLocale, strategy);
+  if (xDefault != null) {
+    out += "  <link rel=\"alternate\" hreflang=\"x-default\" href=\"" +
+      escapeHtml(xDefault) + "\">\n";
+  }
+  return out;
+}
+
 // Splice the resolved chrome strings + lang/dir into a canonical LAYOUT
 // string. The LAYOUT carries `{{chrome_key}}` placeholders the same way
 // the container's does; this fills them with the per-substitution

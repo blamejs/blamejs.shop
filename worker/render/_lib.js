@@ -225,6 +225,59 @@ export var CONSENT_BANNER =
   "    </div>\n" +
   "  </div>\n";
 
+// PWA default manifest + service worker — the shipped fallback served at
+// /manifest.webmanifest + /sw.js when the operator has not defined an
+// active pwaManifest row. BOTH substrates serve these exact bytes (the edge
+// has no DB-backed primitive; the container's DB-backed pwaManifest is the
+// override), so the `<link rel="manifest">` in every layout never 404s on a
+// fresh deploy. The default name is the project name (not interpolated, so
+// the bytes are byte-identical edge↔container — a parity test pins them);
+// an operator customizes via pwaManifest.defineManifest + setActive on the
+// container path. The object/serialization here is the byte-identical twin
+// of lib/storefront.js's PWA_DEFAULT_MANIFEST / PWA_DEFAULT_SW.
+var _PWA_DEFAULT_MANIFEST_OBJ = {
+  name:             "blamejs.shop",
+  short_name:       "blamejs.shop",
+  description:      "Open-source ecommerce framework built on blamejs — server-rendered HTML, post-quantum crypto, zero npm runtime dependencies.",
+  start_url:        "/",
+  scope:            "/",
+  display:          "standalone",
+  orientation:      "portrait",
+  theme_color:      "#08080a",
+  background_color: "#08080a",
+  lang:             "en",
+  dir:              "ltr",
+  icons: [
+    { src: "/assets/brand/favicon.png", sizes: "192x192", type: "image/png", purpose: "any" },
+    { src: "/assets/brand/favicon.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
+    { src: "/assets/brand/favicon.svg", sizes: "any",     type: "image/svg+xml", purpose: "any" }
+  ]
+};
+export var PWA_DEFAULT_MANIFEST = JSON.stringify(_PWA_DEFAULT_MANIFEST_OBJ, null, 2);
+
+// Minimal pass-through service worker — a network-first navigation
+// fallback to the home page so an offline navigation lands on a cached
+// shell instead of the browser's error page. Self-contained; no precache
+// (the default keeps install instant). Operators who want a precache list
+// + per-rule runtime caching define an active SW via pwaManifest. Byte-
+// identical to lib/storefront.js's PWA_DEFAULT_SW.
+export var PWA_DEFAULT_SW =
+  "// service worker — shipped default (pass-through navigation fallback)\n" +
+  "\"use strict\";\n" +
+  "var CACHE_NAME = \"blamejs-shop-default-v1\";\n" +
+  "self.addEventListener(\"install\", function (e) { self.skipWaiting(); });\n" +
+  "self.addEventListener(\"activate\", function (e) {\n" +
+  "  e.waitUntil(caches.keys().then(function (keys) {\n" +
+  "    return Promise.all(keys.map(function (k) { if (k !== CACHE_NAME) return caches.delete(k); }));\n" +
+  "  }).then(function () { return self.clients.claim(); }));\n" +
+  "});\n" +
+  "self.addEventListener(\"fetch\", function (e) {\n" +
+  "  if (e.request.method !== \"GET\") return;\n" +
+  "  if (e.request.mode === \"navigate\") {\n" +
+  "    e.respondWith(fetch(e.request).catch(function () { return caches.match(\"/\"); }));\n" +
+  "  }\n" +
+  "});\n";
+
 // `<script>` tag for the consent island, resolved to its content-
 // fingerprinted URL + SRI from the shared manifest — byte-identical to the
 // container's `_islandScript("consent.js", { id, policy })`. The strict

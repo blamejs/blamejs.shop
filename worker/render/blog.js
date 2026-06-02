@@ -6,20 +6,23 @@
 // Operators who want markdown formatting compose `b.template`
 // elsewhere and pass the rendered HTML in.
 import { renderTemplate, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, spliceRaw, absolutizeOgImage } from "./_lib.js";
+import { dirFor, alternateLinks } from "./chrome-i18n.js";
 import b from "../b.js";
 
 var LAYOUT =
   "<!DOCTYPE html>\n" +
-  "<html lang=\"en\">\n" +
+  "<html lang=\"{{lang}}\" dir=\"{{dir}}\">\n" +
   "<head>\n" +
   "  <meta charset=\"utf-8\">\n" +
   "  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n" +
   "  <title>{{title}} — {{shop_name}}</title>\n" +
   "  <meta name=\"description\" content=\"{{description}}\">\n" +
   "  <link rel=\"canonical\" href=\"{{canonical_url}}\">\n" +
+  "RAW_HREFLANG" +
   "  <link rel=\"icon\" type=\"image/svg+xml\" href=\"/assets/brand/favicon.svg\">\n" +
   "  <link rel=\"icon\" type=\"image/png\" href=\"/assets/brand/favicon.png\">\n" +
   "  <link rel=\"apple-touch-icon\" href=\"/assets/brand/favicon.png\">\n" +
+  "  <link rel=\"manifest\" href=\"/manifest.webmanifest\">\n" +
   "  <meta name=\"theme-color\" content=\"#08080a\">\n" +
   "  <link rel=\"stylesheet\" href=\"{{theme_css}}\"RAW_CSS_INTEGRITY>\n" +
   "  <link rel=\"alternate\" type=\"application/rss+xml\" href=\"/feed.xml\" title=\"{{shop_name_rss}} Blog\">\n" +
@@ -82,6 +85,11 @@ var LAYOUT =
 function _wrap(opts, bodyHtml) {
   var shopName = opts.shopName || "blamejs.shop";
   var themeCss = opts.themeCss || assetUrl("css/main.css");
+  // The edge serves the storefront's DEFAULT locale (any explicit choice
+  // bypasses the edge to the container), so `<html lang/dir>` carries the
+  // configured default + its writing direction. The blog chrome strings
+  // stay English literals — only the document language localizes.
+  var locale = opts.locale || opts.defaultLocale || "en";
   // og:image / twitter:image carry a FULLY-QUALIFIED URL — a relative
   // `/assets/...` value (the blog-list brand default, or an article hero
   // already absolutized at its own site) is dropped by social-share
@@ -97,6 +105,8 @@ function _wrap(opts, bodyHtml) {
     shop_name_footer:  shopName,
     description:       opts.description,
     theme_css:         themeCss,
+    lang:              locale,
+    dir:               dirFor(locale),
     og_type:           opts.ogType || "website",
     og_title:          (opts.title || shopName) + " — " + shopName,
     og_description:    opts.description,
@@ -104,6 +114,13 @@ function _wrap(opts, bodyHtml) {
     canonical_url:     opts.canonicalUrl || "",
     year:              String(new Date().getUTCFullYear()),
   }).replace("RAW_CSS_INTEGRITY", stylesheetIntegrityAttr(themeCss))
+    .replace("RAW_HREFLANG", alternateLinks({
+      host:            opts.host,
+      path:            opts.path,
+      defaultLocale:   opts.defaultLocale || "en",
+      supportedLocales: opts.supportedLocales,
+      strategy:        opts.localeStrategy,
+    }))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
     .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "");
@@ -219,6 +236,12 @@ export function renderBlogList(opts) {
     themeCss:     opts.themeCss,
     version:      opts.version,
     canonicalUrl: opts.canonicalUrl,
+    locale:           opts.locale,
+    defaultLocale:    opts.defaultLocale,
+    host:             opts.host,
+    path:             opts.path,
+    supportedLocales: opts.supportedLocales,
+    localeStrategy:   opts.localeStrategy,
   }, body);
 }
 
@@ -291,5 +314,11 @@ export function renderBlogArticle(opts) {
     themeCss:     opts.themeCss,
     version:      opts.version,
     canonicalUrl: opts.canonicalUrl,
+    locale:           opts.locale,
+    defaultLocale:    opts.defaultLocale,
+    host:             opts.host,
+    path:             opts.path,
+    supportedLocales: opts.supportedLocales,
+    localeStrategy:   opts.localeStrategy,
   }, articleHtml + jsonLd);
 }

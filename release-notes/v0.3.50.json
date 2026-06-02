@@ -1,0 +1,39 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.50",
+  "date": "2026-06-02",
+  "headline": "Installable PWA manifest, hreflang for multilingual stores, complete sitemap and robots coverage, localized edge pages, and product Q&A rich results",
+  "summary": "Several search-engine and internationalization signals were missing or inconsistent between the cached (edge) and dynamically rendered pages. This release serves an installable web-app manifest and a service worker, emits hreflang alternates when a store runs path- or subdomain-based locales, localizes the blog, CMS, and policy pages on the cached path (they were always English), brings the robots.txt and sitemap into agreement across both render paths with collections, categories, and CMS pages now included, and emits Q&A structured data on product pages. It also fixes a bug that dropped every product from the dynamically rendered sitemap.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Installable web-app manifest and service worker",
+          "body": "The store now serves a web-app manifest at /manifest.webmanifest and a service worker at /sw.js, and links the manifest from every page, so the storefront can be installed as a progressive web app. A working default is served out of the box; an operator who configures a custom manifest overrides it."
+        },
+        {
+          "title": "hreflang alternates for multilingual stores",
+          "body": "When a store runs locales via URL prefixes (e.g. /de/) or subdomains, each page now emits rel=alternate hreflang links (plus x-default) so search engines map the equivalent localized URLs instead of treating them as duplicate content. Stores on a single locale, or locale-by-cookie, emit none."
+        },
+        {
+          "title": "Product Q&A rich results",
+          "body": "A product page with answered customer questions now emits QAPage structured data so the questions and answers are eligible for rich results in search."
+        }
+      ]
+    },
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Localized blog, CMS, and policy pages on the cached path",
+          "body": "The cached (edge-rendered) blog articles, CMS pages, and privacy/terms pages now carry the correct document language and direction for the active locale, matching the dynamically rendered pages. Previously they were always marked English and left-to-right, which harmed screen readers and search indexing and broke right-to-left layout."
+        },
+        {
+          "title": "Consistent robots.txt and complete sitemap",
+          "body": "robots.txt now disallows the admin, cart, checkout, order, and account paths consistently on both render paths, and the sitemap now includes collection, category, and CMS-page URLs alongside products and blog posts. A bug that made the dynamically rendered sitemap omit every product (a list limit overflow) is fixed so the full catalog is listed."
+        }
+      ]
+    }
+  ]
+}

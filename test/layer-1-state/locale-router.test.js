@@ -672,6 +672,72 @@ async function _exportedConstants() {
   check("instance STRATEGIES",              inst.STRATEGIES.length === 5);
 }
 
+// alternateUrls — the hreflang alternate set for the active URL-shaped
+// policy. Composes _canonicalForUrl; returns null for non-URL strategies,
+// a single-locale policy, no active policy, or a malformed host/path (a
+// request-shape reader — never throws on bad input).
+async function _alternateUrlsHelper() {
+  // url_prefix: a leading locale segment is swapped per supported locale.
+  var fp = _factory();
+  await _seedCatalog(fp.router);
+  await fp.router.definePolicy({
+    slug: "main", strategy: "url_prefix", default_locale: "en",
+    supported_locales: ["en", "de", "fr"],
+  });
+  await fp.router.setActivePolicy("main");
+
+  var up = await fp.router.alternateUrls("shop.example", "/de/about");
+  check("alternateUrls url_prefix not null",   up !== null);
+  check("alternateUrls default_locale",        up.default_locale === "en");
+  check("alternateUrls x_default_url",          up.x_default_url === "https://shop.example/en/about");
+  var byTag = {};
+  up.alternates.forEach(function (a) { byTag[a.tag] = a.href; });
+  check("alternateUrls en href",               byTag.en === "https://shop.example/en/about");
+  check("alternateUrls de href (segment swap)", byTag.de === "https://shop.example/de/about");
+  check("alternateUrls fr href",               byTag.fr === "https://shop.example/fr/about");
+  // A path with no leading locale segment prepends the locale.
+  var upNoSeg = await fp.router.alternateUrls("shop.example", "/about");
+  var byTag2 = {};
+  upNoSeg.alternates.forEach(function (a) { byTag2[a.tag] = a.href; });
+  check("alternateUrls url_prefix prepend",    byTag2.de === "https://shop.example/de/about");
+
+  // subdomain: the leftmost locale subdomain is swapped per supported tag.
+  var fs2 = _factory();
+  await _seedCatalog(fs2.router);
+  await fs2.router.definePolicy({
+    slug: "sub", strategy: "subdomain", default_locale: "en",
+    supported_locales: ["en", "de"],
+  });
+  await fs2.router.setActivePolicy("sub");
+  var sd = await fs2.router.alternateUrls("de.shop.example", "/about");
+  check("alternateUrls subdomain not null",    sd !== null);
+  var sdByTag = {};
+  sd.alternates.forEach(function (a) { sdByTag[a.tag] = a.href; });
+  check("alternateUrls subdomain en host swap", sdByTag.en === "https://en.shop.example/about");
+  check("alternateUrls subdomain de host swap", sdByTag.de === "https://de.shop.example/about");
+  check("alternateUrls subdomain x_default",    sd.x_default_url === "https://en.shop.example/about");
+
+  // cookie strategy → null (no URL-shaped alternates).
+  var fc = _factory();
+  await _seedCatalog(fc.router);
+  await fc.router.definePolicy({
+    slug: "ck", strategy: "cookie", default_locale: "en",
+    supported_locales: ["en", "de"],
+  });
+  await fc.router.setActivePolicy("ck");
+  check("alternateUrls cookie strategy → null", (await fc.router.alternateUrls("shop.example", "/about")) === null);
+
+  // malformed host → null, no throw.
+  check("alternateUrls malformed host → null",  (await fp.router.alternateUrls("not a host!!", "/about")) === null);
+  // malformed path → null, no throw.
+  check("alternateUrls malformed path → null",  (await fp.router.alternateUrls("shop.example", "no-leading-slash")) === null);
+
+  // no active policy → null.
+  var fn = _factory();
+  await _seedCatalog(fn.router);
+  check("alternateUrls no active policy → null", (await fn.router.alternateUrls("shop.example", "/about")) === null);
+}
+
 async function run() {
   await _defineLocaleAcrossKinds();
   await _definePolicyPerStrategy();
@@ -682,6 +748,7 @@ async function run() {
   await _localePopularityAudit();
   await _validationSurface();
   await _exportedConstants();
+  await _alternateUrlsHelper();
 }
 
 module.exports = { run: run };

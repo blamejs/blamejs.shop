@@ -461,6 +461,46 @@ export async function listActiveProductSlugs(DB) {
   return { rows: rows };
 }
 
+// Every active collection slug + its last-modified epoch, for the
+// sitemap's /collections/<slug> URLs. Active = not archived, matching
+// the container's collections.list({ active_only: true }). Same 50k cap
+// as products. Missing-table-resilient — operators who haven't applied
+// migration `0043` (collections) get an empty result set rather than a
+// D1 error propagating to the sitemap route.
+export async function listActiveCollectionSlugs(DB) {
+  try {
+    var res = await DB
+      .prepare("SELECT slug, updated_at FROM collections WHERE archived_at IS NULL ORDER BY updated_at DESC LIMIT 50000")
+      .bind()
+      .all();
+    var rows = (res && res.results) ? res.results : [];
+    return { rows: rows };
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return { rows: [] };
+    throw e;
+  }
+}
+
+// Every active category slug + its last-modified epoch, for the
+// sitemap's /categories/<slug> URLs. Active = active flag set AND not
+// archived, matching the container's categoryNavigation.tree() (which
+// drops inactive + archived nodes). Same 50k cap. Missing-table-resilient
+// — operators who haven't applied migration `0201` (categories) get an
+// empty result set.
+export async function listActiveCategorySlugs(DB) {
+  try {
+    var res = await DB
+      .prepare("SELECT slug, updated_at FROM categories WHERE active = 1 AND archived_at IS NULL ORDER BY updated_at DESC LIMIT 50000")
+      .bind()
+      .all();
+    var rows = (res && res.results) ? res.results : [];
+    return { rows: rows };
+  } catch (e) {
+    if (e && /no such table/i.test(e.message || "")) return { rows: [] };
+    throw e;
+  }
+}
+
 // Every published blog article slug + its last-modified epoch.
 // Same 50k cap as products (independent budget — sitemap protocol's
 // limit is per-file, not per-source).
