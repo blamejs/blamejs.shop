@@ -694,24 +694,29 @@ async function main() {
       // schema and is skipped; guest-cart recovery re-opens the day a
       // guest checkout-email is persisted on the cart and fed through
       // the resolver.
+      // Shared transactional mailer — one b.mail/email instance per boot,
+      // null unless the operator configured SMTP. Reused by cart-recovery
+      // AND the back-in-stock sweep so both transactional surfaces share the
+      // same transport rather than each building its own.
+      var txEmail = null;
+      if (process.env.SMTP_HOST && process.env.MAIL_FROM) {
+        var txMailer = b.mail.create({
+          transport: b.mail.transports.smtp({
+            host: process.env.SMTP_HOST,
+            port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587,
+            user: process.env.SMTP_USER || undefined,
+            pass: process.env.SMTP_PASS || undefined,
+          }),
+          defaults: { from: process.env.MAIL_FROM },
+        });
+        txEmail = bShop.email.create({ mailer: txMailer });
+      }
+
       var cartRecoveryPass = null;
       if (catalog && cart) {
-        // Build the transactional mailer only when the operator has
-        // configured SMTP. Absent it, `recoveryEmail` stays null and the
-        // pass gate keeps the cron quiet.
-        var recoveryEmail = null;
-        if (process.env.SMTP_HOST && process.env.MAIL_FROM) {
-          var mailer = b.mail.create({
-            transport: b.mail.transports.smtp({
-              host: process.env.SMTP_HOST,
-              port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587,
-              user: process.env.SMTP_USER || undefined,
-              pass: process.env.SMTP_PASS || undefined,
-            }),
-            defaults: { from: process.env.MAIL_FROM },
-          });
-          recoveryEmail = bShop.email.create({ mailer: mailer });
-        }
+        // Cart-recovery reuses the shared transactional mailer (built above).
+        // Absent SMTP it's null and the pass gate keeps the cron quiet.
+        var recoveryEmail = txEmail;
 
         // Operator-owned resolver: cart customer_id → deliverable
         // plaintext address. The default deploy has no plaintext-email
@@ -781,6 +786,97 @@ async function main() {
         }
         var summary = await cartRecoveryPass.runPass();
         res.json(summary);
+      });
+
+      // Back-in-stock sweep — the Worker's scheduled() handler POSTs here over
+      // the SHOP service binding once a minute (a SECOND, independent
+      // ctx.waitUntil so a slow stock sweep never blocks cart recovery). Same
+      // D1_BRIDGE_SECRET timing-safe gate, same drop-silent / never-5xx shape
+      // as /_/cart-recovery-tick. The sweep self-gates cadence below so it
+      // doesn't actually scan every minute on an empty/quiet table.
+      //
+      // Cadence gate: the cron fires every minute, but scanning the table +
+      // emailing on every fire is wasteful when stock rarely changes. Gate to
+      // one real sweep per STOCK_ALERT_SWEEP_INTERVAL_MS; a minute-fire inside
+      // the window returns `{ ok:true, skipped:true }` cheaply.
+      var STOCK_ALERT_SWEEP_INTERVAL_MS = process.env.STOCK_ALERT_SWEEP_INTERVAL_MS
+        ? parseInt(process.env.STOCK_ALERT_SWEEP_INTERVAL_MS, 10)
+        : b.constants.TIME.minutes(15); // default: one real sweep every 15 minutes
+      var _lastStockAlertSweepAt = 0;
+
+      r.post("/_/stock-alert-sweep", async function (req, res) {
+        var got = req.headers && req.headers["x-d1-bridge-secret"];
+        var want = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !want ||
+          typeof got !== "string" ||
+          got.length !== want.length ||
+          !b.crypto.timingSafeEqual(got, want)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!stockAlerts) {
+          res.json({ ok: true, enabled: false, reason: "stock alerts not composed (no catalog/cart)" });
+          return;
+        }
+        var now = Date.now();
+        if (now - _lastStockAlertSweepAt < STOCK_ALERT_SWEEP_INTERVAL_MS) {
+          res.json({ ok: true, enabled: true, skipped: true, next_in_ms: STOCK_ALERT_SWEEP_INTERVAL_MS - (now - _lastStockAlertSweepAt) });
+          return;
+        }
+        _lastStockAlertSweepAt = now;
+        var summary = { scanned: 0, notified: 0, emailed: 0, cleaned: 0 };
+        try {
+          var swept = await stockAlerts.scanAndNotify({ now: now });
+          summary.scanned = swept.scanned;
+          summary.notified = swept.notified;
+          // Email each fired row best-effort (drop-silent per row) when SMTP
+          // is configured. A single bad address must not poison the sweep.
+          if (txEmail) {
+            var originBase = (process.env.SHOP_ORIGIN || "").replace(/\/$/, "");
+            for (var i = 0; i < swept.rows.length; i += 1) {
+              var row = swept.rows[i];
+              try {
+                // Rows carry sku, not the product slug. Resolve the slug via a
+                // cheap indexed read (drop-silent → fall back to /search?q=).
+                var productUrl;
+                var unsubscribeUrl;
+                var titleForSku = row.sku;
+                var prodForSku = null;
+                try {
+                  if (catalog && catalog.products && typeof catalog.products.bySku === "function") {
+                    prodForSku = await catalog.products.bySku(row.sku);
+                  }
+                } catch (_lookupErr) { prodForSku = null; }
+                if (prodForSku && prodForSku.slug) {
+                  productUrl = originBase + "/products/" + encodeURIComponent(prodForSku.slug);
+                  if (prodForSku.title) titleForSku = prodForSku.title;
+                } else {
+                  productUrl = originBase + "/search?q=" + encodeURIComponent(row.sku);
+                }
+                var unsubQuery = "email=" + encodeURIComponent(row.email_normalised) +
+                  "&sku=" + encodeURIComponent(row.sku) +
+                  (row.variant_id ? "&variant_id=" + encodeURIComponent(row.variant_id) : "");
+                unsubscribeUrl = originBase + "/stock-alert/unsubscribe?" + unsubQuery;
+                await txEmail.sendBackInStock({
+                  to:              row.email_normalised,
+                  product_title:   titleForSku,
+                  sku:             row.sku,
+                  product_url:     productUrl,
+                  unsubscribe_url: unsubscribeUrl,
+                });
+                summary.emailed += 1;
+              } catch (_e) { /* drop-silent — a single bad address must not poison the sweep */ }
+            }
+          }
+          var cleaned = await stockAlerts.cleanupExpired({ now: now });
+          summary.cleaned = cleaned.removed;
+          res.json(Object.assign({ ok: true, enabled: true }, summary));
+        } catch (e) {
+          // Never 5xx — a thrown sweep would mark the cron run failed.
+          res.json({ ok: false, error: (e && e.message) || String(e) });
+        }
       });
 
       // Shared config primitive — operator-tunable runtime
@@ -1102,6 +1198,31 @@ async function main() {
       var orderRatings = (catalog && cart)
         ? bShop.orderRatings.create({})
         : null;
+
+      // Back-in-stock alerts — double-opt-in "notify me" subscriptions + the
+      // scan-and-notify sweeper. catalog.inventory.get(sku) drives the sweep;
+      // `notifications` is intentionally omitted (no in-app notifications
+      // surface is wired) so scanAndNotify stamps notified_at + returns the
+      // fired rows, which the cron handler emails via the shared transactional
+      // mailer. Gate on catalog (subscribe/confirm need no inventory; the
+      // sweep does) AND cart (the storefront mount gate).
+      var stockAlerts = (catalog && cart)
+        ? bShop.stockAlerts.create({ catalog: catalog })
+        : null;
+
+      // Search ranking — operator-tunable weight sets + per-query pins. The
+      // /search container handler reranks its candidate universe through
+      // applyToResults; the admin console authors weight sets + pins. The
+      // catalog binding is OPTIONAL (only rankQuery needs it; the route uses
+      // applyToResults with its own roster), so construct without catalog.
+      var searchRanking = (catalog && cart) ? bShop.searchRanking.create({}) : null;
+
+      // Trust badges — operator-authored trust/certification badges rendered
+      // at the container-only checkout + order-confirmation placements (the
+      // edge-cached header/footer/pdp/cart_review placements are deferred —
+      // they'd need worker/render twins). SVG sanitized at define time via
+      // b.guardSvg; URLs through b.safeUrl. Only the externalDb query handle.
+      var trustBadges = (catalog && cart) ? bShop.trustBadges.create({}) : null;
 
       // Fulfillment ops — the warehouse-side surfaces over the order +
       // shipment data. Pick lists consolidate open orders into an aisle-
@@ -1515,6 +1636,8 @@ async function main() {
           streamDsrBundle:         _streamDsrBundle,
           orderExchanges: orderExchanges,
           orderRatings:  orderRatings,
+          searchRanking: searchRanking,
+          trustBadges:   trustBadges,
           preorder:      preorder,
           customers:     customers,
           storeCredit:      storeCredit,
@@ -1737,6 +1860,21 @@ async function main() {
         // rewrite instance; facets is the per-request factory.
         if (searchSynonyms) sfDeps.searchSynonyms = searchSynonyms;
         if (searchFacets) sfDeps.searchFacets = searchFacets;
+        // Search ranking — the /search container handler reranks its candidate
+        // universe through applyToResults using the active weight set + query
+        // pins (never reranks the edge — container-only enhancement). Drop-
+        // silent fallback to un-ranked order on any failure.
+        if (searchRanking) sfDeps.searchRanking = searchRanking;
+        // Back-in-stock alerts — the PDP "Notify me" subscribe/confirm/
+        // unsubscribe routes. The shared transactional mailer is threaded as
+        // sfDeps.email so the subscribe route can send the confirmation email
+        // (drop-silent on a mailer hiccup). The cron sweep emails the fired
+        // rows from the server-level handler, not here.
+        if (stockAlerts) sfDeps.stockAlerts = stockAlerts;
+        if (txEmail) sfDeps.email = txEmail;
+        // Trust badges — rendered at the container-only checkout + order-
+        // confirmation placements; drop-silent on any read failure.
+        if (trustBadges) sfDeps.trustBadges = trustBadges;
         // Subscription self-management (/account/subscriptions) — the
         // shared instance. The list renders read-only without payment;
         // the cancel route mounts only when `sfDeps.payment` is wired
