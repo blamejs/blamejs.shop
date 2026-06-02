@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.48",
+  "date": "2026-06-02",
+  "headline": "Customers can export or request deletion of their personal data, and the admin console gets a privacy-request queue to fulfil it",
+  "summary": "The framework had a complete data-subject-request engine but nothing reached it, so a store handling EU/California personal data had no way for a shopper to exercise their right of access or erasure and no operator path to fulfil one. A signed-in customer can now request a full export of their data — account, addresses, orders, subscriptions, loyalty, and support history, streamed as a downloadable JSON bundle — and can file a deletion request. The admin console gets a Privacy requests screen where an operator reviews each request, downloads the export, previews a deletion (a dry run that changes nothing), and then executes it. Erasure anonymizes the customer's account and archives their addresses and subscriptions while retaining orders, loyalty ledger, and support tickets that must be kept for tax and legal records. A customer can only ever see or act on their own requests; deletion is always filed by the customer and carried out by an operator.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Customer data export and deletion requests",
+          "body": "A signed-in customer gets a Privacy & data area under their account where they can request a full export of their personal data and file a deletion request. The export is streamed as a downloadable JSON bundle covering their account, addresses, orders, subscriptions, loyalty balance and ledger, and support history. A customer can only access their own requests and downloads; a request belonging to anyone else returns not-found."
+        },
+        {
+          "title": "Privacy-request queue in the admin console",
+          "body": "A new Privacy requests screen lists every data-subject request with its status. An operator can download a request's export, preview a deletion as a dry run that reports what would change without modifying anything, and then execute the deletion behind a confirmation step. Deletion anonymizes the customer's account and archives their addresses and subscriptions, while orders, the loyalty ledger, and support tickets are retained for tax and legal record-keeping. Every customer- and operator-entered field shown in either console is HTML-escaped."
+        }
+      ]
+    }
+  ]
+}

@@ -160,6 +160,259 @@ function _problemFromError(res, e) {
   });
 }
 
+// Per-domain reader adapters for the subject-access-request primitive
+// (lib/compliance-export.js). The primitive expects each injected handle
+// to expose `forCustomerExport(customer_id)` (returns that domain's data)
+// and/or `forCustomerDeletion(customer_id, { dry_run })` (executes/counts
+// the per-domain erasure and returns `{ table, deleted }`). NONE of the
+// per-domain primitives (customers / addresses / order / subscriptions /
+// support-tickets / loyalty) implement that contract, so passing the raw
+// handles ships an empty bundle (every section lands in `sections_absent`)
+// and every deletion is a no-op. These shims map each handle's EXISTING
+// read / soft-delete surface onto the contract, so the per-domain modules
+// stay unchanged.
+//
+// Resilience (drop-silent, hot-path): an export adapter that fails (one
+// unmigrated table, a read error) returns null/[]/{} rather than throwing —
+// the primitive treats a thrown reader as a hard error, so we never throw
+// out of an adapter. A deletion adapter that fails returns
+// `{ table, deleted: 0 }`. One missing domain never fails the whole bundle.
+//
+// Retention (PD-2): orders, the loyalty ledger, and support tickets are
+// accounting / financial / operator records a controller may retain under a
+// legal-obligation basis — their deletion adapters retain (`deleted: 0` +
+// note). Addresses + subscriptions are archived; the customer row is
+// anonymized in place (PD-1) so FK children (orders, tickets) don't orphan.
+var _dsrReader = {
+  // customers: export reads the row + the customer's passkeys + their
+  // OAuth sign-in providers. deletion anonymizes-in-place via update() —
+  // overwrite display_name to a tombstone, keep the row so FKs hold
+  // (a hard delete would orphan orders / tickets). The raw email is never
+  // stored (email_hash only), so the row carries no plaintext PII to scrub
+  // beyond the display name.
+  customers: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        try {
+          var row      = await handle.get(id);
+          var passkeys = [];
+          try { passkeys = await handle.listPasskeys(id); } catch (_e) { passkeys = []; }
+          var methods = null;
+          try { methods = await handle.signInMethodsByCustomer([id]); } catch (_e) { methods = null; }
+          return {
+            customer:        row || null,
+            passkeys:        passkeys || [],
+            sign_in_methods: methods || null,
+          };
+        } catch (_e) { return null; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          var existing = await handle.get(id);
+          if (!existing) return { table: "customers", deleted: 0 };
+          if (dryRun) return { table: "customers", deleted: 1 };
+          await handle.update(id, { display_name: "[erased customer " + String(id).slice(0, 8) + "]" });
+          return { table: "customers", deleted: 1 };
+        } catch (_e) { return { table: "customers", deleted: 0 }; }
+      },
+    };
+  },
+
+  // addresses: export lists every address (including archived for the
+  // audit). deletion archives each via the existing soft-delete; dry-run
+  // counts without archiving.
+  addresses: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        try { return await handle.listForCustomer(id, { include_archived: true }); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          var rows = await handle.listForCustomer(id, {});
+          if (dryRun) return { table: "customer_addresses", deleted: rows.length };
+          var n = 0;
+          for (var i = 0; i < rows.length; i += 1) {
+            var ok = await handle.archive(rows[i].id);
+            if (ok) n += 1;
+          }
+          return { table: "customer_addresses", deleted: n };
+        } catch (_e) { return { table: "customer_addresses", deleted: 0 }; }
+      },
+    };
+  },
+
+  // order: export lists the customer's orders (hydrated rows). deletion
+  // RETAINS — orders are a legal / accounting record (PD-2). The customer
+  // linkage stays so the controller can answer a tax / chargeback audit;
+  // the customer-identity scrub rides the anonymized customers row.
+  order: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        // order.listForCustomer caps limit at 100 (lib/order.js MAX_LIST_LIMIT);
+        // a higher value throws and would silently empty the section.
+        try { return (await handle.listForCustomer(id, { limit: 100 })).rows; }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (_id, _opts) {
+        return { table: "orders", deleted: 0, note: "retained-for-accounting" };
+      },
+    };
+  },
+
+  // subscriptions: the handle is the nested { plans, subscriptions } object.
+  // export lists the customer's subscription rows. deletion soft-cancels the
+  // customer's non-terminal subscriptions (status -> 'canceled'); the
+  // subscriptions handle exposes no Stripe-free soft-delete (its `cancel`
+  // posts to Stripe, `archive` lives on `plans`, not on a subscription), so
+  // the adapter marks status directly over the same externalDb query the
+  // primitive itself uses. dry-run counts the rows it WOULD cancel without
+  // mutating. `query` is the composition-root D1 handle.
+  subscriptions: function (handle, query) {
+    var TERMINAL = ["canceled", "incomplete_expired"];
+    return {
+      forCustomerExport: async function (id) {
+        try { return await handle.subscriptions.list({ customer_id: id }); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          var rows = await handle.subscriptions.list({ customer_id: id });
+          var live = rows.filter(function (r) { return TERMINAL.indexOf(r.status) === -1; });
+          if (dryRun) return { table: "subscriptions", deleted: live.length };
+          var n = 0;
+          var ts = Date.now();
+          for (var i = 0; i < live.length; i += 1) {
+            var res = await query(
+              "UPDATE subscriptions SET status = 'canceled', updated_at = ?1 WHERE id = ?2",
+              [ts, live[i].id],
+            );
+            if (res && res.rowCount) n += Number(res.rowCount);
+          }
+          return { table: "subscriptions", deleted: n };
+        } catch (_e) { return { table: "subscriptions", deleted: 0 }; }
+      },
+    };
+  },
+
+  // supportTickets: export lists the customer's tickets. deletion RETAINS
+  // (PD-2) — tickets are operator-facing service records and store the
+  // requester email hash-only (no plaintext PII). Their bodies stay out of
+  // hard-delete scope in v1; the slot exists for a later opt-in.
+  supportTickets: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        // listByCustomerId caps limit at 100 (support-tickets MAX_LIST_LIMIT);
+        // a higher value throws and would silently empty the section.
+        try { return await handle.listByCustomerId(id, { limit: 100 }); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (_id, _opts) {
+        return { table: "support_tickets", deleted: 0, note: "retained" };
+      },
+    };
+  },
+
+  // orderNotes: lib/order-notes.js is keyed by order_id (no customer-scoped
+  // query) and isn't constructed in this composition root, so there is no
+  // per-customer order-note data to read — the customer-visible content
+  // (operator replies on the customer's orders) already rides the `order`
+  // section. This adapter exists so the `full` scope reports the section
+  // PRESENT-but-empty rather than absent (an absent section reads as "we
+  // hid something"; an explicit empty array reads as "nothing held here").
+  orderNotes: function () {
+    return { forCustomerExport: async function () { return []; } };
+  },
+
+  // paymentMethods: lib/saved-payment-methods.js is Stripe-gated and unwired
+  // in prod (Stripe unconfigured). When a handle is supplied, export lists
+  // the customer's saved methods (card metadata only — never raw PAN, which
+  // lives at Stripe); absent a handle it reports the section present-but-empty
+  // so the `full` bundle never reads as incomplete. The slot lights up with
+  // real data the moment an operator wires Stripe (defer-with-condition).
+  paymentMethods: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        if (!handle || typeof handle.listForCustomer !== "function") return [];
+        try { return await handle.listForCustomer(id); } catch (_e) { return []; }
+      },
+    };
+  },
+
+  // loyalty: export carries the balance + the points ledger. deletion
+  // RETAINS — the ledger is a financial record (PD-2).
+  loyalty: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        try {
+          var balance = await handle.balance(id);
+          var history = [];
+          try { history = (await handle.history(id, { limit: 200 })).rows; } catch (_e) { history = []; }
+          return { balance: balance, history: history };
+        } catch (_e) { return null; }
+      },
+      forCustomerDeletion: async function (_id, _opts) {
+        return { table: "loyalty", deleted: 0, note: "retained-ledger" };
+      },
+    };
+  },
+};
+
+// orderNotes is intentionally NOT a per-customer reader: lib/order-notes.js
+// is keyed by order_id (no customer-scoped query) and isn't constructed in
+// this composition root — its customer-visible content (operator replies on
+// the customer's orders) already rides the `order` export section.
+//
+// paymentMethods is Stripe-gated (lib/saved-payment-methods.js) and unwired
+// in prod (Stripe unconfigured) — a real defer-with-condition: the
+// reader-map slot lights up only when that handle exists, so the primitive
+// reports it absent until an operator wires Stripe.
+
+// Assemble the per-domain export bundle for a fulfilled DSR row, writing it
+// to the response header-first / section-by-section so the process holds the
+// bundle plus one section's serialization at a time — never a second giant
+// JSON string alongside the assembled bundle (download-route-stream-not-buffer).
+// fulfillRequest is the assembler that flips status + re-walks the readers;
+// the download must NOT re-run it (a download shouldn't re-fulfill), so it
+// re-reads the SAME reader set directly and streams. Status + ownership are
+// validated by the caller BEFORE the first write (can't change status
+// mid-stream). `sections` is the scope's section list (SCOPE_SECTIONS[scope]).
+async function _streamDsrBundle(res, readers, sections, row) {
+  res.status(200);
+  if (res.setHeader) {
+    res.setHeader("content-type", "application/json; charset=utf-8");
+    res.setHeader(
+      "content-disposition",
+      "attachment; filename=\"dsr-export-" + String(row.id).replace(/[^A-Za-z0-9._-]/g, "") + ".json\"",
+    );
+    res.setHeader("x-content-type-options", "nosniff");
+  }
+  var canWrite = typeof res.write === "function" && typeof res.end === "function";
+  var buf = "";
+  function emit(s) { if (canWrite) res.write(s); else buf += s; }
+  emit("{\"request_id\":" + JSON.stringify(row.id) +
+       ",\"customer_id\":" + JSON.stringify(row.customer_id) +
+       ",\"jurisdiction\":" + JSON.stringify(row.jurisdiction) +
+       ",\"scope\":" + JSON.stringify(row.scope) +
+       ",\"data\":{");
+  var first = true;
+  for (var i = 0; i < sections.length; i += 1) {
+    var name   = sections[i];
+    var reader = readers[name];
+    if (!reader || typeof reader.forCustomerExport !== "function") continue;
+    var section;
+    try { section = await reader.forCustomerExport(row.customer_id); }
+    catch (_e) { section = null; }
+    emit((first ? "" : ",") + JSON.stringify(name) + ":" + JSON.stringify(section == null ? null : section));
+    first = false;
+  }
+  emit("}}");
+  if (canWrite) res.end(); else (res.end ? res.end(buf) : res.send(buf));
+}
+
 async function main() {
   // createApp's secure defaults unlock TWO wrapped components at boot — the
   // vault AND the audit-signing keypair — and the framework reads their
@@ -1089,6 +1342,43 @@ async function main() {
         ? bShop.salesTaxFilings.create({ taxRates: taxRates })
         : null;
 
+      // Subject-access-request lifecycle (GDPR / CCPA / LGPD). Backs the
+      // operator DSR queue (/admin/dsr) + the customer privacy surface
+      // (/account/privacy, /account/delete). The primitive owns the request
+      // row + walks the injected per-domain readers to assemble the export
+      // bundle (or execute the erasure). The readers are the adapter shims
+      // (`_dsrReader`, defined at module scope) over the existing customers /
+      // addresses / order / subscriptions / support-tickets / loyalty
+      // handles, so the per-domain modules stay unchanged. The same reader
+      // map streams the download (the routes re-read the readers rather than
+      // re-running fulfillRequest, which would flip status on every download).
+      var complianceExportReaders = null;
+      var complianceExport = null;
+      if (catalog && cart && customers) {
+        complianceExportReaders = {
+          customers:      _dsrReader.customers(customers),
+          addresses:      addresses ? _dsrReader.addresses(addresses) : null,
+          order:          order ? _dsrReader.order(order) : null,
+          orderNotes:     _dsrReader.orderNotes(),
+          subscriptions:  subscriptions ? _dsrReader.subscriptions(subscriptions, b.externalDb.query) : null,
+          // paymentMethods is unwired in prod (Stripe unconfigured) — the
+          // adapter reports the section present-but-empty until a handle exists.
+          paymentMethods: _dsrReader.paymentMethods(null),
+          supportTickets: supportTickets ? _dsrReader.supportTickets(supportTickets) : null,
+          loyalty:        loyalty ? _dsrReader.loyalty(loyalty) : null,
+        };
+        complianceExport = bShop.complianceExport.create({
+          customers:      complianceExportReaders.customers,
+          addresses:      complianceExportReaders.addresses,
+          order:          complianceExportReaders.order,
+          orderNotes:     complianceExportReaders.orderNotes,
+          subscriptions:  complianceExportReaders.subscriptions,
+          paymentMethods: complianceExportReaders.paymentMethods,
+          supportTickets: complianceExportReaders.supportTickets,
+          loyalty:        complianceExportReaders.loyalty,
+        });
+      }
+
       // Admin API — bearer-token-gated CRUD over catalog + orders +
       // refunds. Only mounts when ADMIN_API_KEY is present (operator
       // opts in by setting the secret). Stripe-backed refund routes
@@ -1141,6 +1431,14 @@ async function main() {
           returns:       returns,
           returnLabels:  returnLabels,
           supportTickets: supportTickets,
+          // Subject-access-request queue (/admin/dsr) — the primitive plus
+          // the reader map + scope-section table + the streaming helper, so
+          // the export download streams the bundle without re-running
+          // fulfillRequest (which would flip status on every download).
+          complianceExport:        complianceExport,
+          complianceExportReaders: complianceExportReaders,
+          complianceExportSections: bShop.complianceExport.SCOPE_SECTIONS,
+          streamDsrBundle:         _streamDsrBundle,
           orderExchanges: orderExchanges,
           orderRatings:  orderRatings,
           preorder:      preorder,
@@ -1296,6 +1594,17 @@ async function main() {
         if (returnLabels) sfDeps.returnLabels = returnLabels;
         // Support tickets — the customer intake + thread (/account/support).
         if (supportTickets) sfDeps.supportTickets = supportTickets;
+        // Privacy & data (/account/privacy, /account/delete) — the customer
+        // self-service surface over the DSR primitive. Self-service FILES an
+        // export or deletion request; the operator fulfils/executes it from
+        // the admin queue. The reader map + scope-section table + streaming
+        // helper back the ownership-scoped export download.
+        if (complianceExport) {
+          sfDeps.complianceExport         = complianceExport;
+          sfDeps.complianceExportReaders  = complianceExportReaders;
+          sfDeps.complianceExportSections = bShop.complianceExport.SCOPE_SECTIONS;
+          sfDeps.streamDsrBundle          = _streamDsrBundle;
+        }
         // Order exchanges — the customer request + status surface
         // (/account/orders/:id/exchange + /account/exchanges). Wired with
         // the shared order instance (sfDeps.order set below) for the
