@@ -1,0 +1,26 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.54",
+  "date": "2026-06-02",
+  "headline": "In-store pickup, saved payment methods, and gift wrapping at checkout",
+  "summary": "Three more built-but-unreachable capabilities are now wired end to end. Operators can offer in-store pickup with managed pickup locations and a fulfilment queue; signed-in customers can save a card and reuse it at checkout; and operators can offer gift wrapping with a per-order gift message. The gift-wrap fee is added as a real cart line so it is included in the charged total.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "In-store pickup (click and collect)",
+          "body": "Operators can define pickup locations and work a pickup queue in the admin console (filtered by location), and shoppers can choose 'Pick up in store' at checkout. The order page and a new account pickups view show the pickup status. A not-found pickup or location returns a clear not-found rather than a generic error."
+        },
+        {
+          "title": "Saved payment methods",
+          "body": "When Stripe is configured, a signed-in customer can save a card via a secure setup flow (loaded through a route-scoped policy and a same-origin script, with no inline script), manage their saved cards under their account, set a default, and reuse a saved card at checkout. A customer can only ever see or change their own saved cards."
+        },
+        {
+          "title": "Gift wrapping at checkout",
+          "body": "Operators can define gift-wrap options (with a fee) in the admin console, and shoppers can add a wrap plus a gift message and recipient at checkout. The wrap fee is added as a real cart line, so it is included in the order total and the amount charged — never applied after the charge."
+        }
+      ]
+    }
+  ]
+}

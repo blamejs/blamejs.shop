@@ -553,8 +553,48 @@ async function _factoryRefusals() {
   }, /enqueue/);
 }
 
+// archiveLocation soft-deletes (clears active + stamps archived_at) so the
+// location drops out of availableLocations; getLocation still resolves it
+// (past schedules' FK holds); a re-define resurrects it (archived_at NULL).
+async function _archiveLocation() {
+  var w = await _wire();
+  await w.svc.definePickupLocation({
+    code: "STORE-ARCH", name: "Archivable",
+    address: _validAddress(), hours_json: _validHours(),
+    capacity_per_hour: 3, lead_time_hours: 0,
+  });
+  var before = await w.svc.availableLocations();
+  check("archiveLocation: visible before archive", before.some(function (l) { return l.code === "STORE-ARCH"; }));
+
+  var archived = await w.svc.archiveLocation("STORE-ARCH");
+  check("archiveLocation returns the row",        archived && archived.code === "STORE-ARCH");
+  check("archiveLocation clears active",           Number(archived.active) === 0);
+  check("archiveLocation stamps archived_at",      archived.archived_at != null);
+
+  var after = await w.svc.availableLocations();
+  check("archiveLocation: hidden from available",  !after.some(function (l) { return l.code === "STORE-ARCH"; }));
+  // getLocation still resolves the archived row.
+  var still = await w.svc.getLocation("STORE-ARCH");
+  check("archiveLocation: getLocation still resolves", still && still.code === "STORE-ARCH");
+
+  // Re-define resurrects (archived_at back to NULL, active back on).
+  var resurrected = await w.svc.definePickupLocation({
+    code: "STORE-ARCH", name: "Back",
+    address: _validAddress(), hours_json: _validHours(),
+    capacity_per_hour: 3, lead_time_hours: 0,
+  });
+  check("re-define clears archived_at",            resurrected.archived_at == null && Number(resurrected.active) === 1);
+
+  // archiveLocation on an unknown code is a no-op returning null (the route
+  // maps null → 404), and a malformed code throws TypeError.
+  var missing = await w.svc.archiveLocation("NO-SUCH");
+  check("archiveLocation unknown code -> null",    missing === null);
+  await assert.rejects(w.svc.archiveLocation("bad code!"), /code must match/);
+}
+
 async function run() {
   await _definePickupLocation();
+  await _archiveLocation();
   await _availableLocationsSkuFilter();
   await _scheduleAtLocationCapacityAndLeadTime();
   await _fsmTransitions();

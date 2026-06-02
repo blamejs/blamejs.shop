@@ -441,6 +441,76 @@ async function _paymentMethodDomains() {
   check("list sends no body",                     !calls[0].body);
 }
 
+// The saved-card vaulting surface: createCustomer + createSetupIntent +
+// retrieveSetupIntent + retrievePaymentMethod, each over a stubbed
+// httpClient (no network). Asserts the HTTP shapes (path/method/params) +
+// the new IDEMPOTENT_OPERATIONS entries + the input validation.
+async function _setupIntentAndCustomer() {
+  // Realistic-length Stripe ids — the adapter validates them with
+  // _assertSecret (min 8 chars), which a real cus_/seti_/pm_ id always clears.
+  var CUS = "cus_NffrFeUfNV2Hib";
+  var SETI = "seti_1MzFN02eZvKYlo2C";
+  var PM = "pm_1MqLiJ2eZvKYlo2C";
+  var fake = _fakeHttp([
+    { status: 200, body: { id: CUS } },
+    { status: 200, body: { id: SETI, client_secret: SETI + "_secret", customer: CUS } },
+    { status: 200, body: { id: SETI, payment_method: PM, status: "succeeded" } },
+    { status: 200, body: { id: PM, card: { brand: "visa", last4: "4242", exp_month: 4, exp_year: 2030 } } },
+  ]);
+  var s = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", httpClient: fake.httpClient });
+
+  var cust = await s.createCustomer({ metadata: { shop_customer_id: "abc" } });
+  check("createCustomer returns the customer",     cust.id === CUS);
+  check("createCustomer is a POST /customers",     fake.calls[0].method === "POST" && fake.calls[0].url.indexOf("/customers") !== -1);
+
+  var si = await s.createSetupIntent({ customer: CUS });
+  check("createSetupIntent returns client_secret", si.client_secret === SETI + "_secret");
+  check("createSetupIntent POSTs /setup_intents",  fake.calls[1].method === "POST" && fake.calls[1].url.indexOf("/setup_intents") !== -1);
+  check("setup_intent uses off_session",           (fake.calls[1].body || "").indexOf("usage=off_session") !== -1);
+  check("setup_intent binds the customer",          (fake.calls[1].body || "").indexOf("customer=" + CUS) !== -1);
+
+  var got = await s.retrieveSetupIntent(SETI);
+  check("retrieveSetupIntent surfaces the pm",     got.payment_method === PM);
+  check("retrieveSetupIntent is a GET",            fake.calls[2].method === "GET" && fake.calls[2].url.indexOf("/setup_intents/" + SETI) !== -1);
+
+  var pm = await s.retrievePaymentMethod(PM);
+  check("retrievePaymentMethod returns card meta", pm.card.brand === "visa" && pm.card.last4 === "4242");
+  check("retrievePaymentMethod is a GET",          fake.calls[3].method === "GET" && fake.calls[3].url.indexOf("/payment_methods/" + PM) !== -1);
+
+  // The new operations are registered as idempotent — proven behaviorally:
+  // a keyed setup_intent.create with a `query` caches + replays without a
+  // second HTTP hit (an UNregistered operation would throw "unknown
+  // idempotent operation" instead).
+  var fakeI = _fakeHttp([{ status: 200, body: { id: SETI, client_secret: SETI + "_secret", customer: CUS } }]);
+  var storeI = _fakeQuery();
+  var sI = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", httpClient: fakeI.httpClient, query: storeI.query });
+  var key = "seti_create_v1_key";
+  var first = await sI.createSetupIntent({ customer: CUS }, key);
+  var replay = await sI.createSetupIntent({ customer: CUS }, key);
+  check("setup_intent.create is idempotent (registered)", first.id === SETI && replay._replayed === true && fakeI.calls.length === 1);
+  var fakeC = _fakeHttp([{ status: 200, body: { id: CUS } }]);
+  var storeC = _fakeQuery();
+  var sC = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", httpClient: fakeC.httpClient, query: storeC.query });
+  var c1 = await sC.createCustomer({ email: "a@example.com" }, "cust_create_v1_key");
+  var c2 = await sC.createCustomer({ email: "a@example.com" }, "cust_create_v1_key");
+  check("customer.create is idempotent (registered)", c1.id === CUS && c2._replayed === true && fakeC.calls.length === 1);
+
+  // Input validation.
+  assert.throws(function () { s.createSetupIntent({}); },              /customer/);
+  assert.throws(function () { s.createSetupIntent(); },                /input object required/);
+  assert.throws(function () { s.createCustomer(); },                   /input object required/);
+  assert.throws(function () { s.createCustomer({ email: "" }); },      /email must be/);
+
+  // createPaymentIntent's optional off-session params (saved-card reuse):
+  // supplying a payment_method confirms immediately + off_session rides.
+  var fake2 = _fakeHttp([{ status: 200, body: { id: "pi_off", status: "succeeded" } }]);
+  var s2 = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", httpClient: fake2.httpClient });
+  await s2.createPaymentIntent({ amount_minor: 2999, currency: "usd", customer: "cus_123", payment_method: "pm_123", off_session: true });
+  check("off-session PI sends payment_method",     (fake2.calls[0].body || "").indexOf("payment_method=pm_123") !== -1);
+  check("off-session PI confirms immediately",     (fake2.calls[0].body || "").indexOf("confirm=true") !== -1);
+  check("off-session PI sends off_session",        (fake2.calls[0].body || "").indexOf("off_session=true") !== -1);
+}
+
 async function run() {
   await _verifierHappyPath();
   await _verifierHeaderCaseInsensitive();
@@ -459,6 +529,7 @@ async function run() {
   await _canonicalHashStable();
   await _factoryRejectsBadOptionTypes();
   await _paymentMethodDomains();
+  await _setupIntentAndCustomer();
 }
 
 module.exports = { run: run };
