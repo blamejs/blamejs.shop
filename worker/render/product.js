@@ -234,14 +234,35 @@ function _buildBuyBox(variants, escAttr, availability, headlinePrice) {
   var soldOutRowBtn =
     "<button type=\"submit\" class=\"btn-primary btn-primary--sm\" disabled aria-disabled=\"true\">Out of stock</button>";
 
+  // "Notify me when back in stock" — a cookie-less, edge-cache-safe form
+  // posting to the DISTINCT CSRF-exempt action `/stock-alert/subscribe`
+  // (NOT /products/:slug/notify — that would over-exempt the token-required
+  // review + question POSTs). The action is in EDGE_POST_PATHS, so the
+  // container's `_injectCsrfFields` leaves it un-tokened, keeping this markup
+  // byte-identical to the worker twin. sku/variant are catalog data; escape
+  // anyway (escape-by-default). DUAL-RENDER: this helper is byte-identical to
+  // worker/render/product.js#_buildBuyBox._notifyForm.
+  function _notifyForm(sku, variantId) {
+    return "<form class=\"pdp__notify\" method=\"post\" action=\"/stock-alert/subscribe\">\n" +
+           "          <input type=\"hidden\" name=\"sku\" value=\"" + escAttr(sku) + "\">\n" +
+           (variantId ? "          <input type=\"hidden\" name=\"variant_id\" value=\"" + escAttr(variantId) + "\">\n" : "") +
+           "          <label class=\"pdp__notify-label\" for=\"notify-email-" + escAttr(sku) + "\">Email me when this is back in stock</label>\n" +
+           "          <input id=\"notify-email-" + escAttr(sku) + "\" type=\"email\" name=\"email\" required placeholder=\"you@example.com\" autocomplete=\"email\">\n" +
+           "          <button type=\"submit\" class=\"btn-secondary btn-primary--sm\">Notify me</button>\n" +
+           "        </form>";
+  }
+
   // Many variants → keep the compact table (still a per-row add form).
   if (variants.length > BUYBOX_CHIP_LIMIT) {
     var rows = variants.map(function (v) {
       var row = renderTemplate(VARIANT_ROW, { title: v.title, sku: v.sku, price: v.price, variant_id: v.id });
+      // When the product is out of stock, swap each per-row add button for
+      // the disabled control + a per-row notify form so no row offers an
+      // active purchase but every sold-out SKU offers the alert.
       if (!inStock) {
         row = row.replace(
           "<button type=\"submit\" class=\"btn-primary btn-primary--sm\">Add to cart</button>",
-          soldOutRowBtn);
+          soldOutRowBtn + _notifyForm(v.sku, v.id));
       }
       return row;
     }).join("");
@@ -285,6 +306,13 @@ function _buildBuyBox(variants, escAttr, availability, headlinePrice) {
     ? "<button type=\"submit\" class=\"btn-primary cart-page__checkout\">$ add to cart</button>"
     : soldOutBtn;
 
+  // Out-of-stock chip/single buy box → the notify form sits OUTSIDE the
+  // add-to-cart form (its own form element, distinct action), after the
+  // sold-out control. Keyed to the LEAD variant's SKU — the chip radio does
+  // not JS-swap the hidden field (Trusted Types / no innerHTML island), so a
+  // shopper subscribes against the lead SKU. Documented limitation.
+  var notifyBlock = inStock ? "" : ("\n        " + _notifyForm(lead.sku, lead.id));
+
   var headline = (headlinePrice != null && headlinePrice !== "") ? headlinePrice : lead.price;
   return "<div class=\"pdp__buybox\">\n" +
          "        <p class=\"featured-product__price\">" + escAttr(headline) + "</p>\n" +
@@ -293,7 +321,7 @@ function _buildBuyBox(variants, escAttr, availability, headlinePrice) {
          "          <label class=\"pdp__variants-title\" for=\"buybox-qty\">Quantity</label>\n" +
          "          <input id=\"buybox-qty\" type=\"number\" name=\"qty\" value=\"1\" min=\"1\" max=\"99\" class=\"variant-row__qty\" aria-label=\"Quantity\">\n" +
          "          " + addControl + "\n" +
-         "        </form>\n" +
+         "        </form>" + notifyBlock + "\n" +
          "      </div>\n" +
          "      " + trustLine;
 }

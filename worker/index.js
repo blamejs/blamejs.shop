@@ -774,6 +774,30 @@ export default {
           console.error("cart-recovery-tick failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
         }
       })());
+
+      // Back-in-stock sweep — a SECOND, independent ctx.waitUntil (NOT nested
+      // in the cart-recovery one) so a slow stock sweep never blocks cart
+      // recovery and vice-versa. POSTs the container's /_/stock-alert-sweep
+      // over the SHOP service binding with the shared D1_BRIDGE_SECRET header.
+      // The cron fires every minute; the container handler self-gates cadence
+      // (it only scans periodically), so this is a cheap call most ticks.
+      ctx.waitUntil((async function () {
+        try {
+          var sweepUrl = new URL("/_/stock-alert-sweep", "http://shop.container");
+          var sweepReq = new Request(sweepUrl.toString(), {
+            method:  "POST",
+            headers: {
+              "content-type":       "application/json; charset=utf-8",
+              "x-d1-bridge-secret": env.D1_BRIDGE_SECRET || "",
+            },
+            body: "{}",
+          });
+          var sweepContainer = _shopContainer(env);
+          await sweepContainer.fetch(sweepReq);
+        } catch (e) {
+          console.error("stock-alert-sweep failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        }
+      })());
     }
 
     if (env.EDGE_RENDER !== "on") return;
