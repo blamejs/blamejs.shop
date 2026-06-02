@@ -477,6 +477,49 @@ async function _composeDigestShape() {
   });
   var zeroDigest = await wZero.svc.composeDigest({ customer_id: zeroCid });
   check("composeDigest USD keeps trailing zeros", zeroDigest.lines[0].price === "$10.00");
+
+  // Hot-path guard: garbage catalog price data (non-integer / negative
+  // amount_minor) must NOT throw — pricing.format throws on bad input,
+  // so composeDigest degrades that line's price to "—" rather than
+  // poisoning the dispatcher tick.
+  var badCid  = _customerId();
+  var badProd = bShop.framework.uuid.v7();
+  var badVar  = bShop.framework.uuid.v7();
+  var badWl = {}; badWl[badCid] = [
+    { id: "wl-bad", customer_id: badCid, product_id: badProd, variant_id: badVar, created_at: 10 },
+  ];
+  var badProducts = {}; badProducts[badProd] = { id: badProd, title: "Broken Widget" };
+  var badPrices = {};
+  badPrices[badVar + ":USD"] = { amount_minor: 19.99, currency: "USD" };   // non-integer — would throw in pricing.format
+  var wBad = await _wire({
+    wishlist: _wishlistStub(badWl),
+    catalog:  _catalogStub({ products: badProducts, prices: badPrices }),
+  });
+  var badDigest = await wBad.svc.composeDigest({ customer_id: badCid });
+  check("composeDigest non-integer amount degrades to dash", badDigest.lines[0].price === "—");
+  check("composeDigest non-integer amount still renders line", badDigest.lines.length === 1);
+}
+
+// listSchedules — new read verb. Returns non-archived schedules by
+// default; active_only:false includes archived rows.
+async function _listSchedulesReturnsLiveOnly() {
+  var w = await _wire();
+  await w.svc.defineSchedule({
+    slug: "weekly-a", frequency: "weekly", day_of_week: 1, time_local: "09:00", timezone: "UTC",
+  });
+  await w.svc.defineSchedule({
+    slug: "monthly-b", frequency: "monthly", day_of_month: 1, time_local: "08:00", timezone: "UTC",
+  });
+  var live = await w.svc.listSchedules();
+  check("listSchedules returns both live",        live.length === 2);
+
+  // Archive one via a direct UPDATE (no archive verb exists) — listSchedules
+  // active_only (default) hides it; active_only:false shows it.
+  await w.q("UPDATE wishlist_digest_schedules SET archived_at = ?1 WHERE slug = ?2", [Date.now(), "weekly-a"]);
+  var liveAfter = await w.svc.listSchedules();
+  check("listSchedules hides archived by default", liveAfter.length === 1 && liveAfter[0].slug === "monthly-b");
+  var all = await w.svc.listSchedules({ active_only: false });
+  check("listSchedules active_only:false shows archived", all.length === 2);
 }
 
 // ---- 5. pauseEnrollment + resumeEnrollment FSM -------------------------
@@ -673,6 +716,7 @@ async function run() {
   await _enrollCustomerNextDispatchAtMath();
   await _dispatchTickFanOut();
   await _composeDigestShape();
+  await _listSchedulesReturnsLiveOnly();
   await _pauseResumeFsm();
   await _emailSuppressionsShortCircuit();
   await _enrollmentsAndRecordSentAndRefusals();

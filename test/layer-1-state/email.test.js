@@ -346,6 +346,88 @@ async function _newTemplateHtmlEscapes() {
   check("review escaped form present",              s3.sent[0].html.indexOf("&lt;b&gt;boom&lt;/b&gt;") !== -1);
 }
 
+// sendWishlistDigest — the periodic rollup email. Renders from the
+// structured lines[] via the per-line escape-by-default _render loop;
+// a hostile line title MUST be escaped (never a live <script>). Empty
+// lines renders the "no items" body without throwing.
+async function _wishlistDigest() {
+  // XSS guard — a <script>-bearing title must land escaped.
+  var s = _setup();
+  await s.email.sendWishlistDigest({
+    customer_email: "x@example.com",
+    schedule_slug:  "weekly-a",
+    currency:       "USD",
+    item_count:     1,
+    lines: [{
+      title:       "<script>alert(1)</script>",
+      price:       "$19.99",
+      in_stock:    true,
+      product_url: "https://x.example.com/p",
+    }],
+    // The caller's shape also carries html/text — they MUST be ignored
+    // (the method renders from lines[], never splices these raw).
+    html: "<script>raw-html-should-be-ignored</script>",
+    text: "raw text ignored",
+  });
+  check("digest sent one message",                   s.sent.length === 1);
+  check("digest subject is the wishlist update",     s.sent[0].subject === "Your wishlist update");
+  check("digest escapes <script> in title",          s.sent[0].html.indexOf("<script>alert(1)") === -1);
+  check("digest escaped form present",               s.sent[0].html.indexOf("&lt;script&gt;") !== -1);
+  // The caller's raw html MUST NOT be spliced through.
+  check("digest does NOT splice caller raw html",    s.sent[0].html.indexOf("raw-html-should-be-ignored") === -1);
+  check("digest line price present",                 s.sent[0].html.indexOf("$19.99") !== -1);
+  check("digest in-stock marker present",            s.sent[0].html.indexOf("(in stock)") !== -1);
+
+  // Empty wishlist — the "no items" digest renders without throwing.
+  var s2 = _setup();
+  await s2.email.sendWishlistDigest({
+    customer_email: "y@example.com",
+    schedule_slug:  "weekly-a",
+    currency:       "USD",
+    item_count:     0,
+    lines:          [],
+  });
+  check("empty digest sent",                         s2.sent.length === 1);
+  check("empty digest mentions no items",            s2.sent[0].html.indexOf("No items in your wishlist") !== -1);
+
+  // Validation — missing customer_email / non-array lines / bad line shape.
+  await assert.rejects(s.email.sendWishlistDigest({ lines: [] }), /customer_email required/);
+  await assert.rejects(
+    s.email.sendWishlistDigest({ customer_email: "x@example.com", lines: "nope" }),
+    /lines array required/,
+  );
+  await assert.rejects(
+    s.email.sendWishlistDigest({ customer_email: "x@example.com", lines: [{ price: "$1" }] }),
+    /title required/,
+  );
+}
+
+// sendMagicLink — the passwordless sign-in email. The link_url is
+// escaped through the strict renderer; validation refuses a bad shape.
+async function _magicLink() {
+  var s = _setup();
+  await s.email.sendMagicLink({
+    customer_email: "x@example.com",
+    link_url:       "https://shop.example.com/account/portal/abc123",
+  });
+  check("magic-link sent one message",               s.sent.length === 1);
+  check("magic-link subject",                        s.sent[0].subject === "Your sign-in link");
+  check("magic-link carries the url",                s.sent[0].html.indexOf("/account/portal/abc123") !== -1);
+  check("magic-link text carries the url",           s.sent[0].text.indexOf("/account/portal/abc123") !== -1);
+
+  // A link_url with HTML metacharacters is escaped (escape-by-default).
+  var s2 = _setup();
+  await s2.email.sendMagicLink({
+    customer_email: "x@example.com",
+    link_url:       "https://shop.example.com/x?a=1&b=\"><script>",
+  });
+  check("magic-link escapes a hostile url",          s2.sent[0].html.indexOf("\"><script>") === -1);
+  check("magic-link escaped form present",           s2.sent[0].html.indexOf("&lt;script&gt;") !== -1);
+
+  await assert.rejects(s.email.sendMagicLink({ link_url: "x" }), /customer_email required/);
+  await assert.rejects(s.email.sendMagicLink({ customer_email: "x@example.com" }), /link_url required/);
+}
+
 async function run() {
   void b;   // satisfy linter about b being unused — kept available for future extensions
   await _orderReceipt();
@@ -359,6 +441,8 @@ async function run() {
   await _reviewRequest();
   await _newTemplateValidation();
   await _newTemplateHtmlEscapes();
+  await _wishlistDigest();
+  await _magicLink();
 }
 
 module.exports = { run: run };

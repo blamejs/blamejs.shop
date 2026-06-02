@@ -1242,6 +1242,162 @@ async function main() {
         ? bShop.stockAlerts.create({ catalog: catalog })
         : null;
 
+      // Wishlist alert + digest crons. wishlistAlerts fires event-driven
+      // "this saved item just dropped / restocked" emails; wishlistDigest
+      // sends the periodic rollup. Both compose the wishlist + catalog
+      // instances above plus the SHARED transactional mailer + email
+      // resolver the cart-recovery block built (recoveryEmail /
+      // recoveryResolveEmail / recoveryEmailSuppressions) so the three
+      // mailer-backed surfaces share one transport instead of each
+      // building its own (audit-existing-code). Both are gated on
+      // recoveryEmail being non-null: the factories throw if the email
+      // handle lacks sendWishlistDiscount / sendWishlistDigest, and an
+      // unconfigured deploy (no SMTP) has no mailer — so the instances are
+      // null and the cron ticks report enabled:false.
+      //
+      // INERT BY DEFAULT even WITH a mailer: the customers table stores
+      // only an email_hash (never plaintext), so recoveryResolveEmail
+      // returns null exactly like cart-recovery — every otherwise-firing
+      // candidate is accounted `no_email` and nothing sends. The re-open
+      // condition is the same as cart-recovery: an operator wires an
+      // emailForCustomer resolver against their own plaintext-address
+      // store.
+      var wishlistAlerts = (wishlist && catalog && recoveryEmail)
+        ? bShop.wishlistAlerts.create({
+            wishlist:         wishlist,
+            catalog:          catalog,
+            email:            recoveryEmail,
+            stockAlerts:      stockAlerts || null,
+            emailForCustomer: recoveryResolveEmail,
+            cursorSecret:     process.env.D1_BRIDGE_SECRET
+              ? b.crypto.namespaceHash("wishlist-alerts-cursor", process.env.D1_BRIDGE_SECRET)
+              : "wishlist-alerts-cursor-secret-dev-only",
+          })
+        : null;
+      var wishlistDigest = (wishlist && catalog && recoveryEmail)
+        ? bShop.wishlistDigest.create({
+            wishlist:          wishlist,
+            catalog:           catalog,
+            email:             recoveryEmail,
+            emailSuppressions: recoveryEmailSuppressions,
+            emailForCustomer:  recoveryResolveEmail,
+          })
+        : null;
+
+      // Customer-portal magic-link — a passwordless entry for shoppers
+      // without a passkey or a social login. The primitive mints a
+      // single-use, hashed-at-rest, 15-min-default session token; the
+      // storefront emails the link and redeems it into the sealed
+      // shop_auth cookie. INERT without a mailer: the storefront's
+      // /account/login/link surface degrades to the enumeration-safe
+      // "if an account exists we've emailed a link" with no actual send,
+      // and passkey / OAuth login are unchanged. Built unconditionally
+      // where the data layer exists (it needs only the externalDb query
+      // handle); the magic-link ROUTES gate on the mailer (wired into
+      // sfDeps below only when recoveryEmail is non-null).
+      var customerPortal = (catalog && cart)
+        ? bShop.customerPortal.create({})
+        : null;
+
+      // Cadence gate for the wishlist-alerts sweep. The Worker cron fires
+      // every minute, but a full alerts sweep walks every wishlist entry ×
+      // every live policy (price/inventory reads each) — expensive and
+      // pointless at minute granularity. Run at most one real sweep per
+      // interval; a minute-fire inside the window returns cheaply. The
+      // digest sweep needs NO process-local gate: dispatchTick self-limits
+      // via next_dispatch_at <= now, so a minute-fire only picks up due
+      // enrollments.
+      var WISHLIST_ALERTS_SWEEP_INTERVAL_MS = process.env.WISHLIST_ALERTS_SWEEP_INTERVAL_MS
+        ? parseInt(process.env.WISHLIST_ALERTS_SWEEP_INTERVAL_MS, 10)
+        : b.constants.TIME.hours(6);
+      var _lastWishlistAlertsSweepAt = 0;
+
+      // Internal cron-tick endpoints — the Worker's scheduled() POSTs here
+      // over the SHOP service binding once a minute, gated by the shared
+      // D1_BRIDGE_SECRET header (same trust root as the SQL / R2 bridges).
+      // Both are drop-silent at the row level inside the primitives (every
+      // catch in scanAndDispatch / dispatchTick accounts into skipped_by,
+      // never throws), so a flapping mailer can't 5xx the tick and mark the
+      // cron run failed.
+      r.post("/_/wishlist-alerts-sweep", async function (req, res) {
+        var got = req.headers && req.headers["x-d1-bridge-secret"];
+        var want = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !want ||
+          typeof got !== "string" ||
+          got.length !== want.length ||
+          !b.crypto.timingSafeEqual(got, want)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!wishlistAlerts) {
+          res.json({ ok: true, enabled: false, reason: "wishlist alerts not composed (no mailer)" });
+          return;
+        }
+        var nowMs = Date.now();
+        if (nowMs - _lastWishlistAlertsSweepAt < WISHLIST_ALERTS_SWEEP_INTERVAL_MS) {
+          res.json({ ok: true, enabled: true, skipped: "cadence", next_in_ms: WISHLIST_ALERTS_SWEEP_INTERVAL_MS - (nowMs - _lastWishlistAlertsSweepAt) });
+          return;
+        }
+        _lastWishlistAlertsSweepAt = nowMs;
+        var summary = await wishlistAlerts.scanAndDispatch({ now: nowMs });
+        res.json({ ok: true, enabled: true, summary: summary });
+      });
+
+      r.post("/_/wishlist-digest-sweep", async function (req, res) {
+        var got2 = req.headers && req.headers["x-d1-bridge-secret"];
+        var want2 = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !want2 ||
+          typeof got2 !== "string" ||
+          got2.length !== want2.length ||
+          !b.crypto.timingSafeEqual(got2, want2)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!wishlistDigest) {
+          res.json({ ok: true, enabled: false, reason: "wishlist digest not composed (no mailer)" });
+          return;
+        }
+        var summary = await wishlistDigest.dispatchTick({ now: Date.now() });
+        res.json({ ok: true, enabled: true, summary: summary });
+      });
+
+      // Customer-portal session-expiry tick — flips stale `issued`
+      // magic-link rows to `expired` so the FSM column stays durable for
+      // audit. Cheap (one bounded UPDATE) every minute; no cadence gate.
+      // Inert (no-op count) until the magic-link surface mints tokens.
+      r.post("/_/customer-portal-expire", async function (req, res) {
+        var got3 = req.headers && req.headers["x-d1-bridge-secret"];
+        var want3 = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !want3 ||
+          typeof got3 !== "string" ||
+          got3.length !== want3.length ||
+          !b.crypto.timingSafeEqual(got3, want3)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!customerPortal) {
+          res.json({ ok: true, enabled: false, reason: "customer portal not composed" });
+          return;
+        }
+        // Expire sessions whose TTL elapsed more than a day ago (the
+        // verify path always re-checks expiry; this just durably stamps
+        // the FSM). C.TIME returns ms; expireOlderThan takes seconds.
+        var summary;
+        try {
+          summary = await customerPortal.expireOlderThan(b.constants.TIME.days(1) / 1000);
+        } catch (e) {
+          res.json({ ok: false, error: (e && e.message) || String(e) });
+          return;
+        }
+        res.json({ ok: true, enabled: true, summary: summary });
+      });
+
       // Search ranking — operator-tunable weight sets + per-query pins. The
       // /search container handler reranks its candidate universe through
       // applyToResults; the admin console authors weight sets + pins. The
@@ -1698,6 +1854,8 @@ async function main() {
           loyalty:           loyalty,
           loyaltyEarnRules:  loyaltyEarnRules,
           loyaltyRedemption: loyaltyRedemption,
+          wishlistAlerts:    wishlistAlerts,
+          wishlistDigest:    wishlistDigest,
           // Integration state map for /admin/integrations — "enabled" |
           // "action" (credentials present, a one-time operator action
           // still required) | "off". admin.js never reads process.env.
@@ -1830,6 +1988,21 @@ async function main() {
         if (wishlist) sfDeps.wishlist = wishlist;
         // Wishlist sharing — owner share links + the public shared view.
         if (wishlistSharing) sfDeps.wishlistSharing = wishlistSharing;
+        // Wishlist alerts + digest opt-in toggles on /account/wishlist.
+        // Present only on a mailer-configured deploy (the instances are
+        // null otherwise); absent them the toggles simply don't render.
+        if (wishlistAlerts) sfDeps.wishlistAlerts = wishlistAlerts;
+        if (wishlistDigest) sfDeps.wishlistDigest = wishlistDigest;
+        // Customer-portal magic-link sign-in — the /account/login/link +
+        // /account/portal/:token routes mount only when BOTH the portal
+        // primitive AND the shared transactional mailer are wired (no
+        // mailer = no deliverable link, so the surface stays inert and
+        // passkey / OAuth login are unchanged). The email handle + the
+        // origin for the absolute link ride alongside.
+        if (customerPortal && recoveryEmail) {
+          sfDeps.customerPortal      = customerPortal;
+          sfDeps.customerPortalEmail = recoveryEmail;
+        }
         if (saveForLater) sfDeps.saveForLater = saveForLater;
         if (giftRegistry) sfDeps.giftRegistry = giftRegistry;
         if (addresses) sfDeps.addresses = addresses;
