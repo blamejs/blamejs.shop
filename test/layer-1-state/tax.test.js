@@ -94,6 +94,21 @@ async function _bankersRounding() {
   // Zero subtotal → zero tax
   var r4 = await t3.calculate({ shipTo: { country: "US" }, subtotal_minor: 0 });
   check("zero subtotal yields zero tax", r4.tax_minor === 0);
+
+  // Large-subtotal precision: `subtotal * bps / 10000` as a JS double
+  // loses a minor unit once the product crosses 2^53. The BigInt money
+  // path is exact — the prior float banker's-round returned
+  // 190000000000062 for this input; the exact answer is ...063.
+  var tBig = tax.create({ rules: [{ country: "US", rate_bps: 1900 }] });
+  var rBig = await tBig.calculate({ shipTo: { country: "US" }, subtotal_minor: 1000000000000329 });
+  check("large subtotal tax is exact (BigInt, not float)", rBig.tax_minor === 190000000000063);
+
+  // Half-even ties land on the even neighbour.
+  var tTie = tax.create({ rules: [{ country: "US", rate_bps: 1250 }] });
+  var rTie0 = await tTie.calculate({ shipTo: { country: "US" }, subtotal_minor: 4 });   // 0.5 → 0
+  check("half-even tie 0.5 → 0 (even)", rTie0.tax_minor === 0);
+  var rTie2 = await tTie.calculate({ shipTo: { country: "US" }, subtotal_minor: 12 });  // 1.5 → 2
+  check("half-even tie 1.5 → 2 (even)", rTie2.tax_minor === 2);
 }
 
 async function _validation() {

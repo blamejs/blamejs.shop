@@ -9,6 +9,7 @@
 // codebase-patterns:allow-file internal-rulebook-vocabulary-in-source — runtime regex construction inevitably includes the patterns being detected
 // codebase-patterns:allow-file non-shop-require — catalog file describes the require shape it detects
 // codebase-patterns:allow-file cursor-tamper-trailing-replace — catalog references the `next_cursor.slice(0, -N)` shape it detects
+// codebase-patterns:allow-file hand-rolled-bankers-round — the description string contains the `% 2 === 0) ? floor` shape it detects
 
 // Re-exec under a 6 GiB old-space ceiling when the parent process did
 // not already raise the heap cap. Future detectors that cross-product
@@ -244,6 +245,13 @@ var KNOWN_ANTIPATTERNS = [
     scanScope:   "lib",
     description: "`Math.random()` in lib/ — security-sensitive randomness must come from crypto.randomBytes / crypto.randomUUID; non-security uses still go through a documented PRNG so nothing weak slips into an auth surface by accident",
     regex:       /\bMath\.random\s*\(/,
+    allowlist:   [],
+  },
+  {
+    id:          "hand-rolled-bankers-round",
+    scanScope:   "lib",
+    description: "A by-hand `(floor % 2 === 0) ? floor : floor + 1` tail is the round-half-to-even branch of a float-then-round money computation. Float intermediates lose precision over large minor-unit values (a tax filing summing many orders can pass 2^53). Compose the framework money primitive's half-even multiply on a BigInt round-trip — Number(b.money.fromMinorUnits(BigInt(minor), ccy).multiply([BigInt(num), BigInt(den)], { rounding: \"half-even\" }).toMinorUnits()) — it never touches a binary fraction",
+    regex:       /%\s*2\s*===\s*0\s*\)?\s*\?\s*[\w$]*[Ff]loor/,
     allowlist:   [],
   },
   {
