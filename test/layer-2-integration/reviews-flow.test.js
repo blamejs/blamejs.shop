@@ -182,6 +182,11 @@ async function _run() {
     });
     check("submit bad rating → 400",              badRating.status === 400);
     check("submit bad rating → notice shown",     badRating.body.indexOf("form-notice--error") !== -1);
+    // WCAG 3.3.1/3.3.3 — the rejected rating control (the existing fieldset)
+    // is marked aria-invalid + wired to an adjacent error span.
+    check("bad rating → aria-invalid on control", badRating.body.indexOf("aria-invalid=\"true\"") !== -1);
+    check("bad rating → error span wired",         badRating.body.indexOf("id=\"review-err-rating\"") !== -1 && badRating.body.indexOf("aria-describedby=\"review-err-rating\"") !== -1);
+    check("clean form GET has no aria-invalid",    buyerForm.body.indexOf("aria-invalid") === -1);
 
     // POST submit, buyer, valid → 200 thanks; review lands pending.
     var ok = await helpers.httpRequest({

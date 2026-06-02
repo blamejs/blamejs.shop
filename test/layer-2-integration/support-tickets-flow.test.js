@@ -133,6 +133,11 @@ async function _run() {
     check("empty subject/body -> 400",          badCreate.status === 400);
     check("bad intake re-renders the form",     badCreate.body.indexOf("Raise a support ticket") !== -1);
     check("bad intake leaks no raw error",      _noLeak(badCreate.body));
+    // WCAG 3.3.1/3.3.3 — the rejected subject field is marked + wired (the
+    // whitespace subject is the first field the validator rejects).
+    check("bad intake -> subject aria-invalid",  badCreate.body.indexOf("aria-invalid=\"true\"") !== -1);
+    check("bad intake -> subject error span",    badCreate.body.indexOf("id=\"support-err-subject\"") !== -1 && badCreate.body.indexOf("aria-describedby=\"support-err-subject\"") !== -1);
+    check("clean new-ticket form no aria-invalid", newForm.body.indexOf("aria-invalid") === -1);
 
     // ---- raise a ticket as the signed-in customer ---------------------
     var created = await helpers.httpRequest({
