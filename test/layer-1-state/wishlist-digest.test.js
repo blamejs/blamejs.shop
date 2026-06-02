@@ -431,7 +431,7 @@ async function _composeDigestShape() {
   check("composeDigest item_count=1",            digest.item_count === 1);
   check("composeDigest lines length",            digest.lines.length === 1);
   check("composeDigest line title",              digest.lines[0].title === "Wishlisted Widget");
-  check("composeDigest line price",              digest.lines[0].price === "19.99 USD");
+  check("composeDigest line price",              digest.lines[0].price === "$19.99");
   check("composeDigest line in_stock=true",      digest.lines[0].in_stock === true);
   check("composeDigest html non-empty",          digest.html.length > 0 && digest.html.indexOf("Wishlisted Widget") >= 0);
   check("composeDigest text non-empty",          digest.text.length > 0 && digest.text.indexOf("Wishlisted Widget") >= 0);
@@ -442,6 +442,41 @@ async function _composeDigestShape() {
   check("composeDigest empty item_count=0",      emptyDigest.item_count === 0);
   check("composeDigest empty html mentions no items",
     emptyDigest.html.indexOf("No items") >= 0);
+
+  // Currency-correct rendering via pricing.format (was a hand-rolled
+  // amount_minor/100 + toFixed(2) before): a zero-decimal currency must
+  // not render a spurious fraction, and a whole-unit amount must keep
+  // its trailing zeros.
+  var jpyCid  = _customerId();
+  var jpyProd = bShop.framework.uuid.v7();
+  var jpyVar  = bShop.framework.uuid.v7();
+  var jpyWl = {}; jpyWl[jpyCid] = [
+    { id: "wl-jpy", customer_id: jpyCid, product_id: jpyProd, variant_id: jpyVar, created_at: 10 },
+  ];
+  var jpyProducts = {}; jpyProducts[jpyProd] = { id: jpyProd, title: "Yen Widget" };
+  var jpyPrices   = {}; jpyPrices[jpyVar + ":JPY"] = { amount_minor: 1050, currency: "JPY" };
+  var wJpy = await _wire({
+    wishlist:            _wishlistStub(jpyWl),
+    catalog:             _catalogStub({ products: jpyProducts, prices: jpyPrices }),
+    currencyForCustomer: function () { return "JPY"; },
+  });
+  var jpyDigest = await wJpy.svc.composeDigest({ customer_id: jpyCid });
+  check("composeDigest JPY price has no fraction", jpyDigest.lines[0].price === "¥1,050");
+
+  var zeroCid  = _customerId();
+  var zeroProd = bShop.framework.uuid.v7();
+  var zeroVar  = bShop.framework.uuid.v7();
+  var zeroWl = {}; zeroWl[zeroCid] = [
+    { id: "wl-zero", customer_id: zeroCid, product_id: zeroProd, variant_id: zeroVar, created_at: 10 },
+  ];
+  var zeroProducts = {}; zeroProducts[zeroProd] = { id: zeroProd, title: "Round Widget" };
+  var zeroPrices   = {}; zeroPrices[zeroVar + ":USD"] = { amount_minor: 1000, currency: "USD" };
+  var wZero = await _wire({
+    wishlist: _wishlistStub(zeroWl),
+    catalog:  _catalogStub({ products: zeroProducts, prices: zeroPrices }),
+  });
+  var zeroDigest = await wZero.svc.composeDigest({ customer_id: zeroCid });
+  check("composeDigest USD keeps trailing zeros", zeroDigest.lines[0].price === "$10.00");
 }
 
 // ---- 5. pauseEnrollment + resumeEnrollment FSM -------------------------

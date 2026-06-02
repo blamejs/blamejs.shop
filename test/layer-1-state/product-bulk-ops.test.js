@@ -188,9 +188,10 @@ async function _bulkAdjustPricePercent() {
   check("bulkAdjustPrice: 4000 -> 3400",                p2.amount_minor === 3400);
   check("bulkAdjustPrice: 1000 -> 850",                 p3.amount_minor === 850);
 
-  // Rounding: 333 * 1.005 = 334.665 -> 335 (half-up). Filter by v3's
-  // SKU so the matched product is p2, whose only variant is v3 — we
-  // get an isolated single-variant adjust to verify the rounding math.
+  // Rounding: 333 * 1.005 = 334.665 -> 335 (half-even; not a tie, so it
+  // rounds up regardless). Filter by v3's SKU so the matched product is
+  // p2, whose only variant is v3 — an isolated single-variant adjust to
+  // verify the rounding math.
   await ctx.catalog.prices.set(s.v3.id, { currency: "USD", amount_minor: 333 });
   var r2 = await ctx.bulk.bulkAdjustPrice({
     filter:      { skus: [s.v3.sku] },
@@ -200,6 +201,18 @@ async function _bulkAdjustPricePercent() {
   check("bulkAdjustPrice: rounding applied",            r2.affected_count === 1);
   var pAfter = await ctx.catalog.prices.current(s.v3.id, "USD");
   check("bulkAdjustPrice: 333 * 1.005 rounds to 335",   pAfter.amount_minor === 335);
+
+  // Half-even tie: 200 × 1.0025 = 200.5 → rounds to 200 (even), where
+  // the prior Math.round (half-up) returned 201.
+  await ctx.catalog.prices.set(s.v3.id, { currency: "USD", amount_minor: 200 });
+  var rTie = await ctx.bulk.bulkAdjustPrice({
+    filter:      { skus: [s.v3.sku] },
+    currency:    "USD",
+    percent_bps: 25,           // +0.25%
+  });
+  check("bulkAdjustPrice: half-even tie affected",      rTie.affected_count === 1);
+  var pTie = await ctx.catalog.prices.current(s.v3.id, "USD");
+  check("bulkAdjustPrice: 200 × 1.0025 = 200.5 → 200",  pTie.amount_minor === 200);
 
   // -100% floors at 0.
   var r3 = await ctx.bulk.bulkAdjustPrice({

@@ -1,0 +1,35 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.45",
+  "date": "2026-06-01",
+  "headline": "Tax, VAT, bulk price changes, and customer emails now compute money in exact integer arithmetic",
+  "summary": "Several money calculations were performed with floating-point intermediates. On a large order subtotal the sales-tax math could lose a minor unit, and the customer-facing wishlist emails formatted prices by dividing by 100 — which is wrong for zero-decimal currencies like JPY (¥1,050 rendered as 10.5) and three-decimal currencies like BHD, and dropped trailing zeros ($10.00 shown as 10). All of these now run through the framework's exact BigInt money primitive: sales-tax and VAT/GST extraction, the per-rate owed figure on a tax filing, the admin bulk price-adjust, the wishlist price-drop and digest emails, and subscription monthly-revenue normalization. Prices in customer emails are now rendered with the correct currency exponent and symbol for every currency.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Exact sales-tax and VAT computation",
+          "body": "Sales tax, VAT-inclusive extraction, and VAT-exclusive addition are computed in exact integer arithmetic rather than with a floating-point intermediate, so the tax on a large order total is no longer off by a minor unit. The per-rate owed figure on a tax filing is likewise computed exactly, which matters when a filing window aggregates a very large taxable total."
+        },
+        {
+          "title": "Currency-correct prices in wishlist emails",
+          "body": "Price-drop alert emails and the wishlist digest now format prices with each currency's own decimal places and symbol. Zero-decimal currencies (such as JPY) and three-decimal currencies (such as BHD) render correctly, and whole amounts keep their trailing zeros — for example $10.00 instead of 10."
+        },
+        {
+          "title": "Exact subscription monthly-revenue normalization",
+          "body": "Normalizing a weekly or annual plan to a monthly figure for revenue reporting now uses exact rational arithmetic instead of a floating-point cadence factor, so the dashboard total is stable and does not drift by a cent between refreshes."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Bulk price-adjust rounds to even on exact half-unit ties",
+          "body": "The admin bulk price-adjust now rounds a price that lands exactly halfway between two minor units to the nearest even unit, matching the rounding used everywhere else in the money surface, instead of always rounding the half up. This only changes the result on an exact tie and by at most one minor unit (for example a price computed as 200.5 now becomes 200 rather than 201). If a pricing regime requires rounding halves up, that is a one-line option change."
+        }
+      ]
+    }
+  ]
+}
