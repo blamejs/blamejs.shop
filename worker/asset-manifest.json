@@ -1,5 +1,5 @@
 {
-  "version": "0.3.50",
+  "version": "0.3.51",
   "assets": {
     "css/admin.css": {
       "integrity": "sha384-/NizdENQkTc96romD0kmnl8220NAvW32QI0aSFuGiPbWE5lYbRxLXU5shsjlx5Ek",
@@ -12,6 +12,10 @@
     "js/announcement.js": {
       "integrity": "sha384-z4zcEMn+tScoVnYRE4nEf8N/oyvpxdpaxTNrT4QO/jURChid4+qjAvWkzatCaAPq",
       "fingerprinted": "js/announcement.59eab4872d2f3b4c.js"
+    },
+    "js/captcha.js": {
+      "integrity": "sha384-gsgNDf7cAOxXuZw5Fat4HiRUPCjKoU22W+3AIjNOx2l+i4lJXIHHNJdsXgarm3vy",
+      "fingerprinted": "js/captcha.2aab5803642f8ac5.js"
     },
     "js/cart-count.js": {
       "integrity": "sha384-K/rkm//Dzg8nuOfpaeenJvLKKl+6DEuvuJi1LLgd46BK+dd1HYmU8R7/gHHjtEsr",
@@ -26,12 +30,20 @@
       "fingerprinted": "js/passkey-add.b535e6a3eef4514e.js"
     },
     "js/passkey-login.js": {
-      "integrity": "sha384-iJ5mKqQ15N2dSCqvQRsez9SRgESaCX8CJD0mTZSYoQVhtxQz+DGdZPYe2+df/0VF",
-      "fingerprinted": "js/passkey-login.4482cca420479033.js"
+      "integrity": "sha384-AbMxT4s0paFnZsEfAHfcpbS2ZRSmZ9KPnttEBy9SvWErBX3U+LhoeYYN7Nm3Y8AX",
+      "fingerprinted": "js/passkey-login.90c13d7c0d8667e2.js"
     },
     "js/passkey-register.js": {
-      "integrity": "sha384-NB0gCF+Bpo6cJYkqfTdcvCMYBzpTJfzz/pYCx6iTykznRWVcBHKqidj+mMIv5qKV",
-      "fingerprinted": "js/passkey-register.537c8a0a0b70ddec.js"
+      "integrity": "sha384-BjuUhbPZ18pHFMyOwT+309BEXu+VAc54RSj8lvN93jfFGDydEgmapiAOKTQM1yma",
+      "fingerprinted": "js/passkey-register.02b0e196fb9608d8.js"
+    },
+    "js/pay.js": {
+      "integrity": "sha384-b9H7SuK6CdLZtcZbTouW6uZ2G99L5/joX5z2YyiL7Slg2ub69ZNw2rPZ/Pxw4qBG",
+      "fingerprinted": "js/pay.e174b69ddffbbfe4.js"
+    },
+    "js/paypal-checkout.js": {
+      "integrity": "sha384-jgpqYd3IojRZ3DkHjlo0QMsnYXBK6EOV7+c4ciny2Kd3fzDtIfcxwDberx5P63FJ",
+      "fingerprinted": "js/paypal-checkout.dabb9e1314891654.js"
     }
   }
 }

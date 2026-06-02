@@ -1,0 +1,40 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.51",
+  "date": "2026-06-02",
+  "headline": "Payment scripts load under the strict CSP, an optional CAPTCHA gate guards signup and checkout, HSTS is preload-strength, and order actions are rate-limited",
+  "summary": "The strict content-security-policy blocked the Stripe and PayPal scripts on the payment pages, so checkout would have failed even once payment keys were configured. Those pages now load the processor scripts through a route-scoped policy and same-origin script files, without relaxing the site-wide policy anywhere else. A CAPTCHA challenge can now be required on signup and checkout (and optionally login) once an operator configures a provider; it stays off until then. The edge now sends a two-year HSTS max-age so the domain qualifies for the preload list, and the order cancel, rate, and reorder actions are covered by the tighter per-route rate limit.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Payment pages load Stripe and PayPal under the strict CSP",
+          "body": "The pay and checkout pages now load the Stripe and PayPal scripts through a content-security-policy scoped to those routes plus same-origin script files, instead of inline script that the site-wide strict policy blocked. Checkout works once payment keys are set, and the site-wide policy — no inline script, Trusted Types required, restricted object and frame sources — is unchanged everywhere else."
+        },
+        {
+          "title": "Order actions covered by the tighter rate limit",
+          "body": "Cancelling, rating, and reordering an order are now under the same strict per-route rate limit as other sensitive actions, rather than only the looser global limit."
+        }
+      ]
+    },
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Optional CAPTCHA gate on signup, checkout, and login",
+          "body": "When an operator configures a CAPTCHA provider (Cloudflare Turnstile, hCaptcha, or reCAPTCHA), a challenge is required on signup and checkout, with login behind an opt-in flag since passkey sign-in is already phishing-resistant. The token is verified server-side before the action proceeds. With no provider configured the gate is a no-op and every flow behaves exactly as before."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Preload-strength HSTS at the edge",
+          "body": "The edge now sends an HSTS max-age of two years (with includeSubDomains and preload), matching the container and meeting the one-year minimum required for HSTS preload-list inclusion."
+        }
+      ]
+    }
+  ]
+}

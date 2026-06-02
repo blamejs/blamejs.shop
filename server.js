@@ -545,6 +545,61 @@ async function main() {
     } catch (_e) { /* no locale policy / unmigrated table — English baseline */ }
   }
 
+  // CAPTCHA gate wiring — resolved here (where `await` is allowed) so the
+  // synchronous `routes(r)` callback below can attach the already-resolved
+  // provider to sfDeps. Active ONLY when the operator has registered an
+  // active provider AND named it in CAPTCHA_PROVIDER_SLUG; absent that this
+  // stays null and every high-risk flow behaves exactly as an unconfigured
+  // store (the graceful no-op, mirroring the Stripe / PayPal / OAuth blocks).
+  // The siteverify HTTPS call is the operator's egress, run through
+  // b.httpClient (SSRF-guarded); the primitive owns only the local decision.
+  var captchaWiring = null;
+  if (catalog && cart && process.env.CAPTCHA_PROVIDER_SLUG) {
+    try {
+      var captchaSlug = process.env.CAPTCHA_PROVIDER_SLUG;
+      var cg = bShop.captchaGate.create({});   // defaults to b.externalDb.query
+      // Resolve the active provider row once at boot (public key + kind,
+      // never the secret). A missing / inactive / unknown slug leaves the
+      // gate inert so the flows are unchanged.
+      var capProvider = await cg.getProvider(captchaSlug);
+      if (capProvider && capProvider.active && !capProvider.archived_at) {
+        // Per-kind siteverify endpoint (public, fixed). The verify callback
+        // POSTs the operator's secret + the buyer's token form-encoded and
+        // returns the parsed JSON the primitive scores.
+        var CAPTCHA_VERIFY_URL = {
+          turnstile:    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+          hcaptcha:     "https://api.hcaptcha.com/siteverify",
+          recaptcha_v2: "https://www.google.com/recaptcha/api/siteverify",
+          recaptcha_v3: "https://www.google.com/recaptcha/api/siteverify",
+        };
+        captchaWiring = {
+          captchaGate:         cg,
+          captchaProviderSlug: captchaSlug,
+          captchaKind:         capProvider.kind,
+          captchaPublicKey:    capProvider.public_key,
+          // Signup + checkout challenge whenever a provider is active; login
+          // is behind CAPTCHA_GATE_LOGIN (passkey login is already phishing-
+          // resistant — defensible to default off).
+          captchaLoginEnabled: process.env.CAPTCHA_GATE_LOGIN === "1",
+          captchaVerify: async function (ctx) {
+            var url = CAPTCHA_VERIFY_URL[ctx.kind];
+            if (!url) throw new TypeError("captcha: no siteverify URL for kind " + ctx.kind);
+            var form = "secret=" + encodeURIComponent(ctx.secret_key) +
+                       "&response=" + encodeURIComponent(ctx.token);
+            var resp = await b.httpClient.request({
+              url:     url,
+              method:  "POST",
+              headers: { "content-type": "application/x-www-form-urlencoded" },
+              body:    form,
+            });
+            var text = resp && resp.body ? resp.body.toString("utf8") : "{}";
+            return JSON.parse(text);   // { success, score?, action?, ... }
+          },
+        };
+      }
+    } catch (_ce) { /* misconfigured / unmigrated table — leave captcha disabled */ }
+  }
+
   var app = await b.createApp({
     dataDir: DATA_DIR,
     // Generous GLOBAL per-client-IP rate limit — the backstop against
@@ -1542,6 +1597,19 @@ async function main() {
         // single `customers` instance built above (also wired into the
         // admin roster), so both surfaces share one handle.
         sfDeps.customers = customers;
+        // CAPTCHA gate — wired from the boot-time resolution (captchaWiring,
+        // resolved before createApp where await is allowed). Present only when
+        // the operator has an active provider named in CAPTCHA_PROVIDER_SLUG;
+        // absent it, signup / login / checkout behave EXACTLY as today (the
+        // graceful no-op, mirroring the Stripe / PayPal / OAuth blocks).
+        if (captchaWiring) {
+          sfDeps.captchaGate         = captchaWiring.captchaGate;
+          sfDeps.captchaProviderSlug = captchaWiring.captchaProviderSlug;
+          sfDeps.captchaKind         = captchaWiring.captchaKind;
+          sfDeps.captchaPublicKey    = captchaWiring.captchaPublicKey;
+          sfDeps.captchaLoginEnabled = captchaWiring.captchaLoginEnabled;
+          sfDeps.captchaVerify       = captchaWiring.captchaVerify;
+        }
         // Sign in with Google (OIDC). Mounts the /account/login/google
         // routes only when the operator supplies the OAuth client +
         // SHOP_ORIGIN (for the exact redirect URI). The framework

@@ -1619,7 +1619,7 @@ var _SECURITY_HEADERS = {
   "x-content-type-options":   "nosniff",
   "x-dns-prefetch-control":   "off",
   "x-frame-options":          "DENY",
-  "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+  "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
 };
 
 function _withSecurityHeaders(base) {
