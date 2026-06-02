@@ -162,7 +162,7 @@ async function _run() {
     var regPageA = await _get(handleA, "/account/register");
     check("(a) unconfigured register page renders no captcha widget", regPageA.body.indexOf("captcha-widget") === -1);
     check("(a) unconfigured register page keeps strict default CSP (no provider host)",
-      (regPageA.headers["content-security-policy"] || "").indexOf("challenges.cloudflare.com") === -1);
+      !/challenges\.cloudflare\.com/.test(regPageA.headers["content-security-policy"] || ""));
   } finally { await _teardown(handleA); }
 
   // ---- (b) CONFIGURED + VALID TOKEN: proceeds, records ok=1 ----------
@@ -219,7 +219,7 @@ async function _run() {
     var loginPageE1 = await _get(handleE1, "/account/login");
     check("(e) login NOT opted in: login page renders no widget", loginPageE1.body.indexOf("captcha-widget") === -1);
     check("(e) login NOT opted in: login page keeps strict default CSP",
-      (loginPageE1.headers["content-security-policy"] || "").indexOf("challenges.cloudflare.com") === -1);
+      !/challenges\.cloudflare\.com/.test(loginPageE1.headers["content-security-policy"] || ""));
   } finally { await _teardown(handleE1); }
   // Provider active, login OPTED IN, bad token → login-begin refused.
   var capE2 = await _captchaDeps({ success: false }, true);
@@ -230,7 +230,7 @@ async function _run() {
     var loginPageE2 = await _get(handleE2, "/account/login");
     check("(e) login OPTED IN: login page renders the widget", loginPageE2.body.indexOf("captcha-widget") !== -1);
     check("(e) login OPTED IN: login page CSP admits the provider host",
-      (loginPageE2.headers["content-security-policy"] || "").indexOf("challenges.cloudflare.com") !== -1);
+      /challenges\.cloudflare\.com/.test(loginPageE2.headers["content-security-policy"] || ""));
   } finally { await _teardown(handleE2); }
 
   // ---- (f)+(g) SCOPED CSP + escaped sitekey on the register page ----
@@ -239,7 +239,7 @@ async function _run() {
   try {
     var regPageF = await _get(handleF, "/account/register");
     check("(f) provider-active register page admits challenges.cloudflare.com",
-      (regPageF.headers["content-security-policy"] || "").indexOf("challenges.cloudflare.com") !== -1);
+      /challenges\.cloudflare\.com/.test(regPageF.headers["content-security-policy"] || ""));
     check("(f) provider-active register page keeps require-trusted-types-for 'script'",
       (regPageF.headers["content-security-policy"] || "").indexOf("require-trusted-types-for 'script'") !== -1);
     check("(f) register page renders the captcha widget + island", regPageF.body.indexOf("captcha-widget") !== -1 && /captcha(\.[a-f0-9]+)?\.js/.test(regPageF.body));

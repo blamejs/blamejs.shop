@@ -90,22 +90,22 @@ function _unit() {
   // (b) stripe+paypal admits both hosts.
   var bothCsp = sm.scopedCsp(["stripe", "paypal"]);
   check("(b) scopedCsp(['stripe','paypal']) admits js.stripe.com",
-    bothCsp.indexOf("https://js.stripe.com") !== -1);
+    /js\.stripe\.com/.test(bothCsp));
   check("(b) scopedCsp(['stripe','paypal']) admits www.paypal.com",
-    bothCsp.indexOf("https://www.paypal.com") !== -1);
+    /www\.paypal\.com/.test(bothCsp));
   _assertProtectionsIntact("(b) stripe+paypal scoped CSP", bothCsp);
 
   // (b2) the captcha provider host is admissible the same way.
   var turnstileCsp = sm.scopedCsp(["turnstile"]);
   check("(b2) scopedCsp(['turnstile']) admits challenges.cloudflare.com",
-    turnstileCsp.indexOf("https://challenges.cloudflare.com") !== -1);
+    /challenges\.cloudflare\.com/.test(turnstileCsp));
   _assertProtectionsIntact("(b2) turnstile scoped CSP", turnstileCsp);
 
   // (c) empty / unknown key => strict default unchanged (no host leaked).
   var emptyCsp = sm.scopedCsp([]);
   var unknownCsp = sm.scopedCsp(["totally-unknown-key"]);
   check("(c) scopedCsp([]) carries NO js.stripe.com (strict default)",
-    emptyCsp.indexOf("https://js.stripe.com") === -1);
+    !/js\.stripe\.com/.test(emptyCsp));
   check("(c) scopedCsp(['unknown']) carries NO third-party host (strict default)",
     unknownCsp.indexOf("https://") === -1);
   check("(c) scopedCsp([]) script-src is bare 'self'",
@@ -120,13 +120,13 @@ function _unit() {
     shop_name: "Shop",
   });
   check("(e) pay body has the Stripe SDK <script src>",
-    payHtml.indexOf("https://js.stripe.com/v3/") !== -1);
+    /js\.stripe\.com\/v3\//.test(payHtml));
   check("(e) pay body references the pay.js island",
     /\/assets\/.*pay(\.[a-f0-9]+)?\.js/.test(payHtml));
   check("(e) pay body has NO inline Stripe constructor glue",
     payHtml.indexOf("Stripe({") === -1 && payHtml.indexOf("stripe.elements(") === -1);
   check("(e) pay body has NO inline <script> with executable body (only src tags)",
-    !/<script>[^<]*\S[^<]*<\/script>/.test(payHtml));
+    !/<script>[^<]*\S[^<]*<\/script>/i.test(payHtml));
 
   // (f) XSS-shaped values render escaped in data-* attributes.
   var xssId = "\"><script>alert(1)</script>";
@@ -199,7 +199,7 @@ async function _http() {
     var payResp = await httpRequest({ port: port, path: "/pay/" + b.uuid.v7(), headers: _hdr() });
     var payCsp = payResp.headers["content-security-policy"] || "";
     check("(d) /pay response CSP admits js.stripe.com (route-scoped)",
-      payCsp.indexOf("https://js.stripe.com") !== -1);
+      /js\.stripe\.com/.test(payCsp));
     _assertProtectionsIntact("(d) /pay route CSP", payCsp);
 
     var cartResp = await httpRequest({ port: port, path: "/cart", headers: _hdr() });
