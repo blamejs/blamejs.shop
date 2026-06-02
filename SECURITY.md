@@ -198,3 +198,61 @@ node -e "
   emails are stored hash-only (`b.crypto.namespaceHash`), and the
   account leaderboard exposes rank plus initials only, never an email or
   account id.
+- **Privileged actions are recorded and reviewable.** Every mutating
+  admin action and every catalog-API error is appended to a
+  tamper-evident, hash-chained audit log (the framework's `b.audit`
+  surface — append-only, verified at boot). Operators review it at
+  `/admin/audit`: a read-only activity log filterable by outcome
+  (success / failure / denied) and paginated. Opening the log is itself
+  recorded (an `audit.read` row), so reviewing the audit trail leaves
+  its own forensic mark.
+- **Email deliverability — SPF / DKIM / DMARC + one-click unsubscribe.**
+  Transactional and broadcast mail is composed on `b.mail`, which signs
+  each message with DKIM, but the receiving server still rejects or
+  spam-folders mail whose envelope DNS isn't published. Publish all
+  three records for the From: domain:
+    - **SPF:** a TXT record on the sending domain authorizing the
+      service that emits the envelope (e.g. `v=spf1
+      include:<your-relay> -all`). `b.mail` signs the body but does not
+      control the envelope sender, so SPF must name whatever relay
+      actually delivers.
+    - **DKIM:** `b.mail.dkim` generates the `DKIM-Signature` header;
+      publish the matching public key as a TXT record at
+      `<selector>._domainkey.<domain>`. The selector is the one
+      configured for the signing key.
+    - **DMARC:** publish `_dmarc.<domain>` with at least
+      `v=DMARC1; p=quarantine; rua=mailto:<aggregate-report-mailbox>`.
+      Align the SPF and DKIM domains with the From: domain so DMARC
+      passes; raise to `p=reject` once aggregate reports are clean.
+    - **One-click unsubscribe (RFC 8058):** the broadcast path emits
+      `List-Unsubscribe` plus `List-Unsubscribe-Post:
+      List-Unsubscribe=One-Click` (composed on `b.guardListUnsubscribe`).
+      Keep the unsubscribe endpoint reachable from the public origin —
+      mailbox providers fetch it directly, and an unreachable endpoint
+      hurts sender reputation.
+- **Database backup & recovery.** Two layers protect the live D1
+  database:
+    - **D1 Time Travel (always on).** Cloudflare retains a rolling
+      30-day point-in-time history of the database with no setup.
+      Recover with `wrangler d1 time-travel restore blamejs-shop
+      --timestamp <ISO-8601>` (or `--bookmark <id>`); inspect the
+      current bookmark with `wrangler d1 time-travel info blamejs-shop`.
+    - **Scheduled logical export.** `node scripts/d1-export.js --to-r2`
+      (or `npm run d1-export -- --to-r2`) produces a full `.sql` dump of
+      the live database and uploads it to the private `backups/` key in
+      the assets R2 bucket. Schedule it from the operator's own
+      cron / CI on whatever cadence the retention policy requires; it is
+      not wired into the deploy. The dump bears all customer data —
+      treat the R2 `backups/` prefix as sensitive. It is NOT on the
+      Worker's served asset path (the Worker serves only
+      `/assets/themes/...` and `brand/`), so a backup object is never
+      web-reachable.
+- **Supply-chain integrity — vendored bytes are verified on every
+  build.** `lib/vendor/MANIFEST.json` pins a per-file SHA-256 of the
+  entire vendored blamejs tree. The smoke gate (run in CI on every
+  push/PR and inside the container image build) recomputes each file's
+  digest and compares it against the manifest via the framework's own
+  `b.configDrift.verifyVendorIntegrity`, so a hand-edit to any vendored
+  source — or a vendor refresh that skipped re-stamping — fails the
+  build before it can ship. Refresh + re-stamp is a single command
+  (`scripts/vendor-update.sh blamejs <tag>`).

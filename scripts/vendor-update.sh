@@ -130,8 +130,16 @@ _refresh_blamejs() {
     fs.writeFileSync(p, JSON.stringify(m, null, 2) + '\n');
   "
 
+  # Stamp per-file SHA-256 integrity hashes into MANIFEST.json (replacing
+  # the single `files.server` directory entry with one entry per vendored
+  # file). The smoke gate `check-vendor-integrity.js` recomputes and
+  # compares these, so a hand-edit to lib/vendor/ fails the build. Runs
+  # AFTER the version/tag/bundledAt write above so it stamps the freshly
+  # unpacked tree.
+  node scripts/stamp-vendor-integrity.js
+
   echo "[vendor] blamejs vendored at lib/vendor/blamejs/ ($tag)"
-  echo "[vendor] MANIFEST.json updated"
+  echo "[vendor] MANIFEST.json updated + integrity-stamped"
   echo ""
   echo "Verify the smoke gate:    node test/smoke.js"
   echo "Then commit:              git add lib/vendor/ && git commit -m 'vendor: refresh blamejs to $tag'"

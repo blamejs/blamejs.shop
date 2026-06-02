@@ -210,7 +210,13 @@ async function _run() {
     check("PDP then 200",                         pdp.status === 200);
     check("PDP shows the pre-order CTA",          pdp.body.indexOf("Reserve your pre-order") !== -1);
     check("PDP shows the pre-order buy box class", pdp.body.indexOf("pdp__buybox--preorder") !== -1);
-    check("PDP shows the release date",           pdp.body.indexOf("ships " + new Date(launchAt).toISOString().slice(0, 10)) !== -1);
+    // The server parses the datetime-local form value (launchLocal) as LOCAL
+    // time, so the stored instant — and thus the rendered UTC release date —
+    // derives from launchLocal, not the original launchAt. Deriving the
+    // expected date the same way keeps this correct regardless of the runner's
+    // timezone / time-of-day (a UTC-wall string parsed as local can land on
+    // the next UTC day).
+    check("PDP shows the release date",           pdp.body.indexOf("ships " + new Date(launchLocal).toISOString().slice(0, 10)) !== -1);
     check("PDP shows 2 of 2 remaining",           pdp.body.indexOf("2 of 2 reservations remaining") !== -1);
     check("PDP shows the deposit line",           pdp.body.indexOf("deposit") !== -1);
     check("PDP reserve form posts to the route",  pdp.body.indexOf("action=\"/products/starlight-deck/preorder\"") !== -1);
@@ -228,7 +234,7 @@ async function _run() {
       var fmt = function (minor, ccy) { try { return b.money.of(BigInt(minor), ccy).toString(); } catch (_e) { return String(minor); } };
       var edgeShape = edgeMod.preorderCtaShape(campaignRow, 2, fmt, "starlight-deck");
       check("edge preorderCtaShape resolves",      !!edgeShape && edgeShape.product_slug === "starlight-deck");
-      check("edge shape release date matches",     edgeShape.release_date_iso === new Date(launchAt).toISOString().slice(0, 10));
+      check("edge shape release date matches",     edgeShape.release_date_iso === new Date(launchLocal).toISOString().slice(0, 10));
       check("edge shape remaining matches",        edgeShape.remaining_units === 2);
       check("edge shape not sold out",             edgeShape.sold_out === false);
       // A launched campaign yields no CTA shape in either substrate.

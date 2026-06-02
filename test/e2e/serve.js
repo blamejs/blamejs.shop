@@ -25,7 +25,8 @@ var b = bShop.framework;
 
 var PORT = parseInt(process.env.E2E_PORT || "8099", 10);
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0004_shop_config.sql"]
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0004_shop_config.sql",
+  "0206_orders_email_hash.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) { return t.replace(/--[^\n]*\n/g, "\n").split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean); }
@@ -83,6 +84,65 @@ function _makeQuery() {
       r.use(b.middleware.bodyParser());
       bShop.securityMiddleware.mountRouteGuards(r);
       bShop.storefront.mount(r, { catalog: catalog, cart: cart, order: order });
+
+      // Stub-payment checkout for the e2e driver — NOT a real PSP (Stripe
+      // can't run offline). It exercises the SAME security stack the real
+      // checkout does: registered AFTER mountRouteGuards, and NOT in
+      // EDGE_POST_PATHS, so the double-submit CSRF gate applies (a tokenless
+      // POST is rejected; the storefront-issued token round-trips). On a
+      // tokened POST it reads the session cart, creates an order via the
+      // wired order primitive's createFromCart, and drives the FSM
+      // pending → paid — proving an order TRANSITION through the live stack.
+      // This route lives ONLY in this test harness; production checkout goes
+      // through deps.checkout.confirm (Stripe). No NODE_ENV bypass touches
+      // real code.
+      r.post("/e2e/checkout", async function (req, res) {
+        function _send(status, obj) {
+          res.status(status);
+          if (res.setHeader) res.setHeader("content-type", "application/json; charset=utf-8");
+          var body = JSON.stringify(obj);
+          if (res.end) res.end(body); else res.send(body);
+        }
+        try {
+          var raw = req.headers && (req.headers.cookie || "");
+          var m = /(?:^|;\s*)shop_sid=([^;]+)/.exec(raw || "");
+          var sid = m ? decodeURIComponent(m[1]) : null;
+          if (!sid) return _send(400, { error: "no-session" });
+          var c = await cart.bySession(sid);
+          if (!c) return _send(400, { error: "no-cart" });
+          var lines = await cart.listLines(c.id);
+          if (!lines.length) return _send(400, { error: "empty-cart" });
+          var subtotal = lines.reduce(function (n, l) {
+            return n + (l.unit_amount_minor || 0) * (l.qty || 0);
+          }, 0);
+          var created = await order.createFromCart({
+            cart_id:           c.id,
+            session_id:        c.session_id,
+            currency:          c.currency || "USD",
+            lines: lines.map(function (l) {
+              return {
+                variant_id:        l.variant_id,
+                sku:               l.sku,
+                qty:               l.qty,
+                unit_amount_minor: l.unit_amount_minor,
+                unit_currency:     l.unit_currency || c.currency || "USD",
+              };
+            }),
+            subtotal_minor:    subtotal,
+            discount_minor:    0,
+            tax_minor:         0,
+            shipping_minor:    0,
+            grand_total_minor: subtotal,
+            ship_to:           { country: "US" },
+            payment_intent_id: "pi_e2e_stub_" + b.uuid.v7(),
+          });
+          // Stub payment "succeeds" → drive the FSM into paid.
+          var paid = await order.transition(created.id, "mark_paid", { metadata: { stub: true } });
+          _send(200, { order_id: created.id, status: paid.status });
+        } catch (e) {
+          _send(500, { error: (e && e.message) || "checkout-failed" });
+        }
+      });
     },
   });
   var bound = await app.listen({ port: PORT, host: "127.0.0.1" });
