@@ -434,6 +434,9 @@ async function main() {
   var supportTickets     = bShop.supportTickets.create({ query: query, cursorSecret: "audit-support" });
   var orderExchanges     = bShop.orderExchanges.create({ query: query, order: order });
   var orderRatings       = bShop.orderRatings.create({ query: query });
+  var clickAndCollect    = bShop.clickAndCollect.create({ query: query, order: order });
+  var giftOptions        = bShop.giftOptions.create({ query: query, catalog: catalog });
+  var paymentMethods     = bShop.paymentMethods.create({ query: query });
   var orderExport        = bShop.orderExport.create({ query: query, order: order, cursorSecret: "audit-order-export" });
   // Bridge the preorder primitive's per-line createFromCart call into the
   // order primitive's signature (cart/session id + totals + ship_to), so a
@@ -515,6 +518,13 @@ async function main() {
     createPaymentIntent: async function (input) {
       return { id: "pi_audit_" + b.uuid.v7(), client_secret: "pi_audit_secret", status: "requires_payment_method", _amount: input.amount_minor };
     },
+    // SetupIntent vault surface so the saved-card screens mount in the audit
+    // harness (the add page still needs external Stripe.js, but the
+    // list/set-default/archive surfaces are exercised against this stub).
+    createCustomer:        async function () { return { id: "cus_audit_" + b.uuid.v7() }; },
+    createSetupIntent:     async function (i) { return { id: "seti_audit", client_secret: "seti_audit_secret", customer: i.customer }; },
+    retrieveSetupIntent:   async function (id) { return { id: id, payment_method: "pm_audit", status: "succeeded" }; },
+    retrievePaymentMethod: async function (id) { return { id: id, card: { brand: "visa", last4: "4242", exp_month: 4, exp_year: 2030 } }; },
     verifyWebhook: async function () { return { ok: false, reason: "audit-stub" }; },
   };
 
@@ -523,7 +533,7 @@ async function main() {
     tax: tax, shipping: shipping, payment: payment, order: order,
     customers: customers, giftcards: giftcards, giftCardLedger: giftCardLedger,
     quantityDiscounts: quantityDiscounts, autoDiscount: autoDiscount,
-    discountAllocation: discountAllocation,
+    discountAllocation: discountAllocation, giftOptions: giftOptions,
   });
 
   // Seed before listen — so the AUDIT_READY line names real entities.
@@ -638,6 +648,8 @@ async function main() {
         supportTickets:     supportTickets,
         orderExchanges:     orderExchanges,
         orderRatings:       orderRatings,
+        clickAndCollect:    clickAndCollect,
+        giftOptions:        giftOptions,
         orderExport:        orderExport,
         preorder:           preorder,
         customers:          customers,
@@ -686,6 +698,9 @@ async function main() {
         supportTickets:     supportTickets,
         orderExchanges:     orderExchanges,
         orderRatings:       orderRatings,
+        clickAndCollect:    clickAndCollect,
+        giftOptions:        giftOptions,
+        paymentMethods:     paymentMethods,
         preorder:           preorder,
         collections:        collections,
         knowledgeBase:      knowledgeBase,
@@ -698,7 +713,10 @@ async function main() {
         checkout:           checkout,
         payment:            payment,
         default_shipping_id: async function () { return "std"; },
-        stripe_publishable_key: "",
+        // A placeholder publishable key so the saved-card add page renders in
+        // the audit harness (the stub payment serves the SetupIntent surface);
+        // the real Stripe.js still loads from js.stripe.com via the scoped CSP.
+        stripe_publishable_key: "pk_test_audit",
       };
       bShop.storefront.mount(r, sfDeps);
     },

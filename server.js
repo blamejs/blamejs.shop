@@ -1199,6 +1199,38 @@ async function main() {
         ? bShop.orderRatings.create({})
         : null;
 
+      // Click-and-collect (BOPIS) — pickup-location CRUD + the front-counter
+      // pickup queue (admin) and a checkout "pick up in store" option +
+      // per-order pickup status (storefront). The shared `order` handle lets
+      // markPickedUp drive the parent order to delivered and customerSchedules
+      // resolve the customer→order linkage. `notifications` / `inventoryLocations`
+      // are intentionally NOT passed — the factory throws at boot if a handle
+      // is supplied that lacks enqueue / stockForSku, and neither surface is
+      // wired here; absent them the FSM transition still lands. Every route
+      // that reads it degrades gracefully if the pickup tables aren't migrated.
+      var clickAndCollect = (catalog && cart)
+        ? bShop.clickAndCollect.create({ order: order })
+        : null;
+
+      // Gift options — operator-defined gift-wrap catalog (admin) + a cart/
+      // checkout gift UI (wrap + message + recipient + hide-prices). `catalog`
+      // is REQUIRED by the factory so defineWrap can verify wrap_sku resolves
+      // to a real variant. The wrap fee rides as a real cart LINE so it flows
+      // through pricing.totals and is charged correctly (never a post-commit
+      // hook). Container-only.
+      var giftOptions = (catalog && cart)
+        ? bShop.giftOptions.create({ catalog: catalog })
+        : null;
+
+      // Saved payment methods — per-customer vaulted processor tokens. Built
+      // unconditionally where the data layer exists (it needs only the
+      // externalDb query handle); the add-card SetupIntent flow + checkout
+      // surfacing only EXPOSE inside the Stripe-configured block below. The
+      // shop stores only the opaque pm_… token — never the PAN/CVV.
+      var paymentMethods = (catalog && cart)
+        ? bShop.paymentMethods.create({})
+        : null;
+
       // Back-in-stock alerts — double-opt-in "notify me" subscriptions + the
       // scan-and-notify sweeper. catalog.inventory.get(sku) drives the sweep;
       // `notifications` is intentionally omitted (no in-app notifications
@@ -1636,6 +1668,8 @@ async function main() {
           streamDsrBundle:         _streamDsrBundle,
           orderExchanges: orderExchanges,
           orderRatings:  orderRatings,
+          clickAndCollect: clickAndCollect,
+          giftOptions:   giftOptions,
           searchRanking: searchRanking,
           trustBadges:   trustBadges,
           preorder:      preorder,
@@ -1825,6 +1859,14 @@ async function main() {
         // admin moderation queue acts on, so a flagged comment is suppressed
         // for the customer and an operator reply appears on their order page.
         if (orderRatings) sfDeps.orderRatings = orderRatings;
+        // Click-and-collect — the customer-facing pickup status on /orders/:id
+        // + /account/pickups list, and the checkout "pick up in store" option
+        // (scheduled post-commit, drop-silent). Container-only.
+        if (clickAndCollect) sfDeps.clickAndCollect = clickAndCollect;
+        // Gift options — the cart/checkout gift UI (wrap select + message +
+        // recipient + hide-prices) and the order/account gift display. The
+        // wrap fee rides as a real cart line so it's charged through the quote.
+        if (giftOptions) sfDeps.giftOptions = giftOptions;
         if (collections) sfDeps.collections = collections;
         if (categoryNavigation) sfDeps.categoryNavigation = categoryNavigation;
         if (recentlyViewed) sfDeps.recentlyViewed = recentlyViewed;
@@ -2001,6 +2043,14 @@ async function main() {
             return await config.get("shipping.default_id", DEFAULT_SHIPPING_ID);
           };
           sfDeps.stripe_publishable_key = process.env.STRIPE_PUBLISHABLE_KEY || "";
+          // Saved payment methods — exposed only inside the Stripe-configured
+          // block: the /account/payment-methods routes (list / set-default /
+          // archive / add-via-SetupIntent) need the shared `payment` handle
+          // for the SetupIntent + payment-method reads, and the add page needs
+          // the publishable key. The list/set-default/archive surfaces need no
+          // external JS; add-card uses the route-scoped CSP + the saved-card.js
+          // island (mirroring the pay page).
+          if (paymentMethods) sfDeps.paymentMethods = paymentMethods;
         }
         // Multi-currency display wiring. The operator's display-currency
         // allow-list lives in `shop.currencies` config (base first); the
