@@ -243,6 +243,50 @@ async function _confirmRejectsInvalidAddressFormats() {
     { email: "buyer@example.com", name: "x".repeat(121) }), /customer\.name/);
 }
 
+async function _digitalOnlyCartCompletesWithoutShippingService() {
+  // An all-digital cart (requires_shipping = 0 on every line) gets the
+  // physical services filtered out of shipping.rates(), so the caller's
+  // default physical id ("std") can never resolve — checkout must fall
+  // back to the zero-cost no-shipping selection instead of refusing the
+  // order. (The live shape: a $5 digital thank-you product was
+  // un-buyable because the shop configures no digital_only service.)
+  var s = await _setup();
+  var p = await s.catalog.products.create({ slug: "digital-good", title: "Digital Good", status: "active" });
+  var v = await s.catalog.variants.create(p.id, { sku: "DIG-1", requires_shipping: false });
+  await s.catalog.prices.set(v.id, { currency: "USD", amount_minor: 500 });
+  var c = await s.cart.create(bShop.framework.uuid.v7(), { currency: "USD" });
+  await s.cart.addLine(c.id, { variant_id: v.id, qty: 1 });
+
+  var q = await s.checkout.quote({
+    cart_id: c.id,
+    ship_to: { country: "US", state: "CA", postal: "94103" },
+    selected_shipping_id: "std",
+  });
+  check("digital cart quote selects the no-shipping fallback", q.selected_shipping.id === "digital_none");
+  check("digital cart ships for zero",                          q.totals.shipping_minor === 0);
+
+  var result = await s.checkout.confirm({
+    cart_id: c.id,
+    ship_to: { country: "US", state: "CA", postal: "94103" },
+    selected_shipping_id: "std",
+    customer: { email: "digital@example.com" },
+    idempotency_key: "idemp_" + nodeCrypto.randomUUID(),
+  });
+  check("digital cart confirm creates the order",  result.order && result.order.id);
+  check("digital order records zero shipping",     result.order.shipping_minor === 0);
+
+  // A PHYSICAL cart with an unresolvable service id still throws —
+  // that is a real config typo and must surface at the boundary.
+  var s2 = await _setup();
+  await assert.rejects(s2.checkout.confirm({
+    cart_id: s2.cartRow.id,
+    ship_to: { country: "US", state: "CA", postal: "94103" },
+    selected_shipping_id: "no-such-service",
+    customer: { email: "buyer@example.com" },
+    idempotency_key: "idemp_" + nodeCrypto.randomUUID(),
+  }), /selected_shipping_id .* not available/);
+}
+
 async function _confirmRefusesZeroTotal() {
   // Build a setup where every cost component is zero:
   //   - cart line at 0 minor units
@@ -320,6 +364,7 @@ async function run() {
   await _confirmPersistsFullAddress();
   await _confirmRejectsMalformedAddress();
   await _confirmRejectsInvalidAddressFormats();
+  await _digitalOnlyCartCompletesWithoutShippingService();
   await _confirmRefusesZeroTotal();
   await _webhookDispatchHappyPath();
   await _webhookBadSig();
