@@ -529,10 +529,49 @@ async function _signatureRoundTrip() {
   await assert.rejects(webhooks.verifyIncoming(payload, header, secret, 10), /toleranceSeconds/);
 }
 
+// Outbound deliveries to operator-registered receivers go through the
+// production `_defaultTransport`, which dials `b.httpClient.request`
+// with NO caller `agent`. That keeps the framework's PQC-first TLS
+// posture (ML-KEM hybrid groups, TLS 1.3 minimum) for arbitrary
+// operator URLs — the opposite of the PSP adapters (lib/payment.js),
+// which pin a classical-downgrade agent ONLY for their two fixed
+// processor endpoints. A receiver that can't negotiate an ML-KEM hybrid
+// group fails the handshake (TLS alert 40); the framework records it as
+// a transport error and retries / DLQs. This guard pins that decision:
+// if someone ever wires a downgrade agent into the default webhook
+// transport, this fails — the posture change must be a conscious edit.
+async function _defaultTransportHoldsPqcDefault() {
+  var q = _makeQuery();
+  var realRequest = bShop.framework.httpClient.request;
+  var captured = [];
+  bShop.framework.httpClient.request = function (opts) {
+    captured.push(opts);
+    return Promise.resolve({ statusCode: 200, headers: {}, body: Buffer.from("") });
+  };
+  try {
+    // No `transport` override → the factory falls back to _defaultTransport.
+    var webhooks = bShop.webhooks.create({ query: q });
+    await webhooks.endpoints.create({ url: "https://example.com/hook", events: "*" });
+    await webhooks.send("order.mark_paid", { order_id: "o_pqc" });
+  } finally {
+    bShop.framework.httpClient.request = realRequest;
+  }
+  check("default transport dialed httpClient once", captured.length === 1);
+  check("default transport POSTs the receiver URL",
+    captured[0].method === "POST" && captured[0].url === "https://example.com/hook");
+  // The posture decision: NO caller agent → b.httpClient keeps its
+  // PQC-hybrid group list + TLS 1.3 minimum for the operator-arbitrary URL.
+  check("default webhook transport carries NO downgrade agent (PQC-first held)",
+    captured[0].agent === undefined);
+  check("default webhook transport sets no classical ecdhCurve override",
+    captured[0].ecdhCurve === undefined);
+}
+
 async function run() {
   await _crud();
   await _urlValidation();
   await _signingRoundTrip();
+  await _defaultTransportHoldsPqcDefault();
   await _eventFiltering();
   await _failurePersisted();
   await _retryOnTransient();
