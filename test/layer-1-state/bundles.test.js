@@ -310,6 +310,26 @@ async function _priceBundleWithDiscount() {
   check("priceBundle disc amount_minor",            res.amount_minor === 3825);
   check("priceBundle disc bps preserved",           res.bundle_discount_bps === 1500);
 
+  // Float-drift guard: with a large list total, a JS float multiply of
+  // listTotal*bps overflows 2^53 and floors one cent high. listTotal =
+  // 27048646413003 at 333 bps -> exact floor 900719925552, but the
+  // float path yields 900719925553. The exact-BigInt path must floor to
+  // 552.
+  var qBig = _makeQuery();
+  var catalogBig = await _seedVariants(qBig, ["A"]);
+  var bBig = bundles.create({ query: qBig, catalog: catalogBig, cursorSecret: "s" });
+  await bBig.defineBundle({
+    bundle_sku: "KIT-BIG", title: "big kit",
+    bundle_discount_bps: 333,
+    components: [{ sku: "A", quantity: 1 }],
+  });
+  var bigList = 27048646413003;
+  var pricingBig = _stubPricing({ A: { amount_minor: bigList, currency: "USD" } });
+  var resBig = await bBig.priceBundle({ bundle_sku: "KIT-BIG", pricing: pricingBig });
+  check("priceBundle large list_total",             resBig.list_total_minor === bigList);
+  check("priceBundle large discount exact (floor)", resBig.discount_minor === 900719925552);
+  check("priceBundle large amount_minor",           resBig.amount_minor === bigList - 900719925552);
+
   // Mixed currencies refused.
   var mixed = _stubPricing({
     A: { amount_minor: 1000, currency: "USD" },

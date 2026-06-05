@@ -143,6 +143,7 @@ async function _run() {
     var listPage0 = await helpers.httpRequest({ port: port, path: "/account/payment-methods", jar: buyerJar });
     check("payment methods page -> 200", listPage0.status === 200);
     check("page shows the add CTA", listPage0.body.indexOf("/account/payment-methods/add") !== -1);
+    check("publishable key present -> live add link", listPage0.body.indexOf("href=\"/account/payment-methods/add\"") !== -1);
 
     // ---- add a card via the SetupIntent flow -------------------------
     var add1 = await _addCard(port, buyerJar);
@@ -231,7 +232,62 @@ async function _run() {
   }
 }
 
-async function run() { await _run(); }
+// Partial Stripe config: STRIPE_API_KEY + STRIPE_WEBHOOK_SECRET present (so
+// the list/set-default/archive routes mount and `payment` is wired) but no
+// STRIPE_PUBLISHABLE_KEY — the add-card SetupIntent flow can't complete. The
+// page must NOT offer a live "Add a card" link (which dead-ends on the add
+// route's 503); it renders the disabled affordance + an honest note instead.
+async function _runNoPublishableKey() {
+  var query   = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query });
+  var cart    = bShop.cart.create({ query: query, catalog: catalog });
+  var order   = bShop.order.create({ query: query, cursorSecret: "pm-order-sf-nopk" });
+  var customers = bShop.customers.create({ query: query });
+  var paymentMethods = bShop.paymentMethods.create({ query: query });
+  var payment = _stubPayment();
+
+  var buyer = b.uuid.v7();
+
+  var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-pm-nopk-"));
+  var app = await b.createApp({
+    dataDir: dataDir, vault: { mode: "plaintext" },
+    db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
+    middleware: { botGuard: false, rateLimit: false },
+    routes: function (r) {
+      r.use(b.middleware.bodyParser());
+      bShop.storefront.mount(r, {
+        catalog: catalog, cart: cart, order: order, customers: customers,
+        paymentMethods: paymentMethods, payment: payment,
+        // No stripe_publishable_key — the partial-config case.
+        shop_name: "PM Shop",
+      });
+    },
+  });
+  var bound = await app.listen({ port: 0, host: "127.0.0.1" });
+  var port = bound.port;
+
+  try {
+    var jar = helpers.cookieJar();
+    jar.capture({ "set-cookie": [helpers.authCookie(b, buyer)] });
+
+    var page = await helpers.httpRequest({ port: port, path: "/account/payment-methods", jar: jar });
+    check("no-pk: payment methods page -> 200", page.status === 200);
+    check("no-pk: NO live add link", page.body.indexOf("href=\"/account/payment-methods/add\"") === -1);
+    check("no-pk: disabled add-card affordance renders", /<button[^>]*disabled[^>]*>Add a card<\/button>/.test(page.body));
+    check("no-pk: honest unconfigured note", page.body.indexOf("isn't available on this store yet") !== -1);
+
+    // Defense-in-depth: a direct hit on the add route still 503s gracefully
+    // (the disabled CTA means nothing links here, but a typed URL must not 500).
+    var addDirect = await helpers.httpRequest({ port: port, path: "/account/payment-methods/add", jar: jar });
+    check("no-pk: direct add route -> 503", addDirect.status === 503);
+    check("no-pk: 503 leaks no raw error", _noLeak(addDirect.body));
+  } finally {
+    try { await app.shutdown(); } catch (_e) { /* best-effort */ }
+    try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* best-effort */ }
+  }
+}
+
+async function run() { await _run(); await _runNoPublishableKey(); }
 
 module.exports = { run: run };
 
