@@ -244,25 +244,77 @@ async function httpRequest(opts) {
     headers["content-length"] = String(bodyBuf.length);
   }
   return await new Promise(function (resolve, reject) {
+    // A server that refuses an upload mid-stream (e.g. the multipart
+    // size cap) responds and tears the socket down while the client is
+    // still writing the body. Whether this side then sees the response,
+    // a write EPIPE, or a read ECONNRESET is a TCP race — so the
+    // response wins whenever its headers arrived: a post-response
+    // socket error settles with whatever body was received instead of
+    // failing the test. Pre-response socket errors are real failures
+    // and still reject. Large bodies are written in slices with an
+    // event-loop yield between them so an early response gets processed
+    // mid-upload and the client stops sending into a dead socket.
+    var gotResponse = false;
+    var settled = false;
     var req = http.request({
       host:    opts.host || "127.0.0.1",
       port:    opts.port,
       method:  method,
       path:    opts.path,
       headers: headers,
+      // One fresh socket per request — Node's default agent keeps
+      // connections alive and would hand the NEXT request the socket a
+      // mid-upload rejection just destroyed, surfacing as a read
+      // ECONNRESET in whichever unrelated request drew it from the pool.
+      agent:   false,
     }, function (res) {
+      gotResponse = true;
       var chunks = [];
-      res.on("data", function (c) { chunks.push(c); });
-      res.on("end", function () {
+      function _settle() {
+        if (settled) return;
+        settled = true;
         var body = Buffer.concat(chunks).toString("utf8");
         if (opts.jar) opts.jar.capture(res.headers);
         resolve({ status: res.statusCode, headers: res.headers, body: body });
+      }
+      res.on("data", function (c) { chunks.push(c); });
+      res.on("end", _settle);
+      res.on("error", function (e) {
+        if (e && (e.code === "ECONNRESET" || e.code === "EPIPE")) return _settle();
+        if (!settled) { settled = true; reject(e); }
       });
-      res.on("error", reject);
     });
-    req.on("error", reject);
-    if (bodyBuf) req.write(bodyBuf);
-    req.end();
+    req.on("error", function (e) {
+      if (gotResponse && e && (e.code === "EPIPE" || e.code === "ECONNRESET")) return;
+      // A server refusing a mid-stream upload (over-cap multipart) may
+      // destroy the connection before its 413/redirect flushes — the RST
+      // discards the client's buffered response, so no response is ever
+      // readable. That reset IS the refusal on the wire (browsers see the
+      // same). A caller probing such a path opts in via tolerateEarlyClose
+      // and gets a sentinel instead of a throw; everything else still
+      // rejects, so a genuinely crashed server fails tests loudly.
+      if (opts.tolerateEarlyClose && e && (e.code === "EPIPE" || e.code === "ECONNRESET")) {
+        if (!settled) { settled = true; resolve({ status: 0, reset: true, headers: {}, body: "" }); }
+        return;
+      }
+      if (!settled) { settled = true; reject(e); }
+    });
+    if (!bodyBuf || bodyBuf.length <= 65536) {
+      if (bodyBuf) req.write(bodyBuf);
+      req.end();
+    } else {
+      var offset = 0;
+      (function _writeSlice() {
+        if (req.destroyed) return;
+        // Server already answered (early rejection) — stop sending and
+        // close our side; the response handler owns settling.
+        if (gotResponse) return req.end();
+        if (offset >= bodyBuf.length) return req.end();
+        var slice = bodyBuf.subarray(offset, offset + 65536);
+        offset += slice.length;
+        req.write(slice, function () { setImmediate(_writeSlice); });
+      })();
+    }
   });
 }
 
