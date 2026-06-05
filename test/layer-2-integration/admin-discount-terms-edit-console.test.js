@@ -194,6 +194,84 @@ async function _run() {
     var apiGet = await helpers.httpRequest({ port: port, path: "/admin/discounts/ten-off-50", headers: bearer });
     check("detail API JSON",                      (apiGet.headers["content-type"] || "").indexOf("application/json") === 0);
 
+    // ---- unlock_code: console create / edit / clear / list display ----
+    //
+    // The rule is API-gated to an unlock code the operator never sees in
+    // the console without these. The create form must carry the field, the
+    // edit form must prefill + clear it, and the list / detail must surface
+    // it so an operator knows which rules are code-gated.
+
+    // The create form renders the optional Unlock code input.
+    var listForCreate = await helpers.httpRequest({ port: port, path: "/admin/discounts", jar: jar });
+    check("create form has an unlock_code input", listForCreate.body.indexOf("name=\"unlock_code\"") !== -1);
+    check("discounts subhead no longer claims \"without a coupon code\"",
+      listForCreate.body.indexOf("without a coupon code") === -1);
+    check("discounts subhead mentions the unlock-code behaviour",
+      listForCreate.body.indexOf("unlock code") !== -1);
+
+    // Create a code-gated rule through the browser form.
+    var createGated = await helpers.httpRequest({
+      port: port, path: "/admin/discounts", method: "POST", jar: jar,
+      form: {
+        slug: "vip-15", title: "VIP 15% off",
+        trigger_kind: "cart_total_min", trigger_min_minor: "1000",
+        value_kind: "percent_off", value_basis_points: "1500",
+        unlock_code: "VIP15",
+      },
+    });
+    check("create code-gated rule then 303",      createGated.status === 303);
+    var gated = await autoDiscount.getRule("vip-15");
+    check("created rule carries the unlock code",  gated && gated.unlock_code === "VIP15");
+
+    // The list surfaces the code so operators can tell gated from automatic.
+    var listGated = await helpers.httpRequest({ port: port, path: "/admin/discounts", jar: jar });
+    check("list shows the gated rule's code",      listGated.body.indexOf("VIP15") !== -1);
+
+    // The detail screen prefills the unlock_code field for editing.
+    var detailGated = await helpers.httpRequest({ port: port, path: "/admin/discounts/vip-15", jar: jar });
+    check("detail prefills the unlock code",       detailGated.body.indexOf("name=\"unlock_code\" value=\"VIP15\"") !== -1);
+    check("detail carries the clear marker",       detailGated.body.indexOf("name=\"unlock_code_present\" value=\"1\"") !== -1);
+    check("detail-grid shows the unlock code",     detailGated.body.indexOf("Unlock code") !== -1);
+
+    // Editing to a new code persists (and the present-marker makes the
+    // field authoritative on every edit submission).
+    var recode = await helpers.httpRequest({
+      port: port, path: "/admin/discounts/vip-15/edit", method: "POST", jar: jar,
+      form: {
+        title: "VIP 15% off", active_present: "1", active: "on", priority: "0",
+        trigger_kind: "cart_total_min", trigger_min_minor: "1000",
+        value_kind: "percent_off", value_basis_points: "1500",
+        unlock_code_present: "1", unlock_code: "VIP-2026",
+      },
+    });
+    check("recode edit then 303",                  recode.status === 303);
+    check("unlock code changed",                   (await autoDiscount.getRule("vip-15")).unlock_code === "VIP-2026");
+
+    // A blank field with the present-marker CLEARS the code — the rule
+    // reverts to a pure automatic.
+    var clearCode = await helpers.httpRequest({
+      port: port, path: "/admin/discounts/vip-15/edit", method: "POST", jar: jar,
+      form: {
+        title: "VIP 15% off", active_present: "1", active: "on", priority: "0",
+        trigger_kind: "cart_total_min", trigger_min_minor: "1000",
+        value_kind: "percent_off", value_basis_points: "1500",
+        unlock_code_present: "1", unlock_code: "",
+      },
+    });
+    check("clear-code edit then 303",              clearCode.status === 303);
+    check("unlock code cleared to null",           (await autoDiscount.getRule("vip-15")).unlock_code == null);
+
+    // The inline row edit (no present-marker) leaves a code untouched: set
+    // one, then run a priority-only edit, and confirm the code survives.
+    await autoDiscount.updateRule("vip-15", { unlock_code: "KEEPME" });
+    var inlineKeep = await helpers.httpRequest({
+      port: port, path: "/admin/discounts/vip-15/edit", method: "POST", jar: jar,
+      form: { priority: "7", active_present: "1" },
+    });
+    check("inline edit then 303",                  inlineKeep.status === 303);
+    check("inline edit left the unlock code intact",
+      (await autoDiscount.getRule("vip-15")).unlock_code === "KEEPME");
+
     // Anon → sign-in form.
     var anon = await helpers.httpRequest({ port: port, path: "/admin/discounts/ten-off-50" });
     check("anon detail → login form",            anon.body.indexOf("Admin API key") !== -1);

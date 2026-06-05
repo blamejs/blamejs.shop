@@ -75,6 +75,30 @@ function _fakeMailer() {
   };
 }
 
+// A mailer whose send FAILS — the SMTP/provider fault path. The thrown
+// error is NOT a TypeError, so it must route through the operator error log
+// (not bubble out unrecorded) and degrade to a graceful banner.
+function _faultyMailer() {
+  return {
+    orderReceipt: async function () {
+      var e = new Error("smtp: 421 service not available");
+      throw e;
+    },
+  };
+}
+
+// Minimal errorLog spy matching the surface _safeNotice touches
+// (captureServerError). Records what was captured so the test can assert
+// the mailer fault landed in the operator-readable log.
+function _spyErrorLog() {
+  var captured = [];
+  return {
+    captured: captured,
+    captureServerError: async function (input) { captured.push(input); return { ok: true }; },
+    recentServerErrors: async function () { return captured.slice(); },
+  };
+}
+
 // Seed a paid order for a linked customer so the receipt can greet them.
 async function _seedOrder(query, order, customerId) {
   var cartId = b.uuid.v7();
@@ -111,7 +135,8 @@ async function _boot(opts) {
   var alice = await customers.register({ email: "alice@example.com", display_name: "Alice Anderson" });
   var ord = await _seedOrder(query, order, alice.id);
 
-  var mailer = opts.noMailer ? null : _fakeMailer();
+  var mailer = opts.noMailer ? null : (opts.faultyMailer ? _faultyMailer() : _fakeMailer());
+  var errorLog = opts.errorLog || null;
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-resend-"));
   var app = await b.createApp({
     dataDir: dataDir, vault: { mode: "plaintext" }, db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
@@ -123,11 +148,12 @@ async function _boot(opts) {
         customers: customers,
       };
       if (mailer) deps.mailer = mailer;
+      if (errorLog) deps.errorLog = errorLog;
       bShop.admin.mount(r, deps);
     },
   });
   var bound = await app.listen({ port: 0, host: "127.0.0.1" });
-  return { app: app, port: bound.port, dataDir: dataDir, mailer: mailer, order: ord };
+  return { app: app, port: bound.port, dataDir: dataDir, mailer: mailer, order: ord, errorLog: errorLog };
 }
 
 async function _run() {
@@ -265,6 +291,54 @@ async function _run() {
   } finally {
     try { await env2.app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(env2.dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
+  }
+
+  // ---- mailer FAULT: the send fails, must land in the error log --------
+  //
+  // A send failure is NOT a TypeError. The browser handler isn't wrapped by
+  // the bearer-path error wrapper, so a bare re-throw would bypass the
+  // operator error-log capture the JSON path gets for free. The fix routes
+  // the fault through _safeNotice (which records into the wired errorLog)
+  // and degrades to a ?resend_err=send banner instead of a 500. Both paths
+  // (browser + bearer JSON) must capture.
+  var spyLog = _spyErrorLog();
+  var env3 = await _boot({ faultyMailer: true, errorLog: spyLog });
+  try {
+    var enc3 = encodeURIComponent(env3.order.id);
+    var jar3 = helpers.cookieJar();
+    await helpers.httpRequest({ port: env3.port, path: "/admin/login", method: "POST", form: { token: TOKEN }, jar: jar3 });
+
+    // Browser path: a mailer fault degrades to ?resend_err=send (not a 500)
+    // AND records into the operator error log.
+    var faultBrowser = await helpers.httpRequest({
+      port: env3.port, path: "/admin/orders/" + enc3 + "/resend-confirmation", method: "POST", jar: jar3,
+      form: { email: "ok@example.com" },
+    });
+    check("mailer fault (browser) then 303, not 500", faultBrowser.status === 303);
+    check("mailer fault (browser) -> resend_err=send", (faultBrowser.headers.location || "").indexOf("resend_err=send") !== -1);
+    check("mailer fault captured into the error log", spyLog.captured.length >= 1);
+    check("captured fault is routed for the resend action",
+      spyLog.captured.some(function (c) { return c.route === "admin:order.receipt.resend" && c.status === 500; }));
+
+    // The detail page surfaces the send-failed banner.
+    var afterSend = await helpers.httpRequest({ port: env3.port, path: "/admin/orders/" + enc3 + "?resend_err=send", jar: jar3 });
+    check("detail shows the send-failed banner", afterSend.body.indexOf("couldn't be sent") !== -1);
+
+    // Bearer JSON path of the same fault: a 500 problem-details with no raw
+    // error leak — and it too lands in the error log (via the wrapper catch
+    // -> _safeNotice).
+    var beforeJson = spyLog.captured.length;
+    var faultJson = await helpers.httpRequest({
+      port: env3.port, path: "/admin/orders/" + enc3 + "/resend-confirmation", method: "POST",
+      headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ email: "ok@example.com" }),
+    });
+    check("mailer fault (bearer) then 500", faultJson.status === 500);
+    check("bearer 500 leaks no smtp detail", faultJson.body.indexOf("smtp:") === -1);
+    check("mailer fault (bearer) also captured", spyLog.captured.length > beforeJson);
+  } finally {
+    try { await env3.app.shutdown(); } catch (_e) { /* */ }
+    try { nodeFs.rmSync(env3.dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
   }
 }
 

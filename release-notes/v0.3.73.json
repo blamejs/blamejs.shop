@@ -1,0 +1,26 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.73",
+  "date": "2026-06-05",
+  "headline": "Unlock codes are manageable from the Discounts screen, and coupon guessing is rate-capped",
+  "summary": "Code-unlocked discount rules shipped with an API-only gap: the Discounts console had no field for the unlock code, so creating a code-gated rule required a raw API call. The create and edit forms now carry an optional Unlock code input — clearing it on edit reverts the rule to purely automatic — and the rule list and detail show which rules are code-gated; the screen's description covers both kinds. The cart's code-apply endpoint joins the tight per-address rate budget that already guards gift-card balance lookups, capping coupon-namespace guessing at the same rate. Also fixed: a failed confirmation-resend in the browser console now lands in the error log with a clean notice instead of an unrecorded failure, and the signed-in cart page resolves the shopper's destination once instead of twice per view.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Unlock codes editable in the Discounts console",
+          "body": "The create and edit forms gain an optional Unlock code field, threaded through the same validation as the API. On edit, submitting the field blank explicitly clears the code (the rule becomes purely automatic again), while the inline quick-edit leaves it untouched. The rule list and the detail view display each rule's code, escaped, so code-gated rules are visible at a glance, and the screen copy now describes both automatic and code-unlocked rules."
+        },
+        {
+          "title": "Coupon-code guessing joins the tight rate budget",
+          "body": "POST /cart/coupon now sits in the per-address, per-path rate budget alongside gift-card balance lookups — both accept guessable secrets and answer uniformly, so both deserve the same throttle. The pinned integration test sprays the endpoint and asserts the cap engages."
+        },
+        {
+          "title": "Failed confirmation resends are captured and surfaced",
+          "body": "A mailer fault during a browser-initiated confirmation resend previously escaped both the error log and the screen. It now records to the error log and redirects back to the order with an honest failure notice; the API path captures identically. The signed-in cart view also drops a duplicated destination lookup per render."
+        }
+      ]
+    }
+  ]
+}
