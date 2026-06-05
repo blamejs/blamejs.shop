@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.3",
+  "date": "2026-06-05",
+  "headline": "Passkey sign-in works again: WebAuthn is permitted on the pages that host it",
+  "summary": "The framework's deny-all Permissions-Policy disabled the browser's WebAuthn API everywhere — including the sign-in page's own top-level document — so attempting a passkey sign-in failed with the browser reporting that publickey-credentials-get is not enabled. The policy now permits exactly the WebAuthn capability each ceremony page needs: credential assertion on the sign-in page, credential creation on the registration and passkey-management pages, both scoped to the page's own origin. Every other page keeps the strict deny-all policy, and every other feature (camera, microphone, geolocation, payment outside the payment page) remains denied on the ceremony pages too.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Passkey ceremonies are no longer blocked by Permissions-Policy",
+          "body": "Sign-in carries publickey-credentials-get=(self); registration and passkey management carry publickey-credentials-create=(self). The allowance is scoped per route following the same pattern the payment page uses, grants apply only to the page's own origin (no cross-origin delegation), and unrecognized feature requests relax nothing. Tests assert the exact header tokens per route and that unrelated pages still deny both WebAuthn features."
+        }
+      ]
+    }
+  ]
+}
