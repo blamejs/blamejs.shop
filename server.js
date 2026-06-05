@@ -1145,7 +1145,7 @@ async function main() {
       // loyaltyEarnRules / referrals exist) so both the admin block and the
       // storefront block reuse it instead of each standing up its own.
       var order = (catalog && cart)
-        ? bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals, inventory: catalog.inventory })
+        ? bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals, inventory: catalog.inventory, errorLog: errorLog })
         : null;
 
       // Order notes — threaded customer-service notes attached to an order,
@@ -1751,6 +1751,72 @@ async function main() {
             webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
           })
         : null;
+
+      // Stale-pending-order reaper — cancels pending orders older than the
+      // TTL so their reserved stock holds release. A pending order whose
+      // buyer abandoned the payment sheet (or whose PaymentIntent expired)
+      // otherwise holds its stock forever: confirm places the holds + creates
+      // the pending order, but the only hold-freeing FSM edges are
+      // pending→paid and pending→cancelled, and nothing fires the cancel
+      // automatically. The reaper composes the shared `order` + `payment`
+      // handles only — it needs no quote/confirm machinery, so it stands up
+      // a thin checkout instance over default (stateless) tax/shipping
+      // adapters rather than the per-request config-wrapped ones.
+      //
+      // TTL is operator-tunable via CHECKOUT_PENDING_TTL_MINUTES (default
+      // 120). Config-time validation: a present value MUST parse to an
+      // integer >= 5, else throw at boot so a typo surfaces immediately
+      // (entry-point tier).
+      var STALE_ORDER_TTL_MINUTES = 120;
+      if (process.env.CHECKOUT_PENDING_TTL_MINUTES != null && process.env.CHECKOUT_PENDING_TTL_MINUTES !== "") {
+        var _ttlParsed = Number(process.env.CHECKOUT_PENDING_TTL_MINUTES);
+        if (!Number.isInteger(_ttlParsed) || _ttlParsed < 5) {
+          throw new Error("CHECKOUT_PENDING_TTL_MINUTES must be an integer >= 5 (minutes); got " +
+            JSON.stringify(process.env.CHECKOUT_PENDING_TTL_MINUTES));
+        }
+        STALE_ORDER_TTL_MINUTES = _ttlParsed;
+      }
+      var staleOrderReaper = (catalog && cart && order)
+        ? bShop.checkout.create({
+            catalog: catalog, cart: cart, pricing: bShop.pricing,
+            tax:      bShop.tax.create({ rules: [] }),
+            // The reaper never quotes shipping; the adapter just satisfies
+            // checkout.create's required-deps gate with a valid no-op table.
+            shipping: bShop.shipping.create({ services: [{ id: "noop", label: "noop", zones: [{ country: "US", flat_amount_minor: 0 }] }] }),
+            payment:  payment || { name: "no-stripe" },
+            order:    order,
+          })
+        : null;
+
+      // Internal cron endpoint — the Worker's scheduled() handler POSTs here
+      // over the SHOP service binding once a minute. Same D1_BRIDGE_SECRET
+      // timing-safe gate + never-5xx (drop-silent, JSON summary) shape as the
+      // other ticks. One bounded reap pass per fire (batch-capped in the
+      // primitive); a quiet table is a cheap read.
+      r.post("/_/stale-order-reap", async function (req, res) {
+        var gotR = req.headers && req.headers["x-d1-bridge-secret"];
+        var wantR = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !wantR ||
+          typeof gotR !== "string" ||
+          gotR.length !== wantR.length ||
+          !b.crypto.timingSafeEqual(gotR, wantR)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!staleOrderReaper) {
+          res.json({ ok: true, enabled: false, reason: "checkout not composed (no catalog/cart/order)" });
+          return;
+        }
+        try {
+          var reapSummary = await staleOrderReaper.reapStalePending({ ttl_minutes: STALE_ORDER_TTL_MINUTES });
+          res.json(Object.assign({ enabled: true }, reapSummary));
+        } catch (e) {
+          // Never 5xx — a thrown reap would mark the cron run failed.
+          res.json({ ok: false, enabled: true, error: (e && e.message) || String(e) });
+        }
+      });
 
       // Subscriptions — the recurring-offer catalog (/admin/subscription-
       // plans) plus the customer self-management surface

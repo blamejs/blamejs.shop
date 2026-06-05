@@ -497,6 +497,28 @@ async function _run() {
     var bobApi = await helpers.httpRequest({ port: port, path: bobBase, headers: bearer });
     check("bob activity API is empty",          Array.isArray(JSON.parse(bobApi.body).activity) && JSON.parse(bobApi.body).activity.length === 0);
 
+    // ---- activity link guard: protocol-relative URLs are NOT linked -----
+    // The activity panel renders an event's `link` as an href ONLY when it's a
+    // same-origin path: a leading "/" that is NOT "//". A protocol-relative
+    // "//evil.example/x" also starts with "/" but resolves to an off-site
+    // origin, and the HTML escaper leaves "/" untouched — so without the
+    // second-char guard it would survive into a working cross-origin href.
+    // Render the panel directly with a malicious link and assert it never
+    // becomes an href (it falls back to plain, un-linked text).
+    var guardHtml = bShop.admin.renderAdminCustomerDetail({
+      customer:     { id: alice.id, display_name: "Alice Anderson", created_at: Date.now() },
+      currency:     "USD",
+      can_activity: true,
+      activity: [
+        { kind: "order.create", occurred_at: Date.now(), title: "Off-site link", body: null, actor: "system", link: "//evil.example/x" },
+        { kind: "order.create", occurred_at: Date.now() - 1, title: "Same-origin link", body: null, actor: "system", link: "/operator/orders/abc" },
+      ],
+    });
+    check("link guard: no protocol-relative href", guardHtml.indexOf("href=\"//evil.example") === -1);
+    check("link guard: off-site link not anchored", guardHtml.indexOf("//evil.example/x</a>") === -1);
+    check("link guard: off-site title renders as plain text", guardHtml.indexOf("Off-site link") !== -1);
+    check("link guard: same-origin link still anchored", guardHtml.indexOf("href=\"/operator/orders/abc\"") !== -1);
+
     // ---- auth gate -----------------------------------------------------
     var anon = await helpers.httpRequest({ port: port, path: base });
     check("anon detail → login form",           anon.body.indexOf("Admin API key") !== -1);

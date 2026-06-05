@@ -180,6 +180,17 @@ node -e "
   Redemption decrements with an atomic `balance >= amount` SQL guard
   keyed on the order id, so concurrent or replayed checkouts can never
   overdraw a card or apply more than the remaining balance.
+- **Abandoned checkouts don't strand stock forever.** Checkout reserves
+  stock with an atomic conditional hold before charging; an order whose
+  buyer abandons the payment sheet (or whose PaymentIntent expires) would
+  otherwise hold that stock indefinitely. A background tick cancels
+  pending orders older than `CHECKOUT_PENDING_TTL_MINUTES` (default 120,
+  minimum 5) so their holds release back to the shelf. For a Stripe order
+  the tick cancels the PaymentIntent FIRST — if Stripe reports the payment
+  already succeeded, the order is left pending for the webhook to settle,
+  so a reap can never cancel an order whose payment completed. Tune the
+  TTL to the longest payment flow you support (slow 3-D Secure, manual
+  bank pushes) so a legitimate in-progress checkout is never reaped.
 - **Loyalty points are account-scoped money — earned and spent under
   the same double-spend discipline.** The `/account/loyalty` page and
   the redeem actions are login-gated and read the customer id from the
