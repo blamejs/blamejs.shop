@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.72",
+  "date": "2026-06-05",
+  "headline": "Resend an order confirmation from the console, and export a segment's members as CSV",
+  "summary": "Two operator actions land in the admin console. The order detail screen gains a Resend-confirmation action: buyer emails are stored only as one-way hashes, so the original address cannot be recovered — the operator types the recipient (from the customer's own request), and a fresh receipt rendered from the stored order is sent, rate-bounded to three per order per hour, with every send audited and the recipient kept out of the audit trail. The action appears only when a mailer is configured. Customer segments gain a members CSV export that streams id, display name, segment join date, and order count — deliberately no email column, since addresses are not stored in readable form; the file says so in a leading comment, cell values are quoted and spreadsheet-formula-neutralized, and the stream is written batch by batch so a large segment never buffers in memory.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Resend order confirmation",
+          "body": "POST /admin/orders/:id/resend-confirmation sends a fresh receipt for the stored order to an operator-supplied address, since the buyer's email exists only as a hash and cannot be recovered — the recipient comes from the customer's own \"I didn't get it\" request. Rate-bounded to three sends per order per hour, audited without recording the recipient, gated on a configured mailer (the panel renders an honest disabled note otherwise), and validated for address shape."
+        },
+        {
+          "title": "Segment members CSV export",
+          "body": "GET /admin/segments/:slug/members.csv streams a segment's members — customer id, display name, join date, order count — in keyset-paginated batches with RFC 4180 quoting and spreadsheet-formula-injection neutralization. There is no email column: addresses are stored hashed, and both the screen copy and a leading CSV comment state it. Unknown segments return 404 before any bytes stream; an archived segment yields a well-formed header-only file; each export is audited."
+        }
+      ]
+    }
+  ]
+}

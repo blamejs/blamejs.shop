@@ -114,6 +114,14 @@ async function _run() {
   var port = bound.port;
   var bearer = { authorization: "Bearer " + TOKEN };
 
+  // Spy on b.audit.safeEmit so the export-event assertion is deterministic
+  // and touches no DB / chain read path (fragile across the shared-process
+  // smoke ordering). The export route fires safeEmit like every admin
+  // mutation, so the spy captures it.
+  var auditCaptured = [];
+  var _origSafeEmit = b.audit.safeEmit;
+  b.audit.safeEmit = function (ev) { auditCaptured.push(ev); return _origSafeEmit.apply(this, arguments); };
+
   try {
     var jar = helpers.cookieJar();
     var login = await helpers.httpRequest({ port: port, path: "/admin/login", method: "POST", form: { token: TOKEN }, jar: jar });
@@ -262,10 +270,60 @@ async function _run() {
     check("bearer recompute returns the count",  JSON.parse(apiRecompute.body).member_count === 0);
     check("recompute reflects the edited rule",  (await customerSegments.stats("any-buyer")).member_count === 0);
 
+    // ---- members CSV export --------------------------------------------
+    // Re-seed a matching member so the export has a row: recompute the rule
+    // back to "any buyer" (1 order) first, since the edit above set it to 3.
+    await customerSegments.update("any-buyer", { rules: { frequency_orders_min: 1 } });
+    await customerSegments.recompute({ slugs: ["any-buyer"] });
+    check("export precondition: one member",     (await customerSegments.stats("any-buyer")).member_count === 1);
+
+    // The list + detail screens expose an Export CSV affordance.
+    var listForExport = await helpers.httpRequest({ port: port, path: "/admin/segments", jar: jar });
+    check("list offers an Export CSV link",      listForExport.body.indexOf("/admin/segments/any-buyer/members.csv") !== -1);
+    var detailForExport = await helpers.httpRequest({ port: port, path: "/admin/segments/any-buyer", jar: jar });
+    check("detail offers an Export CSV link",    detailForExport.body.indexOf("/admin/segments/any-buyer/members.csv") !== -1);
+    check("detail states no email in export",    detailForExport.body.toLowerCase().indexOf("no email") !== -1 || detailForExport.body.indexOf("one-way hash") !== -1);
+
+    // Browser download streams the CSV with the expected columns + Alice's
+    // row, and NO email column.
+    var csv = await helpers.httpRequest({ port: port, path: "/admin/segments/any-buyer/members.csv", jar: jar });
+    check("members CSV then 200",                csv.status === 200);
+    check("members CSV content-type",            (csv.headers["content-type"] || "").indexOf("text/csv") === 0);
+    check("members CSV is an attachment",        (csv.headers["content-disposition"] || "").indexOf("attachment") !== -1);
+    check("members CSV header columns",          csv.body.indexOf("\"customer_id\",\"display_name\",\"joined_segment_at\",\"order_count\"") !== -1);
+    check("members CSV leading comment row",     csv.body.indexOf("email addresses are omitted") !== -1);
+    check("members CSV carries the member id",   csv.body.indexOf(alice.id) !== -1);
+    check("members CSV carries the display name", csv.body.indexOf("Alice Anderson") !== -1);
+    check("members CSV carries the order count", csv.body.indexOf("\"1\"") !== -1);
+    // No email column header and no address anywhere in the export.
+    check("members CSV has no email column",     csv.body.toLowerCase().indexOf("\"email\"") === -1);
+    check("members CSV leaks no address",        csv.body.indexOf("alice@example.com") === -1);
+
+    // The export is audited — the spy captured the safeEmit the route fired.
+    var exportRows = auditCaptured.filter(function (r) {
+      return r.action === "shop_admin.customer_segment.export" && r.metadata && r.metadata.slug === "any-buyer";
+    });
+    check("export recorded an audit row",        exportRows.length >= 1);
+
+    // The bearer JSON surface serves the same file (a download, not JSON).
+    var csvApi = await helpers.httpRequest({ port: port, path: "/admin/segments/any-buyer/members.csv", headers: bearer });
+    check("bearer members CSV 200",              csvApi.status === 200 && (csvApi.headers["content-type"] || "").indexOf("text/csv") === 0);
+    check("bearer members CSV carries the id",   csvApi.body.indexOf(alice.id) !== -1);
+
+    // An unknown / foreign segment 404s instead of streaming an empty file.
+    var csvMissing = await helpers.httpRequest({ port: port, path: "/admin/segments/no-such-segment/members.csv", headers: bearer });
+    check("unknown-segment export then 404",     csvMissing.status === 404);
+    var csvMissingHtml = await helpers.httpRequest({ port: port, path: "/admin/segments/no-such-segment/members.csv", jar: jar });
+    check("unknown-segment export (browser) 404", csvMissingHtml.status === 404);
+
     // ---- anon -> sign-in form ------------------------------------------
     var anon = await helpers.httpRequest({ port: port, path: "/admin/segments" });
     check("anon list -> login form",             anon.body.indexOf("Admin API key") !== -1);
+    // The export route is gated too — anon gets the sign-in form, never a file.
+    var anonCsv = await helpers.httpRequest({ port: port, path: "/admin/segments/any-buyer/members.csv" });
+    check("anon export -> login form, not a file", anonCsv.body.indexOf("Admin API key") !== -1 && (anonCsv.headers["content-type"] || "").indexOf("text/csv") !== 0);
   } finally {
+    try { b.audit.safeEmit = _origSafeEmit; } catch (_e) { /* */ }
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
   }
