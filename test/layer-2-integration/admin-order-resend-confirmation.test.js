@@ -136,7 +136,6 @@ async function _run() {
   var port = env.port;
   var orderId = env.order.id;
   var enc = encodeURIComponent(orderId);
-  var bearer = { authorization: "Bearer " + TOKEN };
 
   // Spy on b.audit.safeEmit so the resend-event assertion is deterministic
   // and touches no DB / chain read path (which is fragile across the
