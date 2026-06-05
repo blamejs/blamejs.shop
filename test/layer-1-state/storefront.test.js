@@ -1159,6 +1159,39 @@ async function _checkoutForm() {
   // visually-hidden "(required)" so a screen reader announces it.
   check("required fields carry an sr-only (required) cue", html.indexOf("<span class=\"sr-only\">(required)</span>") !== -1);
 
+  // The default (physical) form marks line1 + city required — anchor on
+  // each input tag and confirm ` required` rides it.
+  function _reqOn(markup, name) {
+    var at = markup.indexOf("name=\"" + name + "\"");
+    if (at === -1) return false;
+    return markup.slice(at, markup.indexOf(">", at)).indexOf(" required") !== -1;
+  }
+  check("physical checkout form marks line1 required", _reqOn(html, "line1"));
+  check("physical checkout form marks city required",  _reqOn(html, "city"));
+
+  // An all-digital cart (`all_digital: true`) renders the address block
+  // optional: line1 + city drop `required`, email + country stay required
+  // (country feeds the tax quote), and an honest no-address note appears.
+  var digital = storefront.renderCheckoutForm({
+    lines:  [{ variant_id: "v1", sku: "TIP-1", qty: 1, unit_amount_minor: 500, unit_currency: "USD", line_total_minor: 500 }],
+    totals: { subtotal_minor: 500, currency: "USD" },
+    shop_name: "Acme",
+    all_digital: true,
+    product_lookup: { v1: { product: { title: "Buy Me a Coffee", slug: "tip" }, hero_media: null } },
+  });
+  check("digital checkout form drops line1 required", !_reqOn(digital, "line1"));
+  check("digital checkout form drops city required",  !_reqOn(digital, "city"));
+  check("digital checkout form keeps email required", _reqOn(digital, "email"));
+  check("digital checkout form keeps country required (feeds tax)", _reqOn(digital, "country"));
+  check("digital checkout form shows the no-address note",
+    digital.indexOf("checkout-page__digital-note") !== -1 && digital.indexOf("digital order") !== -1);
+  // line1's label loses the visual `*` marker too (the field is optional).
+  // Anchor: the Street address label must NOT carry a form-field__req span.
+  var dLine1At = digital.indexOf("name=\"line1\"");
+  var dLabelStart = digital.lastIndexOf("Street address", dLine1At);
+  check("digital line1 label drops the * required marker",
+    dLabelStart !== -1 && digital.slice(dLabelStart, dLine1At).indexOf("form-field__req") === -1);
+
   // A coded gift-card/loyalty error re-renders the form with the message inline.
   var withErr = storefront.renderCheckoutForm({
     lines:  [{ variant_id: "v1", sku: "X-1", qty: 1, unit_amount_minor: 2999, unit_currency: "USD" }],

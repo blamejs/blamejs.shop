@@ -106,6 +106,14 @@ async function _run() {
   await catalog.prices.set(v3.id, { currency: "USD", amount_minor: 999 });
   await catalog.inventory.create("OUT-1", { stock_on_hand: 0 });
 
+  // A $5.00 DIGITAL good — requires_shipping = 0, no weight. A cart of
+  // only this line ships nothing, so checkout must not force a street
+  // address (mirrors the live "Buy Me a Coffee" product).
+  var pd = await catalog.products.create({ slug: "digital-tip", title: "Buy Me a Coffee", status: "active" });
+  var vd = await catalog.variants.create(pd.id, { sku: "TIP-1", weight_grams: 0, requires_shipping: false });
+  await catalog.prices.set(vd.id, { currency: "USD", amount_minor: 500 });
+  await catalog.inventory.create("TIP-1", { stock_on_hand: 9999 });
+
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-carttot-"));
   var app = await b.createApp({
     dataDir: dataDir, vault: { mode: "plaintext" }, db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
@@ -249,6 +257,77 @@ async function _run() {
     var fixed = await _coPost(goodForm);
     check("corrected resubmit confirms (303 → /pay)",
       fixed.status === 303 && (fixed.headers.location || "").indexOf("/pay/") === 0);
+
+    // ---- a DIGITAL-only cart drops the shipping-address requirement ----
+    // Every line is a no-shipment good → the form renders the address
+    // block optional (line1 + city lose `required`) and the POST gate
+    // requires only email + name + country. The shopper can complete the
+    // order without typing a street address.
+    var dJar = await _cartWith([{ variant_id: vd.id, qty: 1 }]);
+    var dGet = await helpers.httpRequest({ port: port, path: "/checkout", jar: dJar });
+    check("digital checkout form returns 200", dGet.status === 200);
+    // line1 + city inputs have no `required` attr. Anchor on the input's
+    // name= attribute and scan the tag up to its close for ` required`.
+    function _inputHasRequired(html, name) {
+      var at = html.indexOf("name=\"" + name + "\"");
+      if (at === -1) return false;
+      var end = html.indexOf(">", at);
+      return html.slice(at, end).indexOf(" required") !== -1;
+    }
+    check("digital form: line1 input is NOT required", !_inputHasRequired(dGet.body, "line1"));
+    check("digital form: city input is NOT required",  !_inputHasRequired(dGet.body, "city"));
+    check("digital form: email input stays required",  _inputHasRequired(dGet.body, "email"));
+    check("digital form: country input stays required (feeds tax)", _inputHasRequired(dGet.body, "country"));
+    check("digital form: honest no-address note shown",
+      dGet.body.indexOf("checkout-page__digital-note") !== -1 &&
+      dGet.body.indexOf("digital order") !== -1);
+
+    // POST with ONLY email + name + country (no street/city/state/postal)
+    // confirms — the digital order ships nothing.
+    function _dPost(form) {
+      return helpers.httpRequest({ port: port, path: "/checkout", method: "POST", jar: dJar, form: form });
+    }
+    var dConfirm = await _dPost({ email: "tipper@example.com", name: "Tipper", country: "US" });
+    check("digital confirm with no address redirects to /pay (303)",
+      dConfirm.status === 303 && (dConfirm.headers.location || "").indexOf("/pay/") === 0);
+    var dOrderId = (dConfirm.headers.location || "").slice("/pay/".length);
+    var dPlaced = await order.get(dOrderId);
+    // Subtotal 500; US tax @8.75% = 500*875/10000 = 43.75 → 44; shipping 0
+    // (no-shipment cart) → grand total 544. Tax keys off country, which the
+    // form still collects, so a digital order is still taxed correctly.
+    check("digital order placed: $5 subtotal, taxed, ZERO shipping",
+      dPlaced && dPlaced.subtotal_minor === 500 && dPlaced.tax_minor === 44 &&
+      dPlaced.shipping_minor === 0 && dPlaced.grand_total_minor === 544);
+
+    // Format validation still applies when a value IS supplied: a digital
+    // cart that POSTs a garbage US postal still gets the postal field
+    // error (relaxing presence never relaxes format).
+    var dJar2 = await _cartWith([{ variant_id: vd.id, qty: 1 }]);
+    await helpers.httpRequest({ port: port, path: "/checkout", jar: dJar2 });   // seed CSRF
+    var dBadZip = await helpers.httpRequest({
+      port: port, path: "/checkout", method: "POST", jar: dJar2,
+      form: { email: "tipper@example.com", name: "Tipper", country: "US", postal: "abc" },
+    });
+    check("digital cart: garbage postal still fails with the postal field error (400)",
+      dBadZip.status === 400 && dBadZip.body.indexOf("co-err-postal") !== -1);
+
+    // ---- a MIXED cart (any shippable line) keeps the FULL requirement ----
+    // One digital line + one physical line → the cart still ships, so the
+    // address stays mandatory. A POST without line1 fails with co-err-line1.
+    var mJar = await _cartWith([
+      { variant_id: vd.id, qty: 1 },   // digital
+      { variant_id: v1.id, qty: 1 },   // physical
+    ]);
+    var mGet = await helpers.httpRequest({ port: port, path: "/checkout", jar: mJar });
+    check("mixed checkout form returns 200", mGet.status === 200);
+    check("mixed form: line1 input STAYS required", _inputHasRequired(mGet.body, "line1"));
+    check("mixed form: no digital no-address note", mGet.body.indexOf("checkout-page__digital-note") === -1);
+    var mBad = await helpers.httpRequest({
+      port: port, path: "/checkout", method: "POST", jar: mJar,
+      form: { email: "buyer@example.com", name: "Buyer", country: "US", state: "CA", postal: "94103", city: "SF" },
+    });
+    check("mixed cart: missing line1 still fails (400 with co-err-line1)",
+      mBad.status === 400 && mBad.body.indexOf("co-err-line1") !== -1);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* best-effort */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* best-effort */ }
