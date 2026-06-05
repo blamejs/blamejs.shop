@@ -199,10 +199,23 @@ async function _verifyStripeSignature(rawBody, header, secret, toleranceSeconds)
 
 // ---- Durable Object: InventoryLock ----------------------------------------
 //
-// Serializes "check stock, decrement-if-available" against a single
-// SKU across all container replicas. The DO instance is keyed by SKU
-// so contention is per-SKU, not global. The actual stock row lives
-// in D1; the DO is the serialization point.
+// Serializes "check stock, hold-if-available" against a single SKU
+// across all container replicas. The DO instance is keyed by SKU so
+// contention is per-SKU, not global. The actual stock row lives in D1;
+// the DO is the serialization point.
+//
+// Status: OPTIONAL serialization aid, not the primary oversell defense.
+// The container places + settles stock holds directly with atomic
+// conditional `UPDATE`s on the `inventory` row (see catalog.inventory
+// `hold` / `decrement` / `release`, driven by checkout.confirm + the
+// order FSM). Because each guard is a single check-and-set SQL
+// statement, the conditional write itself serializes concurrent
+// checkouts — so the buy path is oversell-safe on the single replica
+// the container runs today WITHOUT routing through this DO. The DO is
+// retained for a future multi-replica topology where an operator wants
+// an explicit per-SKU queue in front of the shelf; nothing calls it on
+// the default path. Its `/decrement` route places a HOLD (increments
+// stock_held), matching the container's hold semantics.
 export class InventoryLock {
   constructor(state, env) {
     this.state = state;

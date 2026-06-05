@@ -1,0 +1,1646 @@
+{
+  "$schema": "../scripts/release-notes-consolidated-schema.json",
+  "minor": "0.3",
+  "releases": [
+    {
+      "version": "0.3.76",
+      "date": "2026-06-05",
+      "headline": "Abandoned-cart visibility in the admin console, with honest recovery",
+      "summary": "The admin console gains a Carts screen showing abandoned carts: active carts with items whose last activity is older than a tunable window (twenty-four hours by default), listed freshest-first with line counts, subtotals, guest or signed-in attribution, and a value-at-risk summary. Recovery is built around what the privacy stance actually permits: buyer email addresses are stored only as one-way hashes, so a recovery email is impossible by design and the screen says so plainly. Instead, a per-cart action mints a single-use, code-gated percent-off discount — composing the existing unlock-code rules — and shows the code once for the operator to share through whatever channel they have. Fresh, empty, and converted carts are excluded; queries are window- and limit-bounded; the screen and its JSON shape are bearer-gated like every other console surface.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Abandoned-carts screen with single-use recovery codes",
+              "body": "GET /admin/carts lists abandoned carts — active, containing items, idle past the window (tunable via the hours parameter, clamped to sane bounds) — with per-cart line counts, subtotal, last activity, and the customer link for signed-in carts, plus a count and value-at-risk summary. The per-cart Issue-code action creates a single-use unlock-code discount rule at the operator's chosen percentage and reveals the code once; the action is audited and appears only when the discounts primitive is wired. Session identifiers never appear in the JSON shape, and the screen states why no email recovery exists: addresses are one-way hashed."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.75",
+      "date": "2026-06-05",
+      "headline": "The analytics funnel records real shopper events — only with analytics consent",
+      "summary": "The admin Analytics screen's browse-to-buy funnel, top search terms, and most-viewed products read an event stream that nothing previously wrote, so those tables stayed empty. The storefront now records five events — product view, search, add to cart, checkout started, order completed — strictly gated on the visitor's analytics consent: no consent decision means no recording, Do Not Track and Global Privacy Control suppress recording even after an accept-all, session identifiers are stored only as keyed hashes, and no name or email ever rides an event. Recording is fire-and-forget and can never affect a request. Edge-cached anonymous pages are deliberately not recorded — the cache stays shared and fast — so the funnel reflects consented, container-served traffic, and the dashboard's own copy now says exactly that.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Consent-gated shopper event recording",
+              "body": "Product views, searches, cart adds, checkout starts, and completed orders record into the analytics event stream when — and only when — the session's consent grants the analytics category. The gate is the consent primitive's own server-side read: default-deny without a decision, policy-version-aware, and honoring Do Not Track and Sec-GPC over a stored acceptance. Events carry a hashed session key and bounded payloads, never personal data. The Analytics screen's funnel now states that its counts cover consented, container-served traffic; anonymous edge-cached page views are not tracked by design."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.74",
+      "date": "2026-06-05",
+      "headline": "The payment form matches the shop's dark theme",
+      "summary": "The Stripe Payment Element and the express wallet buttons on the pay page previously rendered in Stripe's default light style — a white card floating on the shop's near-black page. The elements now use Stripe's night appearance recolored with the shop's own design tokens: violet accent on focus and selected tabs, the shop's charcoal input surfaces, soft ink text, and matching corner radii. The Apple Pay, Google Pay, and PayPal express buttons switch to their white and outline variants, which keep each brand's contrast rules legible on the dark card. No payment behavior changes; this is purely the appearance configuration on the existing elements.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Dark-themed payment elements",
+              "body": "The pay page's Stripe elements adopt the night appearance with the shop's design tokens — violet primary, charcoal surfaces, soft ink, ten-pixel radii, violet focus rings — and the express wallet buttons render in their white and outline variants sized to the page's controls. Inside Stripe's cross-origin frame the typeface falls back to the system stack; everything else mirrors the storefront's stylesheet tokens."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.73",
+      "date": "2026-06-05",
+      "headline": "Unlock codes are manageable from the Discounts screen, and coupon guessing is rate-capped",
+      "summary": "Code-unlocked discount rules shipped with an API-only gap: the Discounts console had no field for the unlock code, so creating a code-gated rule required a raw API call. The create and edit forms now carry an optional Unlock code input — clearing it on edit reverts the rule to purely automatic — and the rule list and detail show which rules are code-gated; the screen's description covers both kinds. The cart's code-apply endpoint joins the tight per-address rate budget that already guards gift-card balance lookups, capping coupon-namespace guessing at the same rate. Also fixed: a failed confirmation-resend in the browser console now lands in the error log with a clean notice instead of an unrecorded failure, and the signed-in cart page resolves the shopper's destination once instead of twice per view.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Unlock codes editable in the Discounts console",
+              "body": "The create and edit forms gain an optional Unlock code field, threaded through the same validation as the API. On edit, submitting the field blank explicitly clears the code (the rule becomes purely automatic again), while the inline quick-edit leaves it untouched. The rule list and the detail view display each rule's code, escaped, so code-gated rules are visible at a glance, and the screen copy now describes both automatic and code-unlocked rules."
+            },
+            {
+              "title": "Coupon-code guessing joins the tight rate budget",
+              "body": "POST /cart/coupon now sits in the per-address, per-path rate budget alongside gift-card balance lookups — both accept guessable secrets and answer uniformly, so both deserve the same throttle. The pinned integration test sprays the endpoint and asserts the cap engages."
+            },
+            {
+              "title": "Failed confirmation resends are captured and surfaced",
+              "body": "A mailer fault during a browser-initiated confirmation resend previously escaped both the error log and the screen. It now records to the error log and redirects back to the order with an honest failure notice; the API path captures identically. The signed-in cart view also drops a duplicated destination lookup per render."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.72",
+      "date": "2026-06-05",
+      "headline": "Resend an order confirmation from the console, and export a segment's members as CSV",
+      "summary": "Two operator actions land in the admin console. The order detail screen gains a Resend-confirmation action: buyer emails are stored only as one-way hashes, so the original address cannot be recovered — the operator types the recipient (from the customer's own request), and a fresh receipt rendered from the stored order is sent, rate-bounded to three per order per hour, with every send audited and the recipient kept out of the audit trail. The action appears only when a mailer is configured. Customer segments gain a members CSV export that streams id, display name, segment join date, and order count — deliberately no email column, since addresses are not stored in readable form; the file says so in a leading comment, cell values are quoted and spreadsheet-formula-neutralized, and the stream is written batch by batch so a large segment never buffers in memory.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Resend order confirmation",
+              "body": "POST /admin/orders/:id/resend-confirmation sends a fresh receipt for the stored order to an operator-supplied address, since the buyer's email exists only as a hash and cannot be recovered — the recipient comes from the customer's own \"I didn't get it\" request. Rate-bounded to three sends per order per hour, audited without recording the recipient, gated on a configured mailer (the panel renders an honest disabled note otherwise), and validated for address shape."
+            },
+            {
+              "title": "Segment members CSV export",
+              "body": "GET /admin/segments/:slug/members.csv streams a segment's members — customer id, display name, join date, order count — in keyset-paginated batches with RFC 4180 quoting and spreadsheet-formula-injection neutralization. There is no email column: addresses are stored hashed, and both the screen copy and a leading CSV comment state it. Unknown segments return 404 before any bytes stream; an archived segment yields a well-formed header-only file; each export is audited."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.71",
+      "date": "2026-06-05",
+      "headline": "Vendored blamejs framework refreshed from v0.14.19 to v0.14.21",
+      "summary": "The storefront runs on a vendored copy of the blamejs framework; this refreshes it across two upstream patch releases. The most operator-relevant upstream changes for this shop: the OAuth client — which Sign in with Google and Apple compose — gains RFC 9396 Rich Authorization Request validation and attestation-based client authentication primitives, and refuses token grants an identity provider broadened beyond what was requested; HEAD requests now conform by carrying no response body; the sealed-field store gains an unseal rate cap; and a framework-wide sweep ensures every accepted option is actually read, surfacing configuration typos that were previously silent. The remaining upstream changes are in framework areas the storefront does not expose (SCIM bulk operations, OID4VCI credential proofs, DMARC forensic-report parsing). The storefront's own behavior is unchanged, verified by the full test suite — including the regression guards that pin the CSRF origin posture, the referrer policy, and the payment-processor TLS agent against vendor drift — and the vendored-tree integrity manifest was re-stamped as part of the refresh.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Updated the vendored framework to blamejs v0.14.21",
+              "body": "The vendored framework moves from v0.14.19 to v0.14.21 (two upstream patch releases of fixes and additive, opt-in changes). Notable for this shop: hardened OAuth client validation behind federated sign-in, HTTP HEAD conformance, a sealed-field unseal rate cap, and boot-time validation of previously-unread options. The integrity manifest over the vendored tree was re-stamped as part of the refresh."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.70",
+      "date": "2026-06-05",
+      "headline": "An Analytics screen in the admin console: funnel, search terms, and product views",
+      "summary": "The admin console gains a read-only Analytics screen at /admin/analytics showing the pre-purchase signal the sales report cannot see: the browse-to-buy funnel (product views to cart adds to checkout starts to completed orders) with a conversion rate, top search terms, most-viewed products, top SKUs ranked by units sold, and a revenue-by-day sparkline. It complements rather than duplicates the existing Reports screen — revenue totals stay there, and the two screens link to each other. The same path answers a bearer-token request with JSON, and three JSON endpoints expose the funnel, search terms, and viewed products individually for tooling. Every aggregate is window-bounded (one year maximum, thirty-day default) and limit-bounded; the screen adds no write path anywhere.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Read-only analytics dashboard",
+              "body": "The analytics primitive's aggregates are now wired into the console: a date-windowed view with the conversion funnel, top search terms, most-viewed products, units-ranked top SKUs, recent revenue trend, and cross-links with the Reports screen. The HTML view degrades a malformed date window to the default with a notice; the JSON surfaces reject it with a 400. Limits clamp to the primitive's own bounds, a refund-heavy window renders a signed negative total instead of failing, and every operator- or customer-derived string on the screen is escaped. The screen appears in the navigation only when the primitive is wired."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.69",
+      "date": "2026-06-05",
+      "headline": "Discount codes on the cart page, and the full shipment timeline on the order page",
+      "summary": "Shoppers can now redeem a discount code: an automatic-discount rule may carry an unlock code, leaving it dormant until a shopper enters that code on the cart page — the code persists on the cart, survives signing in, and flows through the exact same evaluation, quoting, and charge path as every other discount rule, so there is one discount system, not two. The cart shows the applied code with a remove control, totals re-render with the savings, and an unknown code gets one uniform message. Separately, the customer order page now shows the full shipment tracking timeline — every recorded carrier event with its status, location, and time, newest first — instead of only the latest event. Two schema migrations apply on deploy.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Code-unlocked discount rules with cart-page redemption",
+              "body": "An automatic-discount rule can now carry an unlock code (one active rule per code). The rule stays dormant until a shopper enters its code in the new entry form on the cart page; the code is stored on the cart (capped, idempotent, carried across sign-in by the cart merge), totals re-render with the rule applied, and checkout's quote and confirm honor it on every payment path. The applied code renders as a chip with a remove control; unknown, malformed, or inactive codes all get the same message, so the endpoint reveals nothing about which codes exist. The redemption form is CSRF-tokened like the other cart configuration forms, and the cart page's edge-cached anonymous shell is unaffected — code state renders only on the container."
+            },
+            {
+              "title": "Full shipment tracking timeline for customers",
+              "body": "The order page's tracking card previously showed the carrier, tracking number, status, and only the most recent event. It now renders the full event timeline newest-first — status, optional carrier location, optional note, and the event time — bounded to the newest twenty events. Orders without shipment events render exactly as before."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.68",
+      "date": "2026-06-05",
+      "headline": "Delivery estimates: \"Get it by\" dates on the product and cart pages",
+      "summary": "The product page and cart can now promise a delivery date. Operators configure the inputs at /admin/delivery-estimates — carrier transit times, warehouse cutoff hours, shipping holidays, and postal-prefix zones — and name the origin warehouse via the SHOP_ESTIMATE_ORIGIN environment variable or the shop.estimate_origin config row. A signed-in customer with a saved shipping address then sees \"Get it by <date>\" computed from the cutoff clock, transit days, and the holiday calendar. Anonymous visitors served from the edge cache deliberately see no date: an estimate is destination-specific, and a date baked into a shared cached page would show one visitor's delivery promise to everyone while going stale in the cache. The product and cart markup builders are byte-identical across the edge and container renderers with a deterministic date formatter, locked by a parity test. A store that has not configured estimates renders exactly what it does today — nothing — and a configuration gap can never produce a customer-facing error.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Configurable delivery-date estimates",
+              "body": "The delivery-estimate primitive is wired end to end: an /admin/delivery-estimates console manages carrier transit times, order-cutoff hours per warehouse, shipping holidays, and postal-prefix zone mappings, with each mutation audited; the product and cart pages render \"Get it by <date>\" for signed-in customers with a saved shipping address once an origin warehouse is configured. Estimates render only where the destination is actually known — never on shared edge-cached pages — and every estimate read is fail-quiet: missing configuration, an unmatched destination, or a computation error renders no estimate rather than an error. Operators enable it by setting the origin (SHOP_ESTIMATE_ORIGIN or the shop.estimate_origin config row) and authoring at least one cutoff, transit time, and postal zone."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.67",
+      "date": "2026-06-05",
+      "headline": "Digital orders no longer require a shipping address, and search ranking shrugs off malformed weights",
+      "summary": "A cart containing only digital goods completes checkout since 0.3.63, but the shipping form still demanded a street address and city the order would never use. For an all-digital cart, the form now marks the address fields optional with an honest note — email stays required for the receipt and country for tax — and the backend enforces exactly the same relaxed set, while any value the shopper does supply is still format-validated. Carts with any shippable item keep the full requirements. Separately, the search ranker now skips a non-numeric weight in a hand-edited weight set instead of letting it poison every score into NaN and garble the result order; the edge and container rankers apply the identical filter, keeping their orders locked together even on malformed configuration.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Digital-only carts check out without a street address",
+              "body": "When no line in the cart requires shipping, the checkout form renders the address block as optional — the required markers move off street and city, a note explains that a digital order ships nothing and country is kept for tax, and the backend requires exactly email, name, and country. Values the shopper supplies anyway are still format-validated, including the per-field error rendering. A cart with any physical item keeps the full address requirements, and a missing variant record counts as physical, so the relaxation can never trigger on incomplete data."
+            },
+            {
+              "title": "Search ranking ignores non-numeric weights instead of corrupting the order",
+              "body": "A weight set carrying a non-numeric value — possible through a hand-edited database row — multiplied into every product's score as NaN, making the result order effectively random on the container while the edge filtered the bad weight and produced a different order. Both rankers now skip non-numeric weights identically, so a malformed entry degrades to \"that signal contributes nothing\" with edge and container orders staying byte-identical."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.66",
+      "date": "2026-06-05",
+      "headline": "Production server errors are readable from the admin console and the CLI",
+      "summary": "When a server-side failure was scrubbed to a clean customer-facing page — a payment-processor rejection at checkout, a public-API failure, an admin-action error — the underlying detail was only visible in the hosting dashboard's container log viewer. The error-log primitive now captures those failures into the database: route, method, status, a length-bounded message, and a timestamp, ring-buffered to the newest five hundred entries, written fire-and-forget so a logging failure can never affect a customer request, and carrying no customer or session data. A new Errors screen in the admin console lists them newest-first, and the same route answers a bearer-token request with JSON, so operators and tooling can read production errors with one curl. A schema migration adds the message column and applies on deploy.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Server-error capture with an admin Errors screen and JSON API",
+              "body": "Scrubbed 500-class failures — the checkout confirm step, the public catalog API, and admin console actions — now also record route, method, status, and a truncated error message into the error-log table (newest five hundred kept; writes are drop-silent and never awaited in the request path; no customer, session, or header data is stored). GET /admin/errors renders the newest entries in the console with every cell escaped, and the same path with an Authorization: Bearer admin token returns JSON for command-line and tooling access. Migration 0208 adds the message column plus an index and applies with the normal deploy."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.65",
+      "date": "2026-06-04",
+      "headline": "Operator-tuned search ranking applies to edge-served visitors",
+      "summary": "Search-ranking weight sets and manual pins applied only on container-served search — anonymous visitors, who are served from the edge cache and make up most traffic, got unranked results no matter what the operator tuned. The edge search path now applies the identical ranking: pinned products lead in their configured positions, the rest order by the active weight set, with byte-identical scoring pinned by a parity test in the same style as the existing faceting and synonym parity guards. Ranking and pin changes reach edge visitors within the same sixty-second cache window as every other operator-tunable edge surface. If the ranking tables are absent or unconfigured, edge search degrades to its previous unranked order rather than failing.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Edge search results honor ranking weights and manual pins",
+              "body": "The /search route served from the edge ordered results by filter match alone, ignoring the active search weight set and any merchandiser pins, so ranking tuning was visible only to signed-in (container-served) visitors. The edge now loads the active weight set and pins on each cache fill and applies the same scoring as the container — pins first in position order, then weighted score descending, with identical tie-breaking. The two implementations are locked together by a parity test that runs the same fixtures through both. Changes the operator makes take effect for edge visitors within the standard sixty-second cache freshness window; a missing or unconfigured ranking table degrades to the unranked order, never an error."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.64",
+      "date": "2026-06-04",
+      "headline": "Google Pay and Apple Pay express buttons can run on the payment page",
+      "summary": "The app-level Permissions-Policy denies the Payment Request API everywhere — including the payment page, the one surface whose job is payment — so Stripe's express wallet buttons (Google Pay, Apple Pay) could not operate and the browser console filled with policy violations. The payment page now sends a route-scoped Permissions-Policy that grants the payment feature to the page itself, Stripe, and Google Pay, while every other feature stays denied and every other route keeps the fully strict header — the same route-scoping pattern the payment pages already use for their Content-Security-Policy. Card payments and 3-D Secure challenges were verified live before and after; a remaining cosmetic Trusted-Types console message from Stripe's loader is documented in code with the test recipe for future verification, and does not affect card, wallet, or 3-D Secure flows.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Payment page grants the Payment Request API to Stripe and Google Pay",
+              "body": "The default Permissions-Policy sets payment=() sitewide, which blocks the Payment Request API that Stripe's express wallet buttons need. The /pay route now emits the same policy with exactly one change — payment=(self \"https://js.stripe.com\" \"https://pay.google.com\") — derived from the same source as the default header so the two can never drift apart. Camera, microphone, geolocation, and every other feature remain denied on the payment page, and all other routes keep payment=(). Tests pin the scoped header on the payment route, the strict header elsewhere, and that exactly one feature differs from the default."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.63",
+      "date": "2026-06-04",
+      "headline": "Digital-only carts can check out, and the outbound TLS posture is documented end to end",
+      "summary": "A cart containing only digital goods could never complete checkout: the shipping resolver correctly filters physical services out for a cart that ships nothing, but checkout then demanded the configured default physical service resolve anyway and refused the order. Digital-only carts now select the operator's digital-shipping service when one is configured, and otherwise complete with a synthesized zero-cost no-shipping selection; a physical cart with a misconfigured service id still fails loudly, since that is a real configuration error. Separately, every outbound TLS connection has been audited against the framework's post-quantum-first key-exchange posture: of all fixed external hosts, only the Stripe API edge refuses the post-quantum groups (already handled by the payment module's explicit agent) — the CAPTCHA providers, PayPal, and Cloudflare all negotiate hybrids cleanly. Operator-supplied destinations — webhook receiver URLs and admin media source URLs — deliberately keep the post-quantum-first default, with the failure mode documented where operators will look for it: a receiver that cannot negotiate a hybrid group sees deliveries fail with a TLS handshake failure, retry on the backoff schedule, and land in the dead-letter queue; a media source URL that cannot fails as the existing clean fetch error. A regression test pins that these dials never silently downgrade.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Digital-only carts complete checkout",
+              "body": "Shipping rate resolution offers only digital-shipping services to a cart in which no line requires shipping — so the configured default physical service id could never resolve, and checkout refused every all-digital order. Checkout now falls back for all-digital carts: the operator's digital-shipping service is selected when configured, and a zero-cost \"No shipping required\" selection is synthesized otherwise, so the order completes and records zero shipping. Physical carts are unchanged: an unresolvable service id still fails at the boundary, because that is a real configuration typo."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Outbound TLS posture audited and documented",
+              "body": "Every outbound connection was audited against the framework's post-quantum-first TLS key-exchange list. Fixed external hosts: the Stripe API edge is the only one that refuses the post-quantum groups, and the payment module's explicitly scoped agent already covers it (PayPal currently negotiates hybrids; the agent remains as defense). Operator-supplied destinations keep the post-quantum-first default deliberately: an outbound-webhook receiver that cannot negotiate a hybrid group sees deliveries fail with a TLS handshake failure (alert 40), retry on the backoff schedule, and reach the dead-letter queue after the fifth attempt — front such a receiver with a post-quantum-capable proxy or upgrade its TLS stack; an admin media source URL that cannot negotiate fails as the existing clean fetch error, and the file can be uploaded directly instead. Module documentation now states this where the integrations are configured, and a regression test pins that these dials never silently downgrade."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.62",
+      "date": "2026-06-04",
+      "headline": "Live card payments work, and back-in-stock unsubscribe is token-gated",
+      "summary": "Checkout failed at the charge step on Stripe-configured deploys: the framework's outbound HTTP client offers only post-quantum hybrid TLS key-exchange groups, and the Stripe and PayPal API edges do not negotiate any of them yet, so every processor call died with a TLS handshake failure (alert 40) and checkout rendered a server error. The payment module now dials the processors through an explicitly constructed agent — TLS 1.3 minimum, the platform's default key-exchange groups — which is the framework's prescribed pattern for a peer that cannot meet the post-quantum list: the downgrade is visible in the code, scoped to the processor connections only, and every other outbound connection keeps the post-quantum-first default. Verified against the live Stripe API. The downgrade reverts when the processor edges add hybrid key-exchange support. Separately, the checkout error page no longer echoes upstream failure detail (such as TLS library internals) to the customer — that detail goes to the audit log, and the page states plainly that nothing was charged. This release also token-gates back-in-stock unsubscribe: cancelling a back-in-stock alert previously took only the subscriber's email address and the product SKU — guessable values, so a third party could silently cancel someone else's restock notification. Unsubscribe is now authorized by an opaque per-subscription token, carried in the confirmation and notification emails as a one-click link, exactly like the newsletter's unsubscribe. Tokens are stored only as keyed hashes, compared in constant time, and unknown tokens get the same response as valid ones, so the endpoint is not a subscription-existence oracle. A schema migration adds the token column; it applies automatically on deploy.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Stripe and PayPal connections complete their TLS handshake",
+              "body": "The outbound HTTP client's default TLS posture offers exclusively post-quantum hybrid key-exchange groups. Processor API edges currently answer that ClientHello with handshake_failure (TLS alert 40), so the first real charge attempt on a Stripe-configured deploy failed checkout with a server error. The payment module now passes its own connection agent on every processor call — TLS 1.3 minimum is kept, key exchange falls back to the platform defaults — while the client's SSRF pinning, retries, and response caps stay in force. The agent is scoped to the payment-processor dials; all other outbound traffic keeps the post-quantum-first posture. A regression test pins the agent's presence and configuration on the charge path."
+            },
+            {
+              "title": "Checkout server errors no longer echo upstream detail to the customer",
+              "body": "When the charge step failed, the checkout error page interpolated the underlying error string — in this case raw TLS library internals — into the customer-facing message. Server-side failure detail now goes to the audit log; the customer sees a plain recoverable message that confirms nothing was charged. Field-validation messages, which are written for customers, are unaffected."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Back-in-stock unsubscribe requires the emailed token",
+              "body": "POST /stock-alert/unsubscribe no longer accepts an email + SKU pair; it requires the per-subscription token from the unsubscribe link in the confirmation or back-in-stock email. The token is minted at subscribe time for the confirmation mail and rotated per notification send, stored only as a keyed hash, and verified with a constant-time compare; bad or unknown tokens return the same uniform response as valid ones. The one-click link works without cookies or a signed-in session, so mail clients can fire it directly; each email carries the token that is current for its send. Operators upgrading: migration 0207 adds the token column and applies with the normal deploy."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.60",
+      "date": "2026-06-04",
+      "headline": "Exact integer math for percentage discounts and insurance premiums, and an honest Add-a-card state under partial Stripe configuration",
+      "summary": "Every place that computes a percentage of a money amount — automatic percent-off discounts, bundle discounts and their per-line allocation, partial-refund policy amounts, and shipping-insurance premiums — now uses exact integer arithmetic instead of a floating-point intermediate. On very large amounts the float product loses precision past 2^53 and can drift the rounded result by a minor unit; charged totals were never affected (the charge path was already integer end-to-end), but displayed and clamped values now match exact math everywhere, with each site's rounding direction preserved. Separately, the account Payment-methods screen no longer links into a 503 when the Stripe publishable key is missing: the Add-a-card affordance now renders as a disabled control with an explanatory note until the configuration is complete, matching how the unconfigured checkout behaves.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Percentage-of-amount math is exact integer arithmetic",
+              "body": "Automatic percent-off discounts, bundle discounts, the cart's per-line bundle allocation, partial-refund policy amounts, and shipping-insurance premiums all computed `amount × basis_points / 10000` through a floating-point multiply. Amounts and rates are both integers, so the computation is now exact integer arithmetic with each site's rounding direction unchanged — half-away-from-zero for discounts, floor for allocations and refunds, ceiling for insurance premiums (the insurer is never short). The drift was only reachable on very large amounts (products beyond 2^53) and never touched a charged total, which was already integer end-to-end; tests now pin exact results on amounts past the float-precision boundary."
+            },
+            {
+              "title": "Add a card renders honestly when Stripe configuration is incomplete",
+              "body": "Saving a card needs the Stripe publishable key in addition to the server-side API keys. With the server keys set but the publishable key missing, the Payment-methods screen rendered a live \"Add a card\" link that dead-ended on a 503. The link now gates on the same condition the add route enforces: when the publishable key is absent it renders as a disabled control with a note explaining the missing configuration, while listing, choosing a default, and removing saved cards keep working. The route's own 503 remains as defense in depth for a directly typed URL."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.59",
+      "date": "2026-06-04",
+      "headline": "Back-in-stock subscribe rate-limited, payment-method metadata in privacy exports, and accessible wishlist alert toggles",
+      "summary": "The anonymous back-in-stock \"notify me\" endpoint sends a confirmation email to the address the request supplies; it now sits in the same tight per-IP rate budget as login, checkout, and the newsletter, closing a victim-addressed email-flooding vector. Privacy (GDPR/CCPA) data exports now include saved-payment-method display metadata — card brand, last four, expiry — which is personal data the export was silently omitting. The wishlist alert and digest toggle buttons gain accessible names that include the alert they control, so a screen reader no longer announces a list of identical \"Turn on\" buttons. Internal housekeeping rides along: module imports hoisted to file tops, a per-test wall-clock-ceiling helper backing an existing test gate, and stale comments corrected.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Back-in-stock subscribe joins the tight rate limit",
+              "body": "POST /stock-alert/subscribe is anonymous and sends a double-opt-in confirmation email to the request-supplied address. It previously sat only behind the loose global token bucket, so a script could direct a burst of confirmation emails at an arbitrary victim address — an email-flooding and sender-reputation risk. The route now shares the tight per-IP, per-path budget that already covers login, registration, checkout, gift-card balance, and the newsletter; the integration suite pins the throttle."
+            },
+            {
+              "title": "Privacy exports include saved-payment-method metadata",
+              "body": "The subject-access (GDPR/CCPA) export composed every reader except saved payment methods, which was wired to an empty handle — an export silently omitted the card brand, last-four digits, and expiry the shop stores alongside the opaque processor token. The reader now receives the live handle, so a customer's export reflects everything held about them. Only display metadata is stored or exported — never card numbers."
+            },
+            {
+              "title": "Wishlist alert toggles are screen-reader distinguishable",
+              "body": "The account wishlist-alerts screen rendered visually identical \"Turn on\" / \"Turn off\" / \"Subscribe\" buttons whose accessible names did not say which alert or digest they control. Each toggle now carries an accessible name that includes its alert label (for example \"Turn off Price-drop alerts\"), satisfying WCAG 2.4.6 for assistive-technology users walking the button list."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.58",
+      "date": "2026-06-04",
+      "headline": "Browser form submissions no longer refused as cross-origin, server-side shipping-address validation, and a repaired checkout layout",
+      "summary": "Every navigational form POST served by the container — checkout, magic-link sign-in, product reviews, returns, the account area, and the admin console — was refused with a 403 in real browsers. Pages shipped Referrer-Policy: no-referrer, which makes browsers send Origin: null on same-origin form submissions, and the CSRF gate's origin pre-check refuses a null Origin before the token is read. Both the edge and the container now send Referrer-Policy: same-origin: referrer information still never leaves the site, while same-origin posts carry the real Origin the gate verifies. Cross-site and sandboxed-iframe submissions are still refused. Checkout additionally gains backend shipping-address validation with accessible per-field errors that preserve everything the shopper typed, and the checkout page's layout is repaired — fields fill the form column instead of collapsing to its center, and the gift, store-pickup, and loyalty options render inside the form above the submit button.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Form posts from real browsers were refused as cross-origin (403)",
+              "body": "Pages were served with Referrer-Policy: no-referrer, which per the Fetch specification makes browsers serialize the Origin header as the literal string \"null\" on same-origin navigational POSTs. The CSRF gate's origin pre-check refuses a null Origin before the double-submit token is validated, so every container-rendered form returned {\"error\":\"CSRF cross-origin request refused.\"} on submit — checkout, magic-link sign-in, reviews, returns, account self-service, and the admin console. JSON fetch() calls (passkeys, saved cards, the cart-count island) carry a real Origin and were unaffected. Both substrates now send Referrer-Policy: same-origin: no referrer information ever leaves the site (matching the previous policy's intent), same-origin posts carry a real Origin verified against the configured public origins, and cross-site or sandboxed-iframe posts still arrive as null and are still refused. The integration suite now drives the full Origin matrix — same-origin accepted, null and cross-origin refused — closing the gap between loopback tests (which send no Origin header) and real browsers. Operators composing their own securityHeaders options should not reinstate no-referrer: it re-breaks every tokened form post."
+            },
+            {
+              "title": "Checkout layout: fields fill the column; gift and pickup options join the form",
+              "body": "A global form rule leaked align-items: center into the checkout's stacked form, collapsing every field to its content width in the middle of a wide column; the stacked form now stretches its rows. The gift-options, store-pickup, and loyalty-redeem blocks were spliced in after the submit button, rendering as an unstyled run of fields below the call to action — they now render inside the form above the submit row, framed as cards consistent with the order summary, with labels matching the shipping fields."
+            }
+          ]
+        },
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Server-side shipping-address validation with per-field errors",
+              "body": "The checkout POST validates the shipping address on the backend and, on rejection, re-renders the form with the one bad field marked (aria-invalid plus an adjacent role=\"alert\" message) and every typed value preserved — replacing the previous dead-end error page. Country must be a real ISO 3166-1 alpha-2 code, validated against the platform's Intl region data (no new dependencies). US and Canadian destinations validate the state or province code and the ZIP (12345 or 12345-6789) / postal (A1A 1A1) format, and require street, city, region, and postal — the figures that feed destination tax. Every other country keeps lenient length-bounded checks, so international addresses are never over-validated. Email gains a shape check alongside the existing content-safety gate, and the customer name is length-bounded. Headless callers of checkout.confirm keep the presence-optional contract for digital-only orders; malformed values are now refused everywhere."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.57",
+      "date": "2026-06-02",
+      "headline": "Vendored blamejs framework refreshed from v0.14.16 to v0.14.19",
+      "summary": "The storefront runs on a vendored copy of the blamejs framework. This refreshes it across three upstream patch releases (v0.14.16 to v0.14.19), picking up framework fixes and hardening. The most operator-relevant is a PKCE-downgrade defense in the OAuth/OIDC client, which the storefront composes for Sign in with Google and Apple, so the federated sign-in flow inherits it. The remaining upstream changes are in framework areas the storefront does not expose (archive writing, SCIM, verifiable-credential issuance, SPF/DMARC tooling, OpenAPI), and the storefront's own behavior is unchanged — verified by the full test suite and the vendored-tree integrity gate against the new tree.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Updated the vendored framework to blamejs v0.14.19",
+              "body": "The vendored framework moves from v0.14.16 to v0.14.19 (three upstream patch releases of fixes and additive, opt-in changes). Notably, the OAuth/OIDC client now refuses an identity provider that advertises PKCE methods without S256 — a stripped-S256 downgrade defense — which hardens the storefront's Sign in with Google and Apple. The integrity manifest over the vendored tree was re-stamped as part of the refresh."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.56",
+      "date": "2026-06-02",
+      "headline": "Opt-in wishlist alert and digest emails, passwordless magic-link sign-in, and a documented list of planned integrations",
+      "summary": "Two opt-in capabilities are wired, and the operator docs now state plainly which integrations are planned-but-not-yet-available so nothing reads as silently missing. A customer can opt in to wishlist price-drop and back-in-stock alerts and a periodic wishlist digest; and a passwordless email magic-link offers an account sign-in path alongside passkeys and OAuth. Both stay inert until an operator configures email sending, so a store with no mailer behaves exactly as before.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Opt-in wishlist alert and digest emails",
+              "body": "A customer can opt in, from their wishlist, to price-drop and back-in-stock alerts and to a periodic wishlist digest. Scheduled sweeps send them. The feature is off until an operator configures email sending and an email resolver; with no mailer it is a no-op. Digest emails are rendered field-by-field with output escaping."
+            },
+            {
+              "title": "Passwordless magic-link sign-in",
+              "body": "When a mailer is configured, a customer can request a single-use, time-limited sign-in link by email, in addition to passkeys and OAuth. The request response is identical whether or not the email matches an account (no account enumeration), and the link establishes a sealed session on use."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Documented planned integrations",
+              "body": "The README and SECURITY docs now list the integrations that are intentionally not yet available — address validation, live chat, web-push notifications, in-console payment-key configuration, an age gate, and per-page promo banners — each with the condition under which it would be built, so operators know what is and isn't supported rather than discovering a gap."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.55",
+      "date": "2026-06-02",
+      "headline": "Accessibility: field-level form-error messages and horizontally scrollable admin tables",
+      "summary": "Two accessibility improvements. When a storefront form is rejected, the specific field at fault is now marked for assistive technology with an inline error message tied to that input, in addition to the existing summary at the top of the form. And wide tables in the admin console now scroll horizontally inside their own container instead of overflowing the page on a narrow or zoomed viewport.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Field-level error messages on storefront forms",
+              "body": "When the address, review, product-question, or support-ticket form is rejected, the offending field is now marked aria-invalid with an inline error message associated to it (aria-describedby), so a screen-reader user is taken to the exact field to fix rather than only hearing a top-of-form summary. The server remains the only validator; this only changes how a rejected field is presented. Forms that fail on a whole-form condition continue to show the summary message."
+            },
+            {
+              "title": "Admin tables reflow on narrow screens",
+              "body": "Wide data tables in the admin console (orders, products, inventory, and the rest) are now wrapped in a horizontal-scroll container, so columns stay reachable on a smaller laptop window, a split screen, or at high zoom instead of overflowing the layout. Column header semantics are preserved."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.54",
+      "date": "2026-06-02",
+      "headline": "In-store pickup, saved payment methods, and gift wrapping at checkout",
+      "summary": "Three more built-but-unreachable capabilities are now wired end to end. Operators can offer in-store pickup with managed pickup locations and a fulfilment queue; signed-in customers can save a card and reuse it at checkout; and operators can offer gift wrapping with a per-order gift message. The gift-wrap fee is added as a real cart line so it is included in the charged total.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "In-store pickup (click and collect)",
+              "body": "Operators can define pickup locations and work a pickup queue in the admin console (filtered by location), and shoppers can choose 'Pick up in store' at checkout. The order page and a new account pickups view show the pickup status. A not-found pickup or location returns a clear not-found rather than a generic error."
+            },
+            {
+              "title": "Saved payment methods",
+              "body": "When Stripe is configured, a signed-in customer can save a card via a secure setup flow (loaded through a route-scoped policy and a same-origin script, with no inline script), manage their saved cards under their account, set a default, and reuse a saved card at checkout. A customer can only ever see or change their own saved cards."
+            },
+            {
+              "title": "Gift wrapping at checkout",
+              "body": "Operators can define gift-wrap options (with a fee) in the admin console, and shoppers can add a wrap plus a gift message and recipient at checkout. The wrap fee is added as a real cart line, so it is included in the order total and the amount charged — never applied after the charge."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.53",
+      "date": "2026-06-02",
+      "headline": "Back-in-stock notifications, operator-tunable search ranking, and trust badges",
+      "summary": "Three capabilities that were built into the framework but reachable from no route are now wired end to end. A shopper looking at an out-of-stock variant can ask to be emailed when it returns; operators can tune how search results are ordered and pin products for specific queries; and operators can author trust badges that render at checkout and on the order-confirmation page.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Back-in-stock notifications",
+              "body": "When a variant is out of stock, the product page now shows a 'Notify me when it's back' form. The shopper confirms by email (double opt-in), and a scheduled sweep emails everyone waiting when stock returns, with a one-click unsubscribe. The notify form is served on the cached product page and is protected by same-site and fetch-metadata checks."
+            },
+            {
+              "title": "Operator-tunable search ranking",
+              "body": "A new Search ranking screen in the admin console lets an operator define weighted ranking signals, activate a weight set, and pin specific products to the top for a given query. Ranking is applied to the search results; if a ranking configuration is missing or invalid, search falls back to its default order rather than erroring."
+            },
+            {
+              "title": "Trust badges",
+              "body": "A new Trust badges screen lets an operator author badges (with scheduling windows) that render at checkout and on the order-confirmation page, with impression tracking. Badge content — including any SVG — is sanitized when saved."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.52",
+      "date": "2026-06-02",
+      "headline": "Read-only admin audit log, database backup tooling, an email-deliverability guide, and a cryptographic integrity gate over the vendored framework",
+      "summary": "Audit events were recorded but had no console view, there was no documented database backup path, no operator guidance for email deliverability, and the vendored framework tree was only checked for presence — not integrity. This release adds a read-only audit log screen in the admin console, a database export script plus point-in-time recovery documentation, an SPF/DKIM/DMARC deliverability guide, and a build gate that cryptographically verifies every file in the vendored framework so a tampered or accidentally edited dependency fails the build.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Admin audit log screen",
+              "body": "A read-only Audit screen in the admin console lists recorded audit events — action, outcome, actor, resource, and details — with an outcome filter and pagination. Every field is HTML-escaped. The screen is a pure observability view: if the audit store is briefly unavailable it shows an empty table with a notice rather than erroring."
+            },
+            {
+              "title": "Database backup and recovery tooling",
+              "body": "A new export script wraps the D1 export command (suitable for a scheduled export to object storage), and the operator docs gain a recovery section pointing at D1 Time Travel for point-in-time restore."
+            },
+            {
+              "title": "Email deliverability operator guide",
+              "body": "SECURITY.md and the README gain an email-deliverability section covering the SPF, DKIM, and DMARC DNS setup that determines whether transactional and cart-recovery mail reaches the inbox, alongside the already-handled one-click unsubscribe and suppression behavior."
+            },
+            {
+              "title": "Cryptographic integrity gate over the vendored framework",
+              "body": "The build now re-hashes every file in the vendored framework tree against a pinned manifest and fails if any digest changes, giving the no-hand-edits-to-vendored-code rule real enforcement. The check runs across the test matrix and inside the container image build."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.51",
+      "date": "2026-06-02",
+      "headline": "Payment scripts load under the strict CSP, an optional CAPTCHA gate guards signup and checkout, HSTS is preload-strength, and order actions are rate-limited",
+      "summary": "The strict content-security-policy blocked the Stripe and PayPal scripts on the payment pages, so checkout would have failed even once payment keys were configured. Those pages now load the processor scripts through a route-scoped policy and same-origin script files, without relaxing the site-wide policy anywhere else. A CAPTCHA challenge can now be required on signup and checkout (and optionally login) once an operator configures a provider; it stays off until then. The edge now sends a two-year HSTS max-age so the domain qualifies for the preload list, and the order cancel, rate, and reorder actions are covered by the tighter per-route rate limit.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Payment pages load Stripe and PayPal under the strict CSP",
+              "body": "The pay and checkout pages now load the Stripe and PayPal scripts through a content-security-policy scoped to those routes plus same-origin script files, instead of inline script that the site-wide strict policy blocked. Checkout works once payment keys are set, and the site-wide policy — no inline script, Trusted Types required, restricted object and frame sources — is unchanged everywhere else."
+            },
+            {
+              "title": "Order actions covered by the tighter rate limit",
+              "body": "Cancelling, rating, and reordering an order are now under the same strict per-route rate limit as other sensitive actions, rather than only the looser global limit."
+            }
+          ]
+        },
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Optional CAPTCHA gate on signup, checkout, and login",
+              "body": "When an operator configures a CAPTCHA provider (Cloudflare Turnstile, hCaptcha, or reCAPTCHA), a challenge is required on signup and checkout, with login behind an opt-in flag since passkey sign-in is already phishing-resistant. The token is verified server-side before the action proceeds. With no provider configured the gate is a no-op and every flow behaves exactly as before."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Preload-strength HSTS at the edge",
+              "body": "The edge now sends an HSTS max-age of two years (with includeSubDomains and preload), matching the container and meeting the one-year minimum required for HSTS preload-list inclusion."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.50",
+      "date": "2026-06-02",
+      "headline": "Installable PWA manifest, hreflang for multilingual stores, complete sitemap and robots coverage, localized edge pages, and product Q&A rich results",
+      "summary": "Several search-engine and internationalization signals were missing or inconsistent between the cached (edge) and dynamically rendered pages. This release serves an installable web-app manifest and a service worker, emits hreflang alternates when a store runs path- or subdomain-based locales, localizes the blog, CMS, and policy pages on the cached path (they were always English), brings the robots.txt and sitemap into agreement across both render paths with collections, categories, and CMS pages now included, and emits Q&A structured data on product pages. It also fixes a bug that dropped every product from the dynamically rendered sitemap.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Installable web-app manifest and service worker",
+              "body": "The store now serves a web-app manifest at /manifest.webmanifest and a service worker at /sw.js, and links the manifest from every page, so the storefront can be installed as a progressive web app. A working default is served out of the box; an operator who configures a custom manifest overrides it."
+            },
+            {
+              "title": "hreflang alternates for multilingual stores",
+              "body": "When a store runs locales via URL prefixes (e.g. /de/) or subdomains, each page now emits rel=alternate hreflang links (plus x-default) so search engines map the equivalent localized URLs instead of treating them as duplicate content. Stores on a single locale, or locale-by-cookie, emit none."
+            },
+            {
+              "title": "Product Q&A rich results",
+              "body": "A product page with answered customer questions now emits QAPage structured data so the questions and answers are eligible for rich results in search."
+            }
+          ]
+        },
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Localized blog, CMS, and policy pages on the cached path",
+              "body": "The cached (edge-rendered) blog articles, CMS pages, and privacy/terms pages now carry the correct document language and direction for the active locale, matching the dynamically rendered pages. Previously they were always marked English and left-to-right, which harmed screen readers and search indexing and broke right-to-left layout."
+            },
+            {
+              "title": "Consistent robots.txt and complete sitemap",
+              "body": "robots.txt now disallows the admin, cart, checkout, order, and account paths consistently on both render paths, and the sitemap now includes collection, category, and CMS-page URLs alongside products and blog posts. A bug that made the dynamically rendered sitemap omit every product (a list limit overflow) is fixed so the full catalog is listed."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.49",
+      "date": "2026-06-02",
+      "headline": "Real collection tiles on the home page, a working mobile nav, Collections/Categories in the header, and From-price on multi-variant products",
+      "summary": "The home page's 'Featured collections' band linked to fixed keyword searches that landed on empty results unless a product happened to contain those words, the header navigation disappeared entirely on phones with no menu to replace it, and the two real catalog-browse surfaces (Collections and Categories) were reachable only from the footer. This release resolves those: the home tiles now render the store's actual collections with real links, the header gains a no-JavaScript mobile menu, and Collections and Categories appear in the primary nav. Multi-variant products now show a 'From <lowest price>' headline instead of always showing the first variant's price, the non-functional 'New arrivals'/'On sale' sort links are removed, and two small accessibility fixes land (the survey required-field marker and a dark color-scheme hint for native form controls).",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Home 'Featured collections' tiles render real collections",
+              "body": "The featured-collections band on the home page now lists the store's actual collections with links to each collection page, instead of fixed keyword searches that could land on an empty results page. If no collections are defined, the band is omitted rather than shown empty. Both the cached and dynamically rendered home pages produce identical markup."
+            },
+            {
+              "title": "Mobile navigation menu (no JavaScript required)",
+              "body": "On narrow screens the header now offers a disclosure menu that reveals the navigation links, which previously vanished entirely below a tablet width. It is a pure-CSS menu, so it works with JavaScript disabled."
+            },
+            {
+              "title": "Collections and Categories in the header navigation",
+              "body": "The two catalog-browse surfaces — Collections and Categories — are now in the primary header navigation (and inside the mobile menu), not only in the footer."
+            },
+            {
+              "title": "Multi-variant products show a 'From' price",
+              "body": "A product whose variants differ in price now shows a 'From <lowest price>' headline so the prominent price is no longer misleading when a shopper selects a different variant; each variant chip still shows its own exact price."
+            },
+            {
+              "title": "Removed non-functional sort links",
+              "body": "The 'New arrivals' and 'On sale' links did nothing — the home page does not yet support sorting — so they have been removed rather than left as dead controls. They will return if and when catalog sorting is added."
+            },
+            {
+              "title": "Accessibility: survey required marker and dark color-scheme",
+              "body": "The survey form's required-field marker is now announced correctly to screen readers, and the theme declares a dark color-scheme so native form controls, scrollbars, and autofill render correctly on the dark surface."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.48",
+      "date": "2026-06-02",
+      "headline": "Customers can export or request deletion of their personal data, and the admin console gets a privacy-request queue to fulfil it",
+      "summary": "The framework had a complete data-subject-request engine but nothing reached it, so a store handling EU/California personal data had no way for a shopper to exercise their right of access or erasure and no operator path to fulfil one. A signed-in customer can now request a full export of their data — account, addresses, orders, subscriptions, loyalty, and support history, streamed as a downloadable JSON bundle — and can file a deletion request. The admin console gets a Privacy requests screen where an operator reviews each request, downloads the export, previews a deletion (a dry run that changes nothing), and then executes it. Erasure anonymizes the customer's account and archives their addresses and subscriptions while retaining orders, loyalty ledger, and support tickets that must be kept for tax and legal records. A customer can only ever see or act on their own requests; deletion is always filed by the customer and carried out by an operator.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Customer data export and deletion requests",
+              "body": "A signed-in customer gets a Privacy & data area under their account where they can request a full export of their personal data and file a deletion request. The export is streamed as a downloadable JSON bundle covering their account, addresses, orders, subscriptions, loyalty balance and ledger, and support history. A customer can only access their own requests and downloads; a request belonging to anyone else returns not-found."
+            },
+            {
+              "title": "Privacy-request queue in the admin console",
+              "body": "A new Privacy requests screen lists every data-subject request with its status. An operator can download a request's export, preview a deletion as a dry run that reports what would change without modifying anything, and then execute the deletion behind a confirmation step. Deletion anonymizes the customer's account and archives their addresses and subscriptions, while orders, the loyalty ledger, and support tickets are retained for tax and legal record-keeping. Every customer- and operator-entered field shown in either console is HTML-escaped."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.47",
+      "date": "2026-06-01",
+      "headline": "Admin product detail, collections list, and order shipment panels load with fewer database round trips",
+      "summary": "Three admin-console screens re-derived data with one database query per item: the product-detail screen ran a query per variant per currency for current and historical prices, the collections list pulled up to 200 member rows for each collection just to count them, and the order-detail shipment panel hydrated each shipment and its labels sequentially. These now read in batched or parallel queries. The displayed data is unchanged, with one correctness improvement: a manual collection with more than 200 members now shows its true product count instead of a number capped at 200.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Batched admin product-detail price hydration",
+              "body": "The admin product-detail screen now loads every variant's current and historical prices across all currencies in a single batched query instead of one query per variant per currency. The screen renders identically."
+            },
+            {
+              "title": "Collections list counts without pulling member rows",
+              "body": "The admin collections list now counts a manual collection's members with a COUNT query instead of fetching up to 200 member rows per collection. A manual collection with more than 200 members now shows its true count (previously the displayed count was capped at 200); rule-based collections keep their existing bounded preview count."
+            },
+            {
+              "title": "Parallel shipment hydration on order detail",
+              "body": "The order-detail shipment panel now hydrates each shipment and its labels in parallel rather than one after another, so an order with several shipments opens faster."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.46",
+      "date": "2026-06-01",
+      "headline": "Storefront pages render in far fewer database round trips, and the search collection filter is consistent across cache tiers",
+      "summary": "The dynamically rendered storefront (the path that serves returning, signed-in, or non-default-currency shoppers) re-derived product data with one database query per item — a home or search page could issue dozens to hundreds of round trips, where the cached edge already did the same work in a single batched query. The home grid, search results, product page, related-products rail, and cart now read product, variant, price, inventory, and media data in batched queries that mirror the edge exactly, so those pages render with far fewer round trips and identical output. As part of this, the search 'collection' filter now reflects manual collection membership consistently whether a page is served from the cache or rendered dynamically.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Batched product reads on storefront pages",
+              "body": "The home grid, search results, product detail, related-products rail, and cart now load product/variant/price/inventory/media data in batched database queries instead of one query per item. On a cache miss, a signed-in session, or a non-default currency the dynamic render path previously issued a query per product (and per variant); these pages now match the single-query shape the cached edge already used. Rendered pages are unchanged."
+            },
+            {
+              "title": "Consistent search collection filter across cache tiers",
+              "body": "The 'collection' filter on the search page now reflects manual collection membership on both the cached and the dynamically rendered paths. Previously the dynamic path could additionally surface smart-collection rule matches in that filter, so a shopper could see different collection filter options depending on which path served the page. If you relied on smart (rule-based) collections appearing as search filters, they now appear only where a product is an explicit member; this aligns the two render paths."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.45",
+      "date": "2026-06-01",
+      "headline": "Tax, VAT, bulk price changes, and customer emails now compute money in exact integer arithmetic",
+      "summary": "Several money calculations were performed with floating-point intermediates. On a large order subtotal the sales-tax math could lose a minor unit, and the customer-facing wishlist emails formatted prices by dividing by 100 — which is wrong for zero-decimal currencies like JPY (¥1,050 rendered as 10.5) and three-decimal currencies like BHD, and dropped trailing zeros ($10.00 shown as 10). All of these now run through the framework's exact BigInt money primitive: sales-tax and VAT/GST extraction, the per-rate owed figure on a tax filing, the admin bulk price-adjust, the wishlist price-drop and digest emails, and subscription monthly-revenue normalization. Prices in customer emails are now rendered with the correct currency exponent and symbol for every currency.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Exact sales-tax and VAT computation",
+              "body": "Sales tax, VAT-inclusive extraction, and VAT-exclusive addition are computed in exact integer arithmetic rather than with a floating-point intermediate, so the tax on a large order total is no longer off by a minor unit. The per-rate owed figure on a tax filing is likewise computed exactly, which matters when a filing window aggregates a very large taxable total."
+            },
+            {
+              "title": "Currency-correct prices in wishlist emails",
+              "body": "Price-drop alert emails and the wishlist digest now format prices with each currency's own decimal places and symbol. Zero-decimal currencies (such as JPY) and three-decimal currencies (such as BHD) render correctly, and whole amounts keep their trailing zeros — for example $10.00 instead of 10."
+            },
+            {
+              "title": "Exact subscription monthly-revenue normalization",
+              "body": "Normalizing a weekly or annual plan to a monthly figure for revenue reporting now uses exact rational arithmetic instead of a floating-point cadence factor, so the dashboard total is stable and does not drift by a cent between refreshes."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Bulk price-adjust rounds to even on exact half-unit ties",
+              "body": "The admin bulk price-adjust now rounds a price that lands exactly halfway between two minor units to the nearest even unit, matching the rounding used everywhere else in the money surface, instead of always rounding the half up. This only changes the result on an exact tie and by at most one minor unit (for example a price computed as 200.5 now becomes 200 rather than 201). If a pricing regime requires rounding halves up, that is a one-line option change."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.44",
+      "date": "2026-05-31",
+      "headline": "Customers can rate a delivered order, and the admin console moderates and replies",
+      "summary": "There was no way for a customer to give feedback on how an order was fulfilled, and no way for an operator to act on it. Customers can now rate one of their own delivered orders on shipping, packaging, and how likely they are to recommend you, with an optional comment. The admin console gets a Ratings screen with a moderation queue of every flagged comment plus the most recent ratings, where an operator can flag a comment or post one public reply that the customer then sees on their order page. A customer can only rate an order they own, and every comment and reply is HTML-escaped wherever it is shown, so feedback text can't inject markup into another shopper's or an operator's page.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Order ratings",
+              "body": "A customer viewing one of their own orders can rate it on three axes — shipping, packaging, and likelihood to recommend (1 to 5) — and optionally leave a comment. Each order can be rated once. The rating, and any public reply from the store, appear on the customer's order page. A customer can only rate an order tied to their own account; the rating is always recorded against the signed-in customer, never a value taken from the request."
+            },
+            {
+              "title": "Ratings moderation in the admin console",
+              "body": "A new Ratings screen lists recent ratings with their scores and comments, alongside a moderation queue that surfaces every flagged comment regardless of its score, so a flagged comment on an otherwise high rating is never hidden. An operator can flag a comment for moderation and post a single public reply to a rating, which is then shown to the customer. Comments and replies are HTML-escaped everywhere they are rendered."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.43",
+      "date": "2026-05-31",
+      "headline": "Export orders for a date range as CSV or NDJSON, with scheduled exports",
+      "summary": "There was no way to pull a bulk export of orders over a date range. A new Exports screen in the admin console previews how many orders and how much revenue a date range covers, then downloads them as a CSV or NDJSON file. The export can also be scheduled and managed as a queued job. Customer email addresses are exported only as a hash, never in the clear, and any field that could be interpreted as a spreadsheet formula is neutralized so an exported file can't run code when opened. This release also updates the vendored blamejs runtime to v0.14.16.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Order export",
+              "body": "An Exports screen in the admin console exports orders over a chosen date range. It first shows a preview — the order count, revenue, and average order value for the range — then downloads the orders as a CSV or NDJSON file with a standard set of columns. Exports can also be queued as scheduled jobs and cancelled before they run. Customer email is exported as a hash rather than in the clear, and any cell that begins with a character a spreadsheet would treat as a formula is escaped, so an exported file can't execute anything when opened in Excel or Sheets."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Vendored blamejs runtime updated to v0.14.16",
+              "body": "The bundled blamejs runtime is updated to v0.14.16, which validates connection ports at configuration time — a malformed port (a non-integer or out-of-range value) is now rejected with a clear error at startup instead of silently falling back to a default. No operator action is required."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.42",
+      "date": "2026-05-31",
+      "headline": "The blog now pages through every post, and the byline shows the shop name",
+      "summary": "The blog index showed only the 12 most recent posts with no way to reach the rest, so older posts were a dead end for anyone browsing — even though they stayed in the sitemap. The index now has previous/next pagination, so every published post is reachable. The post byline and the article's structured data now show the shop name instead of an internal author identifier, and a missing blog post or product page no longer returns a body on a HEAD request.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Blog index pagination",
+              "body": "The blog index listed only the 12 most recent posts and offered no way to reach older ones from /blog. It now has previous/next pagination — the same control used on collection and search pages — so every published post is reachable, with the next link appearing only when there is genuinely another page."
+            },
+            {
+              "title": "Blog byline shows the shop name, not an internal id",
+              "body": "The blog post byline and the article's structured data displayed the raw internal author identifier. They now show the shop name, so the public byline and the author Google reads from the structured data are meaningful rather than an internal id."
+            },
+            {
+              "title": "Missing pages don't return a body on HEAD",
+              "body": "A missing blog post or product page returned a full page body even for a HEAD request. Those 404 responses now omit the body on HEAD, matching the other pages and the HTTP spec."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.41",
+      "date": "2026-05-31",
+      "headline": "The public product API no longer leaks internal error details, and bad order links return Not Found",
+      "summary": "A server-side error on the public product API could include the raw internal error message — potentially database or query details — in its 500 response to anonymous callers. Those responses now return a generic message, with the real error recorded server-side only, matching how the admin side already behaves. Separately, opening an order or payment page with a malformed link now returns a clean Not Found instead of a server error. This release also updates the vendored blamejs runtime to v0.14.15.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Public product API hides internal error details",
+              "body": "When the public product API (the catalog endpoints) hit a server-side error, its 500 response could carry the raw internal error message — including database or constraint text — to any caller. It now returns a generic \"something went wrong\" message and records the real error server-side only, the same way the admin console already scrubs its errors. Validation errors still return their helpful 400 message unchanged."
+            },
+            {
+              "title": "Malformed order and payment links return Not Found",
+              "body": "Opening an order confirmation or payment page with a malformed (non-identifier) link returned a server error instead of a Not Found. Both pages now return a clean 404 for a malformed or unknown link, matching the order reorder and cancel pages."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Vendored blamejs runtime updated to v0.14.15",
+              "body": "The bundled blamejs runtime is updated to v0.14.15, which adds a recognized-purpose vocabulary to its consent ledger (with lawful-basis enforcement for regulated purposes) and a new privacy namespace for periodic third-party vendor-review attestations. These are additive, opt-in capabilities; existing behavior is unchanged and no operator action is required."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.40",
+      "date": "2026-05-31",
+      "headline": "Return shipping labels — operators issue one, customers download and track it",
+      "summary": "After a return was approved there was no way to give the customer a shipping label or for them to follow the parcel back. Operators can now issue a return label on an approved return from the admin console — entering the carrier, tracking number, and the label link generated in their carrier account — and post tracking updates as the parcel moves. The customer sees the label on their return: they can open or print it, see the carrier and tracking number, and follow the scan history, with the return marked received once it arrives back. A customer can only see and download the label for their own return.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Return shipping labels and tracking",
+              "body": "Opening a return in the account area now shows its detail, and once a label has been issued the customer can open or print the return label, see the carrier and tracking number, and follow the parcel's scan history — all scoped so a customer only ever sees their own return. On the operator side, an approved return gains an Issue return label form (carrier, service level, weight, the carrier label link, tracking number, and cost) and controls to mark the parcel shipped, in transit, delivered, or held with an exception; marking it delivered records the return as received. The label link is required to be a secure URL, and the customer download is served without exposing that link in the page."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.39",
+      "date": "2026-05-31",
+      "headline": "Paginated lists no longer show an empty extra page at exact page boundaries",
+      "summary": "Several paginated lists offered a next page even when the current page was the last one, if the list's length happened to be an exact multiple of the page size — following that next link landed on an empty page. This affected a customer's order history, loyalty history, and store-credit history, and the admin customer list. Each now checks whether a further item actually exists before offering a next page, so the next link appears only when there is genuinely more to show.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "No phantom next page on exactly-full lists",
+              "body": "A customer's order history, loyalty history, and store-credit history, and the admin customer list, offered a next page whenever the current page was full — so a list whose total was an exact multiple of the page size showed a next link that led to an empty page. These lists now look one item past the page before offering a next link, so it appears only when a further item exists. This matches the fix already in place for collection pages."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.38",
+      "date": "2026-05-31",
+      "headline": "Pre-order campaigns — reserve a product before it is released",
+      "summary": "Products that are not yet released could not be sold or reserved. Operators can now run a pre-order campaign for a product from the admin console — setting its release date, price, and an optional reservation cap. While the campaign is open, the product page shows a Pre-order control with the release date and how many reservations remain, and a signed-in customer can reserve their quantity without paying upfront. Customers see and can cancel their reservations from their account, and when the operator launches the campaign on its release date, each reservation is turned into a pending order the customer pays for through normal checkout.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Pre-order campaigns",
+              "body": "A Pre-orders screen in the admin console runs a campaign for a product's SKU — release date, price, an optional deposit, and a reservation cap — with launch and close controls (launch is available once the release date arrives). While a campaign is open, the product page shows a Pre-order control with the release date and remaining availability instead of the usual add-to-cart, and a signed-in customer can reserve their quantity (no charge at reservation time; reserving past the cap or on a closed campaign is refused). Customers manage their reservations under Pre-orders in their account and can cancel one, which frees that capacity. Launching the campaign converts each open reservation into a pending order the customer completes through normal checkout. A customer can only see and cancel their own reservations."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.37",
+      "date": "2026-05-31",
+      "headline": "Gift registries — create one, share it, and let people mark gifts as bought",
+      "summary": "A customer can now create a gift registry for an occasion — a wedding, baby, or birthday — add the products they want with the quantity desired, and share a public link. Anyone with the link can open the registry without an account, see what is still needed, add an item to their own cart to buy it through normal checkout, or mark an item as already purchased so it stops showing as needed. Registries can be public, unlisted, or private, and a private registry is not viewable from its link. The shared page never reveals who owns the registry or who bought what, and is not indexed by search engines.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Gift registries",
+              "body": "A new Registry section in the account area lets a customer create a registry (title, occasion, event date, and a public/unlisted/private visibility), add and remove the items they want with a desired quantity, edit its details, and close it. Each registry has a shareable public page at its own link where anyone — no account needed — can see the items and how many of each are still needed, add an item to their cart to buy it through the normal checkout, or mark an item as already purchased so the registry's progress updates. A private registry is not viewable from its link, the public page shows only the items (never the owner's identity, address, or who purchased what), and registry pages are excluded from search indexing."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.36",
+      "date": "2026-05-31",
+      "headline": "Customers can request an exchange instead of only a refund",
+      "summary": "Returning an order could only result in a refund, so a customer who received the wrong size had to refund and buy again. A customer can now request an exchange from the order page — choosing the item to swap, the replacement, and a reason — and operators work those requests from a new Exchanges queue in the admin console, moving each one through approval, shipping the replacement, receiving the returned item, and closing it out. A customer can only request and view exchanges on their own orders. This release also updates the vendored blamejs runtime to v0.14.10.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Order exchanges",
+              "body": "An order can now be exchanged, not just refunded. From the order page a customer requests an exchange — picking the line to return, the replacement variant, and a reason — and tracks its status under Exchanges in their account. Operators get an Exchanges queue in the admin console with a status filter and a per-exchange screen that offers only the actions valid at the current step: approve or reject the request, mark the replacement shipped and delivered, mark the returned item received, and close it once both sides are complete. Every customer-facing exchange action is scoped to the customer's own orders, and an order must be in a fulfilled state to be eligible."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Vendored blamejs runtime updated to v0.14.10",
+              "body": "The bundled blamejs runtime is updated to v0.14.10, which routes the framework's full-text-search index token hashing through a keyed MAC (HMAC-SHAKE256) instead of a static-salted digest, so an index token hash cannot be forged or correlated across deployments without the per-deployment key. The change is internal to the runtime and requires no operator action."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.35",
+      "date": "2026-05-31",
+      "headline": "Share a wishlist with a private link",
+      "summary": "A customer's wishlist could only be viewed by the customer themselves. From the wishlist page a shopper can now create a shareable link and send it to someone — a friend buying a gift, for example — who opens it without needing an account and sees the wishlist's products. The link can be revoked at any time, after which it stops working. The shared page shows only the products: it does not reveal who owns the wishlist or any private notes on it, and it is not indexed by search engines.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Shareable wishlist links",
+              "body": "The wishlist page now has a Share control that creates a private link to the wishlist. The full link is shown once, to copy and send; anyone with it can open the shared wishlist without an account and see its products, each linking to the product page. The owner sees their active links and can revoke any of them, which immediately stops the link from working. The shared view shows only the products — never the owner's identity or private notes — and is marked not to be indexed by search engines, so a personal wishlist stays private to whoever holds the link."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.34",
+      "date": "2026-05-31",
+      "headline": "Edit, pin, and archive the internal notes on a customer",
+      "summary": "Internal notes on a customer could only be added — a note with a typo or one that was no longer true could not be corrected or removed, which is a liability for notes like \"do not ship to this address\" or \"allergic to X\". The customer detail screen now lets you edit a note's text, pin important notes to the top, and archive notes that no longer apply (and restore them). Each action is limited to notes that belong to the customer being viewed.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Edit, pin, and archive customer notes",
+              "body": "The notes panel on a customer's detail screen now supports the full lifecycle: edit a note's text to fix or update it, pin the notes that matter so they sort to the top, and archive notes that no longer apply, with a toggle to show archived notes and restore them. Previously notes were append-only, so a wrong or stale note could not be corrected or retired. Every edit, pin, and archive action is scoped to the customer being viewed, so a note can only be changed from the record it belongs to."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.33",
+      "date": "2026-05-31",
+      "headline": "Create and manage customer segments from the admin console",
+      "summary": "Customer segments could be shown on a customer's profile but there was no way to define or manage them, so the feature could not actually be used. A new Segments screen in the admin console creates rule-based segments from recency, frequency, lifetime-order, spend, average-order-value, and refund-rate criteria, edits their rules, archives and restores them, and recomputes membership on demand — showing how many customers each segment now contains. Segment membership stays rule-derived: it is recalculated from order history, not assigned by hand.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Customer segments administration",
+              "body": "A Segments screen in the admin console manages rule-based customer segments. Each segment is defined by RFM-style criteria — how recently and how often a customer orders, their lifetime order count and spend, average order value, and refund rate — and a list shows every segment with its rules, current member count, and status, filterable by active or archived. You can create and edit segments, archive and restore them, and recompute membership on demand, which re-evaluates the rules against order history and reports how many customers match. Membership is always derived from the rules, never assigned per customer."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.32",
+      "date": "2026-05-31",
+      "headline": "Collection pages now page through every product instead of stopping at 24",
+      "summary": "A collection page showed only its first 24 products and provided no way to reach the rest, so any product past the 24th in a collection was silently unreachable. Collection pages now have previous/next pagination, matching the search results, so a collection of any size can be browsed in full. A shared link to a specific page keeps its position, while the page's canonical URL stays the plain collection address.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Collection pages paginate",
+              "body": "A collection with more than 24 products was truncated at the first 24 with no way to see the others. Collection pages now carry previous/next pagination — the same control used on search results — so every product in a collection is reachable. The canonical URL remains the bare collection address on every page (so search engines see one collection page, not duplicates), while a shared link to a deeper page preserves its position."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.31",
+      "date": "2026-05-31",
+      "headline": "A public help center, authored from the admin console",
+      "summary": "The knowledge-base backend was built but had no pages, so there was no way to publish help content or for a shopper to read it. There is now a Help center at /help: a browsable index of published articles grouped by category, and an article page that renders the article, shows a breadcrumb trail in search results, and lets a reader mark whether it was helpful. Operators get a Help center screen in the admin console to write articles, save them as drafts, publish them, and archive them. Article text is written in a small Markdown subset and is fully escaped on the page, and only published, non-archived articles are publicly reachable.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Help center for shoppers",
+              "body": "A new /help section lists published articles by category and renders each article at /help/:slug with a breadcrumb (carried into search results as BreadcrumbList structured data) and a \"Was this helpful?\" control. Article bodies are written in a Markdown subset and escaped on output, and a draft, archived, or unknown article returns a clean 404 — only published articles are ever publicly reachable."
+            },
+            {
+              "title": "Help center authoring in the admin console",
+              "body": "A Help center screen lets operators write articles (slug, title, category, body), keep them as drafts, publish or unpublish them, and archive ones that should no longer appear. The list filters by all/published/drafts and shows each article's view count and helpfulness tally, so the team can see what readers are using and which articles need work."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.30",
+      "date": "2026-05-31",
+      "headline": "An unrecognized automatic-discount type is now rejected instead of silently becoming free shipping",
+      "summary": "When defining or editing an automatic discount over the API, an unrecognized discount type was silently turned into a free-shipping rule — the most generous kind — and accepted without any error. A discount sent over the API with a type outside the supported set (percent off, amount off the total, amount off each item, buy-X-get-Y, or free shipping) is now rejected with a clear error, so a typo can no longer create a store-wide free-shipping rule by accident. The admin form was never affected, because its type selector only offers the supported values.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Automatic-discount type is validated",
+              "body": "Defining or editing an automatic discount with a discount type outside the supported set now returns a clear error instead of quietly defaulting to free shipping. Previously an unrecognized type sent over the JSON API was coerced into a free-shipping rule and saved with no warning, which could apply free shipping store-wide from a single typo. Free shipping remains a valid, explicitly chosen type; only unrecognized values are rejected. The admin console form was unaffected, since its selector is limited to the supported types."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.28",
+      "date": "2026-05-31",
+      "headline": "Customers can now see their store-credit balance and history",
+      "summary": "Operators could grant or deduct a customer's store credit, but the customer had no way to see it — the balance only ever surfaced as a silent discount at checkout. A new Store credit page in the account area shows the current balance, a callout for any credit about to expire, and the full ledger of credits, deductions, and expirations with amounts, reasons, and dates. The page is read-only and shows only the signed-in customer's own balance.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Store-credit wallet in the account area",
+              "body": "A Store credit page lists a customer's current balance, any credit expiring soon, and the full history of credits, deductions, and expirations — each with its amount, the reason, and the date. It is reachable from the account dashboard and reflects the store credit an operator grants from the customer screen, so a shopper can finally see credit they have been given instead of only discovering it at checkout. The page is read-only and scoped to the signed-in customer."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.27",
+      "date": "2026-05-31",
+      "headline": "Shared product and page links now show a preview image, and category pages get breadcrumb rich results",
+      "summary": "Social-share previews and search rich results were emitting relative image paths, which Facebook, Slack, Twitter, iMessage, and Google all drop — so a shared product or page link showed no preview image, and product rich results had no image. Every og:image, twitter:image, and Product/Article structured-data image is now a fully-qualified URL built from the page's own origin. Collection and category pages, which already showed an on-page breadcrumb, now also emit BreadcrumbList structured data so the trail can appear in search results, matching what product pages already did. And operator-supplied page keywords or announcement text containing a dollar-sign sequence now render literally instead of being garbled.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Share and rich-result images are now absolute URLs",
+              "body": "The og:image, twitter:image, and the image in Product and blog-article structured data were relative paths, so social platforms and Google could not load them — a shared link showed no preview image. They are now fully-qualified against the page's origin on every page, in both the edge and container renderers, so shares unfurl with the right image and product rich results carry one. Images an operator already hosts at an absolute URL pass through unchanged."
+            },
+            {
+              "title": "Breadcrumb structured data on collection and category pages",
+              "body": "Collection and category pages showed a breadcrumb trail on the page but did not expose it as BreadcrumbList structured data, so search engines could not render the trail in results. They now emit it with absolute URLs, the same way product pages already do."
+            },
+            {
+              "title": "Dollar-sign sequences in page metadata render literally",
+              "body": "Page meta-keywords and announcement-bar text containing a dollar-sign sequence (for example a price written with a special character) could be garbled in the page head because of how the value was substituted into the template. The substitution now treats the value as literal text, so it renders exactly as entered."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.26",
+      "date": "2026-05-31",
+      "headline": "Customers can raise support tickets and operators work them from a queue",
+      "summary": "The support-ticket system had a complete backend — threaded messages, assignment, tags, and a status workflow — but no way in or out: a shopper could not open a ticket and an operator could not see one. Both sides are now wired. A logged-in customer can raise a ticket from their account (with an optional link to one of their own orders), see the thread, and reply while it is open. Operators get a Support queue in the console with an unassigned-triage view, the full thread for each ticket, and controls to reply (with an internal-note option that the customer never sees), assign, tag, and move the ticket through its status workflow. A customer only ever sees their own tickets, and replying to a closed ticket is refused.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Customer support tickets",
+              "body": "A Support section in the account area lets a signed-in customer open a ticket (subject, message, category, and an optional reference to one of their own orders), list their tickets with status, read the full message thread, and reply while the ticket is open. Internal operator notes are never shown to the customer, a customer can only see and reply to their own tickets, and a reply to a closed ticket is refused."
+            },
+            {
+              "title": "Support queue in the admin console",
+              "body": "A Support screen lists inbound tickets by status with an unassigned-triage view. Opening a ticket shows the full thread, the requester, the current status, the assignee, and tags. From there an operator can reply (optionally as an internal note), assign the ticket, tag it, and move it through its status workflow — in progress, waiting on the customer, resolved, closed, or reopened."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.25",
+      "date": "2026-05-30",
+      "headline": "Open an individual customer to see their orders and manage store credit, notes, and loyalty",
+      "summary": "The customers list was view-only — there was no way to open a single customer. Each customer now has a detail screen showing their identity, recent orders (linked), store-credit balance with a grant/deduct control, loyalty balance and tier (with a link to adjust points), internal operator notes, and the segments they belong to. A store-credit grant or deduction requires a reason and is written to the store-credit ledger, an over-deduction is refused, and segment membership is shown read-only because it is computed from purchase behavior rather than set by hand.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Customer detail screen",
+              "body": "Opening a customer from the roster now shows their record, recent orders, store-credit balance with a reason-gated grant/deduct (recorded in the store-credit ledger; an over-deduction is refused), their loyalty balance and tier with a link to adjust points, and an internal notes log you can add to. The segments a customer belongs to are listed read-only, since membership is derived from their behavior. Customer identity fields remain read-only by design."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.24",
+      "date": "2026-05-30",
+      "headline": "Manage the loyalty program from the admin console",
+      "summary": "The loyalty program was visible to customers at /account/loyalty — their points balance, tier, the ways to earn, and the rewards — but there was no way to configure it from the console, so it could not actually be run. A new Loyalty admin screen now manages the whole program: create and edit the rules that award points (and archive ones that should no longer apply), build and edit the rewards catalog (a reward must be active to appear to customers), and grant or deduct a specific customer's points balance. A points adjustment requires a reason and is written to the loyalty ledger, so every manual change is recorded.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Loyalty program administration",
+              "body": "A Loyalty screen in the admin console manages earn rules (the events that award points and how many), the rewards catalog (what points can be redeemed for, with per-kind values), and per-customer point adjustments. Only active, non-archived rules and rewards appear to customers. A manual grant or deduction requires a reason and is recorded in the loyalty ledger alongside automatic earn and redeem activity, and an over-deduction or invalid adjustment is rejected without changing the balance. This completes a program that previously could be shown to shoppers but not configured."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.23",
+      "date": "2026-05-30",
+      "headline": "Fix page corruption from a dollar sign in content, keep search pages out of the index, and add a working unsubscribe link",
+      "summary": "Three storefront fixes. First, a content-corruption bug: a dollar sign in any page's dynamic content — a product description, a blog post, a content page, a cart or admin page — could mangle the rendered HTML, and a dollar immediately followed by a backtick could splice the page's head markup into the body. Every page assembled its body in a way that gave dollar sequences special meaning; all of them now insert content verbatim. Second, internal search result pages are now marked noindex so the many query and filter URLs are not indexed as thin, duplicate pages (their product links are still followed). Third, the unsubscribe link that marketing emails point to now has a route behind it, so a recipient can actually unsubscribe (and resubscribe) instead of hitting a missing page.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "A dollar sign in content no longer corrupts the page",
+              "body": "Pages were assembled by substituting the body into a template in a way that treated dollar sequences (such as a dollar followed by a backtick) as special, so content containing them could corrupt the output or pull head markup into the body. Every render path now inserts dynamic content literally, so any text — prices, code samples, anything with a dollar sign — renders exactly as written."
+            },
+            {
+              "title": "Search result pages are no longer indexed",
+              "body": "Internal search result pages now carry a noindex robots tag so the large number of query and facet URL combinations aren't indexed as thin or duplicate content; the product links on those pages are still followed."
+            }
+          ]
+        },
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Newsletter unsubscribe link works",
+              "body": "A /unsubscribe route now backs the one-click unsubscribe link in marketing emails: opening the link shows a confirmation page, confirming removes the address, and a resubscribe option is offered. Invalid, expired, and already-used links each show a clear page rather than an error. The backend for this already existed; it simply had no route."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.22",
+      "date": "2026-05-30",
+      "headline": "Create and publish content pages (About, Shipping, Returns, and the like) from the admin console",
+      "summary": "The shop now has editable content pages. An admin Pages screen lets an operator create a page with a slug, title, Markdown body, layout, and meta fields, then publish, unpublish, archive, or restore it — and the storefront serves each published page at /pages/<slug>. Previously the content-page backend existed but had no admin screen and the storefront did not serve it, so it could not be used; a page is created as a draft and is not visible on the storefront until it is published.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Content pages: author in the console, serve on the storefront",
+              "body": "A new Pages admin screen manages content pages through their full lifecycle (draft, published, archived, with restore). Published pages are served at /pages/<slug> with the page's chosen layout; a draft or archived slug returns not-found. The Markdown body is rendered with the same escaping and safe-link handling as the rest of the storefront. This makes a standard set of pages — about, shipping, returns, and similar — editable instead of requiring a code change."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.21",
+      "date": "2026-05-30",
+      "headline": "Customers can cancel an order from their account before it ships",
+      "summary": "A signed-in customer can now cancel one of their own orders from the order page, as long as it has not started fulfillment. The Cancel control appears only while the order is still cancellable — a paid or pending order — and is absent once the order is fulfilling, shipped, delivered, already cancelled, or refunded. The action is tied to the signed-in customer, so a customer can only cancel their own order. Note: cancelling a paid order changes its status to cancelled but does not by itself refund the charge — issue the refund from the admin console as usual; a customer-initiated cancellation of a paid order is your signal to do so.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Cancel an unfulfilled order from the account",
+              "body": "The order page now shows a Cancel button while an order is still in a pre-fulfillment state (paid or pending). Cancelling moves the order to cancelled and shows a confirmation; the control does not appear once an order is fulfilling, shipped, delivered, cancelled, or refunded, and a customer can only cancel their own order. A paid-order cancellation updates the status but does not automatically refund the captured payment — refund it from the console; treat a customer cancellation of a paid order as the prompt to do so."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.20",
+      "date": "2026-05-30",
+      "headline": "Served media carries hardened headers, primary-image changes are product-scoped, and image-by-URL imports are size-capped",
+      "summary": "Three defense-in-depth fixes on product media. Media assets served from storage now carry X-Content-Type-Options: nosniff and Cross-Origin-Resource-Policy: same-origin, and SVG files additionally carry a content policy that prevents script from running when the file is opened directly while still rendering normally inside a product image. Setting a product's primary image now verifies the image actually belongs to the product named in the request rather than acting on the image alone. And importing a product image by URL now refuses a response larger than the same 10 MiB limit the file-upload path enforces, instead of buffering an unbounded download.",
+      "sections": [
+        {
+          "heading": "Security",
+          "items": [
+            {
+              "title": "Hardened response headers on served media",
+              "body": "Media served from storage now sets X-Content-Type-Options: nosniff and Cross-Origin-Resource-Policy: same-origin, so a mistyped or hostile upload can't be content-sniffed into something executable or embedded cross-origin. An SVG additionally carries a default-src 'none' sandbox content-security policy, so opening an SVG URL directly cannot run script (it still renders inside an img tag). This sits behind the existing SVG-upload sanitizer as a second layer."
+            },
+            {
+              "title": "Importing an image by URL is size-capped",
+              "body": "Importing a product image from a URL now refuses a response larger than 10 MiB — the same limit a direct file upload uses — returning a clear error instead of buffering an unbounded download."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Setting the primary image is product-scoped",
+              "body": "The endpoint that makes an image a product's primary (hero) now verifies the image belongs to the product in the request path and returns not-found otherwise, instead of acting on the image regardless of the product named. A request whose product and image don't match is now rejected."
+            },
+            {
+              "title": "Vendored runtime updated to v0.14.9",
+              "body": "The vendored blamejs runtime is updated to v0.14.9, a documentation-path and source-comment fix with no API, wire-format, or behavior changes. No operator action is required."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.19",
+      "date": "2026-05-30",
+      "headline": "Edit announcement bars, automatic-discount terms, and subscription plans from the console",
+      "summary": "Three admin entities could be created but only partly edited from the console — the rest of their fields were reachable only through the API, so changing them meant archive-and-recreate or a manual API call. Each now has a detail screen with the full edit form. An announcement bar can have its message, links, schedule, audience, and dismissibility changed in place. An automatic discount can have its actual terms changed — the amount, percentage, threshold, or buy-x-get-y values — not just its title, priority, and on/off state. A subscription plan can have its price, billing interval, trial length, active state, and variant edited. Create and archive behavior is unchanged.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Announcement bars are editable in place",
+              "body": "A detail screen now lets you change an announcement's message, link, theme, audience, start/end schedule, and whether it can be dismissed — instead of archiving it and creating a new one (which lost the slug and any recorded dismissal state)."
+            },
+            {
+              "title": "Automatic-discount terms are editable from the console",
+              "body": "The discount detail screen now edits the rule's trigger and value — the amount off, percent off, cart threshold, or buy-x-get-y terms — which previously could only be changed through the API. The inline priority and on/off controls are unchanged."
+            },
+            {
+              "title": "Subscription plans have an edit screen",
+              "body": "A subscription plan's price, billing interval count, trial length, active state, and variant can now be edited from a detail screen. The Stripe-bound fields (the price id, interval unit, and currency) remain read-only, as they were always immutable."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.18",
+      "date": "2026-05-30",
+      "headline": "Write and publish blog posts from the admin console",
+      "summary": "The storefront already served a blog — the index at /blog, individual posts at /blog/:slug, an RSS feed, and sitemap entries — but there was no way to write a post, so it rendered empty. The admin console now has a Blog screen with the full lifecycle: create a draft, edit its title, body (Markdown), tags, hero image, and meta fields, publish it, unpublish it, and archive or restore it. A post is created as a draft and stays off the storefront until it is explicitly published, so work in progress is never visible to shoppers.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Blog authoring in the admin console",
+              "body": "A new Blog screen lists posts by status and lets an operator create, edit, publish, unpublish, archive, and restore them. New posts start as drafts and do not appear on the storefront /blog, its RSS feed, or the sitemap until published; archiving removes a published post from the storefront and is reversible. This wires the admin over the blog backend that was already serving the customer-facing pages."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.17",
+      "date": "2026-05-30",
+      "headline": "Search results paginate with an accurate count, and collection pages get canonical URLs",
+      "summary": "Two customer-facing storefront fixes. Search no longer stops at the first 24 products: the result count now reports the true number of matches instead of the page size, and numbered page links (with prev/next) make every matching product reachable while preserving the active query and filters. Separately, collection pages now emit a correct canonical and og:url so search engines and shared links resolve to one address, while the cart and account pages — which should not be indexed — are explicitly marked noindex.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Search shows the real match count and paginates",
+              "body": "The search results page previously capped at 24 products, discarded the real total, and reported the page size as the match count — so anything past the first 24 was unreachable and the count was wrong. It now computes the true total, shows it in the \"Showing N matches\" summary, and adds no-JavaScript numbered page links (with prev/next) that carry the active query and facet filters, so every matching product can be reached."
+            },
+            {
+              "title": "Collection pages have canonical URLs; cart and account are noindex",
+              "body": "Collection pages now emit an absolute canonical and og:url derived from the request host, so indexers and shared links resolve to a single address instead of an empty tag. The cart and account pages, which are not meant to be indexed, now carry a noindex robots tag in their markup, consistent on both the edge and container render paths."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.16",
+      "date": "2026-05-30",
+      "headline": "Uploaded SVGs are sanitized, and product images can be reordered with a chosen primary",
+      "summary": "Two things for product media in the admin console. First, when an SVG image is uploaded it now passes through a strict sanitizer: an SVG that carries script or other active content is repaired, or refused outright when it can't be made safe, so a stored image can't become a script-execution vector. Second, a product's images can now be reordered and any image promoted to the primary (hero) slot directly from the console — previously the order was fixed at attach time and the first-attached image was always the hero. The primary image is the one shown first on the product page.",
+      "sections": [
+        {
+          "heading": "Security",
+          "items": [
+            {
+              "title": "Uploaded SVG images are sanitized or refused",
+              "body": "An uploaded SVG is now checked by a strict sanitizer before it is stored: active content (scripts, event handlers, external references) is stripped, and an SVG that cannot be made safe is rejected with a clear error and never written. This closes the path where a crafted SVG, once stored and served, could execute script. Raster image uploads (PNG, JPEG, WebP, GIF) are unaffected."
+            }
+          ]
+        },
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Reorder product images and set the primary from the console",
+              "body": "Each image on a product now has a \"Make primary\" control that moves it to the hero slot shown first on the product page, and a reorder control sets the full order. Both are no-JavaScript form actions. The product page renders images in this order, so changing it here changes what shoppers see first."
+            }
+          ]
+        },
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Vendored runtime updated to v0.14.8",
+              "body": "The vendored blamejs runtime is updated to v0.14.8, an internal source-comment and lint-hygiene release with no API, wire-format, or behavior changes. No operator action is required."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.15",
+      "date": "2026-05-30",
+      "headline": "Product image galleries are interactive — click a thumbnail to view that image full size",
+      "summary": "A product page's image gallery now lets a shopper switch between the product's images: clicking a thumbnail swaps the main image, with no JavaScript required. Previously the thumbnail strip was decorative — the additional images were unreachable, a single-image product showed empty placeholder slots, and only the first four images were shown. Now the main image stacks the product's images and the thumbnails are real, keyboard-accessible controls that select which one is shown; a product with one image shows just that image (no empty slots), and the four-image cap is raised to twelve so far more images are reachable. The picker is pure HTML and CSS, so it works without scripting and degrades cleanly.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "The product image gallery actually switches images now",
+              "body": "Thumbnails on the product page are now interactive: selecting one shows that image as the main image, using a no-JavaScript radio/label control. The empty placeholder slots a single-image product used to show are gone, the four-image cap is raised to twelve so far more images are reachable, and the strip is keyboard-navigable with accessible labels. The edge and container renderers emit identical markup."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.14",
+      "date": "2026-05-30",
+      "headline": "Drop the inert Document-Policy header that only produced browser warnings",
+      "summary": "Container-rendered pages were sending a Document-Policy response header whose feature tokens (document-write, unsized-media, oversized-images) are no longer recognized by current browsers — so it enforced nothing while making the browser log a warning for each token on every page. The header is now omitted; every other security header (Content-Security-Policy, Permissions-Policy, HSTS, X-Frame-Options, the COOP/CORP set, and the rest) is unchanged. The edge and container paths now agree — neither sends Document-Policy — closing a header-parity gap.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "No more Document-Policy console warnings",
+              "body": "The Document-Policy header is no longer emitted on container-rendered pages. Its tokens were rejected by current browsers (the policy applied nothing and logged a warning per token on every page), so the header is dropped rather than shipped inert; the full set of other security headers is retained unchanged. Edge and container responses are now consistent."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.13",
+      "date": "2026-05-30",
+      "headline": "Updated runtime hardens the storage and audit layers; admin error pages no longer show raw database text",
+      "summary": "The vendored blamejs runtime is updated to v0.14.7, which tightens the data and audit layers the shop is built on: database queries are checked against each table's declared columns (a reference to an undeclared column fails closed), the database encryption key is bound to its deployment so a copied key can't be unsealed elsewhere, raw SQL fragments refuse embedded string literals so values bind through placeholders, audit-chain purges can require two authorizers, and breach-notification deadlines raise a running clock. Separately, when an admin form action fails the console now shows a short generic message with the correct status instead of rendering a raw database or parser string into its error banner. No operator action is required.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Vendored runtime updated to v0.14.7 (storage + audit hardening)",
+              "body": "The underlying runtime now checks every database query against the table's declared columns and fails closed on an undeclared reference, binds the database encryption key to its data directory and key path so a relocated key won't unseal, refuses embedded string literals in raw SQL fragments, supports two-authorizer dual control on audit-chain purges, can compute sealed-column lookup hashes as a keyed MAC, and ships a running clock for breach-notification deadlines. The shop inherits these protections; no configuration change is needed."
+            }
+          ]
+        },
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Console error banners show a safe message, not internal text",
+              "body": "Every admin HTML form handler now routes a thrown error through one shared classifier: a duplicate key becomes a 409 \"That value is already in use.\", a missing referenced record a generic not-found, malformed input a generic \"Invalid input.\", and an unexpected failure a generic message whose detail is recorded server-side rather than shown. Operator-facing validation messages are unchanged. This closes the path where a create form could render a raw database constraint string into its error banner, matching the API behavior the bearer path already had."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.12",
+      "date": "2026-05-30",
+      "headline": "Currency and outbound-host validation consolidated behind one shared check",
+      "summary": "Input validation that was duplicated across the codebase is now a single shared module. Currency codes are validated against the ISO 4217 catalog consistently wherever the admin binds money — the same check the gift-card flow gained last release — and the outbound webhook host guard (refusing loopback, private, link-local, reserved, and cloud-metadata destinations, including trailing-dot forms) is one shared function used by both the delivery and registration paths. The shared module composes the framework's Unicode codepoint catalog so free-text fields can reject control, bidi-override, and zero-width characters when needed. Behavior is equal-or-stricter than before; no operator action is required.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Currency validation is consistently ISO 4217",
+              "body": "Admin paths that bind a currency now validate it against the ISO 4217 catalog in one place, so a code that isn't a real currency is rejected consistently rather than only in some flows."
+            },
+            {
+              "title": "Outbound-host SSRF guard is a single shared check",
+              "body": "The webhook delivery and registration paths now share one host guard — loopback, private (RFC 1918), link-local, reserved, and cloud-metadata addresses (by IP literal or known name, including trailing-dot forms) are refused identically on both, so the two can't drift apart."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.11",
+      "date": "2026-05-30",
+      "headline": "Webhook endpoints reject internal addresses; admin errors stay clean and typed",
+      "summary": "Outbound webhook endpoints can no longer be pointed at loopback, private, link-local, or cloud-metadata addresses, closing a server-side request forgery path from operator-supplied URLs. Several admin endpoints that previously returned a 500 on bad input now return the correct 4xx — a duplicate slug or SKU is a 409 Conflict, a missing referenced record and malformed JSON are a 400 — and none of them echo internal database or parser text back in the response. Gift cards now reject a currency that isn't a real ISO 4217 code, and the returns refund action reports a malformed id the same way its sibling actions do. No configuration change is required; upgrading picks these up automatically.",
+      "sections": [
+        {
+          "heading": "Security",
+          "items": [
+            {
+              "title": "Webhook endpoints can't target internal addresses",
+              "body": "A webhook endpoint URL that points at a loopback, private (RFC 1918), link-local, reserved, or cloud-metadata address — by IP literal or by a known name such as localhost, metadata.google.internal, or any *.internal host — is now refused when the subscription is created, on both the delivery and outbound-registration paths. A trailing-dot form of those hosts (for example localhost. or 169.254.169.254.) is normalized before the check so it can't slip past. Public https endpoints are unaffected."
+            }
+          ]
+        },
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Admin errors return the right status and don't leak internals",
+              "body": "Creating a product, variant, or inventory row with a duplicate key now returns 409 Conflict instead of 500; attaching media to a missing product, and pasting malformed JSON into the shipping-zone editor, now return 400. None of these responses include raw database or JSON-parser text — the detail is a generic, operator-facing message and the underlying error is recorded server-side. The same applies to the receipt and packing-slip routes."
+            },
+            {
+              "title": "Gift cards validate the currency",
+              "body": "Issuing a gift card with a currency that isn't a real ISO 4217 code is now rejected with a 400 instead of creating a card in a non-existent currency."
+            },
+            {
+              "title": "Consistent error status for refunds",
+              "body": "The returns refund action reports a malformed return id with the same 400 its approve, receive, and reject siblings use; a well-formed id that doesn't exist is still a 404."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.10",
+      "date": "2026-05-30",
+      "headline": "Order discounts are split across lines for accurate partial refunds",
+      "summary": "When an order carries a cart-level discount, the admin console now records how that discount split across the order's lines — proportional to each line's value — so a later partial refund of one line knows that line's discounted share rather than the whole-order amount. A new read-only Discount splits screen shows the per-line breakdown for an order. This is back-office bookkeeping recorded after the order is placed; it has no effect on what the shopper is charged, and an order with no discount records nothing.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Per-line discount allocation + admin view",
+              "body": "An order that carried an automatic cart discount now gets a recorded breakdown of how that discount split across its lines — proportional to each line's subtotal, summing exactly to the discount. A read-only Discount splits admin screen shows the breakdown for an order. The recording runs after the order is placed and never affects the charged amount; an order with no discount records nothing."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.9",
+      "date": "2026-05-30",
+      "headline": "Automatic discounts now apply at checkout",
+      "summary": "The automatic-discount rules you define in the admin console — an amount or percentage off a cart that meets a threshold — now reduce the order total at checkout. When a rule matches, the discount is applied (capped so it never exceeds the order subtotal) and shown in the quote the shopper pays; when no rule matches, or none are defined, the total is exactly as before, so a store that has not set up rules is unaffected. The admin screen for managing rules already shipped; this wires it through to the checkout quote and the charge.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Automatic cart discounts at checkout",
+              "body": "When a cart matches a configured automatic-discount rule, the checkout reduces the order total by the rule's saving — capped to the order subtotal so the total is never negative — and the reduced amount is what the shopper is charged. With no matching rule, or no rules defined, the order total is unchanged, so the change stays invisible until you set rules up; any rule-engine error degrades to no discount rather than blocking checkout."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.8",
+      "date": "2026-05-30",
+      "headline": "Update the vendored blamejs runtime to v0.14.6",
+      "summary": "Refreshes the vendored blamejs runtime from v0.14.5 to v0.14.6, a maintenance update. The createApp request-lifecycle security stack the shop composes — CSRF, fetch-metadata, body-parser, cookies, rate limiting — is unchanged in default behavior. v0.14.6 adds opt-in RFC 9457 problem+json and onDeny response hooks to the access-refusal middleware (defaults unchanged, so nothing the shop relies on shifts) and corrects a few internal export and bearer-scope paths. No operator action is required.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Vendored blamejs runtime updated to v0.14.6",
+              "body": "The pinned blamejs runtime moves from v0.14.5 to v0.14.6. The middleware the storefront and admin compose keeps its current default behavior; the release adds opt-in problem-details / onDeny response hooks to the refusal middleware and fixes internal export and bearer-scope paths. No behavior change for the shop."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.7",
+      "date": "2026-05-30",
+      "headline": "Shipping zones now apply at checkout",
+      "summary": "The shipping zones you define in the admin console — per-region rates by destination, parcel weight, and order value — now drive the shipping options shown at checkout. When a cart's destination matches a zone, the shopper sees that zone's rates; when no zone matches, or none are defined, checkout falls back to the existing flat-rate table exactly as before, so a store that has not configured zones is entirely unaffected. A fully digital order is never quoted physical shipping. The admin screen for managing zones already shipped; this wires it through to the checkout quote.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Zone-based shipping rates at checkout",
+              "body": "When a cart's destination matches a configured shipping zone, the checkout shipping quote uses that zone's rates — resolved by destination country and region, parcel weight, and order subtotal — instead of the flat-rate table. With no matching zone, or no zones defined, checkout returns the existing flat rates unchanged, so the change stays invisible until you set zones up; any lookup error degrades to the same flat fallback. A fully digital order (no shipping-requiring item) is never quoted physical shipping."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.6",
+      "date": "2026-05-30",
+      "headline": "Update the vendored blamejs runtime to v0.14.5",
+      "summary": "Refreshes the vendored blamejs runtime from v0.13.46 to v0.14.5, a maintenance update. The request-lifecycle security stack the storefront and admin depend on — CSRF, fetch-metadata, body-parser, cookies, and rate limiting — is unchanged across this range. The runtime's breaking changes in this window (stricter OAuth JAR request-object typing and a PGP signature return type) are in surfaces this shop does not use, so there is no behavior change and no operator action is required.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Vendored blamejs runtime updated to v0.14.5",
+              "body": "The pinned blamejs runtime moves from v0.13.46 to v0.14.5, picking up the framework's maintenance and hardening work across that range. The createApp request-lifecycle middleware the shop composes (CSRF, fetch-metadata, body-parser, cookie, and rate-limit layers) is unchanged, so this refresh carries no behavior change for the storefront or admin console."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.5",
+      "date": "2026-05-30",
+      "headline": "Shipping-label management in the admin console",
+      "summary": "The admin console gains shipping-label tools. On an order, void a purchased label — with a reason — when it needs reprinting, alongside the existing mark-as-used action. A new Shipping labels section adds cross-order visibility: a status-filtered list, the mint queue of labels awaiting a broker, and a broker-spend report that totals label costs by carrier and currency over a date range. This is bookkeeping and reporting only — nothing in the storefront, cart, or checkout changes.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Void a shipping label from the order",
+              "body": "Each purchased label on an order now offers a Void action with a reason, for when a label is reprinted at a different weight or carrier. Voiding is refused once a label has been used or already voided, or once it is past the carrier's void window."
+            },
+            {
+              "title": "Shipping labels admin section",
+              "body": "A new Shipping labels section gives cross-order visibility: a status-filtered label list, the mint queue of labels awaiting a broker, and a broker-spend report totalling label cost grouped by carrier and currency over a date range."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.4",
+      "date": "2026-05-30",
+      "headline": "Sales-tax filings and remittance tracking in the admin console",
+      "summary": "The admin console gains a Tax filings section for tracking sales-tax remittance across reporting periods. Open a filing period for a jurisdiction, compute the tax collected from completed orders in that window, then record the submission and the payment as you remit. Each filing carries a per-rate breakdown and an audit trail, and the list surfaces what's due soon or already overdue. A per-jurisdiction remittance report totals the tax owed across a date range. Every figure derives from completed orders — nothing in the storefront, cart, or checkout changes.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Tax filings admin console",
+              "body": "A new Tax filings section tracks sales-tax remittance: open a filing period for a jurisdiction and reporting kind, compute the tax collected from completed orders in the window with a per-rate breakdown, then record submission and payment through the filing lifecycle. The list surfaces filings due soon or overdue, and a remittance report totals tax owed per jurisdiction across a date range. This is reporting only — it reads completed orders and changes nothing in checkout."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.3",
+      "date": "2026-05-30",
+      "headline": "Manage quantity-break (volume) pricing from the admin console",
+      "summary": "The admin console gains a Quantity breaks section for creating and managing volume-pricing tier sets — buy-more-save-more rules scoped to a SKU, product, collection, vendor, category, or the whole store. Each set defines one or more quantity thresholds (e.g. buy 5, buy 10) with a percentage off, an amount off each unit, an amount off the line, or a fixed per-unit price, and can be marked exclusive or left to stack with others. A sample-price preview shows the discounted unit at each threshold before you commit, and sets archive and restore. The tiers take effect immediately on the product page, in the cart, and at checkout.",
+      "sections": [
+        {
+          "heading": "Added",
+          "items": [
+            {
+              "title": "Quantity Breaks admin console",
+              "body": "A new Quantity breaks section manages volume-pricing tier sets: create a set scoped to a SKU, product, collection, vendor, category, or globally; define one or more quantity thresholds with a percent-off, amount-off-each, amount-off-line, or fixed-per-unit discount; mark a set exclusive or let it stack. A sample-price preview shows the discounted unit at each threshold, and sets archive and restore. The tiers apply automatically on the product page, the cart, and at checkout."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.2",
+      "date": "2026-05-30",
+      "headline": "Creating a product lands you on its detail screen to finish setup",
+      "summary": "Creating a product from the admin console now takes you straight to that product's detail screen — where you add a variant, set its price, and add stock — instead of returning you to the product list. A banner on the new product names the remaining steps to make it sellable. This removes the hunt-for-the-product-you-just-made step from the catalog setup flow.",
+      "sections": [
+        {
+          "heading": "Changed",
+          "items": [
+            {
+              "title": "Product create flows straight into editing",
+              "body": "Submitting the new-product form now redirects to the product's detail screen with a banner naming the next steps — add a variant with a SKU, set its price, and add stock — rather than bouncing back to the product list. Configuring a just-created product no longer requires finding it again first."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.1",
+      "date": "2026-05-30",
+      "headline": "Fix CSRF origin check refusing authenticated forms behind a TLS-terminating proxy",
+      "summary": "The token-based CSRF protection added in 0.3.0 runs an Origin/Referer pre-check on every state-changing request. When the app is served behind a proxy that terminates TLS and forwards plain HTTP to the application — a CDN or load balancer, the standard production topology — the application saw the connection as HTTP and rebuilt its own origin as `http://<host>`, while the browser's request carried `Origin: https://<host>`. That bare scheme mismatch made the check refuse every legitimate same-origin POST as cross-origin, blocking sign-in and every account and admin form. The CSRF gate now trusts the forwarded protocol header — the same proxy stance the session cookies already use — so it derives the real public origin, and it matches against an explicit allowlist of the public origin(s), configurable via SHOP_PUBLIC_ORIGINS. The token cookie also regains its `__Host-` prefix over the forwarded HTTPS connection. No operator action is required for the default origin.",
+      "sections": [
+        {
+          "heading": "Fixed",
+          "items": [
+            {
+              "title": "Authenticated forms no longer refused behind a TLS-terminating proxy",
+              "body": "The CSRF origin pre-check derived the application origin from the raw proxied connection scheme, so a same-origin browser POST carrying `Origin: https://<host>` was refused as cross-origin under a CDN that forwards plain HTTP. The gate now trusts the forwarded `x-forwarded-proto` and matches against an explicit public-origin allowlist — `SHOP_PUBLIC_ORIGINS` (comma-separated), defaulting to the canonical origin — so sign-in and the account and admin forms submit correctly. The double-submit token cookie also regains its `__Host-` prefix over the forwarded HTTPS connection."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.3.0",
+      "date": "2026-05-30",
+      "headline": "Token-based CSRF protection on the account and admin forms",
+      "summary": "Every state-changing form on the customer account surface — subscriptions, addresses, wishlist, returns, reviews, loyalty, referrals, passkey management, profile, checkout — and the entire admin console now carries a per-request double-submit CSRF token that is validated on submission. This is a defense-in-depth layer on top of the existing SameSite session cookies and the fetch-metadata cross-site gate. It lands with an update of the vendored blamejs runtime to v0.13.46, whose createApp now wires CSRF into the request lifecycle by default (closing the long-standing gap where it was documented but not enforced). The edge-rendered, cached storefront forms (add-to-cart, cookie consent, newsletter, currency switch) keep their SameSite + fetch-metadata defense — a per-session token cannot be embedded in HTML that is cached and identical for every visitor, and forcing one would break no-JS submission. No operator action or configuration change is required.",
+      "sections": [
+        {
+          "heading": "Security",
+          "items": [
+            {
+              "title": "Per-form CSRF tokens on account and admin",
+              "body": "The container-rendered account and admin forms now embed a hidden `_csrf` field carrying a per-request double-submit token; the server validates it (constant-time) on every state-changing POST. The passkey enrolment / sign-in islands send the matching token in the `X-CSRF-Token` header. This is layered on top of — not a replacement for — the SameSite session cookies and the fetch-metadata cross-site refusal already in place."
+            },
+            {
+              "title": "Vendored blamejs runtime updated to v0.13.46",
+              "body": "createApp now wires CSRF (double-submit cookie), plus the cookie / CSP-nonce / fetch-metadata / body-parser layers, into the request lifecycle by default. The shop adopts the CSRF default scoped so the edge-cached, dual-rendered storefront endpoints (cart, consent, newsletter, currency) remain on their SameSite + fetch-metadata defense, while the authenticated account and admin surfaces gain the token check. A lint rule now flags any new edge-rendered POST form that would need that exemption."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
