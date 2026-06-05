@@ -280,7 +280,12 @@ async function httpRequest(opts) {
       res.on("data", function (c) { chunks.push(c); });
       res.on("end", _settle);
       res.on("error", function (e) {
-        if (e && (e.code === "ECONNRESET" || e.code === "EPIPE")) return _settle();
+        // Settling with a partial body on a mid-read reset is correct ONLY
+        // for routes whose refusal can legitimately be a wire reset (the
+        // over-cap upload case) — callers opt in via tolerateEarlyClose.
+        // Everywhere else a reset mid-response is a real server failure
+        // and must fail the test loudly.
+        if (opts.tolerateEarlyClose && e && (e.code === "ECONNRESET" || e.code === "EPIPE")) return _settle();
         if (!settled) { settled = true; reject(e); }
       });
     });

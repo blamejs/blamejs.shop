@@ -1972,6 +1972,14 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
    on the right — reusing .cart-page__grid + .cart-page__summary so the
    layout, sticky behaviour, and mobile stacking match the cart. */
 .checkout-page__form-col .form-stack { max-width: 100%; }
+/* Honest "no shipping address needed" note above the address block on an
+   all-digital cart. Reads as muted helper copy, like the gift/pickup notes. */
+.checkout-page__digital-note {
+  margin: calc(-1 * var(--space-2)) 0 0;
+  font-size: var(--text-sm);
+  color: var(--mute);
+  line-height: 1.5;
+}
 .checkout-page__summary-head {
   display: flex; justify-content: space-between; align-items: baseline;
   gap: var(--space-3); margin-bottom: var(--space-4);
