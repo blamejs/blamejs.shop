@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.7",
+  "date": "2026-06-05",
+  "headline": "Payment page: Trusted Types now permits Stripe's loader through a real allowlist, and the Amazon Pay button loads",
+  "summary": "Two payment-page fixes. The site enforces Trusted Types, and Stripe's browser library assigns script URLs without registering a policy — the console logged a TrustedScriptURL violation on every payment page, the failure class that can break a 3-D Secure challenge mid-payment. Rather than relaxing enforcement, the page now registers the default Trusted Types policy before Stripe loads: it admits script URLs from Stripe's own origins and throws for anything else, so enforcement stays on with a genuine gate. Second, the express-wallet row offered an Amazon Pay button whose frame the payment page's policy refused to load; the page's frame allowance now includes the Stripe-operated CDN that serves wallet buttons, scoped to the payment page only. Every other page keeps the strict policy unchanged.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Trusted Types policy for the Stripe loader",
+          "body": "The payment page registers the default Trusted Types policy before the Stripe script tag, synchronously, integrity-pinned like every other script. The policy admits script URLs whose origin is js.stripe.com or a subdomain of it and throws for any other host — lookalike domains, plain http, and non-Stripe CDNs are refused. Browsers without Trusted Types are unaffected. Pages outside the payment route keep require-trusted-types-for enforcement with no registered loader policy, exactly as before."
+        },
+        {
+          "title": "Express wallet buttons can load their frames",
+          "body": "The payment page's frame allowance adds Stripe's wallet-button CDN (b.stripecdn.com) and Stripe's dynamic subdomains (*.js.stripe.com) alongside the existing js.stripe.com and hooks.stripe.com entries, restoring the Amazon Pay express button. The allowance is scoped to the payment page; the storefront-wide policy still permits no third-party frames at all."
+        }
+      ]
+    }
+  ]
+}

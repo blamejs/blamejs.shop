@@ -89,8 +89,37 @@ function _unit() {
   var stripeCsp = sm.scopedCsp(["stripe"]);
   check("(a) scopedCsp(['stripe']) admits js.stripe.com on script-src",
     /script-src[^;]*https:\/\/js\.stripe\.com/.test(stripeCsp));
+  // Stripe.js v3 starts perf sub-frames + the 3DS challenge loader on
+  // per-origin *.js.stripe.com hosts (Stripe security guide), so the
+  // wildcard MUST be admitted on script-src or the dynamic load is refused.
+  check("(a) scopedCsp(['stripe']) admits *.js.stripe.com on script-src",
+    /script-src[^;]*https:\/\/\*\.js\.stripe\.com/.test(stripeCsp));
   check("(a) scopedCsp(['stripe']) admits api.stripe.com on connect-src",
     /connect-src[^;]*https:\/\/api\.stripe\.com/.test(stripeCsp));
+  // frame-src must carry the apex + wildcard (Payment Element / 3DS frames),
+  // hooks.stripe.com (redirect confirmations), and b.stripecdn.com (the
+  // Express Checkout wallet button iframes, e.g. the Amazon Pay button) —
+  // exactly the host set the probe needs to unblock the express wallets,
+  // no wildcards beyond *.js.stripe.com.
+  // Anchor to a directive boundary — a bare /frame-src/ also matches inside
+  // `fenced-frame-src`, which carries a different (deny) value.
+  var stripeFrame = (stripeCsp.match(/(?:^|;\s*)frame-src ([^;]*)/) || [])[1] || "";
+  check("(a) scopedCsp(['stripe']) frame-src admits js.stripe.com",
+    /https:\/\/js\.stripe\.com\b/.test(stripeFrame));
+  check("(a) scopedCsp(['stripe']) frame-src admits *.js.stripe.com",
+    /https:\/\/\*\.js\.stripe\.com\b/.test(stripeFrame));
+  check("(a) scopedCsp(['stripe']) frame-src admits hooks.stripe.com",
+    /https:\/\/hooks\.stripe\.com\b/.test(stripeFrame));
+  check("(a) scopedCsp(['stripe']) frame-src admits b.stripecdn.com (Amazon Pay button iframe)",
+    /https:\/\/b\.stripecdn\.com\b/.test(stripeFrame));
+  // No over-broad host: EVERY wildcard host token in the whole policy must be
+  // exactly `https://*.js.stripe.com` (the one Stripe documents) — no
+  // `https://*.stripe.com`, `https://*.stripecdn.com`, or bare `https:`.
+  var wildcardHosts = stripeCsp.match(/https:\/\/\*[^\s;]*/g) || [];
+  check("(a) scopedCsp(['stripe']) every wildcard host is exactly *.js.stripe.com",
+    wildcardHosts.length > 0 && wildcardHosts.every(function (h) {
+      return h === "https://*.js.stripe.com";
+    }));
   _assertProtectionsIntact("(a) stripe scoped CSP", stripeCsp);
 
   // (b) stripe+paypal admits both hosts.
@@ -167,6 +196,27 @@ function _unit() {
   check("(e) pay body has NO inline <script> with executable body (only src tags)",
     !/<script>[^<]*\S[^<]*<\/script>/i.test(payHtml));
 
+  // (e2) the Trusted Types `default` policy island is emitted BEFORE the
+  //      Stripe SDK <script> tag (so the createScriptURL gate is registered
+  //      before Stripe.js fires its first dynamic load), and it is NOT
+  //      deferred (must run synchronously at parse time, ahead of the
+  //      parser-inserted SDK tag). pay.js stays deferred and is emitted AFTER.
+  var ttIdx     = payHtml.indexOf("pay-trusted-types");
+  var sdkIdx    = payHtml.indexOf("js.stripe.com/v3/");
+  var payJsIdx  = payHtml.search(/\/assets\/.*pay(\.[a-f0-9]+)?\.js/);
+  check("(e2) pay body emits the pay-trusted-types island", ttIdx !== -1);
+  check("(e2) TT policy island is emitted BEFORE the Stripe SDK tag",
+    ttIdx !== -1 && sdkIdx !== -1 && ttIdx < sdkIdx);
+  check("(e2) pay.js island is emitted AFTER the Stripe SDK tag",
+    payJsIdx !== -1 && sdkIdx !== -1 && payJsIdx > sdkIdx);
+  // The TT-policy <script> must NOT be deferred (it has to register the
+  // policy before the SDK runs). Isolate its own tag and assert no `defer`.
+  var ttTag = (payHtml.match(/<script[^>]*pay-trusted-types[^>]*><\/script>/) || [])[0] || "";
+  check("(e2) TT policy <script> carries an integrity (SRI) attr",
+    /integrity="sha384-/.test(ttTag));
+  check("(e2) TT policy <script> is NOT deferred (runs sync before the SDK)",
+    ttTag.length > 0 && ttTag.indexOf(" defer") === -1 && ttTag.indexOf(" async") === -1);
+
   // (f) XSS-shaped values render escaped in data-* attributes.
   var xssId = "\"><script>alert(1)</script>";
   var xssHtml = sf.renderPayPage({
@@ -185,7 +235,7 @@ function _unit() {
   // (g) island assets exist + carry SRI in the manifest.
   var manifest = require("../../lib/asset-manifest.json");
   var assets = manifest.assets || manifest;
-  ["js/pay.js", "js/paypal-checkout.js", "js/captcha.js"].forEach(function (k) {
+  ["js/pay.js", "js/pay-trusted-types.js", "js/paypal-checkout.js", "js/captcha.js"].forEach(function (k) {
     var disk = nodePath.resolve(__dirname, "..", "..", "themes", "default", "assets", k);
     check("(g) island asset on disk: " + k, nodeFs.existsSync(disk));
     var entry = assets[k];
@@ -193,6 +243,54 @@ function _unit() {
       !!(entry && (entry.integrity || entry.sri)) &&
       String(entry.integrity || entry.sri).indexOf("sha384-") === 0);
   });
+
+  // (h) Trusted Types `default` policy source — the createScriptURL gate is
+  //     a REAL allowlist (returns Stripe origins, throws everything else),
+  //     not a relaxation. Source-shape assertions on the shipped asset plus a
+  //     functional test of the validator extracted from the source.
+  var ttSrc = nodeFs.readFileSync(
+    nodePath.resolve(__dirname, "..", "..", "themes", "default", "assets", "js", "pay-trusted-types.js"),
+    "utf8");
+  check("(h) TT island registers a policy named 'default'",
+    /createPolicy\(\s*["']default["']/.test(ttSrc));
+  check("(h) TT island defines createScriptURL", /createScriptURL\s*:/.test(ttSrc));
+  check("(h) TT island guards behind window.trustedTypes (no-op on Firefox/Safari)",
+    /window\.trustedTypes/.test(ttSrc) && /createPolicy[^a-z]/.test(ttSrc));
+  check("(h) TT island THROWS for non-Stripe origins (real gate, not passthrough)",
+    /throw\s+new\s+TypeError/.test(ttSrc));
+
+  // Functionally exercise the validator. The IIFE references `window` /
+  // `URL`; extract the Stripe-origin regex it ships and re-derive the gate so
+  // the test asserts behavior, not just text. (The regex is the load-bearing
+  // allowlist — if it drifts, this fails.)
+  // Capture the regex BODY between the literal's slashes (no flags shipped)
+  // and rebuild it with `new RegExp` — avoids eval, and reconstructs the
+  // exact allowlist the asset ships so a drift in the pattern fails here.
+  var reMatch = ttSrc.match(/STRIPE_ORIGIN\s*=\s*\/(.+?)\/\s*;/);
+  check("(h) TT island ships a STRIPE_ORIGIN allowlist regex", !!reMatch);
+  if (reMatch) {
+    var stripeOriginRe = new RegExp(reMatch[1]);
+    function vet(u) {
+      var origin = new URL(u, "https://blamejs.shop/").origin;
+      if (stripeOriginRe.test(origin)) return u;
+      throw new TypeError("blocked: " + origin);
+    }
+    check("(h) validator ADMITS https://js.stripe.com/v3/",
+      vet("https://js.stripe.com/v3/") === "https://js.stripe.com/v3/");
+    check("(h) validator ADMITS a *.js.stripe.com sub-origin",
+      vet("https://m.js.stripe.com/inner.js") === "https://m.js.stripe.com/inner.js");
+    var rejected = function (u) {
+      try { vet(u); return false; } catch (e) { return e instanceof TypeError; }
+    };
+    check("(h) validator REJECTS an attacker host (evil.example.com)",
+      rejected("https://evil.example.com/x.js"));
+    check("(h) validator REJECTS a stripe.com lookalike (notjs.stripe.com.evil.com)",
+      rejected("https://js.stripe.com.evil.com/x.js"));
+    check("(h) validator REJECTS b.stripecdn.com for SCRIPT urls (frames only, never script)",
+      rejected("https://b.stripecdn.com/x.js"));
+    check("(h) validator REJECTS http (non-https) js.stripe.com",
+      rejected("http://js.stripe.com/v3/"));
+  }
 }
 
 async function _http() {
@@ -240,6 +338,15 @@ async function _http() {
     var payCsp = payResp.headers["content-security-policy"] || "";
     check("(d) /pay response CSP admits js.stripe.com (route-scoped)",
       /js\.stripe\.com/.test(payCsp));
+    // The live response carries the FULL express-wallet frame-src host set,
+    // so the Amazon Pay button iframe (b.stripecdn.com) is no longer blocked.
+    var payFrame = (payCsp.match(/(?:^|;\s*)frame-src ([^;]*)/) || [])[1] || "";
+    check("(d) /pay response frame-src admits *.js.stripe.com",
+      /https:\/\/\*\.js\.stripe\.com\b/.test(payFrame));
+    check("(d) /pay response frame-src admits b.stripecdn.com (Amazon Pay button)",
+      /https:\/\/b\.stripecdn\.com\b/.test(payFrame));
+    check("(d) /pay response script-src admits *.js.stripe.com (dynamic TT load path)",
+      /script-src[^;]*https:\/\/\*\.js\.stripe\.com\b/.test(payCsp));
     _assertProtectionsIntact("(d) /pay route CSP", payCsp);
 
     // (d2) the pay route's Permissions-Policy re-enables `payment` for the
