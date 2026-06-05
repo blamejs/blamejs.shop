@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.76",
+  "date": "2026-06-05",
+  "headline": "Abandoned-cart visibility in the admin console, with honest recovery",
+  "summary": "The admin console gains a Carts screen showing abandoned carts: active carts with items whose last activity is older than a tunable window (twenty-four hours by default), listed freshest-first with line counts, subtotals, guest or signed-in attribution, and a value-at-risk summary. Recovery is built around what the privacy stance actually permits: buyer email addresses are stored only as one-way hashes, so a recovery email is impossible by design and the screen says so plainly. Instead, a per-cart action mints a single-use, code-gated percent-off discount — composing the existing unlock-code rules — and shows the code once for the operator to share through whatever channel they have. Fresh, empty, and converted carts are excluded; queries are window- and limit-bounded; the screen and its JSON shape are bearer-gated like every other console surface.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Abandoned-carts screen with single-use recovery codes",
+          "body": "GET /admin/carts lists abandoned carts — active, containing items, idle past the window (tunable via the hours parameter, clamped to sane bounds) — with per-cart line counts, subtotal, last activity, and the customer link for signed-in carts, plus a count and value-at-risk summary. The per-cart Issue-code action creates a single-use unlock-code discount rule at the operator's chosen percentage and reveals the code once; the action is audited and appears only when the discounts primitive is wired. Session identifiers never appear in the JSON shape, and the screen states why no email recovery exists: addresses are one-way hashed."
+        }
+      ]
+    }
+  ]
+}

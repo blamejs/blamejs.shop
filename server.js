@@ -1857,6 +1857,10 @@ async function main() {
           shop_name:     bootShopName,
           catalog:       catalog,
           order:         order,
+          // Abandoned-cart visibility console (/admin/carts) — reads live
+          // carts directly (no scanner cron needed). Present whenever the
+          // cart primitive is wired.
+          cart:          cart,
           // Operator-readable error feed at /admin/errors (+ the
           // /admin/errors JSON API). Present whenever D1 is wired.
           errorLog:      errorLog,
