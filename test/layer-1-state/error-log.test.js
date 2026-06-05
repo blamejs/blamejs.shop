@@ -31,7 +31,13 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIG_PATH = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0100_error_log.sql");
+// Both migrations: the base table (0100) + the captured-message column
+// the server-error capture path writes (0208). Loaded in order so the
+// ALTER TABLE in 0208 lands on the table 0100 created.
+var MIG_PATHS = [
+  nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0100_error_log.sql"),
+  nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0208_error_log_message.sql"),
+];
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -40,7 +46,9 @@ function _splitSchema(text) {
 
 function _makeQuery() {
   var db = new DatabaseSync(":memory:");
-  _splitSchema(nodeFs.readFileSync(MIG_PATH, "utf8")).forEach(function (s) { db.prepare(s).run(); });
+  MIG_PATHS.forEach(function (p) {
+    _splitSchema(nodeFs.readFileSync(p, "utf8")).forEach(function (s) { db.prepare(s).run(); });
+  });
   return {
     query: async function (sql, params) {
       var stmt = db.prepare(sql);
@@ -360,6 +368,172 @@ async function _validation() {
   check("validation calls landed no rows", Number(n) === 0);
 }
 
+async function _captureHappy() {
+  var q = _makeQuery();
+  var log = errorLogMod.create({ query: q.query });
+
+  // Explicit, distinct occurred_at so the (occurred_at DESC) primary
+  // sort is unambiguous — uuid.v7 is NOT monotonic within a single ms,
+  // so a same-ms tie would order non-deterministically by id.
+  var base = Date.now() - 60000;
+  var out = await log.captureServerError({
+    route: "/checkout", message: "Stripe confirm failed: card_declined",
+    method: "POST", status: 500, occurred_at: base,
+  });
+  check("captureServerError returns id",         typeof out.id === "string" && out.id.length >= 26);
+  check("captureServerError returns occurred_at", Number.isInteger(out.occurred_at) && out.occurred_at > 0);
+  check("captureServerError reports no drop",     !out.dropped);
+
+  var row = q.raw.prepare("SELECT * FROM error_log WHERE id = ?").get(out.id);
+  check("capture persisted one row",      !!row);
+  check("capture stored the message",     row.message === "Stripe confirm failed: card_declined");
+  check("capture stored the route as path", row.path === "/checkout");
+  check("capture stored the method",      row.method === "POST");
+  check("capture stored the status",      row.status === 500);
+  check("capture lands UA class 'other'", row.user_agent_class === "other");
+  check("capture carries NO session PII", row.session_id_hash == null);
+  check("capture carries NO customer PII", row.customer_id == null);
+  check("capture carries NO referrer",    row.referrer == null);
+
+  // Defaults: status→500, method→GET, occurred_at→now.
+  var out2 = await log.captureServerError({ route: "/api/catalog/products", message: "DB timeout", occurred_at: base + 1000 });
+  var row2 = q.raw.prepare("SELECT * FROM error_log WHERE id = ?").get(out2.id);
+  check("capture status defaults to 500", row2.status === 500);
+  check("capture method defaults to GET", row2.method === "GET");
+  check("capture occurred_at stored",     Number(row2.occurred_at) === base + 1000);
+
+  // recentServerErrors returns newest-first, message-bearing only.
+  var recent = await log.recentServerErrors({ limit: 50 });
+  check("recentServerErrors returns both captured rows", recent.length === 2);
+  check("recentServerErrors newest first", recent[0].id === out2.id && recent[1].id === out.id);
+  check("recentServerErrors maps route+message", recent[1].route === "/checkout" && recent[1].message === "Stripe confirm failed: card_declined");
+}
+
+async function _captureIsolatesFromMetadataRows() {
+  var q = _makeQuery();
+  var log = errorLogMod.create({ query: q.query });
+
+  // A response-metadata row (recordError) must NOT appear in the
+  // captured-error feed, and a captured row must NOT pollute the 5xx
+  // aggregate's path/status buckets beyond its own row.
+  await log.recordError({ status: 500, path: "/p/meta", method: "GET", user_agent_class: "desktop" });
+  await log.captureServerError({ route: "/checkout", message: "boom" });
+
+  var recent = await log.recentServerErrors({ limit: 50 });
+  check("feed excludes response-metadata rows", recent.length === 1 && recent[0].route === "/checkout");
+
+  // The metadata row has NULL message; the captured row has NULL referrer/etc.
+  var metaRow = q.raw.prepare("SELECT * FROM error_log WHERE path = ?").get("/p/meta");
+  check("response-metadata row has NULL message", metaRow.message == null);
+}
+
+async function _captureDropsSilent() {
+  var q = _makeQuery();
+  var log = errorLogMod.create({ query: q.query });
+
+  var drops = [
+    null,
+    undefined,
+    "not-an-object",
+    {},                                                        // missing route + message
+    { route: "/x" },                                            // missing message
+    { message: "boom" },                                        // missing route
+    { route: "", message: "boom" },                             // empty route
+    { route: "x".repeat(3000), message: "boom" },               // oversized route
+    { route: "/x", message: "" },                               // empty message
+    { route: "/x", message: 12345 },                            // non-string message
+    { route: "/x", message: "boom", status: 404 },              // 4xx not allowed (goes through recordError)
+    { route: "/x", message: "boom", status: 200 },              // out of 5xx band
+    { route: "/x", message: "boom", method: "FROOB" },          // unknown method
+    { route: "/x", message: "boom", occurred_at: "yesterday" },  // bad occurred_at
+  ];
+
+  for (var i = 0; i < drops.length; i += 1) {
+    var out = await log.captureServerError(drops[i]);
+    check("capture drop-silent case " + i + " returned dropped:true",
+      out && out.dropped === true && typeof out.reason === "string");
+    check("capture drop-silent case " + i + " did NOT throw and did NOT return an id", out.id == null);
+  }
+  var n = q.raw.prepare("SELECT COUNT(*) AS n FROM error_log").get().n;
+  check("no rows landed across every capture drop-silent case", Number(n) === 0);
+}
+
+async function _captureTruncatesMessage() {
+  var q = _makeQuery();
+  var log = errorLogMod.create({ query: q.query });
+
+  // An over-long message is TRUNCATED to MAX_MESSAGE, not dropped — the
+  // head of a scrubbed failure is the useful part.
+  var long = "E".repeat(errorLogMod.MAX_MESSAGE + 500);
+  var out = await log.captureServerError({ route: "/checkout", message: long });
+  check("oversized message still captured (not dropped)", !out.dropped && typeof out.id === "string");
+  var row = q.raw.prepare("SELECT message FROM error_log WHERE id = ?").get(out.id);
+  check("message truncated to MAX_MESSAGE", row.message.length === errorLogMod.MAX_MESSAGE);
+  check("message keeps the head", row.message === "E".repeat(errorLogMod.MAX_MESSAGE));
+}
+
+async function _captureRingBufferCap() {
+  var q = _makeQuery();
+  var log = errorLogMod.create({ query: q.query });
+  var now = Date.now();
+
+  // Seed CAP + 25 captured rows at strictly increasing timestamps. After
+  // each insert the trim keeps only the newest CAP, so the feed holds
+  // exactly CAP rows and the OLDEST 25 are gone.
+  var cap = errorLogMod.SERVER_ERROR_CAP;
+  var total = cap + 25;
+  for (var i = 0; i < total; i += 1) {
+    await log.captureServerError({
+      route: "/checkout", message: "err-" + i,
+      occurred_at: now - (total - i) * 1000,    // older → newer
+    });
+  }
+
+  var n = q.raw.prepare("SELECT COUNT(*) AS n FROM error_log WHERE message IS NOT NULL").get().n;
+  check("ring buffer holds exactly the cap", Number(n) === cap);
+
+  // The 25 oldest (err-0 .. err-24) are gone; the newest (err-{total-1}) remains.
+  var oldest = q.raw.prepare("SELECT COUNT(*) AS n FROM error_log WHERE message = ?").get("err-0").n;
+  check("oldest captured row evicted", Number(oldest) === 0);
+  var newest = q.raw.prepare("SELECT COUNT(*) AS n FROM error_log WHERE message = ?").get("err-" + (total - 1)).n;
+  check("newest captured row retained", Number(newest) === 1);
+
+  // recentServerErrors honours its own limit independent of the cap.
+  var page = await log.recentServerErrors({ limit: 10 });
+  check("recentServerErrors honours limit", page.length === 10);
+  check("recentServerErrors newest-first after trim", page[0].message === "err-" + (total - 1));
+}
+
+async function _captureDropSilentOnBrokenQuery() {
+  // A write failure mid-request must resolve to a silent drop — the
+  // capture is wired into catch blocks and must never throw.
+  var calls = 0;
+  var brokenQuery = async function () {
+    calls += 1;
+    throw new Error("D1 bridge unreachable");
+  };
+  var log = errorLogMod.create({ query: brokenQuery });
+
+  var out = await log.captureServerError({ route: "/checkout", message: "boom" });
+  check("broken-query capture did NOT throw", out && out.dropped === true);
+  check("broken-query capture reason is internal", out.reason === "internal");
+  check("broken-query capture attempted the write", calls >= 1);
+
+  // recentServerErrors (read-side) propagates a broken-query failure —
+  // that's a dashboard read with an operator on the other end. (The
+  // ADMIN route wraps it in try/catch; the primitive itself throws.)
+  await assert.rejects(log.recentServerErrors({ limit: 10 }), /D1 bridge unreachable/);
+}
+
+async function _captureReadValidation() {
+  var q = _makeQuery();
+  var log = errorLogMod.create({ query: q.query });
+  // recentServerErrors is a read-side surface — bad limit THROWS.
+  await assert.rejects(log.recentServerErrors({ limit: 0 }),   /limit/);
+  await assert.rejects(log.recentServerErrors({ limit: 501 }), /limit/);
+  await assert.rejects(log.recentServerErrors({ limit: 1.5 }), /limit/);
+}
+
 async function run() {
   await _recordHappy();
   await _recordDropsSilent();
@@ -370,6 +544,13 @@ async function run() {
   await _byStatusPagination();
   await _metrics();
   await _validation();
+  await _captureHappy();
+  await _captureIsolatesFromMetadataRows();
+  await _captureDropsSilent();
+  await _captureTruncatesMessage();
+  await _captureRingBufferCap();
+  await _captureDropSilentOnBrokenQuery();
+  await _captureReadValidation();
 }
 
 module.exports = { run: run };
