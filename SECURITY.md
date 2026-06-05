@@ -112,6 +112,15 @@ node -e "
 
 ## Application checklist
 
+- **Guest order pages are access-gated, not capability URLs.** A guest
+  order's confirmation page (name, address, items) requires the placing
+  browser's sealed device cookie, the signed `?k=` token carried by the
+  order-receipt email link (HMAC-SHA3-512, order-scoped, expiring), or
+  the signed-in owner — a bare order UUID returns 404. The token key is
+  derived from the app secret (`VAULT_PASSPHRASE`, falling back to
+  `D1_BRIDGE_SECRET`), so rotating that secret invalidates outstanding
+  emailed order links; rotate deliberately and expect customers to use
+  fresh links afterward.
 - **D1 bridge secret.** When deploying on Cloudflare, the container
   reaches D1 through a Worker service binding. The bridge is gated by
   a shared-secret header (`X-D1-Bridge-Secret`) so the route only
