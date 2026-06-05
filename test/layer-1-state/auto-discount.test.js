@@ -361,6 +361,38 @@ async function _evalAmountOffEachAndRounding() {
     cart: { subtotal_minor: 1001, lines: [{ sku: "A", quantity: 1, unit_price_minor: 1001 }] },
   });
   check("percent_off: half-away-from-zero rounding", rRound.applied[0].savings_minor === 124);
+
+  // Exact-multiple sanity: 8250 * 1250 / 10000 = 1031.25 -> 1031
+  // (half-away). No float drift at this magnitude; pins the result so a
+  // future rounding-direction change is caught.
+  var q3 = _makeQuery();
+  var ad3 = autoDiscount.create({ query: q3 });
+  await ad3.defineRule({
+    slug: "round-exact", title: "exact",
+    trigger: { kind: "item_count_min", min_count: 1 },
+    value:   { kind: "percent_off", basis_points: 1250 },
+  });
+  var rExact = await ad3.evaluate({
+    cart: { subtotal_minor: 8250, lines: [{ sku: "A", quantity: 1, unit_price_minor: 8250 }] },
+  });
+  check("percent_off: 8250 * 12.50% = 1031", rExact.applied[0].savings_minor === 1031);
+
+  // Float-drift guard: a JS float multiply of base*basis_points
+  // overflows 2^53 here and lands one cent high. base=27048646418003,
+  // bps=333 -> exact 900719925719, but (base*333)/10000 rounds to
+  // 900719925720 in float. The exact-BigInt path must return 719.
+  var q4 = _makeQuery();
+  var ad4 = autoDiscount.create({ query: q4 });
+  await ad4.defineRule({
+    slug: "round-big", title: "big",
+    trigger: { kind: "item_count_min", min_count: 1 },
+    value:   { kind: "percent_off", basis_points: 333 },
+  });
+  var bigBase = 27048646418003;
+  var rBig = await ad4.evaluate({
+    cart: { subtotal_minor: bigBase, lines: [{ sku: "A", quantity: 1, unit_price_minor: bigBase }] },
+  });
+  check("percent_off: large base exact (no float drift)", rBig.applied[0].savings_minor === 900719925719);
 }
 
 // ---- evaluate: BOGO ----------------------------------------------------

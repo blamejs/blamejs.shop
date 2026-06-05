@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.60",
+  "date": "2026-06-04",
+  "headline": "Exact integer math for percentage discounts and insurance premiums, and an honest Add-a-card state under partial Stripe configuration",
+  "summary": "Every place that computes a percentage of a money amount — automatic percent-off discounts, bundle discounts and their per-line allocation, partial-refund policy amounts, and shipping-insurance premiums — now uses exact integer arithmetic instead of a floating-point intermediate. On very large amounts the float product loses precision past 2^53 and can drift the rounded result by a minor unit; charged totals were never affected (the charge path was already integer end-to-end), but displayed and clamped values now match exact math everywhere, with each site's rounding direction preserved. Separately, the account Payment-methods screen no longer links into a 503 when the Stripe publishable key is missing: the Add-a-card affordance now renders as a disabled control with an explanatory note until the configuration is complete, matching how the unconfigured checkout behaves.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Percentage-of-amount math is exact integer arithmetic",
+          "body": "Automatic percent-off discounts, bundle discounts, the cart's per-line bundle allocation, partial-refund policy amounts, and shipping-insurance premiums all computed `amount × basis_points / 10000` through a floating-point multiply. Amounts and rates are both integers, so the computation is now exact integer arithmetic with each site's rounding direction unchanged — half-away-from-zero for discounts, floor for allocations and refunds, ceiling for insurance premiums (the insurer is never short). The drift was only reachable on very large amounts (products beyond 2^53) and never touched a charged total, which was already integer end-to-end; tests now pin exact results on amounts past the float-precision boundary."
+        },
+        {
+          "title": "Add a card renders honestly when Stripe configuration is incomplete",
+          "body": "Saving a card needs the Stripe publishable key in addition to the server-side API keys. With the server keys set but the publishable key missing, the Payment-methods screen rendered a live \"Add a card\" link that dead-ended on a 503. The link now gates on the same condition the add route enforces: when the publishable key is absent it renders as a disabled control with a note explaining the missing configuration, while listing, choosing a default, and removing saved cards keep working. The route's own 503 remains as defense in depth for a directly typed URL."
+        }
+      ]
+    }
+  ]
+}
