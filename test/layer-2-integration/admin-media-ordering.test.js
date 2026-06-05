@@ -392,14 +392,24 @@ async function _runUploadHardening() {
     var mpBig = _multipart([
       { name: "file", filename: "huge.png", contentType: "image/png", bytes: bigBytes },
     ]);
+    // The wire outcome of an over-cap upload is inherently two-shaped: the
+    // parser's 413 rejection mid-stream can flush a response, or the
+    // teardown's RST can discard it and the client sees a connection reset
+    // (exactly what a real browser gets from capped endpoints). Both are
+    // refusals; the durable contract asserted here is no R2 write, no row,
+    // and never a 500/saved success.
     var big = await helpers.httpRequest({
       port: port, path: P + "/media/upload-file", method: "POST", jar: jar,
       headers: { "content-type": mpBig.contentType }, body: mpBig.body,
+      tolerateEarlyClose: true,
     });
+    check("oversize upload refused (4xx/err or wire reset)",
+      big.reset === true || big.status === 413 || (big.headers.location || "").indexOf("err=1") !== -1);
     check("oversize upload not 2xx/3xx-saved",   !( (big.headers.location || "").indexOf("saved=1") !== -1 ));
     check("oversize upload not a 500 leak",      big.status !== 500);
     check("oversize wrote nothing",              puts.length === 2);
-    _noLeak("oversize upload", big);
+    check("oversize created no row",             (await catalog.media.listForProduct(prod.id)).length === 2);
+    if (!big.reset) _noLeak("oversize upload", big);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }

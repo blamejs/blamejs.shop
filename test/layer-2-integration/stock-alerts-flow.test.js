@@ -12,10 +12,12 @@
  * mailer so the sweep + email fan-out exercise the production code path.
  *
  * Asserts: OOS PDP renders the notify form (in-stock PDP doesn't), subscribe
- * sends a confirmation email + records the token, confirm stamps the row,
- * the sweep emails once on restock + is idempotent, the secret gate, the
- * EDGE_POST_PATHS CSRF exemption is scoped (not global), XSS/email-injection
- * is escaped + a bad email 400s not 500s, and unsubscribe round-trips.
+ * sends a confirmation email + records the confirm token + a token-bearing
+ * unsubscribe link, confirm stamps the row, the sweep emails once on restock
+ * + is idempotent, the secret gate, both stock-alert POSTs are edge-exempt
+ * while the exemption stays scoped, XSS/email-injection is escaped + a bad
+ * email 400s not 500s, and the token-gated unsubscribe round-trips while the
+ * old (email, sku) tuple attack — and a wrong token — no longer cancel a row.
  *
  * Network: zero — every request lands on 127.0.0.1.
  */
@@ -33,7 +35,7 @@ var b = bShop.framework;
 
 var SWEEP_SECRET = "sweep-secret-0123456789abcdef-test";
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0048_stock_alerts.sql"]
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0048_stock_alerts.sql", "0207_stock_alert_unsubscribe_token.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 async function _run() {
@@ -90,7 +92,7 @@ async function _run() {
               await email.sendBackInStock({
                 to: row.email_normalised, product_title: row.sku, sku: row.sku,
                 product_url: "https://shop.example/search?q=" + encodeURIComponent(row.sku),
-                unsubscribe_url: "https://shop.example/stock-alert/unsubscribe?email=" + encodeURIComponent(row.email_normalised) + "&sku=" + encodeURIComponent(row.sku),
+                unsubscribe_url: "https://shop.example/stock-alert/unsubscribe?token=" + encodeURIComponent(row.unsubscribe_token),
               });
               summary.emailed += 1;
             } catch (_e) { /* drop-silent per row */ }
@@ -133,9 +135,15 @@ async function _run() {
       return !!confirmMsg;
     }, { timeoutMs: 5000, label: "t2: confirmation email recorded" });
     check("t2 confirmation email to the shopper", confirmMsg.to === "shopper@example.com");
-    var tokenMatch = (confirmMsg.text || confirmMsg.html || "").match(/\/stock-alert\/confirm\/([A-Za-z0-9_-]{32})/);
+    var confirmBody = confirmMsg.text || confirmMsg.html || "";
+    var tokenMatch = confirmBody.match(/\/stock-alert\/confirm\/([A-Za-z0-9_-]{32})/);
     check("t2 confirmation carries a confirm link", !!tokenMatch);
     var token = tokenMatch && tokenMatch[1];
+    // The confirmation email also carries a token-bearing unsubscribe link —
+    // the per-row bearer is the authorization (no email/sku tuple in the URL).
+    var confirmUnsubMatch = confirmBody.match(/\/stock-alert\/unsubscribe\?token=([A-Za-z0-9_-]{32})/);
+    check("t2 confirmation carries a token unsub link", !!confirmUnsubMatch);
+    check("t2 confirm unsub link has no email/sku tuple", confirmBody.indexOf("/stock-alert/unsubscribe?email=") === -1);
 
     // t3 — confirm → 200 confirmed page; DB row has confirmed_at stamped.
     var confirm = await helpers.httpRequest({ port: port, path: "/stock-alert/confirm/" + token });
@@ -180,23 +188,32 @@ async function _run() {
     var noSweep = await helpers.httpRequest({ port: port, path: "/_/stock-alert-sweep", method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     check("t6 absent secret 401",                 noSweep.status === 401);
 
-    // t7 — CSRF parity: subscribe with NO csrf cookie/token succeeds (the
-    // EDGE_POST_PATHS exemption); a container-CSRF route still 403s without a
-    // token (the exemption is scoped, not global). The cookie consent POST
-    // /consent is itself edge-exempt, so use a NON-exempt container POST:
-    // /stock-alert/unsubscribe is NOT in EDGE_POST_PATHS, so a no-token POST
-    // to it would 403 if the storefront-level csrf guard were active. This
-    // test app boots WITHOUT the security middleware, so instead we prove the
-    // exemption logic at the source: the subscribe path is exempt, the
-    // unsubscribe path is not.
+    // t7 — CSRF parity: both stock-alert POSTs are token-bearer surfaces, so
+    // both are in EDGE_POST_PATHS (subscribe rides the cookie-less edge PDP
+    // form; unsubscribe is the one-click mail-client POST whose per-row
+    // bearer token IS the authorization). The exemption stays SCOPED, not
+    // global — a container-CSRF action like a /products/ review POST is NOT
+    // exempt. We prove the exemption logic at the source.
     check("t7 subscribe path is edge-exempt",     bShop.securityMiddleware.EDGE_POST_PATHS.indexOf("/stock-alert/subscribe") !== -1);
-    check("t7 unsubscribe path NOT edge-exempt",  bShop.securityMiddleware.EDGE_POST_PATHS.indexOf("/stock-alert/unsubscribe") === -1);
-    // And a fresh no-cookie subscribe still works (no token needed).
+    check("t7 unsubscribe path is edge-exempt",   bShop.securityMiddleware.EDGE_POST_PATHS.indexOf("/stock-alert/unsubscribe") !== -1);
+    check("t7 exemption stays scoped (no /products/)", bShop.securityMiddleware.EDGE_POST_PATHS.indexOf("/products/") === -1);
+    // And a fresh no-cookie subscribe still works (no token needed). Capture
+    // its confirmation email so t9 can drive the token-based unsubscribe.
+    memory.sent.length = 0;
     var sub2 = await helpers.httpRequest({
       port: port, path: "/stock-alert/subscribe", method: "POST",
       form: { email: "another@example.com", sku: "BIS-TEE-1" },
     });
     check("t7 no-cookie subscribe 200",           sub2.status === 200);
+    var sub2Confirm = null;
+    await helpers.waitUntil(function () {
+      sub2Confirm = memory.sent.find(function (m) { return /Confirm your back-in-stock alert/.test(m.subject || ""); });
+      return !!sub2Confirm;
+    }, { timeoutMs: 5000, label: "t7: another@ confirmation email recorded" });
+    var sub2Body = sub2Confirm.text || sub2Confirm.html || "";
+    var anotherUnsubMatch = sub2Body.match(/\/stock-alert\/unsubscribe\?token=([A-Za-z0-9_-]{32})/);
+    check("t7 confirmation carries token unsub link", !!anotherUnsubMatch);
+    var anotherUnsubToken = anotherUnsubMatch && anotherUnsubMatch[1];
 
     // t8 — XSS / email-injection: a hostile sku/email is escaped, a bad email
     // shape is 400 not 500.
@@ -211,17 +228,46 @@ async function _run() {
     check("t8 bad token confirm 200 (invalid)",   badConfirm.status === 200);
     check("t8 bad token confirm escapes payload", badConfirm.body.indexOf("<script>x</script>") === -1);
 
-    // t9 — unsubscribe round-trip → the row is gone.
+    // t9 — token-based unsubscribe round-trip → the row is gone.
     var beforeUnsub = (await query("SELECT COUNT(*) AS c FROM stock_alerts WHERE email_hash = ?1", [stockAlerts.hashEmail("another@example.com")])).rows[0];
     check("t9 row present before unsubscribe",     Number(beforeUnsub.c) === 1);
-    var unsub = await helpers.httpRequest({
+
+    // The OLD attack: POST a guessed (email, sku) tuple — with no token — to
+    // cancel a victim's alert. It must NOT remove the row anymore. The route
+    // ignores email/sku entirely; the absent/empty token is a uniform no-op.
+    var tupleAttack = await helpers.httpRequest({
       port: port, path: "/stock-alert/unsubscribe", method: "POST",
       form: { email: "another@example.com", sku: "BIS-TEE-1" },
+    });
+    check("t9 tuple-only POST 200 (uniform)",      tupleAttack.status === 200);
+    var afterAttack = (await query("SELECT COUNT(*) AS c FROM stock_alerts WHERE email_hash = ?1", [stockAlerts.hashEmail("another@example.com")])).rows[0];
+    check("t9 tuple attack did NOT remove row",    Number(afterAttack.c) === 1);
+
+    // A wrong-but-well-shaped token is likewise a uniform no-op.
+    var wrongToken = await helpers.httpRequest({
+      port: port, path: "/stock-alert/unsubscribe", method: "POST",
+      form: { token: "Z".repeat(32) },
+    });
+    check("t9 wrong token 200 (uniform)",          wrongToken.status === 200);
+    var afterWrong = (await query("SELECT COUNT(*) AS c FROM stock_alerts WHERE email_hash = ?1", [stockAlerts.hashEmail("another@example.com")])).rows[0];
+    check("t9 wrong token did NOT remove row",     Number(afterWrong.c) === 1);
+
+    // Only the genuine bearer token from the email cancels the alert.
+    var unsub = await helpers.httpRequest({
+      port: port, path: "/stock-alert/unsubscribe", method: "POST",
+      form: { token: anotherUnsubToken },
     });
     check("t9 unsubscribe 200",                    unsub.status === 200);
     check("t9 unsubscribe page reads done",        unsub.body.indexOf("You're unsubscribed") !== -1);
     var afterUnsub = (await query("SELECT COUNT(*) AS c FROM stock_alerts WHERE email_hash = ?1", [stockAlerts.hashEmail("another@example.com")])).rows[0];
     check("t9 row removed after unsubscribe",       Number(afterUnsub.c) === 0);
+
+    // The GET confirm page renders the token in a hidden field (escaped) and
+    // leaks no email/sku — it is the bearer-only handle.
+    var confirmPage = await helpers.httpRequest({ port: port, path: "/stock-alert/unsubscribe?token=" + encodeURIComponent("A".repeat(32)) });
+    check("t9 confirm page 200",                   confirmPage.status === 200);
+    check("t9 confirm page carries token field",   confirmPage.body.indexOf("name=\"token\" value=\"" + "A".repeat(32) + "\"") !== -1);
+    check("t9 confirm page shows no email/sku",    confirmPage.body.indexOf("another@example.com") === -1);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* best-effort */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* best-effort */ }
