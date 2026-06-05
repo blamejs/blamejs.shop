@@ -1866,6 +1866,11 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
 /* ---- checkout form --------------------------------------------- */
 .form-stack {
   display: flex; flex-direction: column; gap: var(--space-5);
+  /* The global `form` rule sets align-items:center for inline button
+     rows; a stacked field form must stretch its rows to fill the
+     column, or every field collapses to its content width and floats
+     centered in the column. */
+  align-items: stretch;
   max-width: 38rem;
   margin: 0;
 }
@@ -1921,6 +1926,46 @@ button.cart-line__btn--remove:hover { background: var(--danger); border-color: v
   color: var(--ink);
 }
 .form-actions { margin-top: var(--space-4); }
+
+/* ---- checkout sub-fieldsets (gift options, pickup, loyalty) ---------
+   Rendered inside the form above the submit row. Card-framed like the
+   order summary so they read as grouped sections of the same form. */
+.checkout-gift,
+.checkout-pickup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: var(--space-5);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+.checkout-gift > legend,
+.checkout-pickup > legend {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mute);
+  padding: 0;
+}
+.checkout-gift__note,
+.checkout-pickup__note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--mute);
+  line-height: 1.5;
+}
+/* Checkbox rows lay the box beside its label instead of stacking it
+   above; the global input width:100% would otherwise stretch the box. */
+.form-field--check {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+}
+.form-field--check input[type="checkbox"] { width: auto; flex: none; }
 
 /* ---- checkout two-column (mirrors the cart shell) -------------------
    The shipping form sits in the left column, a sticky order-summary rail

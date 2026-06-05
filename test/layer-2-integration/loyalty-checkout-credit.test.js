@@ -137,7 +137,7 @@ async function _run() {
     var jar1 = await _freshBuyerCart();
     var co1 = await helpers.httpRequest({
       port: port, path: "/checkout", method: "POST", jar: jar1,
-      form: { email: "buyer@example.com", name: "Buyer", country: "US", postal: "94103", loyalty_redeem_points: "500" },
+      form: { email: "buyer@example.com", name: "Buyer", line1: "1 Main St", city: "SF", country: "US", state: "CA", postal: "94103", loyalty_redeem_points: "500" },
     });
     check("checkout w/ 500 points then 303",   co1.status === 303 && (co1.headers.location || "").indexOf("/pay/") === 0);
     var firstIntent = payment._intents[payment._intents.length - 1];
@@ -164,7 +164,7 @@ async function _run() {
     var jar2 = await _freshBuyerCart();
     var co2 = await helpers.httpRequest({
       port: port, path: "/checkout", method: "POST", jar: jar2,
-      form: { email: "b2@example.com", name: "B2", country: "US", loyalty_redeem_points: "5000" },
+      form: { email: "b2@example.com", name: "B2", line1: "1 Main St", city: "SF", country: "US", state: "CA", postal: "94103", loyalty_redeem_points: "5000" },
     });
     // $50 of points caps at the $30 order → zero due, paid outright, NO PI.
     check("full-cover checkout then 303",      co2.status === 303);
@@ -182,7 +182,7 @@ async function _run() {
     var jar3 = await _freshBuyerCart();
     var co3 = await helpers.httpRequest({
       port: port, path: "/checkout", method: "POST", jar: jar3,
-      form: { email: "b3@example.com", name: "B3", country: "US", loyalty_redeem_points: "999999" },
+      form: { email: "b3@example.com", name: "B3", line1: "1 Main St", city: "SF", country: "US", state: "CA", postal: "94103", loyalty_redeem_points: "999999" },
     });
     check("over-balance redeem then 400",      co3.status === 400);
     var bal3 = await loyalty.balance(buyer);
@@ -199,7 +199,7 @@ async function _run() {
     await helpers.httpRequest({ port: port, path: "/checkout", jar: jarGuest });
     var coGuest = await helpers.httpRequest({
       port: port, path: "/checkout", method: "POST", jar: jarGuest,
-      form: { email: "guest@example.com", name: "Guest", country: "US", loyalty_redeem_points: "100" },
+      form: { email: "guest@example.com", name: "Guest", line1: "1 Main St", city: "SF", country: "US", state: "CA", postal: "94103", loyalty_redeem_points: "100" },
     });
     check("guest redeem-points then 400",      coGuest.status === 400);
   } finally {

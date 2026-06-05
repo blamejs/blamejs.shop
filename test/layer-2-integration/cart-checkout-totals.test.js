@@ -15,7 +15,10 @@
  *   - per-line stock state surfaces (out-of-stock + low-stock pills),
  *     never a hardcoded "in stock";
  *   - an empty cart stays the empty-state card (no fabricated totals);
- *   - the /checkout form summary shows the same breakdown.
+ *   - the /checkout form summary shows the same breakdown;
+ *   - a rejected address re-renders the form with the one bad field
+ *     marked (aria-invalid + co-err-* span), every typed value
+ *     preserved + escaped, and a corrected resubmit confirms.
  *
  * Network: zero — every request lands on 127.0.0.1; payment is a stub.
  */
@@ -186,6 +189,66 @@ async function _run() {
     check("confirmed order grand total = the estimate shown",  placed && placed.grand_total_minor === 3956);
     check("confirmed order tax = the estimated tax",  placed && placed.tax_minor === 262);
     check("confirmed order shipping = the estimated shipping", placed && placed.shipping_minor === 695);
+
+    // ---- server-side address validation re-renders the form ------------
+    // A rejected POST must land back ON the form (not a dead-end error
+    // page) with the one bad field marked and everything the shopper
+    // typed preserved. Rejected confirms never convert the cart, so one
+    // fresh cart hosts the whole matrix.
+    var vJar = await _cartWith([{ variant_id: v1.id, qty: 1 }]);
+    // GET the form first — seeds the CSRF cookie into the jar so the POSTs
+    // below carry the double-submit token (the gate is on in this app).
+    var vSeed = await helpers.httpRequest({ port: port, path: "/checkout", jar: vJar });
+    check("validation cart renders the form (200)", vSeed.status === 200);
+    function _coPost(form) {
+      return helpers.httpRequest({ port: port, path: "/checkout", method: "POST", jar: vJar, form: form });
+    }
+    var goodForm = { email: "buyer@example.com", name: "Buyer", line1: "1 Main St", city: "SF", country: "US", state: "CA", postal: "94103" };
+
+    var badZip = await _coPost(Object.assign({}, goodForm, { postal: "abc", line1: "123 Preserved St" }));
+    check("bad ZIP re-renders the checkout form (400)", badZip.status === 400 && badZip.body.indexOf("form-stack") !== -1);
+    check("bad ZIP marks the postal field",             badZip.body.indexOf("aria-describedby=\"co-err-postal\"") !== -1);
+    check("bad ZIP marks ONLY one field",               (badZip.body.match(/aria-invalid="true"/g) || []).length === 1);
+    check("re-render preserves the typed street",       badZip.body.indexOf("value=\"123 Preserved St\"") !== -1);
+    check("re-render preserves the typed email",        badZip.body.indexOf("value=\"buyer@example.com\"") !== -1);
+
+    var badCountry = await _coPost(Object.assign({}, goodForm, { country: "XX" }));
+    check("unknown country marks the country field (400)", badCountry.status === 400 && badCountry.body.indexOf("co-err-country") !== -1);
+
+    var badState = await _coPost(Object.assign({}, goodForm, { state: "ZZ" }));
+    check("bogus US state marks the state field (400)",  badState.status === 400 && badState.body.indexOf("co-err-state") !== -1);
+
+    var noState = await _coPost(Object.assign({}, goodForm, { state: "" }));
+    check("missing US state marks the state field (400)", noState.status === 400 && noState.body.indexOf("co-err-state") !== -1);
+
+    var noCity = await _coPost(Object.assign({}, goodForm, { city: "" }));
+    check("missing city marks the city field (400)",     noCity.status === 400 && noCity.body.indexOf("co-err-city") !== -1);
+
+    var badEmail = await _coPost(Object.assign({}, goodForm, { email: "not-an-email" }));
+    check("garbage email marks the email field (400)",   badEmail.status === 400 && badEmail.body.indexOf("co-err-email") !== -1);
+
+    // Every echoed field is escaped at the echo sink — the raw payload
+    // never appears (escape-by-default binding rule). A bad postal forces
+    // the re-render; the payload rides the other fields.
+    var payload = "\"><script>alert(9)</script>";
+    var xss = await _coPost(Object.assign({}, goodForm, {
+      name: "N" + payload, line1: "L" + payload, line2: "M" + payload, city: "C" + payload,
+      postal: "abc",
+    }));
+    check("xss probe re-renders (400)",          xss.status === 400);
+    check("raw script payload never appears",    xss.body.indexOf("<script>alert(9)</script>") === -1);
+    check("payload is escaped into the value attr",
+      xss.body.indexOf("&quot;&gt;&lt;script&gt;alert(9)&lt;/script&gt;") !== -1);
+
+    // Dollar sequences survive the splice — String.replace's `$&`/"$`"
+    // substitution would corrupt the document; _spliceRaw must not.
+    var dollar = await _coPost(Object.assign({}, goodForm, { line1: "5 $& $` St", postal: "abc" }));
+    check("dollar sequences round-trip the re-render intact", dollar.body.indexOf("5 $&amp; $` St") !== -1);
+
+    // The same cart confirms once the shopper corrects the field.
+    var fixed = await _coPost(goodForm);
+    check("corrected resubmit confirms (303 → /pay)",
+      fixed.status === 303 && (fixed.headers.location || "").indexOf("/pay/") === 0);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* best-effort */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* best-effort */ }

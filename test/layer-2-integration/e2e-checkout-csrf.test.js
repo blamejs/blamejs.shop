@@ -140,6 +140,15 @@ async function _run() {
     var pdp = await helpers.httpRequest({ port: port, path: "/products/e2e-widget", jar: jar });
     check("pdp 200",                      pdp.status === 200);
     check("csrf cookie seeded",           !!(jar.get("csrf") || jar.get("__Host-csrf")));
+    // Referrer-Policy regression guard: under `no-referrer`, browsers
+    // serialize the Origin header as "null" on same-origin navigational
+    // form POSTs, and the CSRF origin pre-check refuses "null" before the
+    // token is read — 403-ing every real-browser form submit while
+    // loopback tests (which send no Origin at all) stay green. The app
+    // overrides the vendored default to `same-origin`; if a vendor refresh
+    // or config change reinstates `no-referrer`, this fails first.
+    check("referrer-policy is same-origin (origin-preserving)",
+      (pdp.headers["referrer-policy"] || "") === "same-origin");
     var vm = /name="variant_id"\s+value="([^"]+)"/.exec(pdp.body);
     check("pdp exposes a variant_id",     !!vm);
     var variantId = vm[1];
@@ -163,9 +172,42 @@ async function _run() {
     var cartView = await helpers.httpRequest({ port: port, path: "/cart", jar: jar });
     check("cart shows the line",          cartView.body.indexOf("E2E Widget") !== -1);
 
-    // Checkout WITH the jar-attached token → order created + transitioned.
-    var checkout = await helpers.httpRequest({ port: port, path: "/e2e/checkout", method: "POST", jar: jar, body: "" });
-    check("tokened checkout accepted (200)", checkout.status === 200);
+    // ---- Origin pre-check matrix (the real-browser shapes) --------------
+    // The gate evaluates Origin BEFORE the token, so each refusal below must
+    // be the "cross-origin" rejection — proving the origin defense fires —
+    // while the accept case proves a browser's same-origin Origin round-
+    // trips. Absent-Origin (every other request in this file) reaching the
+    // token check is already proven by the bad-token 403 above.
+
+    // A sandboxed-iframe / opaque-origin attacker sends the literal string
+    // "null" — refused even WITH a valid jar-attached token.
+    var nullOrigin = await helpers.httpRequest({
+      port: port, path: "/e2e/checkout", method: "POST", jar: jar, body: "",
+      headers: { origin: "null" },
+    });
+    check("null Origin refused (403)", nullOrigin.status === 403);
+    check("null Origin refused by the ORIGIN gate, not the token gate",
+      nullOrigin.body.indexOf("cross-origin") !== -1);
+
+    // A cross-site forger's Origin — refused even with a valid token.
+    var crossOrigin = await helpers.httpRequest({
+      port: port, path: "/e2e/checkout", method: "POST", jar: jar, body: "",
+      headers: { origin: "https://evil.example" },
+    });
+    check("cross-origin Origin refused (403)", crossOrigin.status === 403);
+    check("cross-origin refused by the ORIGIN gate",
+      crossOrigin.body.indexOf("cross-origin") !== -1);
+
+    // Checkout WITH the jar-attached token AND a real browser's same-origin
+    // Origin header (what `Referrer-Policy: same-origin` makes browsers send
+    // on a navigational POST) → order created + transitioned. This is the
+    // case the prod bug broke: it must pass the origin pre-check and then
+    // the token check.
+    var checkout = await helpers.httpRequest({
+      port: port, path: "/e2e/checkout", method: "POST", jar: jar, body: "",
+      headers: { origin: "http://127.0.0.1:" + port },
+    });
+    check("same-origin Origin + tokened checkout accepted (200)", checkout.status === 200);
     var out = JSON.parse(checkout.body);
     check("checkout returned an order_id", typeof out.order_id === "string" && out.order_id.length > 0);
     check("order transitioned to paid",    out.status === "paid");

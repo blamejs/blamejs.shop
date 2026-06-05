@@ -1179,6 +1179,57 @@ async function _checkoutForm() {
   });
   check("checkout form pre-fills street",    prefilled.indexOf("value=\"500 Market St\"") !== -1);
   check("checkout form pre-fills city",      prefilled.indexOf("value=\"San Francisco\"") !== -1);
+
+  // The optional sub-blocks (gift options, pickup picker, loyalty redeem)
+  // render INSIDE the form ABOVE the submit action row — appended after
+  // the CTA they'd read as an orphaned block below the button.
+  var withExtras = storefront.renderCheckoutForm({
+    lines:  [{ sku: "X-1", qty: 1, unit_amount_minor: 2999, unit_currency: "USD" }],
+    totals: { subtotal_minor: 2999, currency: "USD" },
+    shop_name: "Acme",
+    gift_enabled: true,
+    pickup_locations: [{ code: "sf-1", name: "Market St Store", address: { city: "SF", country: "US" } }],
+    loyalty_balance: { balance: 120 },
+    loyalty_points_per_usd: 100,
+    captcha_kind: "turnstile",
+    captcha_public_key: "test-sitekey",
+  });
+  var giftAt    = withExtras.indexOf("checkout-gift");
+  var pickupAt  = withExtras.indexOf("checkout-pickup");
+  var loyaltyAt = withExtras.indexOf("loyalty_redeem_points");
+  var captchaAt = withExtras.indexOf("captcha-block");
+  var actionsAt = withExtras.indexOf("form-actions");
+  check("gift options render",                        giftAt !== -1);
+  check("pickup picker renders",                      pickupAt !== -1);
+  check("loyalty redeem renders",                     loyaltyAt !== -1);
+  check("captcha block renders",                      captchaAt !== -1);
+  check("gift options render before the submit row",  giftAt !== -1 && giftAt < actionsAt);
+  check("pickup picker renders before the submit row", pickupAt !== -1 && pickupAt < actionsAt);
+  check("loyalty redeem renders before the submit row", loyaltyAt !== -1 && loyaltyAt < actionsAt);
+  check("captcha renders before the submit row (its token field rides the POST)",
+    captchaAt !== -1 && captchaAt < actionsAt);
+  // The checkout form's own close follows the actions row (the page also
+  // carries the header-search + footer-newsletter forms, so anchor the
+  // search for "</form>" after the actions row, not at the document top).
+  check("submit row stays inside the form",
+    actionsAt !== -1 && withExtras.indexOf("</form>", actionsAt) !== -1);
+
+  // A validation re-render marks the rejected field with aria-invalid +
+  // an adjacent co-err-* span and echoes the typed (escaped) values.
+  var invalid = storefront.renderCheckoutForm({
+    lines:  [{ sku: "X-1", qty: 1, unit_amount_minor: 2999, unit_currency: "USD" }],
+    totals: { subtotal_minor: 2999, currency: "USD" },
+    shop_name: "Acme",
+    prefill: { name: "Ada", line1: "1 Main", city: "SF", country: "US", state: "CA", postal: "abc" },
+    invalid_field: { field: "postal", message: "Enter a valid ZIP code (12345 or 12345-6789)." },
+  });
+  check("invalid field carries aria-invalid",
+    invalid.indexOf("aria-describedby=\"co-err-postal\"") !== -1);
+  check("invalid field renders its error span",
+    invalid.indexOf("id=\"co-err-postal\"") !== -1 && invalid.indexOf("Enter a valid ZIP code") !== -1);
+  check("only the rejected field is marked",
+    (invalid.match(/aria-invalid="true"/g) || []).length === 1);
+  check("rejected value still echoes (escaped)", invalid.indexOf("value=\"abc\"") !== -1);
 }
 
 async function _payPage() {

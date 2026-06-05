@@ -182,7 +182,7 @@ async function _run() {
     var jar1 = await _freshCart();
     var co1 = await helpers.httpRequest({
       port: port, path: "/checkout", method: "POST", jar: jar1,
-      form: { email: "buyer@example.com", name: "Buyer", country: "US", postal: "94103", gift_card_code: fiveCard.code },
+      form: { email: "buyer@example.com", name: "Buyer", line1: "1 Main St", city: "SF", country: "US", state: "CA", postal: "94103", gift_card_code: fiveCard.code },
     });
     check("checkout w/ $5 card then 303",     co1.status === 303 && (co1.headers.location || "").indexOf("/pay/") === 0);
     // The PaymentIntent was created for $25.00 (3000 - 500), not $30.00.
@@ -227,7 +227,7 @@ async function _run() {
     var jar2 = await _freshCart();
     var co2 = await helpers.httpRequest({
       port: port, path: "/checkout", method: "POST", jar: jar2,
-      form: { email: "b2@example.com", name: "B2", country: "US", gift_card_code: fortyIssue.code },
+      form: { email: "b2@example.com", name: "B2", line1: "1 Main St", city: "SF", country: "US", state: "CA", postal: "94103", gift_card_code: fortyIssue.code },
     });
     check("full-cover checkout then 303",     co2.status === 303);
     check("full-cover skips /pay (→ /orders)", (co2.headers.location || "").indexOf("/orders/") === 0);
@@ -244,7 +244,7 @@ async function _run() {
     var jar3 = await _freshCart();
     var co3 = await helpers.httpRequest({
       port: port, path: "/checkout", method: "POST", jar: jar3,
-      form: { email: "b3@example.com", name: "B3", country: "US", gift_card_code: fortyIssue.code },
+      form: { email: "b3@example.com", name: "B3", line1: "1 Main St", city: "SF", country: "US", state: "CA", postal: "94103", gift_card_code: fortyIssue.code },
     });
     check("second redeem then 303 (/pay)",    co3.status === 303 && (co3.headers.location || "").indexOf("/pay/") === 0);
     check("second redeem made a PaymentIntent", payment._intents.length === intentsBeforeSecond + 1);
@@ -262,7 +262,7 @@ async function _run() {
     var jar4 = await _freshCart();
     var coBad = await helpers.httpRequest({
       port: port, path: "/checkout", method: "POST", jar: jar4,
-      form: { email: "b4@example.com", name: "B4", country: "US", gift_card_code: "ZZZZ-ZZZZ-ZZZZ-ZZZZ" },
+      form: { email: "b4@example.com", name: "B4", line1: "1 Main St", city: "SF", country: "US", state: "CA", postal: "94103", gift_card_code: "ZZZZ-ZZZZ-ZZZZ-ZZZZ" },
     });
     check("invalid code at checkout → 400 not 500", coBad.status === 400);
 

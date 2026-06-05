@@ -175,7 +175,72 @@ async function _confirmRejectsMalformedAddress() {
     selected_shipping_id: "std",
     customer: { email: "buyer@example.com" },
     idempotency_key: "idemp_" + nodeCrypto.randomUUID(),
-  }), /ship_to\.line1 malformed/);
+  }), /ship_to\.line1/);
+}
+
+async function _confirmRejectsInvalidAddressFormats() {
+  var s = await _setup();
+  // A rejected confirm never converts the cart, so one setup hosts every
+  // reject case; quote (same _shipTo validator, no charge) hosts the
+  // accept cases so a missing shipping zone for a non-US destination
+  // can't fail an address assertion for the wrong reason.
+  function _confirmWith(shipTo, customer) {
+    return s.checkout.confirm({
+      cart_id: s.cartRow.id,
+      ship_to: shipTo,
+      selected_shipping_id: "std",
+      customer: customer || { email: "buyer@example.com" },
+      idempotency_key: "idemp_" + nodeCrypto.randomUUID(),
+    });
+  }
+  // The validator must pass the address BEFORE shipping/zone resolution —
+  // accept = quote throws nothing, or throws something that isn't a
+  // ship_to error (e.g. no shipping zone for that country).
+  async function _addressOk(shipTo) {
+    try {
+      await s.checkout.quote({ cart_id: s.cartRow.id, ship_to: shipTo, selected_shipping_id: "std" });
+      return true;
+    } catch (e) {
+      return !/ship_to\./.test((e && e.message) || "");
+    }
+  }
+
+  // Country must be a REAL ISO 3166-1 alpha-2 code, not just two letters —
+  // including CLDR-named sentinels that aren't assigned countries (ZZ is
+  // the unknown-region sentinel; UK is reserved, the code is GB).
+  await assert.rejects(_confirmWith({ country: "XX" }), /ship_to\.country/);
+  await assert.rejects(_confirmWith({ country: "ZZ" }), /ship_to\.country/);
+  await assert.rejects(_confirmWith({ country: "UK" }), /ship_to\.country/);
+  await assert.rejects(_confirmWith({ country: "EU" }), /ship_to\.country/);
+  check("country GB accepted", await _addressOk({ country: "GB" }));
+  check("country DE accepted", await _addressOk({ country: "DE" }));
+  check("country XK (user-assigned, ships) accepted", await _addressOk({ country: "XK" }));
+
+  // US: state must be a real USPS code, postal a real ZIP shape.
+  await assert.rejects(_confirmWith({ country: "US", state: "ZZ", postal: "94103" }), /ship_to\.state/);
+  await assert.rejects(_confirmWith({ country: "US", state: "CA", postal: "abc" }),   /ship_to\.postal/);
+  await assert.rejects(_confirmWith({ country: "US", state: "CA", postal: "99" }),    /ship_to\.postal/);
+  check("US ZIP+4 accepted", await _addressOk({ country: "US", state: "CA", postal: "94103-1234" }));
+
+  // Canada: province codes + A1A 1A1 postal (space optional, any case).
+  await assert.rejects(_confirmWith({ country: "CA", state: "ON", postal: "99999" }), /ship_to\.postal/);
+  await assert.rejects(_confirmWith({ country: "CA", state: "XX", postal: "K1A 0B1" }), /ship_to\.state/);
+  check("CA postal with space accepted",  await _addressOk({ country: "CA", state: "ON", postal: "K1A 0B1" }));
+  check("CA postal without space accepted", await _addressOk({ country: "CA", state: "ON", postal: "K1A0B1" }));
+
+  // Everywhere else stays lenient — no postal/region format opinions.
+  check("GB postcode accepted",          await _addressOk({ country: "GB", postal: "SW1A 1AA" }));
+  check("GB without state accepted",     await _addressOk({ country: "GB", city: "London" }));
+
+  // Email shape gate: guardEmail passes plain strings through, so confirm
+  // itself must reject a non-address.
+  await assert.rejects(_confirmWith({ country: "US", state: "CA", postal: "94103" },
+    { email: "not-an-email" }), /customer\.email/);
+  await assert.rejects(_confirmWith({ country: "US", state: "CA", postal: "94103" },
+    { email: "a@b" }), /customer\.email/);
+  // Customer name length cap.
+  await assert.rejects(_confirmWith({ country: "US", state: "CA", postal: "94103" },
+    { email: "buyer@example.com", name: "x".repeat(121) }), /customer\.name/);
 }
 
 async function _confirmRefusesZeroTotal() {
@@ -254,6 +319,7 @@ async function run() {
   await _confirm();
   await _confirmPersistsFullAddress();
   await _confirmRejectsMalformedAddress();
+  await _confirmRejectsInvalidAddressFormats();
   await _confirmRefusesZeroTotal();
   await _webhookDispatchHappyPath();
   await _webhookBadSig();

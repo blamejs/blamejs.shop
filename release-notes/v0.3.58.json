@@ -1,0 +1,31 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.58",
+  "date": "2026-06-04",
+  "headline": "Browser form submissions no longer refused as cross-origin, server-side shipping-address validation, and a repaired checkout layout",
+  "summary": "Every navigational form POST served by the container — checkout, magic-link sign-in, product reviews, returns, the account area, and the admin console — was refused with a 403 in real browsers. Pages shipped Referrer-Policy: no-referrer, which makes browsers send Origin: null on same-origin form submissions, and the CSRF gate's origin pre-check refuses a null Origin before the token is read. Both the edge and the container now send Referrer-Policy: same-origin: referrer information still never leaves the site, while same-origin posts carry the real Origin the gate verifies. Cross-site and sandboxed-iframe submissions are still refused. Checkout additionally gains backend shipping-address validation with accessible per-field errors that preserve everything the shopper typed, and the checkout page's layout is repaired — fields fill the form column instead of collapsing to its center, and the gift, store-pickup, and loyalty options render inside the form above the submit button.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Form posts from real browsers were refused as cross-origin (403)",
+          "body": "Pages were served with Referrer-Policy: no-referrer, which per the Fetch specification makes browsers serialize the Origin header as the literal string \"null\" on same-origin navigational POSTs. The CSRF gate's origin pre-check refuses a null Origin before the double-submit token is validated, so every container-rendered form returned {\"error\":\"CSRF cross-origin request refused.\"} on submit — checkout, magic-link sign-in, reviews, returns, account self-service, and the admin console. JSON fetch() calls (passkeys, saved cards, the cart-count island) carry a real Origin and were unaffected. Both substrates now send Referrer-Policy: same-origin: no referrer information ever leaves the site (matching the previous policy's intent), same-origin posts carry a real Origin verified against the configured public origins, and cross-site or sandboxed-iframe posts still arrive as null and are still refused. The integration suite now drives the full Origin matrix — same-origin accepted, null and cross-origin refused — closing the gap between loopback tests (which send no Origin header) and real browsers. Operators composing their own securityHeaders options should not reinstate no-referrer: it re-breaks every tokened form post."
+        },
+        {
+          "title": "Checkout layout: fields fill the column; gift and pickup options join the form",
+          "body": "A global form rule leaked align-items: center into the checkout's stacked form, collapsing every field to its content width in the middle of a wide column; the stacked form now stretches its rows. The gift-options, store-pickup, and loyalty-redeem blocks were spliced in after the submit button, rendering as an unstyled run of fields below the call to action — they now render inside the form above the submit row, framed as cards consistent with the order summary, with labels matching the shipping fields."
+        }
+      ]
+    },
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Server-side shipping-address validation with per-field errors",
+          "body": "The checkout POST validates the shipping address on the backend and, on rejection, re-renders the form with the one bad field marked (aria-invalid plus an adjacent role=\"alert\" message) and every typed value preserved — replacing the previous dead-end error page. Country must be a real ISO 3166-1 alpha-2 code, validated against the platform's Intl region data (no new dependencies). US and Canadian destinations validate the state or province code and the ZIP (12345 or 12345-6789) / postal (A1A 1A1) format, and require street, city, region, and postal — the figures that feed destination tax. Every other country keeps lenient length-bounded checks, so international addresses are never over-validated. Email gains a shape check alongside the existing content-safety gate, and the customer name is length-bounded. Headless callers of checkout.confirm keep the presence-optional contract for digital-only orders; malformed values are now refused everywhere."
+        }
+      ]
+    }
+  ]
+}

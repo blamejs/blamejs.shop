@@ -1702,7 +1702,16 @@ var _SECURITY_HEADERS = {
     "private-state-token-redemption=(), storage-access=(), browsing-topics=(), " +
     "private-aggregation=(), controlled-frame=(), captured-surface-control=(), " +
     "identity-credentials-get=()",
-  "referrer-policy":          "no-referrer",
+  // `same-origin`, not `no-referrer`: under no-referrer, browsers opaque
+  // the Origin header to "null" on same-origin navigational form POSTs,
+  // which the container's CSRF origin pre-check refuses before the token
+  // is read — 403-ing checkout and every account/admin form submit.
+  // `same-origin` keeps the external posture identical (no referrer ever
+  // leaves the site) while restoring a real Origin on same-origin POSTs.
+  // Must match the container (lib/security-middleware.js
+  // securityHeadersOpts → referrerPolicy) so edge-served pages don't
+  // re-break the forms they host.
+  "referrer-policy":          "same-origin",
   "x-content-type-options":   "nosniff",
   "x-dns-prefetch-control":   "off",
   "x-frame-options":          "DENY",
