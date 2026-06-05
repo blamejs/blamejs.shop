@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.69",
+  "date": "2026-06-05",
+  "headline": "Discount codes on the cart page, and the full shipment timeline on the order page",
+  "summary": "Shoppers can now redeem a discount code: an automatic-discount rule may carry an unlock code, leaving it dormant until a shopper enters that code on the cart page — the code persists on the cart, survives signing in, and flows through the exact same evaluation, quoting, and charge path as every other discount rule, so there is one discount system, not two. The cart shows the applied code with a remove control, totals re-render with the savings, and an unknown code gets one uniform message. Separately, the customer order page now shows the full shipment tracking timeline — every recorded carrier event with its status, location, and time, newest first — instead of only the latest event. Two schema migrations apply on deploy.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Code-unlocked discount rules with cart-page redemption",
+          "body": "An automatic-discount rule can now carry an unlock code (one active rule per code). The rule stays dormant until a shopper enters its code in the new entry form on the cart page; the code is stored on the cart (capped, idempotent, carried across sign-in by the cart merge), totals re-render with the rule applied, and checkout's quote and confirm honor it on every payment path. The applied code renders as a chip with a remove control; unknown, malformed, or inactive codes all get the same message, so the endpoint reveals nothing about which codes exist. The redemption form is CSRF-tokened like the other cart configuration forms, and the cart page's edge-cached anonymous shell is unaffected — code state renders only on the container."
+        },
+        {
+          "title": "Full shipment tracking timeline for customers",
+          "body": "The order page's tracking card previously showed the carrier, tracking number, status, and only the most recent event. It now renders the full event timeline newest-first — status, optional carrier location, optional note, and the event time — bounded to the newest twenty events. Orders without shipment events render exactly as before."
+        }
+      ]
+    }
+  ]
+}

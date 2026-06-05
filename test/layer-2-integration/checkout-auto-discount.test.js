@@ -40,6 +40,7 @@ var b = bShop.framework;
 var MIGS = [
   "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0004_shop_config.sql",
   "0206_orders_email_hash.sql", "0107_auto_discount.sql",
+  "0209_auto_discount_unlock_code.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) {
@@ -255,6 +256,67 @@ async function _run() {
   var recPlaced = await order.get(recConfirm.order.id);
   check("recordApplication throw does NOT reverse the order",          recPlaced && recPlaced.id != null);
   check("recordApplication throw: order still persists the discount",  recPlaced && recPlaced.discount_minor === 300);
+
+  // ---- (f) a code-gated rule is dormant without its code -------------
+  // $7.00 off, but ONLY when the shopper presents code "SAVE7". The same
+  // engine the cart-page coupon entry consults: no code → the rule never
+  // fires (totals identical to no-rule); code present → the savings apply,
+  // and a CONFIRMED order carrying the code persists the reduced total.
+  await engine.defineRule({
+    slug:        "save7-code",
+    title:       "Seven off with code",
+    trigger:     { kind: "cart_total_min", min_minor: 1 },
+    value:       { kind: "amount_off_total", minor: 700 },
+    unlock_code: "SAVE7",
+  });
+  // ruleForCode resolves a typed code case-insensitively; an unknown code
+  // resolves to null (the uniform "no" the cart route relies on).
+  var byCode      = await engine.ruleForCode("save7");
+  var byUnknown   = await engine.ruleForCode("NOPE-404");
+  check("ruleForCode resolves a known code (case-insensitive)", byCode && byCode.slug === "save7-code");
+  check("ruleForCode returns null for an unknown code",         byUnknown === null);
+
+  // No code presented → the code-gated rule stays dormant. (The earlier
+  // five-off-forty rule still fires automatically, so the discount here is
+  // exactly that rule's 500, NOT 500+700.)
+  var noCodeCartId = await _freshCart();
+  var noCodeQuote  = await wiredCheckout.quote({ cart_id: noCodeCartId, ship_to: SHIP_TO, selected_shipping_id: "std" });
+  check("code-gated rule dormant without its code", noCodeQuote.totals.discount_minor === 500);
+
+  // Code presented → the code-gated rule fires on TOP of the automatic.
+  var codeCartId = await _freshCart();
+  var codeQuote  = await wiredCheckout.quote({ cart_id: codeCartId, ship_to: SHIP_TO, selected_shipping_id: "std", codes: ["SAVE7"] });
+  check("code unlocks the gated rule's savings",    codeQuote.totals.discount_minor === 1200);
+  check("code grand total drops by the full discount",
+    codeQuote.totals.grand_total_minor === SUBTOTAL - 1200 + TAX + SHIP);
+
+  // A confirmed order carrying the code persists the reduced total.
+  var codeConfirm = await wiredCheckout.confirm({
+    cart_id: codeCartId, ship_to: SHIP_TO, selected_shipping_id: "std",
+    customer: { email: "coder@example.com", name: "Coder" },
+    codes: ["SAVE7"],
+    idempotency_key: "auto-disc-code-key-0001",
+  });
+  var codePlaced = await order.get(codeConfirm.order.id);
+  check("confirmed coded order persists the reduced discount", codePlaced && codePlaced.discount_minor === 1200);
+  check("confirmed coded order grand total honours the code",
+    codePlaced && codePlaced.grand_total_minor === SUBTOTAL - 1200 + TAX + SHIP);
+
+  // An unknown code presented at quote behaves like no code (the engine
+  // simply finds no rule for it) — never a throw, never a phantom discount.
+  var badCodeCartId = await _freshCart();
+  var badCodeQuote  = await wiredCheckout.quote({ cart_id: badCodeCartId, ship_to: SHIP_TO, selected_shipping_id: "std", codes: ["NOPE-404"] });
+  check("unknown code yields only the automatic discount", badCodeQuote.totals.discount_minor === 500);
+
+  // A second active rule can't claim the same code (case-insensitive).
+  var dupClaim = false;
+  try {
+    await engine.defineRule({
+      slug: "save7-dupe", title: "Dup", trigger: { kind: "cart_total_min", min_minor: 1 },
+      value: { kind: "amount_off_total", minor: 100 }, unlock_code: "save7",
+    });
+  } catch (_e) { dupClaim = true; }
+  check("a second rule can't claim an active code", dupClaim);
 }
 
 async function run() { await _run(); }

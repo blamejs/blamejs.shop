@@ -253,6 +253,54 @@ async function _run() {
     check("tracking panel shows the carrier",     trackedPage.body.indexOf("order-shipment__carrier") !== -1);
     check("tracking panel links the carrier URL", trackedPage.body.indexOf("ups.com/track") !== -1);
 
+    // ---- full carrier-event timeline (newest-first + XSS-escaped) --------
+    // Record several events at known, increasing times so the render order
+    // is deterministic. A later event carries an XSS payload in BOTH its
+    // location AND its operator-recorded detail note — the panel must escape
+    // it at the sink (the primitive's free-text validator allows angle
+    // brackets; the storefront escape is the defense).
+    var t0 = Date.now() - 4 * 3600 * 1000;
+    await tracking.recordEvent({ shipment_id: shipmentId, status: "in-transit", location: "Memphis, TN",  occurred_at: t0 + 1 * 3600 * 1000 });
+    await tracking.recordEvent({ shipment_id: shipmentId, status: "in-transit", location: "Columbus, OH", detail: "Departed sort facility", occurred_at: t0 + 2 * 3600 * 1000 });
+    var XSS = "<script>alert(1)</script>";
+    await tracking.recordEvent({ shipment_id: shipmentId, status: "out-for-delivery", location: XSS, detail: XSS, occurred_at: t0 + 3 * 3600 * 1000 });
+
+    var timelinePage = await helpers.httpRequest({ port: sf.port, path: "/orders/" + shippedOrder.orderId, jar: buyerJar });
+    check("timeline rendered as ordered list",   timelinePage.body.indexOf("order-shipment__timeline") !== -1);
+    // Every distinct event status shows (the earlier "in-transit" from
+    // markShipped's seed + the three recorded above + the out-for-delivery).
+    check("timeline shows in-transit event",     timelinePage.body.indexOf("order-shipment__event-status") !== -1);
+    check("timeline shows the Memphis stop",     timelinePage.body.indexOf("Memphis, TN") !== -1);
+    check("timeline shows the Columbus stop",    timelinePage.body.indexOf("Columbus, OH") !== -1);
+    check("timeline shows the operator detail",  timelinePage.body.indexOf("Departed sort facility") !== -1);
+    check("timeline shows out-for-delivery",     timelinePage.body.indexOf("out-for-delivery") !== -1);
+    // Newest-first: the latest event (out-for-delivery) appears in the
+    // markup BEFORE the earlier Memphis stop.
+    check("timeline is newest-first",            timelinePage.body.indexOf("out-for-delivery") < timelinePage.body.indexOf("Memphis, TN"));
+    // XSS payload in location + detail is escaped — the raw <script> never
+    // reaches the page; the escaped &lt;script&gt; does.
+    check("timeline escapes the XSS payload",    timelinePage.body.indexOf("<script>alert(1)</script>") === -1);
+    check("timeline shows escaped payload",      timelinePage.body.indexOf("&lt;script&gt;alert(1)&lt;/script&gt;") !== -1);
+
+    // ---- eventless shipment renders no timeline (pre-timeline shape) -----
+    // A second order with a shipment but NO recorded events shows the
+    // carrier panel without an <ol> timeline.
+    var noEvtOrder = await _seedOrder(query, buyer, variant.id, variant.sku, "shipped");
+    var noEvtShip  = await tracking.createShipment({ order_id: noEvtOrder.orderId, carrier: "fedex" });
+    var noEvtPage  = await helpers.httpRequest({ port: sf.port, path: "/orders/" + noEvtOrder.orderId, jar: buyerJar });
+    check("eventless order has tracking panel",  noEvtPage.body.indexOf("order-tracking-panel") !== -1);
+    check("eventless order has no timeline ol",  noEvtPage.body.indexOf("order-shipment__timeline") === -1 &&
+      noEvtShip && noEvtShip.id);
+
+    // ---- foreign customer can't read the order (IDOR 404) ----------------
+    // The stranger's paid order has a shipment with events, but the buyer
+    // (a different customer) gets a 404 — never the tracking timeline.
+    var strangerShip = await tracking.createShipment({ order_id: strangerOrder.orderId, carrier: "usps" });
+    await tracking.recordEvent({ shipment_id: strangerShip.id, status: "in-transit", location: "Foreign Hub", occurred_at: Date.now() });
+    var foreignOrder = await helpers.httpRequest({ port: sf.port, path: "/orders/" + strangerOrder.orderId, jar: buyerJar });
+    check("foreign order page → 404",            foreignOrder.status === 404);
+    check("foreign order leaks no tracking",     foreignOrder.body.indexOf("Foreign Hub") === -1);
+
     // ---- order FSM drive: mark a shipment delivered → order delivered ---
     // Record a delivered event, then markDelivered drives the order FSM.
     await tracking.markDelivered(shipmentId);

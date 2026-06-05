@@ -49,7 +49,8 @@ var helpers      = require("../helpers");
 var check        = helpers.check;
 var assert       = helpers.assert;
 
-var MIG = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0107_auto_discount.sql");
+var MIGS = ["0107_auto_discount.sql", "0209_auto_discount_unlock_code.sql"]
+  .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -59,7 +60,9 @@ function _splitSchema(text) {
 function _makeQuery() {
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
-  _splitSchema(nodeFs.readFileSync(MIG, "utf8")).forEach(function (s) { db.prepare(s).run(); });
+  MIGS.forEach(function (p) {
+    _splitSchema(nodeFs.readFileSync(p, "utf8")).forEach(function (s) { db.prepare(s).run(); });
+  });
   return async function (sql, params) {
     var stmt = db.prepare(sql);
     var verb = sql.replace(/^\s+|\s*--[^\n]*\n/g, "").trim().split(/\s+/)[0].toUpperCase();
