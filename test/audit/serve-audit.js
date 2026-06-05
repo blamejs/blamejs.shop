@@ -207,6 +207,27 @@ async function _seed(engines) {
     });
   }
 
+  // --- delivery estimate (cutoff + postal zone + transit) --------------
+  // Configures the "Get it by <date>" path: an origin cutoff, a postal-prefix
+  // → zone mapping for the seeded customer's 90210 address, a carrier transit
+  // for that zone pair, and the operator's estimate-origin config so the
+  // storefront resolves a date for the signed-in customer's saved address.
+  if (engines.deliveryEstimate) {
+    await _try("delivery estimate", async function () {
+      await engines.deliveryEstimate.defineCutoff({
+        origin_location: "dc-east", daily_cutoff_local_time: "14:00", timezone: "America/New_York",
+      });
+      await engines.deliveryEstimate.definePostalZone({ country: "US", postal_prefix: "902", zone: "us-west" });
+      await engines.deliveryEstimate.defineCarrierTransit({
+        from_zone: "dc-east", to_zone: "us-west", carrier: "ups", service_level: "GROUND", transit_days: 4,
+      });
+      if (engines.config && typeof engines.config.put === "function") {
+        await engines.config.put("shop.estimate_origin", "dc-east");
+      }
+      _note("delivery estimate: dc-east → us-west, UPS GROUND 4d, 14:00 cutoff");
+    });
+  }
+
   // --- auto-discount rule ----------------------------------------------
   if (engines.autoDiscount) {
     await _try("auto-discount rule", async function () {
@@ -481,6 +502,7 @@ async function main() {
   var loyaltyRedemption  = bShop.loyaltyRedemption.create({ query: query, loyalty: loyalty });
   var taxRates           = bShop.taxRates.create({ query: query });
   var shippingZones      = bShop.shippingZones.create({ query: query });
+  var deliveryEstimate   = bShop.deliveryEstimate.create({ query: query, shippingZones: shippingZones });
   var autoDiscount       = bShop.autoDiscount.create({ query: query });
   var couponStacking     = bShop.couponStacking.create({ query: query });
   var discountAllocation = bShop.discountAllocation.create({ query: query });
@@ -540,6 +562,7 @@ async function main() {
   var seedResult = await _seed({
     query: query, catalog: catalog, cart: cart, order: order, checkout: checkout,
     quantityDiscounts: quantityDiscounts, shippingZones: shippingZones, taxRates: taxRates,
+    deliveryEstimate: deliveryEstimate, config: config,
     autoDiscount: autoDiscount, couponStacking: couponStacking, salesTaxFilings: salesTaxFilings,
     shippingLabels: shippingLabels, orderTracking: orderTracking, collections: collections,
     giftcards: giftcards, customers: customers, addresses: addresses,
@@ -665,6 +688,7 @@ async function main() {
         storefrontPages:    storefrontPages,
         taxRates:           taxRates,
         shippingZones:      shippingZones,
+        deliveryEstimate:   deliveryEstimate,
         autoDiscount:       autoDiscount,
         couponStacking:     couponStacking,
         discountAllocation: discountAllocation,
@@ -700,6 +724,8 @@ async function main() {
         orderRatings:       orderRatings,
         clickAndCollect:    clickAndCollect,
         giftOptions:        giftOptions,
+        deliveryEstimate:   deliveryEstimate,
+        delivery_estimate_origin: "dc-east",
         paymentMethods:     paymentMethods,
         preorder:           preorder,
         collections:        collections,
