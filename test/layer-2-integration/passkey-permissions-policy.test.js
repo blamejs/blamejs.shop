@@ -71,7 +71,7 @@ function _hdr(extra) {
 // string. Returns "" if the feature is absent. Token equality (not substring)
 // is the assertion currency throughout.
 function _directive(policy, feature) {
-  var re = new RegExp("(?:^|,\\s*)(" + feature.replace(/[-]/g, "\\-") + "=\\([^)]*\\))");
+  var re = new RegExp("(?:^|,\\s*)(" + feature.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "=\\([^)]*\\))");
   return (String(policy).match(re) || [])[1] || "";
 }
 
