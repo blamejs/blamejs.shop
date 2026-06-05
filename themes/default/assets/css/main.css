@@ -1527,6 +1527,21 @@ td.price, td.total, .price, .total { font-variant-numeric: tabular-nums; }
 .pdp__shipping-note a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .pdp__shipping-note a:hover { color: var(--text); }
 
+/* "Get it by <date>" delivery-estimate line on the PDP + cart summary. Shown
+   container-only for a signed-in shopper with a saved shipping address. */
+.delivery-est {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+.delivery-est__icon { font-size: 1em; }
+.delivery-est__label { font-weight: 600; }
+.delivery-est__svc { color: var(--text-muted); }
+
 /* PDP buy-box variant pill-chips: the chip label carries the selected state
    (the native radio alone is too subtle). The radio is visually hidden but
    stays operable + keyboard-focusable, so selection works fully JS-off. */

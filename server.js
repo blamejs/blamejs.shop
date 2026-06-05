@@ -514,6 +514,21 @@ async function main() {
     catch (_e) { /* unconfigured — default */ }
   }
 
+  // Delivery-estimate origin — the inventory-location slug the "Get it by
+  // <date>" math ships from. The deliveryEstimate primitive REFUSES to guess
+  // an origin, so without this the storefront renders no date (by design).
+  // Resolved here at boot (SHOP_ESTIMATE_ORIGIN env, else the shop_config
+  // `shop.estimate_origin` row) because the storefront's sfDeps.config is a
+  // bare { shop_name } stub with no live .get(). Threaded as a plain slug into
+  // sfDeps below; an unconfigured deploy leaves it null and no estimate shows.
+  var deliveryEstimateOrigin = process.env.SHOP_ESTIMATE_ORIGIN || null;
+  if (!deliveryEstimateOrigin && catalog && cart) {
+    try {
+      var _eo = await bShop.config.create({}).get("shop.estimate_origin", null);
+      if (typeof _eo === "string" && _eo) deliveryEstimateOrigin = _eo;
+    } catch (_e) { /* unconfigured — no estimate origin */ }
+  }
+
   // i18n / locale routing — localises the storefront UI chrome (nav,
   // footer, search controls, newsletter band) + mounts the footer locale
   // switcher. The locale-router owns resolution (cookie / ?lang= /
@@ -1723,6 +1738,20 @@ async function main() {
       var taxRates       = (catalog && cart) ? bShop.taxRates.create({})       : null;
       var shippingZones  = (catalog && cart) ? bShop.shippingZones.create({})  : null;
       var autoDiscount   = (catalog && cart) ? bShop.autoDiscount.create({})   : null;
+      // Delivery-estimate — the PDP + cart "Get it by <date>" window from the
+      // operator's carrier-transit / cutoff / holiday / postal-zone tables.
+      // `shippingZones` is wired so a destination that misses the postal-prefix
+      // table can still resolve a zone via the country/region zone router.
+      // inventoryLocations is intentionally NOT passed: the shared catalog
+      // location handle lacks the defaultLocation()/regionFor() resolvers the
+      // primitive expects, so the origin must come from an explicit
+      // origin_location — without a configured cutoff for that origin the
+      // storefront simply renders no estimate (drop-silent). A missing /
+      // unmigrated table only surfaces when a console route reads it (degrades
+      // to an empty list / notice), never at boot.
+      var deliveryEstimate = (catalog && cart)
+        ? bShop.deliveryEstimate.create({ shippingZones: shippingZones })
+        : null;
       var couponStacking = (catalog && cart) ? bShop.couponStacking.create({}) : null;
       // Per-line allocation of cart-level order discounts — back-office
       // bookkeeping that records how an order's discount split across its
@@ -1871,6 +1900,7 @@ async function main() {
           businessHours:   businessHours,
           taxRates:        taxRates,
           shippingZones:   shippingZones,
+          deliveryEstimate: deliveryEstimate,
           autoDiscount:    autoDiscount,
           couponStacking:  couponStacking,
           discountAllocation: discountAllocation,
@@ -2118,6 +2148,14 @@ async function main() {
         // (drop-silent on a mailer hiccup). The cron sweep emails the fired
         // rows from the server-level handler, not here.
         if (stockAlerts) sfDeps.stockAlerts = stockAlerts;
+        // Delivery estimate — the PDP + cart "Get it by <date>" line. The date
+        // is destination-specific, so it renders CONTAINER-ONLY for a signed-in
+        // customer with a saved shipping address (the edge serves a shared cache
+        // across anonymous visitors and never bakes a per-visitor date). Absent
+        // a configured origin cutoff for the resolved origin the route catches
+        // the primitive's config-state throw and renders no estimate.
+        if (deliveryEstimate) sfDeps.deliveryEstimate = deliveryEstimate;
+        if (deliveryEstimate && deliveryEstimateOrigin) sfDeps.delivery_estimate_origin = deliveryEstimateOrigin;
         if (txEmail) sfDeps.email = txEmail;
         // Trust badges — rendered at the container-only checkout + order-
         // confirmation placements; drop-silent on any read failure.

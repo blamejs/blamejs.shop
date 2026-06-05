@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.68",
+  "date": "2026-06-05",
+  "headline": "Delivery estimates: \"Get it by\" dates on the product and cart pages",
+  "summary": "The product page and cart can now promise a delivery date. Operators configure the inputs at /admin/delivery-estimates — carrier transit times, warehouse cutoff hours, shipping holidays, and postal-prefix zones — and name the origin warehouse via the SHOP_ESTIMATE_ORIGIN environment variable or the shop.estimate_origin config row. A signed-in customer with a saved shipping address then sees \"Get it by <date>\" computed from the cutoff clock, transit days, and the holiday calendar. Anonymous visitors served from the edge cache deliberately see no date: an estimate is destination-specific, and a date baked into a shared cached page would show one visitor's delivery promise to everyone while going stale in the cache. The product and cart markup builders are byte-identical across the edge and container renderers with a deterministic date formatter, locked by a parity test. A store that has not configured estimates renders exactly what it does today — nothing — and a configuration gap can never produce a customer-facing error.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Configurable delivery-date estimates",
+          "body": "The delivery-estimate primitive is wired end to end: an /admin/delivery-estimates console manages carrier transit times, order-cutoff hours per warehouse, shipping holidays, and postal-prefix zone mappings, with each mutation audited; the product and cart pages render \"Get it by <date>\" for signed-in customers with a saved shipping address once an origin warehouse is configured. Estimates render only where the destination is actually known — never on shared edge-cached pages — and every estimate read is fail-quiet: missing configuration, an unmatched destination, or a computation error renders no estimate rather than an error. Operators enable it by setting the origin (SHOP_ESTIMATE_ORIGIN or the shop.estimate_origin config row) and authoring at least one cutoff, transit time, and postal zone."
+        }
+      ]
+    }
+  ]
+}

@@ -343,6 +343,7 @@ var PRODUCT_PAGE =
   "      RAW_AVAILABILITY_PLACEHOLDER\n" +
   "      RAW_BUYBOX_PLACEHOLDER\n" +
   "      RAW_SHIPPING_NOTE_PLACEHOLDER\n" +
+  "      RAW_DELIVERYESTIMATE_PLACEHOLDER\n" +
   "      RAW_QTYBREAK_PLACEHOLDER\n" +
   "      RAW_WISHLIST_PLACEHOLDER\n" +
   "      RAW_COMPARE_PLACEHOLDER\n" +
@@ -935,6 +936,42 @@ function _pdpShippingNote(availability) {
          "See our <a href=\"/terms\">shipping &amp; returns policy</a>.</p>";
 }
 
+// "Get it by <date>" delivery-estimate line — mirrors the container
+// (`lib/storefront.js#_buildDeliveryEstimate` / `#_formatDeliveryDate`)
+// byte-for-byte so the dual-render parity gate holds. The EDGE ALWAYS passes
+// estimate=null (the arrival date is destination-specific + per-customer, and
+// edge HTML is shared-cacheable across anonymous visitors), so this renders
+// EMPTY here — the real date is a container-only enhancement. See the
+// container twin for the full design note.
+function _formatDeliveryDate(ymd) {
+  // ymd is YYYY-MM-DD; format as "Thu, Jun 12" deterministically. Date.UTC
+  // gives a runtime-stable weekday (Sun=0..Sat=6) with no timezone drift.
+  var DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  var MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  var y = Number(ymd.slice(0, 4));
+  var m = Number(ymd.slice(5, 7));
+  var d = Number(ymd.slice(8, 10));
+  var wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return DOW[wd] + ", " + MON[m - 1] + " " + d;
+}
+function _buildDeliveryEstimate(estimate, esc) {
+  if (!estimate || typeof estimate !== "object" || !estimate.deliver_by) return "";
+  var by = _formatDeliveryDate(estimate.deliver_by);
+  // A range when the slowest service lands later than the fastest — "by Thu,
+  // Jun 12" becomes "Tue, Jun 10 – Thu, Jun 12" so the shopper sees the window,
+  // not just the optimistic edge.
+  var dateText = (estimate.latest_by && estimate.latest_by !== estimate.deliver_by)
+    ? _formatDeliveryDate(estimate.deliver_by) + " – " + _formatDeliveryDate(estimate.latest_by)
+    : "by " + by;
+  var svc = estimate.service_label
+    ? " <span class=\"delivery-est__svc\">via " + esc(estimate.service_label) + "</span>"
+    : "";
+  return "<p class=\"delivery-est\" role=\"status\">" +
+           "<span class=\"delivery-est__icon\" aria-hidden=\"true\">🚚</span> " +
+           "<span class=\"delivery-est__label\">Get it " + esc(dateText) + "</span>" + svc +
+         "</p>";
+}
+
 // Pre-order CTA — replaces the add-to-cart buy box on a PDP whose lead SKU has
 // an OPEN pre-order campaign. Mirrors the container
 // (`lib/storefront.js#_buildPreorderCta`). `preorder` is the resolved shape:
@@ -1107,6 +1144,13 @@ export function renderProduct(opts) {
   buyboxHtml = _buildPreorderNotice(opts.preorderNotice) + buyboxHtml;
   var availabilityHtml = _buildAvailability(availability);
   var shippingNoteHtml = _pdpShippingNote(availability);
+  // "Get it by <date>" — the edge ALWAYS renders empty (estimate=null): the
+  // date is per-customer + destination-specific and edge HTML is shared across
+  // anonymous visitors. The real date is container-only. Passing nothing keeps
+  // this byte-stable with the container's empty render. See _buildDeliveryEstimate.
+  var deliveryEstimateHtml = (availability.requires_shipping && !preorderShape)
+    ? _buildDeliveryEstimate(opts.deliveryEstimate, escapeHtml)
+    : "";
 
   var galleryHtml = _buildPdpGallery(product, media, assetPrefix);
   var reviewsHtml = _buildReviews(reviewSummary, reviews, reviewForm);
@@ -1144,6 +1188,7 @@ export function renderProduct(opts) {
     .replace("RAW_AVAILABILITY_PLACEHOLDER", availabilityHtml)
     .replace("RAW_BUYBOX_PLACEHOLDER", buyboxHtml)
     .replace("RAW_SHIPPING_NOTE_PLACEHOLDER", shippingNoteHtml)
+    .replace("RAW_DELIVERYESTIMATE_PLACEHOLDER", deliveryEstimateHtml)
     .replace("RAW_QTYBREAK_PLACEHOLDER", qtyBreaksHtml)
     .replace("RAW_WISHLIST_PLACEHOLDER", wishlistHtml)
     .replace("RAW_COMPARE_PLACEHOLDER", compareHtml)
