@@ -1728,7 +1728,7 @@ var KNOWN_ANTIPATTERNS = [
     regex: /\b(?:stream\.pipeline|nodeStream\.pipeline|streamPipeline)\s*\(/,
     requires: /\bwithTestTimeout\b/,
     allowlist: [
-      "test/helpers/wait.js",
+      "test/helpers/index.js",
     ],
     reason: "Real-time-dependent tests using node:stream.pipeline without a per-test wall-clock ceiling can hang the smoke runner for the full GH Actions 6h timeout — see the v0.10.13 PR #102 macOS hang on stream-throttle's setTimeout-based rate test. New tests using stream.pipeline MUST import `withTestTimeout` from `test/helpers` and wrap each test body so a hang surfaces as `test timed out: <label>` in seconds instead of an opaque stuck job.",
   },

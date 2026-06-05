@@ -7,8 +7,8 @@
  * scripts/stamp-vendor-integrity.js) and compares each digest against the
  * pinned `"sha256:<hex>"`. A hand-edit to ANY vendored source — or a
  * vendor refresh that forgot to re-stamp — produces a mismatch and exits
- * non-zero, giving CLAUDE.md hard rules #1 / #11 (no hand-edits to
- * lib/vendor/) real enforcement teeth.
+ * non-zero, giving the vendored-tree policy (lib/vendor/ is read-only;
+ * the ONLY write path is scripts/vendor-update.sh) real enforcement teeth.
  *
  * Wired into test/smoke.js as a static gate, so it runs in the smoke
  * matrix (Windows + macOS + Linux) AND inside the worker-excluded in-image
@@ -68,7 +68,7 @@ function main() {
     });
     process.stderr.write("\nIf you refreshed the vendored tree, re-stamp it:\n" +
       "  node scripts/stamp-vendor-integrity.js\n" +
-      "Hand-edits to lib/vendor/ are forbidden (CLAUDE.md rule #1 / #11) — " +
+      "Hand-edits to lib/vendor/ are forbidden — the vendored tree is read-only; " +
       "file the change upstream or compose around it.\n");
     process.exit(1);
     return;

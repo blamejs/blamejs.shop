@@ -148,6 +148,18 @@ async function _run() {
     var fresh = await httpRequest({ port: port, method: "POST", path: "/account/login", headers: _hdr(freshIp, nav), form: { u: "a" } });
     check("(b) a different IP on the same endpoint is NOT throttled (per-IP keying)", fresh.status >= 200 && fresh.status < 300);
 
+    // The anonymous, CSRF-exempt back-in-stock subscribe sends a
+    // confirmation email to the request-supplied address — it MUST sit
+    // in the tight per-(IP+path) budget or it is a victim-addressed
+    // mail cannon on the loose global bucket alone.
+    var alertIp = "198.51.100.8";
+    var alert429 = 0;
+    for (var t = 0; t < 15; t += 1) {
+      var rA = await httpRequest({ port: port, method: "POST", path: "/stock-alert/subscribe", headers: _hdr(alertIp, nav), form: { email: "victim@example.com", sku: "X-" + t } });
+      if (rA.status === 429) alert429 += 1;
+    }
+    check("(b) stock-alert subscribe is tight-throttled (excess 429)", alert429 >= 4);
+
     // The global budget is separate + generous: the same sprayer can
     // still load a non-tight read page (the tight 429 is per-path).
     var readAfterSpray = await httpRequest({ port: port, path: "/", headers: _hdr(sprayIp, nav) });

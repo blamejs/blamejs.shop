@@ -36,7 +36,7 @@
  *     headline/summary/sections need human judgment; `prepare` prints a
  *     stub and exits if it's missing).
  *   - Git SSH signing configured (commit.gpgsign + gpg.format=ssh +
- *     ~/.ssh/allowed_signers) — see CLAUDE.md "Release workflow".
+ *     ~/.ssh/allowed_signers; one-time operator setup).
  *   - wrangler authenticated (for the `deploy` phase migrations + R2).
  *
  * Judgment-requiring parts stay manual: writing release-notes content,

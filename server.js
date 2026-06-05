@@ -1744,9 +1744,11 @@ async function main() {
           order:          order ? _dsrReader.order(order) : null,
           orderNotes:     _dsrReader.orderNotes(),
           subscriptions:  subscriptions ? _dsrReader.subscriptions(subscriptions, b.externalDb.query) : null,
-          // paymentMethods is unwired in prod (Stripe unconfigured) — the
-          // adapter reports the section present-but-empty until a handle exists.
-          paymentMethods: _dsrReader.paymentMethods(null),
+          // The vault stores only opaque processor tokens + display
+          // metadata (brand/last4/expiry) — personal data that belongs in
+          // a subject-access export, so the reader gets the live handle
+          // whether or not Stripe is configured for NEW card adds.
+          paymentMethods: _dsrReader.paymentMethods(paymentMethods),
           supportTickets: supportTickets ? _dsrReader.supportTickets(supportTickets) : null,
           loyalty:        loyalty ? _dsrReader.loyalty(loyalty) : null,
         };

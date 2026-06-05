@@ -55,6 +55,29 @@ async function waitUntilEqual(getter, expected, opts) {
   }, opts);
 }
 
+// Per-test wall-clock ceiling for real-time-dependent test bodies
+// (stream.pipeline rate tests, throttle/backpressure paths). Races the
+// body against a timer so a hang surfaces as `test timed out: <label>`
+// in seconds instead of an opaque stuck job that eats the CI runner's
+// full timeout. The timer is cleared on settle and unref'd so a passing
+// body never holds the process open.
+async function withTestTimeout(label, fn, opts) {
+  opts = opts || {};
+  var timeoutMs = opts.timeoutMs || 30000;
+  var timer = null;
+  var ceiling = new Promise(function (_resolve, reject) {
+    timer = setTimeout(function () {
+      reject(new Error("test timed out: " + label + " (after " + timeoutMs + "ms)"));
+    }, timeoutMs);
+    if (timer.unref) timer.unref();
+  });
+  try {
+    return await Promise.race([fn(), ceiling]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ---- in-memory D1 query (layer-1 SQL fixtures) -------------------------
 //
 // A `{ rows, rowCount }` async query backed by an in-memory node:sqlite
@@ -272,6 +295,7 @@ module.exports = {
   getChecks:      getChecks,
   waitUntil:      waitUntil,
   waitUntilEqual: waitUntilEqual,
+  withTestTimeout: withTestTimeout,
   memD1Query:     memD1Query,
   cookieJar:      cookieJar,
   httpRequest:    httpRequest,
