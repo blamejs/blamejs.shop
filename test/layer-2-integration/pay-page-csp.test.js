@@ -27,6 +27,12 @@
  *      script-src), while a non-pay route on the SAME app keeps the strict
  *      default (no js.stripe.com, Trusted Types intact) — the proof the
  *      global CSP is NOT weakened.
+ *   p/d2. The pay route ALSO sets a route-scoped Permissions-Policy that
+ *      re-enables the `payment` feature for the same origin + the Stripe /
+ *      Google Pay wallet frames (so the Express Checkout Element's Google Pay
+ *      / Apple Pay buttons can use the Payment Request API), while every other
+ *      feature stays denied and a non-pay route keeps the app-level
+ *      `payment=()` — the proof the global Permissions-Policy is NOT weakened.
  *   e. The rendered pay body carries the Stripe SDK <script src> + the
  *      pay.js island ref, and NO inline Stripe glue (no `Stripe(` /
  *      `stripe.elements(` literal) — the inline half moved to the island.
@@ -112,6 +118,39 @@ function _unit() {
     /script-src 'self'(;|$)/.test(emptyCsp));
   _assertProtectionsIntact("(c) empty scoped CSP", emptyCsp);
 
+  // (p) scopedPermissionsPolicy() re-enables `payment` for the pay surface
+  //     ONLY — same origin + Stripe + Google Pay frames — while every other
+  //     feature stays denied, and the entry derives from the vendored default.
+  var pp = sm.scopedPermissionsPolicy();
+  check("(p) scopedPermissionsPolicy admits self for payment",
+    /payment=\([^)]*\bself\b/.test(pp));
+  check("(p) scopedPermissionsPolicy admits js.stripe.com for payment",
+    /payment=\([^)]*"https:\/\/js\.stripe\.com"/.test(pp));
+  check("(p) scopedPermissionsPolicy admits pay.google.com for payment",
+    /payment=\([^)]*"https:\/\/pay\.google\.com"/.test(pp));
+  check("(p) scopedPermissionsPolicy NEVER opens payment to '*'",
+    !/payment=\*/.test(pp));
+  check("(p) scopedPermissionsPolicy keeps camera DENIED",
+    /(^|,\s*)camera=\(\)/.test(pp));
+  check("(p) scopedPermissionsPolicy keeps geolocation DENIED",
+    /(^|,\s*)geolocation=\(\)/.test(pp));
+  check("(p) scopedPermissionsPolicy keeps microphone DENIED",
+    /(^|,\s*)microphone=\(\)/.test(pp));
+  // The vendored denylist is the single source: every default feature is
+  // present in the scoped string, exactly one (payment) is relaxed.
+  var vendored = require("../../lib/vendor/blamejs/lib/middleware/security-headers");
+  check("(p) scoped policy carries EVERY vendored feature name",
+    vendored.DEFAULT_PERMISSIONS.every(function (entry) {
+      var feature = entry.split("=")[0];
+      return new RegExp("(^|,\\s*)" + feature + "=").test(pp);
+    }));
+  check("(p) scoped policy relaxes EXACTLY one feature (payment) — all others ()",
+    vendored.DEFAULT_PERMISSIONS.filter(function (entry) {
+      var feature = entry.split("=")[0];
+      return feature !== "payment" &&
+        !new RegExp("(^|,\\s*)" + feature + "=\\(\\)").test(pp);
+    }).length === 0);
+
   // (e) the rendered pay body: SDK src + island ref, no inline glue.
   var payHtml = sf.renderPayPage({
     order: { id: b.uuid.v7(), grand_total_minor: 2999, currency: "USD" },
@@ -179,6 +218,7 @@ async function _http() {
       // route-scoped CSP, then sends the pay page.
       r.get("/pay/:order_id", function (req, res) {
         res.setHeader("content-security-policy", sm.scopedCsp(["stripe"]));
+        res.setHeader("permissions-policy", sm.scopedPermissionsPolicy());
         res.status(200);
         res.setHeader("content-type", "text/html; charset=utf-8");
         var html = sf.renderPayPage({
@@ -202,6 +242,17 @@ async function _http() {
       /js\.stripe\.com/.test(payCsp));
     _assertProtectionsIntact("(d) /pay route CSP", payCsp);
 
+    // (d2) the pay route's Permissions-Policy re-enables `payment` for the
+    //      Stripe / Google Pay wallet frames; the app-level strict default
+    //      keeps `payment=()` on a non-pay route.
+    var payPp = payResp.headers["permissions-policy"] || "";
+    check("(d2) /pay response Permissions-Policy admits payment for self + Stripe + Google Pay",
+      /payment=\([^)]*\bself\b/.test(payPp) &&
+      /payment=\([^)]*"https:\/\/js\.stripe\.com"/.test(payPp) &&
+      /payment=\([^)]*"https:\/\/pay\.google\.com"/.test(payPp));
+    check("(d2) /pay response Permissions-Policy keeps camera/microphone DENIED",
+      /(^|,\s*)camera=\(\)/.test(payPp) && /(^|,\s*)microphone=\(\)/.test(payPp));
+
     var cartResp = await httpRequest({ port: port, path: "/cart", headers: _hdr() });
     var cartCsp = cartResp.headers["content-security-policy"] || "";
     check("(d) NON-pay /cart response carries the STRICT default (no js.stripe.com)",
@@ -210,6 +261,11 @@ async function _http() {
       cartCsp.indexOf("require-trusted-types-for 'script'") !== -1);
     check("(d) NON-pay /cart script-src is bare 'self' (global CSP NOT weakened)",
       /script-src 'self'(;|$| )/.test(cartCsp) && cartCsp.indexOf("script-src 'self' https") === -1);
+    // (d2) the global Permissions-Policy denies payment everywhere else.
+    var cartPp = cartResp.headers["permissions-policy"] || "";
+    check("(d2) NON-pay /cart response keeps payment=() (global Permissions-Policy NOT weakened)",
+      cartPp.length > 0 && /(^|,\s*)payment=\(\)/.test(cartPp) &&
+      cartPp.indexOf("js.stripe.com") === -1 && cartPp.indexOf("pay.google.com") === -1);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
