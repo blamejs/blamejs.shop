@@ -2083,6 +2083,13 @@ async function main() {
         if (giftRegistry) sfDeps.giftRegistry = giftRegistry;
         if (addresses) sfDeps.addresses = addresses;
         if (cookieConsent) sfDeps.cookieConsent = cookieConsent;
+        // Analytics event stream — threads the same read-only/recordEvent
+        // handle the admin /admin/analytics screen uses so the storefront
+        // can record browse→buy funnel events. Every recordEvent in the
+        // storefront is gated on the visitor's `analytics` consent category
+        // (default-deny, DNT/GPC honoured) and is container-served only
+        // (anonymous PDP/search GETs are edge-cached and never record).
+        if (analytics) sfDeps.analytics = analytics;
         if (returns) sfDeps.returns = returns;
         if (returnLabels) sfDeps.returnLabels = returnLabels;
         // Support tickets — the customer intake + thread (/account/support).
