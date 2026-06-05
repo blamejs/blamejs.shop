@@ -120,6 +120,17 @@ node -e "
   the value identically on the Worker (`wrangler secret put
   D1_BRIDGE_SECRET`) and the container env. Rotate quarterly or after
   any Worker-credential compromise.
+- **Referrer-Policy is load-bearing for CSRF.** The app sends
+  `Referrer-Policy: same-origin` on both the edge and the container.
+  Browsers serialize the `Origin` header as `null` on same-origin
+  navigational form POSTs when the page's referrer policy is
+  `no-referrer`, and the CSRF gate's origin pre-check refuses a null
+  Origin before the token is read — switching the policy back to
+  `no-referrer` 403s every tokened form submission (checkout,
+  sign-in, account, admin) in real browsers while loopback tests
+  stay green. Keep `same-origin` (referrer data still never leaves
+  the site), or pair any stricter policy with an origin-tolerant
+  CSRF configuration you have tested in a real browser.
 - **Stripe webhook signature.** Inbound `POST` to
   `/api/webhooks/stripe` is signature-verified at the Worker edge
   (HMAC-SHA256 over `<timestamp>.<body>`, 5-minute tolerance window)
