@@ -1,4 +1,4 @@
-import { renderTemplate, escapeAttr, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw, absolutizeOgImage } from "./_lib.js";
+import { renderTemplate, escapeAttr, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, promoBannerHtml, makeFormatPrice, currencySwitcher, spliceRaw, absolutizeOgImage } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout, alternateLinks } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -32,6 +32,7 @@ var LAYOUT =
   "<body>\n" +
   "  <a class=\"skip-link\" href=\"#main\">{{skip_to_content}}</a>\n" +
   "RAW_ANNOUNCEMENT_BAR" +
+  "RAW_PROMO_TOP_STRIP" +
   "\n" +
   "  <div class=\"utility-bar\" role=\"complementary\">\n" +
   "    <div class=\"utility-bar__inner\">\n" +
@@ -91,6 +92,7 @@ var LAYOUT =
   "    </div>\n" +
   "  </section>\n" +
   "\n" +
+  "RAW_PROMO_FOOTER" +
   "  <footer class=\"site-footer\">\n" +
   "    <div class=\"site-footer__inner\">\n" +
   "      <div class=\"site-footer__brand-col\">\n" +
@@ -306,6 +308,9 @@ function _wrap(opts) {
   // land literally, not trigger `String.replace`'s dollar substitution.
   // Same for the cart body below. See `spliceRaw`.
   assembled = spliceRaw(assembled, "RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null));
+  // Sitewide promo banners — byte-identical to the container LAYOUT.
+  assembled = spliceRaw(assembled, "RAW_PROMO_TOP_STRIP", promoBannerHtml(opts.promo_banners, "top_strip"));
+  assembled = spliceRaw(assembled, "RAW_PROMO_FOOTER", promoBannerHtml(opts.promo_banners, "footer"));
   return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", opts.body);
 }
 
@@ -327,9 +332,13 @@ export function renderCart(opts) {
   var subtotal = fmt(totals.subtotal_minor, totals.currency);
   var total    = fmt(totals.grand_total_minor, totals.currency);
 
+  // cart_side promo banner above the cart body — byte-identical to the
+  // container renderCart's `promoCartSide + ...` order. (The edge only ever
+  // renders the empty-cart shell; a populated cart is container-served.)
+  var promoCartSide = promoBannerHtml(opts.promoBanners, "cart_side");
   var body;
   if (lines.length === 0) {
-    body = CART_EMPTY_PAGE;
+    body = promoCartSide + CART_EMPTY_PAGE;
   } else {
     var rows = lines.map(function (l) {
       var match = Object.prototype.hasOwnProperty.call(lookup, l.variant_id) ? lookup[l.variant_id] : null;
@@ -373,7 +382,7 @@ export function renderCart(opts) {
       }).replace("RAW_CART_LINE_THUMB", thumb);
     }).join("");
 
-    body = renderTemplate(CART_PAGE, {
+    body = promoCartSide + renderTemplate(CART_PAGE, {
       line_rows: "RAW_LINES",
       subtotal:  subtotal,
       total:     total,
@@ -398,6 +407,7 @@ export function renderCart(opts) {
     chrome_overrides: opts.chromeOverrides,
     body:       body,
     announcement:         opts.announcement,
+    promo_banners:        opts.promoBanners,
     currency_options:     opts.currencyOptions,
     currency_selected:    opts.currencySelected,
     currency_note:        opts.currencyNote,

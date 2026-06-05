@@ -352,6 +352,56 @@ export function announcementScriptTag() {
     (sri ? " integrity=\"" + sri + "\"" : "") + " defer></script>";
 }
 
+// Promo-banner markup for a resolved row — BYTE-IDENTICAL to the container's
+// `_buildPromoBanner` (lib/storefront.js) so an edge-cached page and a
+// container page render the same banner for the same placement + audience
+// (the asset-fingerprint parity test guards this). Returns "" for a null row
+// so an empty placement renders nothing. The CTA points at the container
+// click-tracking route (`/promo/:slug/click`) — slug-only, no operator free
+// text — so the link is identical on both substrates and the edge click
+// simply navigates to the container counter.
+export function promoBanner(row) {
+  if (!row) return "";
+  var esc = function (s) { return escapeHtml(String(s == null ? "" : s)); };
+  var theme     = esc(row.theme || "info");
+  var placement = esc(row.placement);
+  var slug      = esc(row.slug);
+  var parts = [];
+  parts.push("<div class=\"promo-banner promo-banner--" + theme + " promo-banner--" + placement +
+             "\" data-banner-slug=\"" + slug + "\">");
+  if (row.image_url) {
+    var img = String(row.image_url);
+    if (/^https:\/\//i.test(img) || (img.charAt(0) === "/" && img.charAt(1) !== "/")) {
+      parts.push("<img class=\"promo-banner__image\" src=\"" + esc(img) + "\" alt=\"\" />");
+    }
+  }
+  parts.push("<div class=\"promo-banner__body\">");
+  parts.push("<h2 class=\"promo-banner__headline\">" + esc(row.headline) + "</h2>");
+  if (row.body) {
+    var raw = String(row.body).replace(/\r\n/g, "\n").split("\n");
+    while (raw.length && raw[raw.length - 1] === "") raw.pop();
+    for (var i = 0; i < raw.length; i += 1) {
+      parts.push("<p class=\"promo-banner__line\">" + esc(raw[i]) + "</p>");
+    }
+  }
+  var href = String(row.cta_url == null ? "" : row.cta_url);
+  if (/^https:\/\//i.test(href) || (href.charAt(0) === "/" && href.charAt(1) !== "/")) {
+    parts.push("<a class=\"promo-banner__cta\" href=\"/promo/" + slug + "/click\" data-banner-slug=\"" + slug + "\">" +
+               esc(row.cta_label) + "</a>");
+  }
+  parts.push("</div>");
+  parts.push("</div>");
+  return parts.join("");
+}
+
+// Resolve the pre-rendered promo-banner HTML for a placement from an opts
+// map of resolved rows (keyed by placement), or "" when none is active.
+export function promoBannerHtml(promoMap, placement) {
+  if (!promoMap || typeof promoMap !== "object") return "";
+  var row = promoMap[placement];
+  return row ? promoBanner(row) : "";
+}
+
 export function formatPrice(minorUnits, currency) {
   if (!Number.isInteger(minorUnits)) {
     throw new TypeError("formatPrice: minorUnits must be an integer, got " + JSON.stringify(minorUnits));

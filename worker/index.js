@@ -62,6 +62,7 @@ import {
 } from "./data/search-ranking.js";
 import { hasCurrencyCookie } from "./data/currency.js";
 import { resolveAnnouncement } from "./data/announcement.js";
+import { resolvePromoBanners } from "./data/promo-banners.js";
 
 // Cloudflare Worker — edge router for blamejs.shop.
 //
@@ -1211,6 +1212,7 @@ async function _edgeCartEmpty(request, env, version, shopName) {
       version:       version,
       defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
       announcement:  await resolveAnnouncement(env.DB, {}),
+      promoBanners:  await resolvePromoBanners(env.DB, {}),
     }, _currencyRenderOpts(env, { pathname: "/cart" })));
     // /cart is a session-bound surface even when the guest cart is
     // empty — crawlers indexing it dilute search results with
@@ -1403,6 +1405,7 @@ async function _edgeHome(request, env, _url, version, shopName) {
   try {
     const page = await listActiveProducts(env.DB, { limit: 24, currency: "USD" });
     const ann = await resolveAnnouncement(env.DB, {});
+    const promos = await resolvePromoBanners(env.DB, {});
     // Featured-collections band data — active collections, newest-curated
     // first, capped at 6. Best-effort: a band read failure degrades to no
     // band, never blocking the cached home page. The band drops itself when
@@ -1417,6 +1420,7 @@ async function _edgeHome(request, env, _url, version, shopName) {
       cartCount: 0,
       version:   version,
       announcement: ann,
+      promoBanners: promos,
       // The edge serves the storefront's default locale; any explicit
       // locale choice bypasses the edge to the container.
       defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
@@ -1567,6 +1571,7 @@ async function _edgeSearch(request, env, url, version, shopName) {
       version:        version,
       defaultLocale:  env.SHOP_DEFAULT_LOCALE || "en",
       announcement:   await resolveAnnouncement(env.DB, {}),
+      promoBanners:   await resolvePromoBanners(env.DB, {}),
     }, _localeRenderOpts(env, url), _canonicalRenderOpts(url), _currencyRenderOpts(env, url)));
     return _html(html, request.method, env);
   } catch (e) {
@@ -1685,6 +1690,7 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
       preorderCampaign: preorderCampaign,
       preorderNotice:   url && url.searchParams ? url.searchParams.get("preorder") : null,
       announcement:  await resolveAnnouncement(env.DB, {}),
+      promoBanners:  await resolvePromoBanners(env.DB, {}),
       shopName:      shopName,
       cartCount:     0,
       version:       version,
@@ -1751,6 +1757,14 @@ var _SECURITY_HEADERS = {
   "cross-origin-opener-policy":   "same-origin",
   "cross-origin-resource-policy": "same-origin",
   "origin-agent-cluster":          "?1",
+  // Must list the SAME directives as the container's vendored
+  // DEFAULT_PERMISSIONS (lib/vendor/blamejs/lib/middleware/
+  // security-headers.js) — the two substrates serve one origin, and a
+  // shorter edge list silently weakens pages the edge happens to serve.
+  // A parity test diffs this string against the vendored list, so a
+  // vendor refresh that grows the denylist fails the gate here instead
+  // of drifting. The edge never hosts passkey or payment ceremonies, so
+  // every directive stays deny-all; the container relaxes per-route.
   "permissions-policy":
     "accelerometer=(), ambient-light-sensor=(), autoplay=(), camera=(), " +
     "display-capture=(), encrypted-media=(), fullscreen=(), geolocation=(), " +
@@ -1762,7 +1776,10 @@ var _SECURITY_HEADERS = {
     "window-management=(), private-state-token-issuance=(), " +
     "private-state-token-redemption=(), storage-access=(), browsing-topics=(), " +
     "private-aggregation=(), controlled-frame=(), captured-surface-control=(), " +
-    "identity-credentials-get=()",
+    "identity-credentials-get=(), attribution-reporting-cross-site=(), " +
+    "publickey-credentials-create=(), join-ad-interest-group=(), " +
+    "run-ad-auction=(), shared-storage=(), shared-storage-select-url=(), " +
+    "smartcard=(), all-screens-capture=(), deferred-fetch=()",
   // `same-origin`, not `no-referrer`: under no-referrer, browsers opaque
   // the Origin header to "null" on same-origin navigational form POSTs,
   // which the container's CSRF origin pre-check refuses before the token

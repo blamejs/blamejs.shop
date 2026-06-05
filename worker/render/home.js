@@ -1,4 +1,4 @@
-import { renderTemplate, escapeHtml, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw, absolutizeOgImage } from "./_lib.js";
+import { renderTemplate, escapeHtml, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, promoBannerHtml, makeFormatPrice, currencySwitcher, spliceRaw, absolutizeOgImage } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout, alternateLinks } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -31,6 +31,7 @@ var LAYOUT =
   "<body>\n" +
   "  <a class=\"skip-link\" href=\"#main\">{{skip_to_content}}</a>\n" +
   "RAW_ANNOUNCEMENT_BAR" +
+  "RAW_PROMO_TOP_STRIP" +
   "\n" +
   "  <div class=\"utility-bar\" role=\"complementary\">\n" +
   "    <div class=\"utility-bar__inner\">\n" +
@@ -90,6 +91,7 @@ var LAYOUT =
   "    </div>\n" +
   "  </section>\n" +
   "\n" +
+  "RAW_PROMO_FOOTER" +
   "  <footer class=\"site-footer\">\n" +
   "    <div class=\"site-footer__inner\">\n" +
   "      <div class=\"site-footer__brand-col\">\n" +
@@ -455,6 +457,12 @@ function _wrap(opts) {
   // land literally, not trigger `String.replace`'s dollar substitution.
   // Same for the body fragment below. See `spliceRaw`.
   assembled = spliceRaw(assembled, "RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null));
+  // Sitewide promo banners (top_strip above the chrome, footer above the site
+  // footer) — pre-rendered from the resolved per-placement map, byte-identical
+  // to the container LAYOUT. Spliced via the replacer-function helper since the
+  // operator copy can carry a `$`.
+  assembled = spliceRaw(assembled, "RAW_PROMO_TOP_STRIP", promoBannerHtml(opts.promo_banners, "top_strip"));
+  assembled = spliceRaw(assembled, "RAW_PROMO_FOOTER", promoBannerHtml(opts.promo_banners, "footer"));
   return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", opts.body);
 }
 
@@ -552,7 +560,10 @@ export function renderHome(opts) {
         "query-input": "required name=search_term_string",
       },
     });
-  var body = hero + catalog + jsonLd;
+  // Homepage-hero promo banner above the hero — byte-identical to the
+  // container renderHome's `promoHero + hero + ...` body order.
+  var promoHero = promoBannerHtml(opts.promoBanners, "homepage_hero");
+  var body = promoHero + hero + catalog + jsonLd;
 
   return _wrap({
     title:          title,
@@ -576,6 +587,7 @@ export function renderHome(opts) {
     currency_note:        opts.currencyNote,
     currency_redirect_to: opts.currencyRedirectTo,
     announcement:   opts.announcement,
+    promo_banners:  opts.promoBanners,
     body:           body,
   });
 }

@@ -1,4 +1,4 @@
-import { renderTemplate, escapeHtml, escapeAttr, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw, absoluteBase, absolutizeOgImage } from "./_lib.js";
+import { renderTemplate, escapeHtml, escapeAttr, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, promoBannerHtml, makeFormatPrice, currencySwitcher, spliceRaw, absoluteBase, absolutizeOgImage } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout, alternateLinks } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -31,6 +31,7 @@ var LAYOUT =
   "<body>\n" +
   "  <a class=\"skip-link\" href=\"#main\">{{skip_to_content}}</a>\n" +
   "RAW_ANNOUNCEMENT_BAR" +
+  "RAW_PROMO_TOP_STRIP" +
   "\n" +
   "  <div class=\"utility-bar\" role=\"complementary\">\n" +
   "    <div class=\"utility-bar__inner\">\n" +
@@ -90,6 +91,7 @@ var LAYOUT =
   "    </div>\n" +
   "  </section>\n" +
   "\n" +
+  "RAW_PROMO_FOOTER" +
   "  <footer class=\"site-footer\">\n" +
   "    <div class=\"site-footer__inner\">\n" +
   "      <div class=\"site-footer__brand-col\">\n" +
@@ -810,6 +812,9 @@ function _wrap(opts) {
   // land literally, not trigger `String.replace`'s dollar substitution.
   // Same for the PDP body (a product description) below. See `spliceRaw`.
   assembled = spliceRaw(assembled, "RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null));
+  // Sitewide promo banners — byte-identical to the container LAYOUT.
+  assembled = spliceRaw(assembled, "RAW_PROMO_TOP_STRIP", promoBannerHtml(opts.promo_banners, "top_strip"));
+  assembled = spliceRaw(assembled, "RAW_PROMO_FOOTER", promoBannerHtml(opts.promo_banners, "footer"));
   return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", opts.body);
 }
 
@@ -1277,6 +1282,10 @@ export function renderProduct(opts) {
   var qaPageJsonLd = _buildQaPageJsonLd(qaQuestions);
   jsonLd = (jsonLd || "") + breadcrumbJsonLd + qaPageJsonLd;
 
+  // pdp_side promo banner above the product body — byte-identical to the
+  // container renderProduct's `promoPdpSide + body + jsonLd` order.
+  var promoPdpSide = promoBannerHtml(opts.promoBanners, "pdp_side");
+
   return _wrap({
     title:         product.title,
     shopName:      shopName,
@@ -1296,8 +1305,9 @@ export function renderProduct(opts) {
     path:             opts.path,
     supportedLocales: opts.supportedLocales,
     localeStrategy:   opts.localeStrategy,
-    body:          body + (jsonLd || ""),
+    body:          promoPdpSide + body + (jsonLd || ""),
     announcement:        opts.announcement,
+    promo_banners:       opts.promoBanners,
     currencyOptions:     opts.currencyOptions,
     currencySelected:    opts.currencySelected,
     currencyNote:        opts.currencyNote,
