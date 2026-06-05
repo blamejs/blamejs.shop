@@ -327,13 +327,14 @@ var _dsrReader = {
     };
   },
 
-  // orderNotes: lib/order-notes.js is keyed by order_id (no customer-scoped
-  // query) and isn't constructed in this composition root, so there is no
-  // per-customer order-note data to read — the customer-visible content
+  // orderNotes: lib/order-notes.js is keyed by order_id and exposes no
+  // customer-scoped query, so even though the composition root now constructs a
+  // live instance (wired into the admin order-detail panel), there is no
+  // per-customer order-note read to surface here — the customer-visible content
   // (operator replies on the customer's orders) already rides the `order`
-  // section. This adapter exists so the `full` scope reports the section
-  // PRESENT-but-empty rather than absent (an absent section reads as "we
-  // hid something"; an explicit empty array reads as "nothing held here").
+  // section. This adapter keeps the section PRESENT-but-empty rather than absent
+  // (an absent section reads as "we hid something"; an explicit empty array
+  // reads as "nothing held here").
   orderNotes: function () {
     return { forCustomerExport: async function () { return []; } };
   },
@@ -373,9 +374,10 @@ var _dsrReader = {
 };
 
 // orderNotes is intentionally NOT a per-customer reader: lib/order-notes.js
-// is keyed by order_id (no customer-scoped query) and isn't constructed in
-// this composition root — its customer-visible content (operator replies on
-// the customer's orders) already rides the `order` export section.
+// is keyed by order_id (no customer-scoped query), so although the live
+// instance now backs the admin order-detail panel, its customer-visible
+// content (operator replies on the customer's orders) reaches a DSR export
+// through the `order` export section, not a dedicated order-notes read.
 //
 // paymentMethods is Stripe-gated (lib/saved-payment-methods.js) and unwired
 // in prod (Stripe unconfigured) — a real defer-with-condition: the
@@ -1102,6 +1104,18 @@ async function main() {
       var customerSegments = (catalog && cart)
         ? bShop.customerSegments.create({ cursorSecret: customerSegmentsCursorSecret })
         : null;
+      // Customer activity — the read-only chronological per-customer timeline
+      // surfaced on the customer-detail screen. It WRITES no event rows of its
+      // own: it composes the source primitives that already own each event
+      // class (order transitions, wishlist saves, loyalty ledger, support
+      // tickets, reviews) and flattens them into one feed. The peer markers are
+      // passed below once those instances exist (after `order` is built); each
+      // collector switches on only for the peers wired. The listForCustomer
+      // pagination cursor is HMAC-tagged, so it demands a cursorSecret in
+      // production — derive it from the bridge secret like every other cursor.
+      var customerActivityCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("customer-activity-cursor", process.env.D1_BRIDGE_SECRET)
+        : "customer-activity-cursor-secret-dev-only";
 
       // Product Q&A — opts in the storefront published-Q&A display + the
       // ask-a-question route, plus the admin moderation console. Single
@@ -1132,6 +1146,36 @@ async function main() {
       // storefront block reuse it instead of each standing up its own.
       var order = (catalog && cart)
         ? bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals, inventory: catalog.inventory })
+        : null;
+
+      // Order notes — threaded customer-service notes attached to an order,
+      // surfaced as a panel on the admin order-detail screen. ONE shared
+      // instance backs the console add/list/lifecycle. The listForOrder
+      // pagination cursor is HMAC-tagged, so the primitive demands a
+      // cursorSecret in production — derive it from the bridge secret like
+      // every other shop cursor.
+      var orderNotesCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("order-notes-cursor", process.env.D1_BRIDGE_SECRET)
+        : "order-notes-cursor-secret-dev-only";
+      var orderNotes = (catalog && cart)
+        ? bShop.orderNotes.create({ cursorSecret: orderNotesCursorSecret })
+        : null;
+
+      // Customer activity — read-only aggregator over the source primitives.
+      // The peer markers flip each collector on; absent a peer that source is
+      // skipped silently. order_transitions (via the shared `order` FSM),
+      // wishlist_entries, loyalty_transactions, support_tickets, and reviews
+      // are all populated by the instances already built above, so the timeline
+      // is fed by the existing write paths — no new recording call is needed.
+      var customerActivity = (catalog && cart)
+        ? bShop.customerActivity.create({
+            cursorSecret:   customerActivityCursorSecret,
+            order:          order,
+            wishlist:       wishlist,
+            loyalty:        loyalty,
+            supportTickets: supportTickets,
+            reviews:        reviews,
+          })
         : null;
 
       // Pre-orders — reservations against a SKU that isn't released yet. ONE
@@ -1905,6 +1949,9 @@ async function main() {
           storeCredit:      storeCredit,
           customerNotes:    customerNotes,
           customerSegments: customerSegments,
+          customerActivity: customerActivity,
+          // Threaded customer-service notes panel on the order-detail screen.
+          orderNotes:       orderNotes,
           subscriptions: subscriptions,
           giftcards:     giftcards,
           giftCardLedger: giftCardLedger,

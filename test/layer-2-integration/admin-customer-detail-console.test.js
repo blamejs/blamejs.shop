@@ -23,6 +23,11 @@
  *     mutation); a bad/empty edit and an unknown note id are clean 4xx
  *   - SEGMENTS: read-only membership reflects a recompute (the primitive has no
  *     per-customer manual assign — membership is rule-derived)
+ *   - ACTIVITY: the read-only chronological timeline aggregates the wired
+ *     source primitives (order transitions, wishlist saves, loyalty ledger,
+ *     reviews) newest-first; an event carrying a free-text payload (a review
+ *     title) is ESCAPED at render; a customer with no source events shows the
+ *     empty state; the panel is a bounded newest-N read
  *   - an unknown / malformed customer id -> a clean 404
  *
  * Network: zero — every request lands on 127.0.0.1.
@@ -46,6 +51,9 @@ var MIGS = [
   "0004_shop_config.sql", "0006_customers.sql", "0205_customer_oauth_identities.sql",
   "0094_store_credit.sql", "0134_customer_notes.sql", "0049_customer_segments.sql",
   "0022_loyalty.sql",
+  // Activity-timeline source tables + its memoization cache.
+  "0011_reviews.sql", "0012_wishlist.sql", "0047_support_tickets.sql",
+  "0153_customer_activity_cache.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) {
@@ -112,12 +120,43 @@ async function _run() {
   var customerNotes    = bShop.customerNotes.create({ query: query, cursorSecret: "cust-detail-notes" });
   var customerSegments = bShop.customerSegments.create({ query: query, cursorSecret: "cust-detail-segments" });
   var loyalty          = bShop.loyalty.create({ query: query });
+  var wishlist         = bShop.wishlist.create({ query: query, cursorSecret: "cust-detail-wishlist" });
+  var reviews          = bShop.reviews.create({ query: query, cursorSecret: "cust-detail-reviews" });
+  // Customer activity — the read-only aggregator. Composes the source
+  // primitives above; each peer marker flips its collector on. It records no
+  // events of its own — the order FSM (order_transitions), wishlist, loyalty
+  // ledger, and reviews already populate its source tables.
+  var customerActivity = bShop.customerActivity.create({
+    query: query, cursorSecret: "cust-detail-activity",
+    order: order, wishlist: wishlist, loyalty: loyalty, reviews: reviews,
+  });
 
   var alice = await customers.register({ email: "alice@example.com", display_name: "Alice Anderson" });
   // Two orders so the detail screen's recent-orders panel renders linked rows.
+  // The order FSM stamps an order_transitions "create" row per order, which the
+  // activity aggregator surfaces as an "Order placed" event — so the timeline
+  // is fed by the existing write path with no extra recording call.
   var ord1 = await _seedOrder(query, order, alice.id);
   await _seedOrder(query, order, alice.id);
   await loyalty.ensureAccount(alice.id);
+
+  // Seed a spread of activity across the wired sources so the timeline renders
+  // multiple kinds newest-first. A loyalty earn, a wishlist save, and a review
+  // whose title carries an HTML/script payload (to prove the panel escapes
+  // free-text event bodies at render). The reviews table FKs product_id to
+  // products(id), so seed a real product first and reuse it for both.
+  var activityProduct = await catalog.products.create({
+    slug: "activity-widget", title: "Activity Widget", description: "x", status: "active",
+  });
+  await loyalty.earn({ customer_id: alice.id, points: 120, source: "purchase" });
+  await wishlist.add({ customer_id: alice.id, product_id: activityProduct.id });
+  var REVIEW_XSS_TITLE = "<script>alert('activity-xss')</script>";
+  await reviews.submit({
+    customer_id: alice.id, product_id: activityProduct.id, rating: 5,
+    title: REVIEW_XSS_TITLE, body: "Loved it, would buy again — genuinely great.",
+  });
+  // A SECOND customer (defined below as Bob) with NO source events proves the
+  // empty-state path of the activity panel.
 
   // A SECOND customer with their own note — proves the per-note write routes
   // are scoped to the path :id customer (Bob's note can't be mutated through
@@ -145,6 +184,7 @@ async function _run() {
         token: TOKEN, shop_name: "Test Shop", catalog: catalog, order: order, config: config,
         customers: customers, storeCredit: storeCredit, customerNotes: customerNotes,
         customerSegments: customerSegments, loyalty: loyalty,
+        customerActivity: customerActivity,
       });
     },
   });
@@ -173,12 +213,36 @@ async function _run() {
     check("detail shows segment membership",    detail.body.indexOf("Any buyer") !== -1);
     check("detail shows the loyalty panel",     detail.body.indexOf(">Loyalty<") !== -1);
 
+    // ---- activity timeline: aggregated, newest-first, escaped -----------
+    check("detail shows the activity panel",    detail.body.indexOf(">Activity<") !== -1);
+    // Each wired source surfaced its event kind into the feed.
+    check("activity shows the order event",     detail.body.indexOf("order.create") !== -1 && detail.body.indexOf("Order placed") !== -1);
+    check("activity shows the loyalty event",   detail.body.indexOf("loyalty.earn") !== -1);
+    check("activity shows the wishlist event",  detail.body.indexOf("wishlist.added") !== -1);
+    check("activity shows the review event",    detail.body.indexOf("review.pending") !== -1);
+    // The review title carried an XSS payload — the panel must escape it: no
+    // live <script> in the rendered body, the angle brackets entity-encoded.
+    check("activity escapes a free-text payload", detail.body.indexOf("<script>alert('activity-xss')") === -1 &&
+                                                  detail.body.indexOf("&lt;script&gt;alert(") !== -1);
+    // Newest-first: the most recent seeded event (the review) renders before
+    // the oldest (the order placement). Compare first-occurrence positions of
+    // their kind tokens in the rendered HTML.
+    var posReview = detail.body.indexOf("review.pending");
+    var posOrder  = detail.body.indexOf("order.create");
+    check("activity renders newest-first",      posReview !== -1 && posOrder !== -1 && posReview < posOrder);
+
     var detailApi = await helpers.httpRequest({ port: port, path: base, headers: bearer });
     check("detail API JSON",                    (detailApi.headers["content-type"] || "").indexOf("application/json") === 0);
     var detailJson = JSON.parse(detailApi.body);
     check("detail API carries the customer",    detailJson.customer.id === alice.id);
     check("detail API carries recent orders",   Array.isArray(detailJson.recent_orders) && detailJson.recent_orders.length === 2);
     check("detail API omits raw email",         detailJson.customer.email == null && typeof detailJson.customer.email_hash === "string");
+    // The activity feed is present in the bearer JSON, newest-first, bounded.
+    check("detail API carries activity",        Array.isArray(detailJson.activity) && detailJson.activity.length >= 4);
+    check("detail API activity newest-first",   detailJson.activity[0].occurred_at >= detailJson.activity[detailJson.activity.length - 1].occurred_at);
+    check("detail API activity bounded",        detailJson.activity.length <= 50);
+    check("detail API activity carries kinds",  detailJson.activity.some(function (e) { return e.kind === "loyalty.earn"; }) &&
+                                                detailJson.activity.some(function (e) { return e.kind === "wishlist.added"; }));
 
     // ---- store credit: grant with a reason -----------------------------
     var balBefore = await storeCredit.balance(alice.id);
@@ -421,6 +485,17 @@ async function _run() {
       direction: "grant", amount_minor: "500", reason: "x",
     });
     check("malformed id write then 404 (not 500)", malformedGrant.status === 404);
+
+    // ---- activity empty state ------------------------------------------
+    // Bob has a CRM note but no source events (no order / loyalty / wishlist /
+    // review), so his activity feed is empty — the panel shows the empty state.
+    var bobBase = "/admin/customers/" + encodeURIComponent(bob.id);
+    var bobDetail = await helpers.httpRequest({ port: port, path: bobBase, jar: jar });
+    check("bob detail then 200",                bobDetail.status === 200);
+    check("bob activity panel present",         bobDetail.body.indexOf(">Activity<") !== -1);
+    check("bob activity shows empty state",     bobDetail.body.indexOf("No recorded activity yet") !== -1);
+    var bobApi = await helpers.httpRequest({ port: port, path: bobBase, headers: bearer });
+    check("bob activity API is empty",          Array.isArray(JSON.parse(bobApi.body).activity) && JSON.parse(bobApi.body).activity.length === 0);
 
     // ---- auth gate -----------------------------------------------------
     var anon = await helpers.httpRequest({ port: port, path: base });
