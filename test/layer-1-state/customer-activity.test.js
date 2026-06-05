@@ -618,6 +618,69 @@ async function _collectorReadIsBounded() {
     summary.kind_counts_365d["wishlist.added"] === TOTAL);
 }
 
+// A support ticket emits TWO events (opened at opened_at, resolved at
+// resolved_at), so the bounded read must rank tickets by their NEWEST
+// event timestamp. An old ticket resolved just now outranks every newer
+// unresolved ticket — bounding by opened_at alone would drop it and its
+// resolved event would silently vanish from the first page.
+async function _boundKeepsRecentlyResolvedOldTicket() {
+  var query = _makeQuery();
+  var seed = await _seedCustomerWithOrder(query);
+
+  var support = bShop.supportTickets.create({
+    query:        query,
+    cursorSecret: "ca-test-support-bound",
+  });
+  var base = Date.now();
+
+  // One OLD ticket: opened far in the past, resolved as the NEWEST event.
+  var oldTicket = await support.open({
+    customer_id:    seed.customerId,
+    customer_email: "bound-old@example.com",
+    subject:        "Old ticket, fresh resolution",
+    body:           "Opened ages ago.",
+    category:       "order_issue",
+    priority:       "low",
+  });
+  await query(
+    "UPDATE support_tickets SET opened_at = ?1, resolved_at = ?2 WHERE id = ?3",
+    [base - 1000000, base + 1000, oldTicket.id],
+  );
+
+  // Twelve NEWER unresolved tickets — more than a limit-10 page's bound,
+  // so an opened_at-ranked read would evict the old ticket entirely.
+  for (var i = 0; i < 12; i += 1) {
+    var t = await support.open({
+      customer_id:    seed.customerId,
+      customer_email: "bound-new" + i + "@example.com",
+      subject:        "Newer ticket " + i,
+      body:           "Still open.",
+      category:       "other",
+      priority:       "normal",
+    });
+    await query(
+      "UPDATE support_tickets SET opened_at = ?1 WHERE id = ?2",
+      [base + i, t.id],
+    );
+  }
+
+  var ca = customerActivity.create({
+    query:          query,
+    cursorSecret:   "ca-test-support-bound",
+    order:          seed.order,
+    supportTickets: support,
+  });
+
+  var page = await ca.forCustomer({ customer_id: seed.customerId, limit: 10 });
+  check("resolved-bound: old ticket's resolved event survives the bounded read",
+    page.events.some(function (e) {
+      return e.kind === "support.resolved" && e.body === "Old ticket, fresh resolution";
+    }));
+  check("resolved-bound: the fresh resolution is the newest event on the page",
+    page.events[0].kind === "support.resolved" &&
+    page.events[0].occurred_at === base + 1000);
+}
+
 async function run() {
   await _forCustomerMixesSources();
   await _kindsFilter();
@@ -628,6 +691,7 @@ async function run() {
   await _skipInjectedPeers();
   await _validationRefusals();
   await _collectorReadIsBounded();
+  await _boundKeepsRecentlyResolvedOldTicket();
 }
 
 module.exports = { run: run };
