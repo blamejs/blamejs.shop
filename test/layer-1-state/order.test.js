@@ -435,6 +435,81 @@ async function _settlementFailureIsCrashSafe() {
   check("settlement: capture is a 5xx server-error row",                captured[0].status === 500);
 }
 
+// ---- transition claim guard: a lost race is a no-op -------------------
+//
+// transition() is a read-then-write — it SELECTs the order, replays the
+// FSM from that snapshot, then writes the new state. The write is guarded
+// `WHERE id = ? AND status = <snapshot>`, so a concurrent writer that moved
+// the order between the SELECT and the UPDATE wins and this transition
+// collapses to a no-op: no state overwrite, no order_transitions row, and —
+// critically — no inventory settlement, which would otherwise double-release
+// or double-decrement a hold the winning edge already settled. This is the
+// guard that closes the stale-order-reaper vs payment-webhook oversell race.
+// The race is made deterministic by a query wrapper that moves the order to
+// `cancelled` immediately after transition's snapshot SELECT returns pending.
+async function _claimGuardLostRace() {
+  var base = _makeQuery();
+  var armed = false;
+  var fired = false;
+  var q = async function (sql, params) {
+    var isSnapshotSelect = /^\s*SELECT \* FROM orders WHERE id = \?1\s*$/i.test(sql);
+    var res = await base(sql, params);
+    if (armed && !fired && isSnapshotSelect) {
+      // The concurrent writer (e.g. a payment webhook or the reaper) moves
+      // the order out of `pending` after we snapshot it but before our
+      // guarded UPDATE lands.
+      fired = true;
+      await base("UPDATE orders SET status = 'cancelled' WHERE id = ?1", [params[0]]);
+    }
+    return res;
+  };
+
+  var catalog = bShop.catalog.create({ query: q });
+  var cart    = bShop.cart.create({ query: q, catalog: catalog });
+  var released = [];
+  var decremented = [];
+  var inventory = {
+    release:   async function (sku, qty) { released.push({ sku: sku, qty: qty }); return { ok: true }; },
+    decrement: async function (sku, qty) { decremented.push({ sku: sku, qty: qty }); return { ok: true }; },
+  };
+  var order = bShop.order.create({ query: q, inventory: inventory });
+  var seed = await _seed(catalog, cart);
+
+  // A real hold on the line, so settlement WOULD fire absent the guard —
+  // the test would regress (release/decrement called) if the guard were lost.
+  var oi = _orderInput(seed);
+  oi.lines[0].stock_held_qty = 2;
+  var o = await order.createFromCart(oi);
+  check("claim-guard: order starts pending", o.status === "pending");
+
+  armed = true;
+  var result = await order.transition(o.id, "mark_paid", { reason: "stripe_succeeded" });
+  armed = false;
+
+  check("claim-guard: lost race returns the winner's state (cancelled, not paid)",
+    result && result.status === "cancelled");
+  check("claim-guard: no inventory settlement on the losing edge",
+    decremented.length === 0 && released.length === 0);
+  var trans = await base(
+    "SELECT * FROM order_transitions WHERE order_id = ?1 AND on_event = 'mark_paid'", [o.id]);
+  check("claim-guard: no mark_paid transition row written on the lost race",
+    trans.rows.length === 0);
+
+  // Control: an unraced transition on a fresh order still advances + settles.
+  var sid2 = _validUUID();
+  var c2 = await cart.create(sid2, { currency: "USD" });
+  await cart.addLine(c2.id, { variant_id: seed.variant.id, qty: 1 });
+  var oi2 = _orderInput(seed);
+  oi2.cart_id = c2.id;
+  oi2.session_id = sid2;
+  oi2.lines[0].qty = 1;
+  oi2.lines[0].stock_held_qty = 1;
+  var o2 = await order.createFromCart(oi2);
+  var paid = await order.transition(o2.id, "mark_paid");
+  check("claim-guard: an unraced transition still advances to paid + settles",
+    paid.status === "paid" && decremented.length === 1 && decremented[0].qty === 1);
+}
+
 async function run() {
   await _create();
   await _happyPath();
@@ -445,6 +520,7 @@ async function run() {
   await _hasPurchasedProduct();
   await _validation();
   await _settlementFailureIsCrashSafe();
+  await _claimGuardLostRace();
 }
 
 module.exports = { run: run };
