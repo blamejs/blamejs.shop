@@ -263,9 +263,13 @@ async function _http() {
       /script-src 'self'(;|$| )/.test(cartCsp) && cartCsp.indexOf("script-src 'self' https") === -1);
     // (d2) the global Permissions-Policy denies payment everywhere else.
     var cartPp = cartResp.headers["permissions-policy"] || "";
+    // Extract the payment directive token and assert it is EXACTLY the
+    // empty allowlist — token equality rather than substring probing, so
+    // the assertion can't be satisfied (or fooled) by lookalike hosts
+    // elsewhere in the header.
+    var cartPayDirective = (cartPp.match(/(?:^|,\s*)(payment=\([^)]*\))/) || [])[1] || "";
     check("(d2) NON-pay /cart response keeps payment=() (global Permissions-Policy NOT weakened)",
-      cartPp.length > 0 && /(^|,\s*)payment=\(\)/.test(cartPp) &&
-      cartPp.indexOf("js.stripe.com") === -1 && cartPp.indexOf("pay.google.com") === -1);
+      cartPp.length > 0 && cartPayDirective === "payment=()");
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
