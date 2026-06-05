@@ -1,6 +1,6 @@
 {
   "name": "@blamejs/blamejs-shop",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Open-source framework built on blamejs. Vendored stack, zero npm runtime deps, PQC-first crypto, security-on by default.",
   "main": "lib/index.js",
   "scripts": {
