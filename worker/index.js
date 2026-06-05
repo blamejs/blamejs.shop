@@ -54,6 +54,12 @@ import {
   applyFilters,
   rewriteQuery,
 } from "./data/search-faceting.js";
+import {
+  loadSearchRanking,
+  applyRanking,
+  projectForRanking,
+  normalizeRankingQuery,
+} from "./data/search-ranking.js";
 import { hasCurrencyCookie } from "./data/currency.js";
 import { resolveAnnouncement } from "./data/announcement.js";
 
@@ -1487,7 +1493,27 @@ async function _edgeSearch(request, env, url, version, shopName) {
       // page, so products past the first page are reachable via `?page=N`
       // rather than discarded at 24.
       facets   = computeFacets(facetDefs, universe.rows, filters);
-      const matched = applyFilters(facetDefs, universe.rows, filters);
+      let matched = applyFilters(facetDefs, universe.rows, filters);
+      // Operator-tunable rerank — applied to the matched set BEFORE the page
+      // slice so pins + weights reorder across ALL pages, identical to the
+      // container's `_rerankUniverse` (which ranks the full universe before
+      // faceting windows it). Faceting preserves input order, so ranking the
+      // post-filter matched set yields the same relative order as the
+      // container's rank-then-filter; the `search-ranking-parity` test pins
+      // the two. NEVER-500: ranking is supplementary to search — a missing
+      // table, no active weight set, or any throw degrades to the un-ranked
+      // matched order rather than failing the page. Edge-cache coherence: the
+      // ranking config is read fresh on every cache MISS, so an operator
+      // weight/pin change is visible within the same max-age=60 /
+      // stale-while-revalidate=300 window every other edge config change uses.
+      try {
+        const ranking = await loadSearchRanking(env.DB, normalizeRankingQuery(q));
+        const projected = projectForRanking(matched);
+        const ranked = applyRanking(ranking.weights, ranking.pins, projected);
+        if (Array.isArray(ranked) && ranked.length === matched.length) matched = ranked;
+      } catch (_rankErr) {
+        // Un-ranked fallback — search still serves the default order.
+      }
       totalCount = matched.length;
       page = _clampSearchPage(page, totalCount, SEARCH_PAGE_SIZE);
       products = matched.slice((page - 1) * SEARCH_PAGE_SIZE, page * SEARCH_PAGE_SIZE);
