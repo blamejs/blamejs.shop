@@ -364,6 +364,77 @@ async function _validation() {
   await assert.rejects(order.transition(validUUID, "mark_paid"),              /not found/);
 }
 
+// ---- settlement is crash-safe (per-SKU try/catch + loud capture) ------
+//
+// A decrement throw on the paid edge must NOT propagate out of transition
+// (the payment already succeeded; the webhook must 2xx or Stripe retries
+// forever and the already-advanced guard then strands the hold silently).
+// Instead the failure is caught per SKU, the order still advances to paid,
+// the OTHER SKUs in the loop still settle, and the failure surfaces loudly
+// (audit event + a durable error-log row) for manual reconciliation.
+async function _settlementFailureIsCrashSafe() {
+  var q = _makeQuery();
+  var catalog = bShop.catalog.create({ query: q });
+  var cart    = bShop.cart.create({ query: q, catalog: catalog });
+
+  // Two products so the order holds two SKUs; the failing dep throws for the
+  // FIRST and succeeds for the SECOND, proving the loop continues.
+  var pA = await catalog.products.create({ slug: "set-a", title: "SetA", status: "active" });
+  var vA = await catalog.variants.create(pA.id, { sku: "SET-A" });
+  await catalog.prices.set(vA.id, { currency: "USD", amount_minor: 1000 });
+  var pB = await catalog.products.create({ slug: "set-b", title: "SetB", status: "active" });
+  var vB = await catalog.variants.create(pB.id, { sku: "SET-B" });
+  await catalog.prices.set(vB.id, { currency: "USD", amount_minor: 1000 });
+
+  var sid = _validUUID();
+  var c = await cart.create(sid, { currency: "USD" });
+  await cart.addLine(c.id, { variant_id: vA.id, qty: 2 });
+  await cart.addLine(c.id, { variant_id: vB.id, qty: 1 });
+
+  // Inventory dep: decrement throws for SET-A, succeeds (records) for SET-B.
+  var decremented = [];
+  var failingInventory = {
+    decrement: async function (sku, qty) {
+      if (sku === "SET-A") throw new Error("injected: transient DB failure on decrement");
+      decremented.push({ sku: sku, qty: qty });
+      return { ok: true };
+    },
+    release: async function () { return { ok: true }; },
+  };
+  // Error-log stub captures the durable row the settlement failure writes.
+  var captured = [];
+  var errorLog = {
+    captureServerError: async function (input) { captured.push(input); return { id: "e1", occurred_at: Date.now() }; },
+  };
+
+  var order = bShop.order.create({ query: q, inventory: failingInventory, errorLog: errorLog });
+  var o = await order.createFromCart({
+    cart_id: c.id, session_id: sid, currency: "USD",
+    subtotal_minor: 3000, discount_minor: 0, tax_minor: 0, shipping_minor: 0, grand_total_minor: 3000,
+    ship_to: { country: "US", state: "CA", postal: "94103" },
+    lines: [
+      { variant_id: vA.id, sku: "SET-A", qty: 2, unit_amount_minor: 1000, unit_currency: "USD", stock_held_qty: 2 },
+      { variant_id: vB.id, sku: "SET-B", qty: 1, unit_amount_minor: 1000, unit_currency: "USD", stock_held_qty: 1 },
+    ],
+  });
+
+  // The transition must RESOLVE (not throw) despite the SET-A decrement throw.
+  var settled = null;
+  var threw = null;
+  try { settled = await order.transition(o.id, "mark_paid", { reason: "stripe_succeeded" }); }
+  catch (e) { threw = e; }
+  check("settlement: transition does NOT throw on a decrement failure", threw === null);
+  check("settlement: order still advances to paid",                     settled && settled.status === "paid");
+  check("settlement: the OTHER SKU still settled",
+    decremented.length === 1 && decremented[0].sku === "SET-B" && decremented[0].qty === 1);
+  check("settlement: failure captured to the error feed",               captured.length === 1);
+  check("settlement: capture names the stranded sku/qty/order",
+    captured[0].message.indexOf("SET-A") !== -1 &&
+    captured[0].message.indexOf("qty=2") !== -1 &&
+    captured[0].message.indexOf(o.id) !== -1);
+  check("settlement: capture is a 5xx server-error row",                captured[0].status === 500);
+}
+
 async function run() {
   await _create();
   await _happyPath();
@@ -373,6 +444,7 @@ async function run() {
   await _listForCustomer();
   await _hasPurchasedProduct();
   await _validation();
+  await _settlementFailureIsCrashSafe();
 }
 
 module.exports = { run: run };

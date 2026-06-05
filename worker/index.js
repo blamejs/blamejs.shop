@@ -861,6 +861,28 @@ export default {
         }
       })());
 
+      // Stale-pending-order reaper — cancels pending orders older than the
+      // TTL so their reserved stock holds release (an abandoned payment sheet
+      // / expired PaymentIntent otherwise strands the hold forever). One
+      // bounded reap pass per fire; SEPARATE ctx.waitUntil so a slow reap
+      // never blocks the other ticks.
+      ctx.waitUntil((async function () {
+        try {
+          var reapUrl = new URL("/_/stale-order-reap", "http://shop.container");
+          var reapReq = new Request(reapUrl.toString(), {
+            method:  "POST",
+            headers: {
+              "content-type":       "application/json; charset=utf-8",
+              "x-d1-bridge-secret": env.D1_BRIDGE_SECRET || "",
+            },
+            body: "{}",
+          });
+          await _shopContainer(env).fetch(reapReq);
+        } catch (e) {
+          console.error("stale-order-reap failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        }
+      })());
+
       // Customer-portal magic-link expiry — flips stale issued tokens to
       // expired so the FSM audit column stays durable. Cheap bounded
       // UPDATE; SEPARATE ctx.waitUntil.

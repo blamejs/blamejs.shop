@@ -533,6 +533,91 @@ async function _validationRefusals() {
   await assert.rejects(ca.recentActivity({ limit: 0 }),                  /limit/);
 }
 
+// ---- collectors read a bounded slice, not the whole history -----------
+//
+// A customer with far more events than a page bound must not read them all
+// per panel render. The paginated `forCustomer` read bounds each collector
+// to the page size (newest-N at-or-before the cursor); the merge / sort /
+// cursor / slice still yields the exact same page the unbounded read would.
+// The SUMMARY path stays unbounded so windowed kind-counts remain exact.
+async function _collectorReadIsBounded() {
+  var rawQuery = _makeQuery();
+  // Count how many wishlist rows each collector read pulls, so we can prove
+  // the bound actually limited the scan (not just trimmed the output).
+  var wishlistRowsRead = 0;
+  var query = async function (sql, params) {
+    var r = await rawQuery(sql, params);
+    if (/FROM wishlist_entries/.test(sql)) wishlistRowsRead += r.rows.length;
+    return r;
+  };
+
+  var seed = await _seedCustomerWithOrder(query);
+
+  // Seed 220 wishlist entries (> MAX_LIMIT 200) at strictly increasing
+  // timestamps so newest-first ordering is unambiguous.
+  var TOTAL = 220;
+  var base = Date.now();
+  for (var i = 0; i < TOTAL; i += 1) {
+    await query(
+      "INSERT INTO wishlist_entries (id, customer_id, product_id, variant_id, notes, created_at) " +
+      "VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
+      [_validUUID(), seed.customerId, _validUUID(), "w" + i, base + i],
+    );
+  }
+
+  var ca = customerActivity.create({
+    query:        query,
+    cursorSecret: "ca-test-bound",
+    order:        seed.order,
+    wishlist:     { __injected: true },
+  });
+
+  // ---- a single small page reads a BOUNDED slice, not all 220 ----------
+  wishlistRowsRead = 0;
+  var page1 = await ca.forCustomer({ customer_id: seed.customerId, limit: 10 });
+  check("bound: page returns exactly the limit",   page1.events.length === 10);
+  // The wishlist collector read at most `limit + 1` rows (the boundary-drop
+  // margin), not all 220 — proving the scan is bounded, not just trimmed.
+  check("bound: wishlist read is bounded to ~limit", wishlistRowsRead <= 11);
+  // The page is the NEWEST events, descending. Newest wishlist note is "w219".
+  var newestBody = page1.events[0].body;
+  check("bound: page-1 leads with the newest wishlist note", newestBody === "w" + (TOTAL - 1));
+  var monotonic = true;
+  for (var m = 1; m < page1.events.length; m += 1) {
+    if (page1.events[m].occurred_at > page1.events[m - 1].occurred_at) { monotonic = false; break; }
+  }
+  check("bound: page is newest-first",             monotonic);
+
+  // ---- a cursor walk recovers EVERY event, in order, no gaps/overlaps --
+  var seen = {};
+  var walkMonotonic = true;
+  var prevTs = Infinity;
+  var cursor = null;
+  var pages = 0;
+  do {
+    var pg = await ca.forCustomer({ customer_id: seed.customerId, limit: 25, cursor: cursor || undefined });
+    for (var k = 0; k < pg.events.length; k += 1) {
+      var ev = pg.events[k];
+      var key = ev.occurred_at + "|" + ev.kind + "|" + (ev.body || "");
+      if (seen[key]) walkMonotonic = false;   // overlap → ordering broke
+      seen[key] = true;
+      if (ev.occurred_at > prevTs) walkMonotonic = false;  // out of order
+      prevTs = ev.occurred_at;
+    }
+    cursor = pg.next_cursor;
+    pages += 1;
+  } while (cursor && pages < 50);
+  // 220 wishlist + the order transitions (create/paid/fulfilling/shipped = 4).
+  var totalSeen = Object.keys(seen).length;
+  check("bound: cursor walk recovered every event", totalSeen === TOTAL + 4);
+  check("bound: cursor walk stayed newest-first",   walkMonotonic);
+
+  // ---- summary stays UNBOUNDED — windowed counts see all 220 -----------
+  var summary = await ca.summarize({ customer_id: seed.customerId });
+  check("bound: summary counts ALL wishlist events (unbounded read)",
+    summary.kind_counts_365d["wishlist.added"] === TOTAL);
+}
+
 async function run() {
   await _forCustomerMixesSources();
   await _kindsFilter();
@@ -542,6 +627,7 @@ async function run() {
   await _inactiveCustomersDaysThreshold();
   await _skipInjectedPeers();
   await _validationRefusals();
+  await _collectorReadIsBounded();
 }
 
 module.exports = { run: run };

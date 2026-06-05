@@ -1,0 +1,34 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.2",
+  "date": "2026-06-05",
+  "headline": "Abandoned checkouts release their stock holds, and five more inventory and admin hardening fixes",
+  "summary": "The inventory enforcement introduced in 0.4.0 placed a stock hold at checkout but had no path to free it when a buyer abandoned without paying or cancelling — each abandoned checkout permanently subtracted from sellable stock until an operator intervened. A scheduled reaper now cancels pending orders older than a configurable age (default two hours), cancelling the payment intent first so a late payment can never complete against a reaped order, and releasing the held stock through the existing cancellation path. Around it, five more fixes harden the same surface: settlement failures during payment confirmation no longer strand holds silently (each item settles independently and failures land in the operator error log with the exact item and quantity), a rollback path no longer releases holds belonging to an order that was successfully created, pre-order campaigns whose launch date has passed now enforce real stock limits instead of remaining exempt, the admin activity timeline rejects protocol-relative link targets, and activity reads are bounded instead of scanning a customer's full history per page view.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Stock holds from abandoned checkouts are reclaimed",
+          "body": "A pending order that never completes payment now has its stock hold released automatically. The scheduled reaper cancels pending orders older than CHECKOUT_PENDING_TTL_MINUTES (default 120, minimum 5; invalid values refuse to boot). For card payments the payment intent is cancelled at the processor before the order is touched — if the processor reports the payment already succeeded, the order is left alone for the webhook to settle. Each sweep reports counts of reaped, skipped, and errored orders."
+        },
+        {
+          "title": "Payment settlement is crash-safe per item",
+          "body": "When an order is marked paid, each line's stock decrement now settles independently: one item's database failure no longer blocks the others, no longer fails the payment webhook, and is captured to the operator error log naming the item, quantity, and order so the operator can reconcile stock from the existing adjustment screen."
+        },
+        {
+          "title": "Checkout rollback no longer releases holds it does not own",
+          "body": "If checkout fails after the order record was created, the error path previously released all of the attempt's stock holds — which could free units belonging to the order itself or, on a shared item, a concurrent shopper's reservation. Holds are now released on failure only when no order was created; once an order exists it owns its holds, and cancellation or the reaper frees them. The same correction applies to the PayPal order-creation path."
+        },
+        {
+          "title": "Pre-order campaigns enforce stock after their launch date",
+          "body": "An active pre-order campaign exempts its product from stock holds by design — pre-orders sell beyond the shelf. That exemption now ends when the campaign's launch date passes: a launched product sells from real inventory even if the campaign has not yet been moved out of its pre-order state in the console."
+        },
+        {
+          "title": "Admin activity links and reads hardened",
+          "body": "The customer activity timeline's internal-link guard now rejects protocol-relative targets, and each activity source is read with a bound matching the requested page instead of scanning the customer's entire history. Pagination, ordering, and the summary counts are unchanged."
+        }
+      ]
+    }
+  ]
+}
