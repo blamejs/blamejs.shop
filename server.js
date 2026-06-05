@@ -1477,6 +1477,15 @@ async function main() {
         : "sales-reports-cursor-secret-dev-only";
       var salesReports  = (catalog && cart) ? bShop.salesReports.create({ cursorSecret: salesReportsCursorSecret }) : null;
 
+      // Analytics — pure read-only aggregate queries over orders/order_lines
+      // (units-ranked SKU performance, revenue-by-day trend) plus the
+      // pre-purchase event stream (browse→buy funnel, most-viewed products,
+      // top search terms) for the /admin/analytics screen. Like salesReports
+      // it needs only the externalDb query handle (create() falls back to
+      // `b.externalDb.query`); the screen is read-only and the primitive
+      // bounds every window/limit itself.
+      var analytics     = (catalog && cart) ? bShop.analytics.create({}) : null;
+
       // Order export — bulk date-range CSV / NDJSON dump of the orders
       // table for the admin /admin/exports screen, plus the scheduled-
       // export job queue a background worker drains. Reads the orders
@@ -1856,6 +1865,7 @@ async function main() {
           shippingLabels: shippingLabels,
           splitShipments: splitShipments,
           salesReports:  salesReports,
+          analytics:     analytics,
           orderExport:   orderExport,
           printReceipts: printReceipts,
           packingSlips:  packingSlips,

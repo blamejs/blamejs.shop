@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.70",
+  "date": "2026-06-05",
+  "headline": "An Analytics screen in the admin console: funnel, search terms, and product views",
+  "summary": "The admin console gains a read-only Analytics screen at /admin/analytics showing the pre-purchase signal the sales report cannot see: the browse-to-buy funnel (product views to cart adds to checkout starts to completed orders) with a conversion rate, top search terms, most-viewed products, top SKUs ranked by units sold, and a revenue-by-day sparkline. It complements rather than duplicates the existing Reports screen — revenue totals stay there, and the two screens link to each other. The same path answers a bearer-token request with JSON, and three JSON endpoints expose the funnel, search terms, and viewed products individually for tooling. Every aggregate is window-bounded (one year maximum, thirty-day default) and limit-bounded; the screen adds no write path anywhere.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Read-only analytics dashboard",
+          "body": "The analytics primitive's aggregates are now wired into the console: a date-windowed view with the conversion funnel, top search terms, most-viewed products, units-ranked top SKUs, recent revenue trend, and cross-links with the Reports screen. The HTML view degrades a malformed date window to the default with a notice; the JSON surfaces reject it with a 400. Limits clamp to the primitive's own bounds, a refund-heavy window renders a signed negative total instead of failing, and every operator- or customer-derived string on the screen is escaped. The screen appears in the navigation only when the primitive is wired."
+        }
+      ]
+    }
+  ]
+}
