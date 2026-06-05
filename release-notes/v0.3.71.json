@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.71",
+  "date": "2026-06-05",
+  "headline": "Vendored blamejs framework refreshed from v0.14.19 to v0.14.21",
+  "summary": "The storefront runs on a vendored copy of the blamejs framework; this refreshes it across two upstream patch releases. The most operator-relevant upstream changes for this shop: the OAuth client — which Sign in with Google and Apple compose — gains RFC 9396 Rich Authorization Request validation and attestation-based client authentication primitives, and refuses token grants an identity provider broadened beyond what was requested; HEAD requests now conform by carrying no response body; the sealed-field store gains an unseal rate cap; and a framework-wide sweep ensures every accepted option is actually read, surfacing configuration typos that were previously silent. The remaining upstream changes are in framework areas the storefront does not expose (SCIM bulk operations, OID4VCI credential proofs, DMARC forensic-report parsing). The storefront's own behavior is unchanged, verified by the full test suite — including the regression guards that pin the CSRF origin posture, the referrer policy, and the payment-processor TLS agent against vendor drift — and the vendored-tree integrity manifest was re-stamped as part of the refresh.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Updated the vendored framework to blamejs v0.14.21",
+          "body": "The vendored framework moves from v0.14.19 to v0.14.21 (two upstream patch releases of fixes and additive, opt-in changes). Notable for this shop: hardened OAuth client validation behind federated sign-in, HTTP HEAD conformance, a sealed-field unseal rate cap, and boot-time validation of previously-unread options. The integrity manifest over the vendored tree was re-stamped as part of the refresh."
+        }
+      ]
+    }
+  ]
+}
