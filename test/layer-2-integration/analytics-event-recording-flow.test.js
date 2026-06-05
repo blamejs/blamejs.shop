@@ -154,7 +154,6 @@ async function _run() {
     //    the dashboard's own queries read them back.
     // ================================================================
     var jar = await _grantConsent(helpers.cookieJar());
-    var base = _countEvents(db);
 
     // ---- PDP view -------------------------------------------------
     var pdp = await helpers.httpRequest({ port: port, path: "/products/widget", jar: jar });
@@ -194,8 +193,22 @@ async function _run() {
       form: { email: "buyer@example.com", name: "Buyer", line1: "1 Main St", city: "SF", country: "US", state: "CA", postal: "94103" },
     });
     check("checkout confirm 303 → /pay",       coPost.status === 303 && (coPost.headers.location || "").indexOf("/pay/") === 0);
+    // The Stripe-path order is only PENDING at confirm — no completion event
+    // yet. It records on the post-payment return (?redirect_status=succeeded),
+    // which 303s to the bare URL so refreshes never double-count.
+    check("no completion recorded at confirm (payment pending)",
+      _countEvents(db, "checkout_complete") === 0);
+    var payOrderId = (coPost.headers.location || "").slice("/pay/".length);
+    var ret = await helpers.httpRequest({
+      port: port, path: "/orders/" + payOrderId + "?payment_intent=pi_x&redirect_status=succeeded", jar: jar,
+    });
+    check("payment return 303-strips the params",
+      ret.status === 303 && (ret.headers.location || "") === "/orders/" + payOrderId);
     await helpers.waitUntil(function () { return _countEvents(db, "checkout_complete") === 1; },
-      { label: "checkout_complete recorded under consent" });
+      { label: "checkout_complete recorded on the settled return" });
+    var clean = await helpers.httpRequest({ port: port, path: "/orders/" + payOrderId, jar: jar });
+    check("clean confirmation URL renders (200)", clean.status === 200);
+    check("refresh/revisit records no duplicate", _countEvents(db, "checkout_complete") === 1);
 
     // ---- the dashboard's OWN queries read the recorded rows -------
     // Drive the end-to-end read path the /admin/analytics screen uses.
