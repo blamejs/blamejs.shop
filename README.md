@@ -43,7 +43,7 @@ node test/smoke.js
 
 - **Cloudflare deploy topology** — `Dockerfile` (multi-stage Node LTS, non-root, tini PID 1, vendor refresh + smoke run as build stages), `wrangler.toml` (Container + Worker + D1 + R2 + KV + Durable Objects), `worker/index.js` (edge router: health, asset pass-through, Stripe webhook signature pre-verification, D1 service-binding bridge, container forward, cold-start retry).
 - **`b.externalDb` adapter for Cloudflare D1** (`lib/externaldb-d1.js`) — service-binding + REST-API modes, normalized result envelope, AbortController timeouts, jittered retry on transient errors.
-- **`InventoryLock` Durable Object** — per-SKU serialization point so concurrent checkouts across container replicas can't oversell.
+- **Oversell-safe stock at checkout** — checkout reserves stock with an atomic conditional `UPDATE` (`held = held + qty WHERE on_hand - held >= qty`) before charging, converts the hold to a shelf debit when the order is paid, and releases it if the pending order is cancelled or expires; pre-order / backorder / digital lines are exempt. The conditional write is the serialization point, so two concurrent checkouts for the last unit can't both succeed — the loser gets a friendly out-of-stock re-prompt. An `InventoryLock` Durable Object ships as an optional per-SKU serialization aid for multi-replica deployments.
 - **`docs/deploy-cloudflare.md`** — operator deploy recipe end-to-end.
 - **Database backup & recovery** — D1 Time Travel gives 30 days of
   always-on point-in-time recovery; `npm run d1-export` (`scripts/d1-export.js`)

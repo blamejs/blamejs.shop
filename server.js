@@ -1131,7 +1131,7 @@ async function main() {
       // loyaltyEarnRules / referrals exist) so both the admin block and the
       // storefront block reuse it instead of each standing up its own.
       var order = (catalog && cart)
-        ? bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals })
+        ? bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals, inventory: catalog.inventory })
         : null;
 
       // Pre-orders — reservations against a SKU that isn't released yet. ONE
@@ -2299,6 +2299,11 @@ async function main() {
             loyalty: loyalty, quantityDiscounts: quantityDiscounts,
             autoDiscount: autoDiscount,
             discountAllocation: discountAllocation,
+            // Pre-order SKUs sell beyond the shelf by design — exempt their
+            // lines from the confirm-time stock hold. (backorder is not
+            // mounted on the buy path today; the checkout hook accepts it
+            // when it is.)
+            preorder: preorder,
           });
           sfDeps.payment           = sfPayment;
           sfDeps.paypal            = sfPaypal;
