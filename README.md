@@ -67,6 +67,7 @@ Every primitive is composed on the vendored blamejs surface — no npm runtime d
 | **`lib/tax.js`** | Operator-table adapter. Country / state / postal_prefix → rate_bps. Most-specific-first match, banker's rounding. Pluggable adapter shape for future Stripe Tax / TaxJar / Avalara. |
 | **`lib/shipping.js`** | Operator-table adapter. Services with zones (flat or per-gram + base + min/max), free-over-threshold, `digital_only` flag. |
 | **`lib/delivery-estimate.js`** | "Get it by <date>" promises. Operators define carrier transit times, warehouse cutoffs, holidays, and postal-prefix zones at `/admin/delivery-estimates`; the product and cart pages then show a signed-in customer a delivery date computed against their saved shipping address and the configured origin (`SHOP_ESTIMATE_ORIGIN` or the `shop.estimate_origin` config row). Anonymous, edge-cached pages deliberately render no date — estimates are destination-specific and never bake into the shared cache. Unconfigured stores render nothing, never an error. |
+| **`lib/promo-banners.js`** | Placement-targeted marketing banners (top strip, homepage hero, PDP-side, cart-side, empty-search, footer) with schedule windows, audience targeting, themes, priorities, and click/impression counts. Authored at `/admin/promo-banners`; rendered on both substrates with edge-cache-safe resolution. |
 | **`lib/payment.js`** | Payment adapters — **Stripe** (verify webhook HMAC-SHA256 via upstream `b.webhook.verify`, create / retrieve / confirm / cancel PaymentIntent, refund, register / list payment-method domains for Apple/Google Pay) and **PayPal** (`adapter: "paypal"` — OAuth2 client-credentials token, create / capture / get / refund Orders v2, webhook verify via PayPal's verify-webhook-signature API). No `stripe` / `paypal` npm dep — outbound through `b.httpClient` (SSRF-gated, retried, circuit-broken). |
 | **`lib/order.js`** | FSM-driven post-checkout record via upstream `b.fsm`. States: pending → paid → fulfilling → shipped → delivered (+ refunded / cancelled). Every transition appends to `order_transitions`. |
 | **`lib/checkout.js`** | Orchestrator. `quote()` returns priced quote; `confirm()` validates the ship-to address (real ISO 3166-1 country; US/CA state + ZIP/postal formats; lenient elsewhere) and the customer email shape, then creates a Stripe PaymentIntent + persists order pending; `handleStripeEvent()` verifies webhook + fires the FSM transition. PayPal path: `createPaypalOrder()` opens a PayPal order + persists pending, `capturePaypalOrder()` captures → paid, `handlePaypalEvent()` is the webhook backstop. All idempotent on re-delivery. |
@@ -235,13 +236,13 @@ variables. A signed-in operator can see the live on/off status of each at
   *Re-opens* as a real build (a `requires_age_check` product attribute + a
   server-enforced edge + container interstitial) if an age-restricted category
   enters the catalog.
-- **Placement-specific promo banners** — the sitewide promo/notice strip is the
-  **announcement bar** (managed at `/admin/announcements`); it is the single
-  source for the top-of-page strip. Additional marketing *placements*
-  (homepage hero, PDP-side, cart-side, empty-search, footer) are a future
-  additive surface. *Re-opens* when you want placement-specific marketing beyond
-  the sitewide strip; the top strip stays the announcement bar's (running two
-  competing sitewide strips is avoided by design).
+- **Placement-specific promo banners** — managed at `/admin/promo-banners`:
+  scheduled, audience-targeted banners per placement (top strip, homepage
+  hero, PDP-side, cart-side, empty-search, footer) with themes, priorities,
+  and click/impression counts. The sitewide **announcement bar**
+  (`/admin/announcements`) remains the simpler always-on notice strip; both
+  can target the top of the page, so pick one for the top strip — defining a
+  `top_strip` promo banner while an announcement is active stacks the two.
 
 ## Vendoring blamejs
 

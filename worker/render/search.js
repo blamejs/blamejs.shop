@@ -1,4 +1,4 @@
-import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, makeFormatPrice, currencySwitcher, spliceRaw, absolutizeOgImage } from "./_lib.js";
+import { renderTemplate, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, promoBannerHtml, makeFormatPrice, currencySwitcher, spliceRaw, absolutizeOgImage } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout, alternateLinks } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -32,6 +32,7 @@ var LAYOUT =
   "<body>\n" +
   "  <a class=\"skip-link\" href=\"#main\">{{skip_to_content}}</a>\n" +
   "RAW_ANNOUNCEMENT_BAR" +
+  "RAW_PROMO_TOP_STRIP" +
   "\n" +
   "  <div class=\"utility-bar\" role=\"complementary\">\n" +
   "    <div class=\"utility-bar__inner\">\n" +
@@ -91,6 +92,7 @@ var LAYOUT =
   "    </div>\n" +
   "  </section>\n" +
   "\n" +
+  "RAW_PROMO_FOOTER" +
   "  <footer class=\"site-footer\">\n" +
   "    <div class=\"site-footer__inner\">\n" +
   "      <div class=\"site-footer__brand-col\">\n" +
@@ -474,6 +476,9 @@ function _wrap(opts) {
   // land literally, not trigger `String.replace`'s dollar substitution.
   // Same for the reflected-query body below. See `spliceRaw`.
   assembled = spliceRaw(assembled, "RAW_ANNOUNCEMENT_BAR", announcementBar(opts.announcement || null));
+  // Sitewide promo banners — byte-identical to the container LAYOUT.
+  assembled = spliceRaw(assembled, "RAW_PROMO_TOP_STRIP", promoBannerHtml(opts.promo_banners, "top_strip"));
+  assembled = spliceRaw(assembled, "RAW_PROMO_FOOTER", promoBannerHtml(opts.promo_banners, "footer"));
   return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", opts.body);
 }
 
@@ -541,8 +546,11 @@ export function renderSearch(opts) {
           { href: _searchUrl(opts.q, {}) }
         )
       : "";
-    resultsInner = renderTemplate(SEARCH_EMPTY, { heading: emptyHeading, copy: emptyCopy, clear_link: "RAW_CLEAR" })
-      .replace("RAW_CLEAR", clearLink);
+    // search_empty promo banner above the no-results state — byte-identical
+    // to the container renderSearch's `promoSearchEmpty + SEARCH_EMPTY` order.
+    resultsInner = promoBannerHtml(opts.promoBanners, "search_empty") +
+      renderTemplate(SEARCH_EMPTY, { heading: emptyHeading, copy: emptyCopy, clear_link: "RAW_CLEAR" })
+        .replace("RAW_CLEAR", clearLink);
   } else {
     var assetPrefix = typeof opts.assetPrefix === "string" ? opts.assetPrefix : "/assets/";
     var fmt = makeFormatPrice(opts.currencyContext);
@@ -608,6 +616,7 @@ export function renderSearch(opts) {
     locale_strategy:   opts.localeStrategy,
     body:       body,
     announcement:         opts.announcement,
+    promo_banners:        opts.promoBanners,
     currency_options:     opts.currencyOptions,
     currency_selected:    opts.currencySelected,
     currency_note:        opts.currencyNote,

@@ -178,10 +178,51 @@ function _edgeHsts() {
     /opts\.hsts === undefined\s*\?\s*"max-age=63072000;\s*includeSubDomains;\s*preload"/.test(vendoredSrc));
 }
 
+// SEC-4 — the edge Permissions-Policy denies the SAME directive set as the
+// container's vendored DEFAULT_PERMISSIONS. The two substrates serve one
+// origin; a shorter edge list silently weakens whatever pages the edge
+// happens to serve, and a vendor refresh that grows the denylist must fail
+// here instead of drifting. Source-read parity, guarded by existsSync
+// (worker/ is absent in the in-image smoke; an unguarded read bricks the
+// deploy).
+function _edgePermissionsPolicyParity() {
+  var workerIndexPath = nodePath.resolve(__dirname, "..", "..", "worker", "index.js");
+  if (!nodeFs.existsSync(workerIndexPath)) return;
+  var src = nodeFs.readFileSync(workerIndexPath, "utf8");
+
+  // Vendored list: ["accelerometer=()", ...] → directive names.
+  var vendored = require("../../lib/vendor/blamejs/lib/middleware/security-headers")
+    .DEFAULT_PERMISSIONS.map(function (d) { return d.replace(/=.*$/, ""); }).sort();
+
+  // Edge list: pull the "permissions-policy" value out of the
+  // _SECURITY_HEADERS literal (a multi-line concatenated string), then
+  // split it into directive names.
+  var m = src.match(/"permissions-policy"\s*:\s*((?:"[^"]*"\s*\+\s*)*"[^"]*")/);
+  check("(d) edge declares a permissions-policy key", !!m);
+  if (!m) return;
+  var edgeValue = m[1].match(/"([^"]*)"/g).map(function (q) { return q.slice(1, -1); }).join("");
+  var edge = edgeValue.split(",").map(function (d) { return d.trim().replace(/=.*$/, ""); })
+    .filter(Boolean).sort();
+
+  var missingOnEdge = vendored.filter(function (d) { return edge.indexOf(d) === -1; });
+  var extraOnEdge   = edge.filter(function (d) { return vendored.indexOf(d) === -1; });
+  check("(d) edge Permissions-Policy denies every vendored directive" +
+    (missingOnEdge.length ? " — missing: " + missingOnEdge.join(", ") : ""),
+    missingOnEdge.length === 0);
+  check("(d) edge Permissions-Policy carries no directive the vendored list lacks" +
+    (extraOnEdge.length ? " — extra: " + extraOnEdge.join(", ") : ""),
+    extraOnEdge.length === 0);
+  // Edge-only posture: every edge directive is deny-all `=()` — the edge
+  // never hosts a passkey or payment ceremony, so nothing relaxes there.
+  check("(d) every edge Permissions-Policy directive is deny-all",
+    edgeValue.split(",").every(function (d) { return /=\(\)\s*$/.test(d.trim()); }));
+}
+
 async function _run() {
   await _container();
   _edgeParity();
   _edgeHsts();
+  _edgePermissionsPolicyParity();
 }
 
 module.exports = { run: _run };

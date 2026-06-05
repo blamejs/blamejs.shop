@@ -1565,6 +1565,18 @@ async function main() {
       // until that adapter is wired — segment rows are simply not offered.
       var announcementBar = (catalog && cart) ? bShop.announcementBar.create({}) : null;
 
+      // Promo banners — operator-authored marketing at six fixed storefront
+      // placements (top_strip / homepage_hero / pdp_side / cart_side /
+      // search_empty / footer). The storefront resolves + renders the active
+      // banner per placement per request and counts impressions/clicks; the
+      // admin console manages the rows. The console exposes the all / guest /
+      // logged_in audiences; the primitive's segment audience needs an
+      // isMember(customer_id, segment_slug) handle (the segments primitive
+      // exposes segmentsForCustomer, not isMember), so segment rows stay
+      // unexposed until that adapter is wired — exactly like the announcement
+      // bar.
+      var promoBanners = (catalog && cart) ? bShop.promoBanners.create({}) : null;
+
       // Customer surveys — token-gated NPS/CSAT/CES/custom feedback. The
       // storefront serves the token survey page (/survey/:token) + records
       // responses; the admin console defines surveys, issues invitations,
@@ -2024,6 +2036,7 @@ async function main() {
           webhooks:      webhooks,
           collections:   collections,
           announcementBar: announcementBar,
+          promoBanners:    promoBanners,
           customerSurveys: customerSurveys,
           blog:            blog,
           knowledgeBase:   knowledgeBase,
@@ -2249,6 +2262,11 @@ async function main() {
         // resolves + renders the active bar per request (page-top) and
         // mounts the dismiss route; the admin console manages the rows.
         if (announcementBar) sfDeps.announcementBar = announcementBar;
+        // Promo banners — sitewide + placement-specific marketing blocks. The
+        // storefront resolves the active banner per placement per request and
+        // splices it into the matching render (top_strip/footer through the
+        // LAYOUT, the rest into home/product/cart/search).
+        if (promoBanners) sfDeps.promoBanners = promoBanners;
         // Customer surveys — the token survey page + response submit.
         if (customerSurveys) sfDeps.customerSurveys = customerSurveys;
         // Knowledge base — the public /help reader (index + article + vote).

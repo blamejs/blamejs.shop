@@ -316,6 +316,44 @@ hr { border: 0; border-top: 1px solid var(--border); margin: var(--space-6) 0; }
 .announcement-bar--info    { background: var(--surface-raised); color: var(--text-muted); box-shadow: inset 3px 0 0 var(--color-accent); }
 .announcement-bar--success { background: var(--success-deep); color: #eafff0; }
 
+/* Promo banners — operator marketing blocks at six fixed placements
+   (top_strip / homepage_hero / pdp_side / cart_side / search_empty /
+   footer). The theme modifier sets the colour; the placement modifier tunes
+   the width + spacing for where the block sits. */
+.promo-banner {
+  margin: 0 auto;
+  max-width: var(--container);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--gutter);
+  display: flex; flex-direction: column; gap: var(--space-2);
+  align-items: flex-start;
+}
+.promo-banner__image { max-width: 100%; height: auto; border-radius: var(--radius-md); }
+.promo-banner__headline { margin: 0; font-size: var(--text-base); }
+.promo-banner__line { margin: 0; font-size: var(--text-sm); }
+.promo-banner__cta {
+  align-self: flex-start;
+  font-weight: 700; text-decoration: underline; text-underline-offset: 2px;
+  color: inherit;
+}
+.promo-banner__cta:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.promo-banner--info    { background: var(--surface-raised); color: var(--text-muted); box-shadow: inset 3px 0 0 var(--color-accent); }
+.promo-banner--promo   { background: linear-gradient(90deg, var(--violet-deep), var(--violet)); color: var(--white); }
+.promo-banner--urgency { background: var(--danger-deep); color: #ffffff; }
+.promo-banner--success { background: var(--success-deep); color: #eafff0; }
+/* top_strip + footer are sitewide bands — full-bleed, no rounded corners. */
+.promo-banner--top_strip, .promo-banner--footer {
+  max-width: none; border-radius: 0;
+  align-items: center; text-align: center;
+}
+.promo-banner--top_strip { border-bottom: 1px solid var(--border-strong); }
+.promo-banner--footer    { border-top: 1px solid var(--border-strong); }
+.promo-banner--top_strip .promo-banner__cta,
+.promo-banner--footer .promo-banner__cta { align-self: center; }
+/* Page-specific placements sit inside the content column already. */
+.promo-banner--homepage_hero, .promo-banner--search_empty { margin-bottom: var(--space-5); }
+.promo-banner--pdp_side, .promo-banner--cart_side { margin-bottom: var(--space-4); }
+
 .utility-bar {
   background: linear-gradient(90deg, var(--violet-darkest), var(--violet-deeper));
   color: var(--text-muted);
