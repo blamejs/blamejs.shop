@@ -11,6 +11,7 @@
     <button id="submit" type="button">Pay {{ grand_total }}</button>
     <p id="payment-message" style="color: var(--accent); margin-top: 1rem; min-height: 1.5rem;"></p>
   </div>
+  <script src="{{ pay_tt_script }}"></script>
   <script src="https://js.stripe.com/v3/"></script>
   <script src="{{ pay_script }}" defer></script>
 </section>

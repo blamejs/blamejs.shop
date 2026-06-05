@@ -1,5 +1,5 @@
 {
-  "version": "0.4.6",
+  "version": "0.4.7",
   "assets": {
     "css/admin.css": {
       "integrity": "sha384-6k53cvkRrxMgmeStLIoLjVXZQHqIJgTmv1Izd8TYhh1HOC4POgE6GCvx1bsalyEP",
@@ -36,6 +36,10 @@
     "js/passkey-register.js": {
       "integrity": "sha384-BjuUhbPZ18pHFMyOwT+309BEXu+VAc54RSj8lvN93jfFGDydEgmapiAOKTQM1yma",
       "fingerprinted": "js/passkey-register.02b0e196fb9608d8.js"
+    },
+    "js/pay-trusted-types.js": {
+      "integrity": "sha384-jD90N8l7J3Vcu+aPSFRi6AE/5XKHQl58/avwHE9PH0mHwMavX991OCsEcznEf3n5",
+      "fingerprinted": "js/pay-trusted-types.53d0df13f9480a66.js"
     },
     "js/pay.js": {
       "integrity": "sha384-W11JVQhv1RZq4WhsAOglu56gTZTDz1ByLd+b1HFQBCi8xGoEhJ0PZ2yI3FqbYzt6",
