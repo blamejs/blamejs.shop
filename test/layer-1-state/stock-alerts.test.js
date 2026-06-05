@@ -217,6 +217,28 @@ async function _scanAndNotifyFiresWhenInventoryAvailable() {
   check("idempotent: notif still 2 total",  notif.calls.length === 2);
 }
 
+async function _sweepRaceClaimLoserSkipsRow() {
+  // Two concurrent sweeps select the same pending row before either
+  // claim commits. The `notified_at IS NULL` UPDATE is the claim —
+  // exactly one sweep wins; the loser must SKIP the row, because its
+  // freshly minted unsubscribe token never persisted (a mail built from
+  // it would carry a dead link) and pushing the row would double-notify.
+  var notif = _collectorNotifications();
+  var w = _wire({ notifications: notif });
+  await w.catalog.inventory.create("SKU-R", { stock_on_hand: 0 });
+  var sub = await w.alerts.subscribe({ email: "race@example.com", sku: "SKU-R" });
+  await w.alerts.confirm({ token: sub.confirmation_token });
+  await w.catalog.inventory.restock("SKU-R", 3);
+
+  var both = await Promise.all([w.alerts.scanAndNotify({}), w.alerts.scanAndNotify({})]);
+  var firedTotal = (both[0].rows ? both[0].rows.length : 0) + (both[1].rows ? both[1].rows.length : 0);
+  check("sweep race: the claim loser skips the row (1 fired total)", firedTotal === 1);
+  check("sweep race: exactly one notification enqueued",             notif.calls.length === 1);
+  var winnerRows = both[0].rows && both[0].rows.length ? both[0].rows : both[1].rows;
+  check("sweep race: the winner's token cancels the row",
+    (await w.alerts.unsubscribeByToken(winnerRows[0].unsubscribe_token)).removed === true);
+}
+
 async function _scanAndNotifyHandlesOptedOutWithoutRetrying() {
   // notifications.enqueue returns { ok:false, error:"opted-out" } — the
   // row must still stamp notified_at so the sweeper doesn't retry.
@@ -440,6 +462,7 @@ async function run() {
   await _subscribeDedupesAndDoesNotRevealToken();
   await _confirmTransitionsPendingToConfirmed();
   await _scanAndNotifyFiresWhenInventoryAvailable();
+  await _sweepRaceClaimLoserSkipsRow();
   await _scanAndNotifyHandlesOptedOutWithoutRetrying();
   await _scanAndNotifyWithoutNotificationsDepStillStamps();
   await _scanAndNotifyScopedToSku();
