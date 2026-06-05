@@ -40,9 +40,10 @@ var helpers          = require("../helpers");
 var check            = helpers.check;
 var assert           = helpers.assert;
 
-var MIG_CART     = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0002_cart.sql");
-var MIG_ORDER    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0003_order.sql");
-var MIG_SEGMENTS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0049_customer_segments.sql");
+var MIG_CART      = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0002_cart.sql");
+var MIG_ORDER     = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0003_order.sql");
+var MIG_CUSTOMERS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0006_customers.sql");
+var MIG_SEGMENTS  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0049_customer_segments.sql");
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -52,8 +53,9 @@ function _splitSchema(text) {
 function _makeQuery() {
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
-  // Cart migration first — orders FKs cart_id back to carts.
-  [MIG_CART, MIG_ORDER, MIG_SEGMENTS].forEach(function (p) {
+  // Cart migration first — orders FKs cart_id back to carts. Customers
+  // table is needed by the members-CSV export (LEFT JOIN for display_name).
+  [MIG_CART, MIG_ORDER, MIG_CUSTOMERS, MIG_SEGMENTS].forEach(function (p) {
     var stmts = _splitSchema(nodeFs.readFileSync(p, "utf8"));
     for (var i = 0; i < stmts.length; i += 1) db.prepare(stmts[i]).run();
   });
@@ -501,8 +503,90 @@ async function _productionRequiresCursorSecret() {
   }
 }
 
+// Drain a CSV async-iterable into a single string, counting the chunks
+// so a batched stream can be asserted to yield more than one chunk.
+async function _drainCsv(iter) {
+  var body = "";
+  var chunks = 0;
+  for await (var c of iter) { if (c != null) { body += c; chunks += 1; } }
+  return { body: body, chunks: chunks };
+}
+
+// Seed a customers row so the export's display_name LEFT JOIN resolves.
+async function _seedCustomer(query, displayName) {
+  var id = _uuid();
+  var ts = Date.now();
+  await query(
+    "INSERT INTO customers (id, email_hash, display_name, created_at, updated_at) " +
+    "VALUES (?1, ?2, ?3, ?4, ?4)",
+    [id, "hash_" + id, displayName, ts],
+  );
+  return id;
+}
+
+async function _membersCsvExport() {
+  var query = _makeQuery();
+  var seg = customerSegments.create({ query: query, cursorSecret: "members-csv-test" });
+
+  // Two members: one ordinary, one whose display_name is a CSV-injection
+  // payload (leading "="). Each has one paid order so the segment matches.
+  var c1 = await _seedCustomer(query, "Bob Buyer");
+  var c2 = await _seedCustomer(query, "=cmd()|' /C calc'");
+  await _seedOrder(query, { customer_id: c1 });
+  await _seedOrder(query, { customer_id: c2 });
+
+  await seg.defineSegment({ slug: "buyers", title: "Buyers", rules: { frequency_orders_min: 1 } });
+  await seg.recompute({ slugs: ["buyers"] });
+  check("export: two members recomputed", (await seg.stats("buyers")).member_count === 2);
+
+  var out = await _drainCsv(seg.membersCsvForSegment("buyers"));
+  var body = out.body;
+  check("export: header has the four columns",
+    body.indexOf("\"customer_id\",\"display_name\",\"joined_segment_at\",\"order_count\"") !== -1);
+  check("export: leading comment row present", body.indexOf("email addresses are omitted") !== -1);
+  check("export: NO email column", body.toLowerCase().indexOf("\"email\"") === -1);
+  check("export: carries both member ids", body.indexOf(c1) !== -1 && body.indexOf(c2) !== -1);
+  check("export: carries the ordinary display name", body.indexOf("Bob Buyer") !== -1);
+  check("export: order_count column populated", body.indexOf("\"1\"") !== -1);
+  // CSV-injection neutralization — the "=cmd()" display_name is prefixed
+  // with a single quote so a spreadsheet treats it as text, never a formula.
+  check("export: neutralizes the formula-injection name", body.indexOf("\"'=cmd()") !== -1);
+  check("export: no raw leading-= cell", body.indexOf(",\"=cmd()") === -1);
+
+  // Unit-level injection neutralizer.
+  check("neutralize: leading = escaped",  customerSegments._neutralizeInjection("=SUM(A1)") === "'=SUM(A1)");
+  check("neutralize: leading @ escaped",  customerSegments._neutralizeInjection("@foo") === "'@foo");
+  check("neutralize: signed number passes", customerSegments._neutralizeInjection("-3.50") === "-3.50");
+  check("neutralize: plain text passes",  customerSegments._neutralizeInjection("Bob") === "Bob");
+
+  // Batched streaming — with a tiny seed set the stream still yields the
+  // prelude chunk + at least one data chunk (more than one chunk total),
+  // proving it streams rather than buffering the whole body into one blob.
+  check("export: streams in multiple chunks", out.chunks >= 2);
+
+  // An unknown slug throws on first iteration (clean 404 mapping upstream),
+  // never a partial/empty stream that looks like a real export.
+  var threw = false;
+  try { await _drainCsv(seg.membersCsvForSegment("no-such")); }
+  catch (e) { threw = /unknown slug/.test(e.message); }
+  check("export: unknown slug throws", threw === true);
+
+  // A bad slug shape is rejected before any read.
+  var badSlug = false;
+  try { seg.membersCsvForSegment("Bad Slug!"); }
+  catch (e) { badSlug = /slug/.test(e.message); }
+  check("export: bad slug shape rejected", badSlug === true);
+
+  // An archived segment streams a well-formed (header-only) file, not a 404.
+  await seg.archive("buyers");
+  var archived = await _drainCsv(seg.membersCsvForSegment("buyers"));
+  check("export: archived yields the header", archived.body.indexOf("\"customer_id\"") !== -1);
+  check("export: archived has no member rows", archived.body.indexOf(c1) === -1 && archived.body.indexOf(c2) === -1);
+}
+
 async function run() {
   await _defineAndDuplicate();
+  await _membersCsvExport();
   await _recomputeAndEvaluateVIP();
   await _refundRateAndCountry();
   await _evaluateCursorPagination();

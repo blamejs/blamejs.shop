@@ -1870,6 +1870,10 @@ async function main() {
           printReceipts: printReceipts,
           packingSlips:  packingSlips,
           payment:       payment,
+          // Transactional mailer (lib/email.js) — enables the order
+          // detail's "Resend confirmation" action. Null without SMTP
+          // configured, in which case the panel renders a disabled note.
+          mailer:        txEmail,
           config:        config,
           r2_bridge:     r2_bridge,
           catalogImport: catalogImport,
