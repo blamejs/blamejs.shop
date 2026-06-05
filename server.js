@@ -143,15 +143,26 @@ async function _zoneShippingRates(shippingZones, ctx) {
 // detail; the raw message is recorded server-side via the framework
 // audit (drop-silent, outcome:"failure") so an operator can correlate.
 // Mirrors lib/admin.js _safeNotice.
-function _problemFromError(res, e) {
+function _problemFromError(res, e, ctx) {
   if (e instanceof TypeError) {
     return b.problemDetails.respond(res, b.problemDetails.fromError(e, { status: 400 }));
   }
+  var msg = (e && e.message) || String(e);
   b.audit.safeEmit({
     action:   "shop_catalog_api.request.error",
     outcome:  "failure",
-    metadata: { message: (e && e.message) || String(e) },
+    metadata: { message: msg },
   });
+  // ALSO record the scrubbed message into the operator-readable error
+  // log (lib/error-log.js) so this 500's detail is reachable from the
+  // admin console + the admin JSON API, not just the container's local
+  // audit sink. Drop-silent + fire-and-forget — captureServerError can
+  // never throw, and a 500 response must not wait on (or be undone by)
+  // an error-log write. `ctx` is optional so the existing two-arg
+  // callers and the unit test keep working unchanged.
+  if (ctx && ctx.errorLog && ctx.route) {
+    ctx.errorLog.captureServerError({ route: ctx.route, message: msg, status: 500 });
+  }
   b.problemDetails.send(res, {
     type:   "/problems/internal-error",
     title:  "Internal Server Error",
@@ -446,6 +457,12 @@ async function main() {
   // the framework's cluster-mode boot picks it up automatically.
   var catalog = null;
   var cart    = null;
+  // Operator-readable error log — captures server-side 5xx-class
+  // failure messages into D1 (lib/error-log.js) so they're reachable
+  // from the admin console + the admin JSON API, not just the
+  // container's local audit sink. Wired only when D1 is present (it
+  // defaults to b.externalDb.query, valid after externalDb.init below).
+  var errorLog = null;
   if (process.env.D1_BRIDGE_URL && process.env.D1_BRIDGE_SECRET) {
     // Entropy floor on the bridge secret. The Worker route POST
     // /_/db/query is a single-statement SQL oracle on the live D1, and
@@ -474,6 +491,9 @@ async function main() {
       bridgePath:   process.env.D1_BRIDGE_PATH || "/_/db/query",
     });
     b.externalDb.init({ backends: { main: d1 } });
+    // Now that externalDb is initialized, the error-log factory's
+    // default query handle (b.externalDb.query) is live.
+    errorLog = bShop.errorLog.create({});
     // Cursor HMAC key — derived from the deployment-scoped bridge
     // secret via b.crypto.namespaceHash, which domain-separates the
     // derived value by the "catalog-cursor" prefix so a leak in one
@@ -1799,6 +1819,9 @@ async function main() {
           shop_name:     bootShopName,
           catalog:       catalog,
           order:         order,
+          // Operator-readable error feed at /admin/errors (+ the
+          // /admin/errors JSON API). Present whenever D1 is wired.
+          errorLog:      errorLog,
           orderTracking: orderTracking,
           pickLists:      pickLists,
           shippingLabels: shippingLabels,
@@ -1970,6 +1993,13 @@ async function main() {
         // primitive only needs the externalDb query handle (which
         // ships with this deploy via D1_BRIDGE_URL).
         sfDeps.newsletter = bShop.newsletter.create({});
+
+        // Operator-readable error log — the storefront's server-side
+        // catches (checkout confirm 500, etc.) capture their scrubbed
+        // message here so it's reachable from the admin console + JSON
+        // API. Present whenever D1 is wired; absent it, the storefront
+        // catches behave exactly as before (audit-emit only).
+        if (errorLog) sfDeps.errorLog = errorLog;
 
         // i18n / locale routing — wired from the boot-time resolution
         // (`localeWiring`, built before createApp where `await` is
@@ -2295,7 +2325,7 @@ async function main() {
             var limit  = limitS == null ? 20 : parseInt(limitS, 10);
             var page   = await catalog.products.list({ status: status, limit: limit, cursor: cursor });
             res.json(page);
-          } catch (e) { _problemFromError(res, e); }
+          } catch (e) { _problemFromError(res, e, { errorLog: errorLog, route: "/api/catalog/products" }); }
         });
 
         r.get("/api/catalog/products/:slug", async function (req, res) {
@@ -2312,7 +2342,7 @@ async function main() {
             var variants = await catalog.variants.listForProduct(product.id);
             var media    = await catalog.media.listForProduct(product.id);
             res.json({ product: product, variants: variants, media: media });
-          } catch (e) { _problemFromError(res, e); }
+          } catch (e) { _problemFromError(res, e, { errorLog: errorLog, route: "/api/catalog/products/:slug" }); }
         });
       }
     },
