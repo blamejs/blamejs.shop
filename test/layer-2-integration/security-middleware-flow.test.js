@@ -87,6 +87,11 @@ async function _run() {
       r.get("/", function (_req, res) { res.json({ ok: true }); });
       // The per-session cart-count island the edge calls on every page.
       r.get("/cart/count", function (_req, res) { res.json({ count: 0 }); });
+      // The cart coupon-apply POST — tight-budget via the /cart/coupon
+      // prefix. On a code miss it returns a uniform error (no oracle), so
+      // without the tight budget the loose global bucket alone is a
+      // code-guessing engine.
+      r.post("/cart/coupon", function (_req, res) { res.json({ ok: true }); });
       // A benign same-origin checkout POST (tight-budget path).
       r.post("/checkout", function (_req, res) { res.json({ ok: true }); });
       // A tight-budget auth POST.
@@ -164,6 +169,19 @@ async function _run() {
       if (rA.status === 429) alert429 += 1;
     }
     check("(b) stock-alert subscribe is tight-throttled (excess 429)", alert429 >= 4);
+
+    // The cart coupon-apply POST validates a typed code against the
+    // discount engine; a miss returns a UNIFORM error (no existence
+    // oracle), so on the loose global bucket alone it is a coupon-code
+    // guessing engine. It MUST sit in the tight per-(IP+path) budget so a
+    // sprayer can't grind the namespace for a live code.
+    var couponIp = "198.51.100.9";
+    var coupon429 = 0;
+    for (var c = 0; c < 15; c += 1) {
+      var rC = await httpRequest({ port: port, method: "POST", path: "/cart/coupon", headers: _hdr(couponIp, nav), form: { code: "GUESS-" + c } });
+      if (rC.status === 429) coupon429 += 1;
+    }
+    check("(b) cart coupon-apply is tight-throttled (excess 429)", coupon429 >= 4);
 
     // The global budget is separate + generous: the same sprayer can
     // still load a non-tight read page (the tight 429 is per-path).
