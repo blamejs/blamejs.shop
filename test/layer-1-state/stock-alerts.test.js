@@ -10,7 +10,10 @@
  *   - confirm transitions a pending row to confirmed
  *   - scanAndNotify fires when inventory > 0 + dedupes per row
  *   - scanAndNotify enqueues into the notifications dep when wired
- *   - unsubscribe removes the row
+ *   - subscribe + scanAndNotify each return a single-use unsubscribe token
+ *   - unsubscribeByToken removes the row by its bearer token
+ *   - unsubscribeByToken is a uniform no-op for unknown / bad-shape tokens
+ *   - the legacy (email, sku) tuple no longer cancels another row
  *   - cleanupExpired drops past-expires_at rows
  *   - listForSku / listForCustomer / isSubscribed
  *   - refusals: bad email / bad sku / bad token shape / missing
@@ -31,6 +34,7 @@ var MIGS = [
   "0001_catalog.sql",
   "0008_inventory_thresholds.sql",
   "0048_stock_alerts.sql",
+  "0207_stock_alert_unsubscribe_token.sql",
 ].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
@@ -103,6 +107,8 @@ async function _subscribeMintsToken() {
   check("subscribe returns email_hash",    /^[0-9a-f]{128}$/.test(rv.email_hash));
   check("subscribe returns token len 32",  typeof rv.confirmation_token === "string" && rv.confirmation_token.length === 32);
   check("subscribe token is base64url",    /^[A-Za-z0-9_-]{32}$/.test(rv.confirmation_token));
+  check("subscribe returns unsub token 32", typeof rv.unsubscribe_token === "string" && /^[A-Za-z0-9_-]{32}$/.test(rv.unsubscribe_token));
+  check("unsub token distinct from confirm", rv.unsubscribe_token !== rv.confirmation_token);
   check("subscribe returns expires_at",    Number.isInteger(rv.expires_at) && rv.expires_at > Date.now());
 
   // hashEmail returns the same digest as subscribe.
@@ -192,6 +198,17 @@ async function _scanAndNotifyFiresWhenInventoryAvailable() {
   check("notif payload carries sku",       notif.calls[0].payload.sku === "SKU-D");
   check("notif payload carries available", notif.calls[0].payload.available === 7);
 
+  // Each fired row carries a fresh, single-use unsubscribe bearer token for
+  // the back-in-stock email's one-click link. It resolves the row by hash.
+  check("sweep row carries unsub token",   /^[A-Za-z0-9_-]{32}$/.test(sweep.rows[0].unsubscribe_token));
+  check("sweep row unsub tokens distinct", sweep.rows[0].unsubscribe_token !== sweep.rows[1].unsubscribe_token);
+  // The token cancels the (now notified, terminal) row — proves the
+  // sweep-time rotation persisted a usable hash. Deleting one fired row
+  // doesn't disturb the re-sweep below: both fired rows are notified, so
+  // the candidate set is empty either way (the deleted row is simply gone).
+  var cancel = await w.alerts.unsubscribeByToken(sweep.rows[0].unsubscribe_token);
+  check("sweep unsub token cancels row",   cancel.removed === true);
+
   // Second sweep is idempotent — every notified row carries
   // notified_at, so they are filtered out of the candidate set.
   var sweep2 = await w.alerts.scanAndNotify({});
@@ -253,25 +270,74 @@ async function _scanAndNotifyScopedToSku() {
   check("scoped sweep left SKU-Y untouched", yLive.status === "confirmed");
 }
 
-async function _unsubscribeRemovesRow() {
+async function _unsubscribeByTokenRemovesRow() {
   var w = _wire();
   await w.catalog.inventory.create("SKU-U", { stock_on_hand: 0 });
-  await w.alerts.subscribe({ email: "u@example.com", sku: "SKU-U" });
+  var sub = await w.alerts.subscribe({ email: "u@example.com", sku: "SKU-U" });
 
-  var rv = await w.alerts.unsubscribe({ email: "u@example.com", sku: "SKU-U" });
-  check("unsubscribe removed",        rv.removed === true);
+  var rv = await w.alerts.unsubscribeByToken(sub.unsubscribe_token);
+  check("unsubscribeByToken removed",  rv.removed === true);
 
   var sub2 = await w.alerts.isSubscribed({ email: "u@example.com", sku: "SKU-U" });
-  check("post-unsub: not subscribed", sub2.subscribed === false);
+  check("post-unsub: not subscribed",  sub2.subscribed === false);
 
-  // Idempotent — second unsubscribe is no-op.
-  var rv2 = await w.alerts.unsubscribe({ email: "u@example.com", sku: "SKU-U" });
-  check("unsubscribe idempotent",     rv2.removed === false);
+  // Idempotent — re-presenting the now-consumed token is a uniform no-op.
+  var rv2 = await w.alerts.unsubscribeByToken(sub.unsubscribe_token);
+  check("unsubscribeByToken idempotent", rv2.removed === false);
+}
 
-  // Case-insensitive email match.
-  await w.alerts.subscribe({ email: "Dave@Example.com", sku: "SKU-U" });
-  var rv3 = await w.alerts.unsubscribe({ email: "dave@example.com", sku: "SKU-U" });
-  check("unsubscribe matches normalised email", rv3.removed === true);
+async function _unsubscribeByTokenUniformNoOpForUnknown() {
+  var w = _wire();
+  await w.catalog.inventory.create("SKU-UK", { stock_on_hand: 0 });
+  // A live victim row whose token the attacker does NOT hold.
+  var victim = await w.alerts.subscribe({ email: "victim@example.com", sku: "SKU-UK" });
+
+  // Unknown but well-shaped token → uniform no-op, victim row untouched.
+  var unknown = await w.alerts.unsubscribeByToken("Z".repeat(32));
+  check("unknown token removed false", unknown.removed === false);
+
+  // Bad-shape tokens (too short / wrong charset / non-string / empty) →
+  // same uniform no-op, no throw, no oracle.
+  check("short token no-op",   (await w.alerts.unsubscribeByToken("too-short")).removed === false);
+  check("bad charset no-op",   (await w.alerts.unsubscribeByToken("!".repeat(32))).removed === false);
+  check("non-string no-op",    (await w.alerts.unsubscribeByToken(12345)).removed === false);
+  check("empty token no-op",   (await w.alerts.unsubscribeByToken("")).removed === false);
+  check("null token no-op",    (await w.alerts.unsubscribeByToken(null)).removed === false);
+
+  // The victim is still subscribed — none of the above touched their row.
+  var stillLive = await w.alerts.isSubscribed({ email: "victim@example.com", sku: "SKU-UK" });
+  check("victim untouched by unknown tokens", stillLive.subscribed === true);
+
+  // The victim's OWN token still works — sanity that the no-ops above
+  // didn't somehow consume it.
+  var own = await w.alerts.unsubscribeByToken(victim.unsubscribe_token);
+  check("victim's own token still cancels", own.removed === true);
+}
+
+async function _legacyTupleNoLongerCancelsAnotherRow() {
+  // Regression pin for the verified finding: the OLD attack was a POST with
+  // a guessed (email, sku) tuple deleting a victim's pending alert. There is
+  // no longer a tuple-based unsubscribe surface at all — `unsubscribe` is
+  // gone; the only handle is the per-row bearer token. Knowing the email +
+  // SKU yields nothing.
+  var w = _wire();
+  await w.catalog.inventory.create("SKU-T", { stock_on_hand: 0 });
+  var victim = await w.alerts.subscribe({ email: "target@example.com", sku: "SKU-T" });
+
+  // The tuple-based API the attack relied on is removed.
+  check("tuple unsubscribe API removed", typeof w.alerts.unsubscribe === "undefined");
+
+  // An attacker who guesses the email+sku but submits THAT as a token (the
+  // only remaining input) gets a uniform no-op — the tuple isn't the token.
+  var asToken = "target@example.com|SKU-T";
+  check("tuple-as-token rejected", (await w.alerts.unsubscribeByToken(asToken)).removed === false);
+
+  // Victim's alert survives the attack.
+  var live = await w.alerts.isSubscribed({ email: "target@example.com", sku: "SKU-T" });
+  check("victim alert survives tuple attack", live.subscribed === true);
+
+  // Only the genuine bearer token cancels it.
+  check("genuine token cancels", (await w.alerts.unsubscribeByToken(victim.unsubscribe_token)).removed === true);
 }
 
 async function _cleanupExpiredAndListSurfaces() {
@@ -377,7 +443,9 @@ async function run() {
   await _scanAndNotifyHandlesOptedOutWithoutRetrying();
   await _scanAndNotifyWithoutNotificationsDepStillStamps();
   await _scanAndNotifyScopedToSku();
-  await _unsubscribeRemovesRow();
+  await _unsubscribeByTokenRemovesRow();
+  await _unsubscribeByTokenUniformNoOpForUnknown();
+  await _legacyTupleNoLongerCancelsAnotherRow();
   await _cleanupExpiredAndListSurfaces();
   await _refusalsAndFactoryShape();
   await _resubscribeAfterNotificationMintsFreshToken();

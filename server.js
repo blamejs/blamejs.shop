@@ -855,10 +855,10 @@ async function main() {
                 } else {
                   productUrl = originBase + "/search?q=" + encodeURIComponent(row.sku);
                 }
-                var unsubQuery = "email=" + encodeURIComponent(row.email_normalised) +
-                  "&sku=" + encodeURIComponent(row.sku) +
-                  (row.variant_id ? "&variant_id=" + encodeURIComponent(row.variant_id) : "");
-                unsubscribeUrl = originBase + "/stock-alert/unsubscribe?" + unsubQuery;
+                // The per-row bearer token scanAndNotify minted for this
+                // fired row IS the unsubscribe authorization — no email/sku
+                // tuple in the URL to guess.
+                unsubscribeUrl = originBase + "/stock-alert/unsubscribe?token=" + encodeURIComponent(row.unsubscribe_token);
                 await txEmail.sendBackInStock({
                   to:              row.email_normalised,
                   product_title:   titleForSku,

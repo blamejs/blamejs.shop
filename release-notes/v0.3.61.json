@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.3.61",
+  "date": "2026-06-04",
+  "headline": "Back-in-stock unsubscribe is token-gated",
+  "summary": "Cancelling a back-in-stock alert previously took only the subscriber's email address and the product SKU — guessable values, so a third party could silently cancel someone else's restock notification. Unsubscribe is now authorized by an opaque per-subscription token, carried in the confirmation and notification emails as a one-click link, exactly like the newsletter's unsubscribe. Tokens are stored only as keyed hashes, compared in constant time, and unknown tokens get the same response as valid ones, so the endpoint is not a subscription-existence oracle. A schema migration adds the token column; it applies automatically on deploy.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Back-in-stock unsubscribe requires the emailed token",
+          "body": "POST /stock-alert/unsubscribe no longer accepts an email + SKU pair; it requires the per-subscription token from the unsubscribe link in the confirmation or back-in-stock email. The token is minted at subscribe time for the confirmation mail and rotated per notification send, stored only as a keyed hash, and verified with a constant-time compare; bad or unknown tokens return the same uniform response as valid ones. The one-click link works without cookies or a signed-in session, so mail clients can fire it directly; each email carries the token that is current for its send. Operators upgrading: migration 0207 adds the token column and applies with the normal deploy."
+        }
+      ]
+    }
+  ]
+}
