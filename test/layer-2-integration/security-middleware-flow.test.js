@@ -96,6 +96,11 @@ async function _run() {
       r.post("/checkout", function (_req, res) { res.json({ ok: true }); });
       // A tight-budget auth POST.
       r.post("/account/login", function (_req, res) { res.json({ ok: true }); });
+      // The magic-link trigger — emails a single-use sign-in link to the
+      // request-supplied address. Covered by the `/account/login` tight
+      // prefix; without that budget the loose global bucket alone is a
+      // victim-addressed mail cannon (same rationale as stock-alert subscribe).
+      r.post("/account/login/link", function (_req, res) { res.json({ ok: true }); });
       // The exempt payment webhook.
       r.post("/api/webhooks/stripe", function (_req, res) { res.json({ ok: true }); });
       // Order-mutation POST (cancel/rate/reorder) — tight-budget via the
@@ -157,6 +162,19 @@ async function _run() {
     var freshIp = "198.51.100.99";
     var fresh = await httpRequest({ port: port, method: "POST", path: "/account/login", headers: _hdr(freshIp, nav), form: { u: "a" } });
     check("(b) a different IP on the same endpoint is NOT throttled (per-IP keying)", fresh.status >= 200 && fresh.status < 300);
+
+    // The magic-link trigger emails a single-use link to the request-supplied
+    // address — it MUST sit in the tight per-(IP+path) budget (it is covered
+    // by the `/account/login` prefix) or the loose global bucket alone makes
+    // it a victim-addressed mail cannon. 15 rapid POSTs from one IP: the cap
+    // engages (excess 429s).
+    var magicIp = "198.51.100.61";
+    var magic429 = 0;
+    for (var m = 0; m < 15; m += 1) {
+      var rM = await httpRequest({ port: port, method: "POST", path: "/account/login/link", headers: _hdr(magicIp, nav), form: { email: "victim@example.com" } });
+      if (rM.status === 429) magic429 += 1;
+    }
+    check("(b) magic-link trigger is tight-throttled (excess 429)", magic429 >= 2);
 
     // The anonymous, CSRF-exempt back-in-stock subscribe sends a
     // confirmation email to the request-supplied address — it MUST sit
