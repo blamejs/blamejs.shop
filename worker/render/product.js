@@ -947,7 +947,8 @@ function _pdpShippingNote(availability) {
 // customer's session-cookie request skips the edge cache and reaches the
 // container form, so they always get the real (tokened) form; an anonymous
 // edge visitor can't reserve anyway. Both substrates resolve the campaign from
-// a live D1 read (the edge PDP is served no-store), so the info is consistent.
+// D1 at render time; the container read is always live, the edge copy can lag
+// by up to the PDP cache TTL until the purge hook clears it.
 function _buildPreorderCta(preorder, escAttr) {
   var soldOut = !!preorder.sold_out;
   var remaining = preorder.remaining_units;
