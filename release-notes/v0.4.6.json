@@ -1,0 +1,27 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.6",
+  "date": "2026-06-05",
+  "headline": "Guest order pages require proof of purchase, and guests can save their order to an account in one tap",
+  "summary": "Two changes to what happens after a guest checks out. First, the order confirmation page — which shows the buyer's name, address, and items — is no longer reachable by anyone who learns the order id. A guest order now admits exactly three readers: the browser that placed it (a sealed device cookie set at checkout, surviving the payment redirect), anyone opening the signed link in the order-receipt email (an order-scoped, expiring signed token that works on any device), and the signed-in account that owns it. Everything else sees a 404 indistinguishable from a missing order, and the reorder action is gated the same way. Second, the confirmation page now offers a guest one tap to save the order to an account: it emails a sign-in link to the address they checked out with — shown masked on screen, held only in a short-lived encrypted cookie, never written to the database — and redeeming the link creates the account if needed and attaches their guest orders by a hashed-email match. The response is identical whether or not an account already exists, the trigger is rate-limited, and a second click sends nothing.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "One-tap account setup after checkout",
+          "body": "A guest buyer's confirmation page offers to save the order to an account: one click emails a magic sign-in link to the checkout address (masked on screen, e.g. r***@e***.com), creating the account on redemption if none exists and linking the buyer's guest orders by hashed-email match at the moment they prove control of the inbox. Signed-in buyers never see the offer; buyers whose address already has an account get sign-in wording with the identical send path. The plaintext address lives only in an encrypted cookie for fifteen minutes — the database keeps only the one-way hash it already kept."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Guest order confirmation pages are access-gated",
+          "body": "A guest order's page requires the placing browser's sealed device cookie (set at checkout, capped to recent orders, 30-day refresh), the signed token in the order-receipt email's view-order link (order-scoped, roughly 90-day expiry, constant-time verified), or the signed-in owner. Unauthorized requests — including a signed-in customer who does not own the order — receive a 404 identical to a missing order. The reorder action carries the same gate; cancel, rating, and return actions were already owner-only. The payment-provider return flow and order analytics are unaffected: the device cookie is set before the redirect to the payment page, so the buyer lands back on their confirmation with access intact."
+        }
+      ]
+    }
+  ]
+}

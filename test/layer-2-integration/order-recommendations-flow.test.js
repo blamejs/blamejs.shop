@@ -22,6 +22,17 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var b = bShop.framework;
 
+// Guest-order access: the confirmation page is gated, so reach the seeded
+// guest order the way a real buyer would — via the signed ?k= access token
+// the receipt email carries. Mint it with the same key the storefront mounts
+// with (format mirrors storefront's _verifyOrderAccessToken).
+var ORDER_ACCESS_SECRET = b.crypto.namespaceHash("order-access-token", "rec-conf-access-secret");
+function _accessToken(orderId) {
+  var expB36 = (Date.now() + b.constants.TIME.days(90)).toString(36);
+  var tag = b.crypto.hmacSha3(ORDER_ACCESS_SECRET, "order-access:v1:" + orderId + ":" + expB36).slice(0, 32);
+  return expB36 + "." + tag;
+}
+
 var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0043_collections.sql", "0050_recently_viewed.sql", "0105_recommendations.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
@@ -110,6 +121,7 @@ async function _run() {
       bShop.storefront.mount(r, {
         catalog: catalog, cart: cart, order: order, checkout: checkout,
         recommendations: recommendations, default_shipping_id: "std",
+        order_access_secret: ORDER_ACCESS_SECRET,
       });
     },
   });
@@ -117,7 +129,7 @@ async function _run() {
   var port = bound.port;
 
   try {
-    var page = await helpers.httpRequest({ port: port, path: "/orders/" + orderId });
+    var page = await helpers.httpRequest({ port: port, path: "/orders/" + orderId + "?k=" + encodeURIComponent(_accessToken(orderId)) });
     check("order confirmation then 200",        page.status === 200);
     check("rail heading rendered",              page.body.indexOf("Customers also bought") !== -1);
     check("rail surfaces the pinned rec (B)",   page.body.indexOf("Pinned Companion") !== -1);

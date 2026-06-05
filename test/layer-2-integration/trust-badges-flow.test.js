@@ -34,6 +34,16 @@ var TOKEN = "admin-token-0123456789abcdef-test";
 var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0004_shop_config.sql", "0206_orders_email_hash.sql", "0111_trust_badges.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
+// The guest order's confirmation page is access-gated; reach it via the
+// signed ?k= token (the format storefront's _verifyOrderAccessToken expects),
+// minted with the same key the storefront mounts with.
+var ORDER_ACCESS_SECRET = b.crypto.namespaceHash("order-access-token", "trust-badges-access-secret");
+function _accessToken(orderId) {
+  var expB36 = (Date.now() + b.constants.TIME.days(90)).toString(36);
+  var tag = b.crypto.hmacSha3(ORDER_ACCESS_SECRET, "order-access:v1:" + orderId + ":" + expB36).slice(0, 32);
+  return expB36 + "." + tag;
+}
+
 // A clean inline SVG the strict guard accepts (only allowed tags).
 var CLEAN_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><title>Secure</title><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M8 12l3 3 5-6\"/></svg>";
 
@@ -73,7 +83,7 @@ async function _run() {
   var trustBadges = bShop.trustBadges.create({ query: query });
 
   // Seed a paid order so the order-confirmation page renders (a guest order
-  // with no owner; the page is reachable by id).
+  // with no owner; the page is reachable via the signed access token).
   var prod = await catalog.products.create({ slug: "tb-prod", title: "TB Product", status: "active" });
   var variant = await catalog.variants.create(prod.id, { sku: "TB-1", title: "Default", position: 0 });
   await catalog.inventory.create("TB-1", { stock_on_hand: 10 });
@@ -107,7 +117,7 @@ async function _run() {
     middleware: { botGuard: false, rateLimit: false },
     routes: function (r) {
       r.use(b.middleware.bodyParser());
-      bShop.storefront.mount(r, { catalog: catalog, cart: cart, order: order, checkout: checkout, trustBadges: trustBadges });
+      bShop.storefront.mount(r, { catalog: catalog, cart: cart, order: order, checkout: checkout, trustBadges: trustBadges, order_access_secret: ORDER_ACCESS_SECRET });
       bShop.admin.mount(r, {
         token: TOKEN, catalog: catalog, order: order, config: config,
         trustBadges: trustBadges, shop_name: "Test Shop",
@@ -131,7 +141,8 @@ async function _run() {
     // t2 — the order-confirmation page renders the badge; the badge isn't
     // shown anywhere it doesn't belong (the home page has no order_confirmation
     // placement, so the badge title is absent there).
-    var ordPage = await helpers.httpRequest({ port: port, path: "/orders/" + ord.id });
+    var ordK = "?k=" + encodeURIComponent(_accessToken(ord.id));
+    var ordPage = await helpers.httpRequest({ port: port, path: "/orders/" + ord.id + ordK });
     check("t2 order page 200",                       ordPage.status === 200);
     check("t2 order page renders the badge",         ordPage.body.indexOf("data-trust-badge-slug=\"secure-checkout\"") !== -1);
     var home = await helpers.httpRequest({ port: port, path: "/" });
@@ -150,7 +161,7 @@ async function _run() {
     check("t4 xss badge created 303",               xssCreate.status === 303);
     var listXss = await helpers.httpRequest({ port: port, path: "/admin/trust-badges", jar: jar });
     check("t4 admin list escapes the title",        listXss.body.indexOf("<script>alert('t')</script>") === -1);
-    var ordXss = await helpers.httpRequest({ port: port, path: "/orders/" + ord.id });
+    var ordXss = await helpers.httpRequest({ port: port, path: "/orders/" + ord.id + ordK });
     check("t4 rendered badge escapes the title",    ordXss.body.indexOf("<script>alert('t')</script>") === -1);
     check("t4 rendered badge escapes the alt",      ordXss.body.indexOf("<img src=x onerror=alert(1)>") === -1);
 
@@ -175,7 +186,8 @@ async function _run() {
     var active = await trustBadges.activeForPlacement({ placement: "order_confirmation" });
     var stillActive = active.some(function (bd) { return bd.slug === "secure-checkout"; });
     check("t7 archived badge not in active set",     !stillActive);
-    var ordAfterArchive = await helpers.httpRequest({ port: port, path: "/orders/" + ord.id });
+    var ordAfterArchive = await helpers.httpRequest({ port: port, path: "/orders/" + ord.id + ordK });
+    check("t7 order page still renders (200)",         ordAfterArchive.status === 200);
     check("t7 order page no longer renders it",       ordAfterArchive.body.indexOf("data-trust-badge-slug=\"secure-checkout\"") === -1);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* best-effort */ }

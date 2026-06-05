@@ -731,6 +731,18 @@ async function main() {
       // schema and is skipped; guest-cart recovery re-opens the day a
       // guest checkout-email is persisted on the cart and fed through
       // the resolver.
+      // Order-access token signing key. Gates guest-order confirmation pages:
+      // the storefront verifies the emailed ?k=<token> against this key, and
+      // the email factory mints the link with it. Domain-separated from the
+      // operator's app secret (VAULT_PASSPHRASE), falling back to the bridge
+      // secret, then a dev-only constant — the same derivation chain every
+      // other shop secret uses, so one operator secret drives all of them and
+      // rotating it rotates the order-access links too.
+      var _orderAccessSecret = b.crypto.namespaceHash(
+        "order-access-token",
+        process.env.VAULT_PASSPHRASE || process.env.D1_BRIDGE_SECRET || "order-access-secret-dev-only",
+      );
+
       // Shared transactional mailer — one b.mail/email instance per boot,
       // null unless the operator configured SMTP. Reused by cart-recovery
       // AND the back-in-stock sweep so both transactional surfaces share the
@@ -746,7 +758,17 @@ async function main() {
           }),
           defaults: { from: process.env.MAIL_FROM },
         });
-        txEmail = bShop.email.create({ mailer: txMailer });
+        txEmail = bShop.email.create({
+          mailer: txMailer,
+          // Order-confirmation deep-link signing. Derived (domain-separated)
+          // from the operator's app secret so the receipt / resend mail can
+          // carry a tokenized "view your order" link that opens a guest's
+          // receipt on any device. Falls back to the bridge secret, then a
+          // dev-only constant, mirroring every other shop secret derivation.
+          // Absent an origin the link is simply omitted.
+          orderAccessSecret: _orderAccessSecret,
+          shopOrigin:        process.env.SHOP_ORIGIN || "",
+        });
       }
 
       var cartRecoveryPass = null;
@@ -2358,6 +2380,12 @@ async function main() {
         // Reuse the shared order instance (also wired into the admin console)
         // so a transition fans webhooks / loyalty / referrals once, not twice.
         sfDeps.order = order;
+        // Order-access token signing key — the storefront verifies the emailed
+        // ?k=<token> guest-order access link against it. Same key the email
+        // factory mints links with, so a link minted in a receipt validates at
+        // the gate. (The placing-browser sealed cookie + signed-in owner paths
+        // work without it; this only enables the cross-device emailed link.)
+        sfDeps.order_access_secret = _orderAccessSecret;
         // Order tracking — the customer order page reads it for the shipment
         // status timeline + carrier tracking link. Optional: absent it (or
         // its table unmigrated), the order page renders without the panel.
