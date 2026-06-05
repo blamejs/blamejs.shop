@@ -37,7 +37,8 @@ var b = bShop.framework;
 
 var MIGS = [
   "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0004_shop_config.sql",
-  "0206_orders_email_hash.sql",
+  "0206_orders_email_hash.sql", "0107_auto_discount.sql",
+  "0209_auto_discount_unlock_code.sql", "0210_cart_discount_codes.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) {
@@ -83,9 +84,14 @@ async function _run() {
     { id: "std", label: "Standard", zones: [{ country: "US", flat_amount_minor: 695 }] },
   ] });
   var payment  = _stubPayment();
+  // Auto-discount engine — wired into BOTH checkout (so a coded discount is
+  // honoured at confirm) and the storefront (so the cart-page coupon entry
+  // mounts + the totals estimate reflects an applied code).
+  var autoDiscount = bShop.autoDiscount.create({ query: query });
   var checkout = bShop.checkout.create({
     catalog: catalog, cart: cart, pricing: bShop.pricing,
     tax: tax, shipping: shipping, payment: payment, order: order,
+    autoDiscount: autoDiscount,
   });
 
   // A $29.99 product with stock; a $19.99 low-stock product; a $9.99
@@ -114,6 +120,16 @@ async function _run() {
   await catalog.prices.set(vd.id, { currency: "USD", amount_minor: 500 });
   await catalog.inventory.create("TIP-1", { stock_on_hand: 9999 });
 
+  // A code-gated discount: $4.00 off any cart, but only when the shopper
+  // types code "SAVE4" on the cart page. Dormant until the code is applied.
+  await autoDiscount.defineRule({
+    slug:        "save4-code",
+    title:       "Four off with code",
+    trigger:     { kind: "cart_total_min", min_minor: 1 },
+    value:       { kind: "amount_off_total", minor: 400 },
+    unlock_code: "SAVE4",
+  });
+
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-carttot-"));
   var app = await b.createApp({
     dataDir: dataDir, vault: { mode: "plaintext" }, db: { atRest: "plain", auditSigning: { mode: "plaintext" } },
@@ -122,6 +138,7 @@ async function _run() {
       r.use(b.middleware.bodyParser());
       bShop.storefront.mount(r, {
         catalog: catalog, cart: cart, order: order, checkout: checkout,
+        autoDiscount: autoDiscount,
         default_shipping_id: "std",
       });
     },
@@ -156,6 +173,65 @@ async function _run() {
     check("cart total != subtotal (tax+ship added)", cartPage.body.indexOf("$39.56") !== -1 && cartPage.body.indexOf("$29.99") !== -1);
     check("cart note explains the estimate finalizes at the address step",
       cartPage.body.indexOf("exact total is confirmed once you enter your shipping address") !== -1);
+
+    // ---- cart-page coupon entry: apply / invalid / remove -------------
+    // The coupon entry mounts when the discount engine is wired. The same
+    // $29.99 cart (`jar`) hosts the whole apply→remove cycle.
+    check("cart renders the coupon entry form",      cartPage.body.indexOf("action=\"/cart/coupon\"") !== -1);
+    check("coupon form is CSRF-tokened (not edge-exempt)",
+      cartPage.body.indexOf("action=\"/cart/coupon\"") !== -1 &&
+      // _injectCsrfFields splices a hidden _csrf into every tokened container
+      // form; the coupon form is one, so a _csrf input is present on the page.
+      cartPage.body.indexOf("name=\"_csrf\"") !== -1);
+
+    // CSRF posture pin: a POST WITHOUT the double-submit token is refused.
+    var noTokenJar = await _cartWith([{ variant_id: v1.id, qty: 1 }]);
+    var csrfMiss = await helpers.httpRequest({
+      port: port, path: "/cart/coupon", method: "POST", jar: noTokenJar,
+      form: { code: "SAVE4", _csrf: "" },   // explicit empty token defeats the helper's auto-attach
+    });
+    check("coupon POST without a CSRF token is 403", csrfMiss.status === 403);
+
+    // Apply a VALID code → 303 with ?code_applied=1, and the followed cart
+    // shows the discount in the totals + the applied-code chip.
+    var applyOk = await helpers.httpRequest({ port: port, path: "/cart/coupon", method: "POST", jar: jar, form: { code: "SAVE4" } });
+    check("valid code apply → 303 code_applied",     applyOk.status === 303 &&
+      (applyOk.headers.location || "").indexOf("code_applied=1") !== -1);
+    var afterApply = await helpers.httpRequest({ port: port, path: "/cart?code_applied=1", jar: jar });
+    check("applied code shows the success notice",   afterApply.body.indexOf("Discount code applied.") !== -1);
+    check("applied code shows the discount row",     afterApply.body.indexOf("totals-list__discount") !== -1 && afterApply.body.indexOf("$4.00") !== -1);
+    check("applied code chip echoes the code",       afterApply.body.indexOf(">SAVE4<") !== -1);
+    check("applied code offers a Remove control",    afterApply.body.indexOf("action=\"/cart/coupon/remove\"") !== -1);
+    // The grand total dropped by $4.00 vs the un-coded $39.56 → $35.56.
+    check("applied code reduces the grand total",    afterApply.body.indexOf("$35.56") !== -1);
+
+    // Apply an UNKNOWN code → 303 with ?code_err=1 and a UNIFORM message.
+    var applyBad = await helpers.httpRequest({ port: port, path: "/cart/coupon", method: "POST", jar: jar, form: { code: "NOPE-404" } });
+    check("unknown code apply → 303 code_err",       applyBad.status === 303 &&
+      (applyBad.headers.location || "").indexOf("code_err=1") !== -1);
+    var afterBad = await helpers.httpRequest({ port: port, path: "/cart?code_err=1", jar: jar });
+    check("unknown code shows the uniform error",    afterBad.body.indexOf("That code can't be applied to this cart.") !== -1);
+    // The valid SAVE4 is still applied (the bad apply didn't clear it).
+    check("unknown code didn't drop the valid one",  afterBad.body.indexOf("$35.56") !== -1);
+
+    // XSS in the code echo: a payload-shaped code can't resolve to a rule
+    // (so it never applies), but if it WERE echoed it must be escaped. Apply
+    // a payload code, then confirm the raw script never reaches the page.
+    var xssCode = "<script>alert(7)</script>";
+    var applyXss = await helpers.httpRequest({ port: port, path: "/cart/coupon", method: "POST", jar: jar, form: { code: xssCode } });
+    check("payload code apply → 303 code_err",       applyXss.status === 303 &&
+      (applyXss.headers.location || "").indexOf("code_err=1") !== -1);
+    var afterXss = await helpers.httpRequest({ port: port, path: "/cart?code_err=1", jar: jar });
+    check("payload code never reaches the page raw", afterXss.body.indexOf("<script>alert(7)</script>") === -1);
+
+    // Remove the applied code → totals restore to the un-coded $39.56.
+    var removeOk = await helpers.httpRequest({ port: port, path: "/cart/coupon/remove", method: "POST", jar: jar, form: { code: "SAVE4" } });
+    check("remove code → 303 code_removed",          removeOk.status === 303 &&
+      (removeOk.headers.location || "").indexOf("code_removed=1") !== -1);
+    var afterRemove = await helpers.httpRequest({ port: port, path: "/cart?code_removed=1", jar: jar });
+    check("remove shows the removed notice",         afterRemove.body.indexOf("Discount code removed.") !== -1);
+    check("remove restores the un-coded total",      afterRemove.body.indexOf("$39.56") !== -1);
+    check("remove clears the discount row",          afterRemove.body.indexOf("totals-list__discount") === -1);
 
     // ---- truthful per-line stock state --------------------------------
     var stockJar = await _cartWith([
