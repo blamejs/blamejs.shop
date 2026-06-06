@@ -39,6 +39,7 @@ keys/*-priv.*
 
 # Intermediate / scratch
 .scratch/
+.scratch-*/
 .extract-staging/
 
 # Wrangler / Cloudflare Workers local state (dev cache, deploy

@@ -105,7 +105,7 @@ async function _run() {
   check("feed: both authors are the shop name",
     (cleanXml.match(/<author>Test Shop<\/author>/g) || []).length === 2);
   check("feed: neither op id leaks", cleanXml.indexOf("op-1") === -1 && cleanXml.indexOf("op-2") === -1);
-  check("feed: item links resolve against origin", cleanXml.indexOf("https://test.example/blog/a") !== -1);
+  check("feed: item links resolve against origin", /<link>https:\/\/test\.example\/blog\/a<\/link>/.test(cleanXml));
   check("feed: meta_description used when present", cleanXml.indexOf("Lede A") !== -1);
   check("feed: body slice used when meta_description empty", cleanXml.indexOf("Body B") !== -1);
   check("feed: prolog appears exactly once", (cleanXml.match(/<\?xml /g) || []).length === 1);
