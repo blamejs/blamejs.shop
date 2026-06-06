@@ -2,10 +2,10 @@
 /**
  * quotes — B2B request-for-quote (RFQ) negotiation surface.
  *
- * Layer 1 against in-memory node:sqlite loaded from migration 0102.
- * The primitive isn't wired through `bShop` yet — the test requires
- * `lib/quotes.js` directly so the gate exists ahead of the entry-
- * point edit.
+ * Layer 1 against in-memory node:sqlite loaded from migrations 0102 +
+ * 0211 (the view-token column). The test requires `lib/quotes.js`
+ * directly for the unit-level coverage; the storefront + admin wiring
+ * is exercised in test/layer-2-integration/quotes-flow.test.js.
  *
  * Coverage:
  *   - requestQuote happy path: explicit lines, message + terms
@@ -45,9 +45,10 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIG_PATH = nodePath.resolve(
-  __dirname, "..", "..", "migrations-d1", "0102_quotes.sql"
-);
+var MIG_PATHS = [
+  "0102_quotes.sql",
+  "0211_quote_view_token.sql",
+].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -57,8 +58,10 @@ function _splitSchema(text) {
 function _makeQuery() {
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
-  _splitSchema(nodeFs.readFileSync(MIG_PATH, "utf8")).forEach(function (s) {
-    db.prepare(s).run();
+  MIG_PATHS.forEach(function (p) {
+    _splitSchema(nodeFs.readFileSync(p, "utf8")).forEach(function (s) {
+      db.prepare(s).run();
+    });
   });
   return async function (sql, params) {
     var stmt = db.prepare(sql);

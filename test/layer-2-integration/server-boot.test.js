@@ -389,6 +389,62 @@ async function _runBridged() {
       { "user-agent": "curl/8.5.0", "accept": "*/*" });
     check("bridged boot: curl-shaped call without the key answers 401 from the bearer gate, not 403 from bot-guard",
       curlNoKey.status === 401);
+
+    // 11. Dep-wiring liveness — the B2B quotes surface. The quotes primitive
+    //     is handed to BOTH the admin console (deps.quotes) and the storefront
+    //     (sfDeps.quotes) in server.js; a missing injection darkens both the
+    //     /admin/quotes response queue and the tokened /quote/:token page even
+    //     though the unit tests (which inject the dep directly) pass. Seed a
+    //     responded quote through the SAME bridge-backed query the running
+    //     server reads, then prove both surfaces reach the wire: the admin
+    //     console lists it (bearer JSON), and the customer's capability link
+    //     renders the actionable quote.
+    var quotesSeed = bShop.quotes.create({ query: mem.query });
+    var quoteCustomerId = bShop.framework.uuid.v7();
+    var seededQuote = await quotesSeed.requestQuote({
+      customer_id: quoteCustomerId,
+      lines:       [{ sku: "BOOT-1", quantity: 5 }],
+      message:     "Bulk order for the boot test",
+    });
+    check("bridged boot: quote requested with a view token", !!seededQuote && !!seededQuote.view_token);
+    var respondedQuote = await quotesSeed.respondToQuote({
+      quote_id:    seededQuote.id,
+      line_prices: [{ sku: "BOOT-1", unit_price_minor: 1500 }],
+      valid_until: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      currency:    "USD",
+    });
+    check("bridged boot: quote responded (total computed)", respondedQuote.status === "responded" && respondedQuote.total_minor === 7500);
+
+    // Admin response queue + customer-scoped list, through the bearer JSON
+    // surface (proves deps.quotes reached admin.mount).
+    var adminQuotes = await _rawGet(state.port, "/admin/quotes?customer_id=" + encodeURIComponent(quoteCustomerId),
+      { "authorization": "Bearer " + ADMIN_KEY, "user-agent": "curl/8.5.0", "accept": "*/*" });
+    check("bridged boot: GET /admin/quotes reaches the console (2xx, quotes wired)",
+      adminQuotes.status >= 200 && adminQuotes.status < 300);
+    var adminQuotesJson = null;
+    try { adminQuotesJson = JSON.parse(adminQuotes.body); } catch (_e) { adminQuotesJson = null; }
+    check("bridged boot: /admin/quotes lists the seeded quote",
+      !!adminQuotesJson && Array.isArray(adminQuotesJson.rows) &&
+      adminQuotesJson.rows.some(function (q) { return q.id === seededQuote.id; }));
+
+    // The tokened customer page renders the actionable quote (proves
+    // sfDeps.quotes reached storefront.mount). Browser-shaped so bot-guard
+    // admits it; the token is the access.
+    var quotePage = await helpers.httpRequest({
+      port: state.port, path: "/quote/" + encodeURIComponent(seededQuote.view_token),
+      jar: helpers.cookieJar(), headers: browserHeaders,
+    });
+    check("bridged boot: GET /quote/:token is 2xx (storefront quotes mounted)",
+      quotePage.status >= 200 && quotePage.status < 400);
+    check("bridged boot: quote page renders the accept control",
+      quotePage.body.indexOf("Accept this quote") !== -1);
+    // A garbage token resolves to the not-found state (404) — the hash lookup
+    // never widens to leak another quote.
+    var badQuote = await helpers.httpRequest({
+      port: state.port, path: "/quote/" + ("x".repeat(43)),
+      jar: helpers.cookieJar(), headers: browserHeaders,
+    });
+    check("bridged boot: unknown quote token is 404", badQuote.status === 404);
   } finally {
     if (state) _cleanup(state);
     await bridge.close();
