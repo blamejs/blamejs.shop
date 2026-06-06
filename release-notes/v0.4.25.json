@@ -1,0 +1,39 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.25",
+  "date": "2026-06-06",
+  "headline": "The admin role gate fails closed, payment-processor calls are host-pinned, the public catalog API stops leaking unpublished products, and privacy requests show their statutory deadline",
+  "summary": "A security-hardening release. The staff role matrix now denies an unmapped admin action by default (owner-only) instead of leaving it manager-reachable; outbound Stripe and PayPal calls are pinned to the configured processor host with their idempotency keys validated before they leave; the public catalog API no longer honors a caller-supplied status filter, so draft and archived products can't be enumerated; the privacy-request console surfaces each request's statutory response deadline; and the Apple Pay well-known bot-guard exemption is tightened to an exact-path match. No migrations.",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Admin role gate fails closed on unmapped actions",
+          "body": "The operator role matrix is now a declarative registry with role inheritance (owner ⊃ manager ⊃ viewer) validated at boot. A mutating admin action that isn't explicitly mapped to a permission now requires the owner role, instead of falling through to a manager-grantable default — so a newly added admin route can't be reached by a manager or viewer by accident. Existing mapped routes keep their grants."
+        },
+        {
+          "title": "Public catalog API no longer leaks unpublished products",
+          "body": "GET /api/catalog/products accepted a caller-supplied ?status= filter and passed it straight through, so an unauthenticated request could list draft or archived products by asking for them. The endpoint now always lists only published products; operators browse other statuses through the authenticated admin catalog screens."
+        },
+        {
+          "title": "Payment-processor calls are host-pinned with validated idempotency keys",
+          "body": "Every outbound Stripe and PayPal call is now pinned to the configured processor host (defense-in-depth over the existing private-address and metadata-endpoint blocking), and a malformed or non-HTTPS processor base URL fails at the first call rather than dialing in the clear. The idempotency key each call carries is validated before it leaves, refusing path-traversal, slash, and control-character shapes."
+        },
+        {
+          "title": "Apple Pay well-known bot-guard exemption is exact-match",
+          "body": "The bot-guard skip for the Apple Pay domain-association path was matched as a prefix, which would also have exempted any sibling path beneath it. It is now an exact-path match, so only the single static association file skips the guard."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Privacy-request console shows the statutory response deadline",
+          "body": "Each export and erasure request now displays its statutory response deadline — one month under GDPR, 45 days under CCPA, 15 days under LGPD — derived from the request's recorded jurisdiction and timestamp, and flags an open request whose deadline has passed. Requests under no statutory regime show no deadline rather than an invented one."
+        }
+      ]
+    }
+  ]
+}

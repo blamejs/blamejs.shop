@@ -47,12 +47,16 @@ function _makeQuery() {
 }
 
 // Stub OIDC adapter: deterministic authorization URL + verified claims.
+// `claims` may be a static object OR a function (called per exchange) so a
+// single booted app can return different identities on successive callbacks.
 function _stubOAuth(claims) {
   return {
     authorizationUrl: async function () {
       return { url: "https://accounts.google.com/o/oauth2/v2/auth?stub=1", state: "STATE-abc", nonce: "NONCE-abc", verifier: "VERIFIER-abc" };
     },
-    exchangeCode: async function (_e) { return { claims: claims }; },
+    exchangeCode: async function (_e) {
+      return { claims: typeof claims === "function" ? claims() : claims };
+    },
   };
 }
 
@@ -145,6 +149,70 @@ async function _run() {
   } finally {
     try { await handle.app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(handle.dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
+  }
+
+  // --- No silent account takeover on an UNVERIFIED-email match. ---
+  // A local account already exists for victim@example.com (registered via
+  // the passwordless customers.register path — no passkey, no federated
+  // link). An attacker drives a Google sign-in whose `sub` is brand-new and
+  // whose claimed email is the victim's, but with email_verified=false. The
+  // route MUST refuse: no session minted, no identity linked to the victim,
+  // the victim row left exactly as it was. This is the headline takeover
+  // class (an enroll/sign-in route attaching to an existing account by mere
+  // email knowledge) the customers model guards against — proven here end to
+  // end at the HTTP layer, not just in the unit suite.
+  var query2 = _makeQuery();
+  var customers2 = bShop.customers.create({ query: query2 });
+  var victim = await customers2.register({ email: "victim@example.com", display_name: "Victim" });
+  var attackerClaims = { sub: "attacker-sub-999", email: "victim@example.com", email_verified: false, name: "Mallory" };
+  var handle2 = await _boot(query2, customers2, _stubOAuth(attackerClaims));
+  try {
+    var jar3 = helpers.cookieJar();
+    await helpers.httpRequest({ port: handle2.port, path: "/account/login/google", jar: jar3 });
+    var attack = await helpers.httpRequest({ port: handle2.port, path: "/account/auth/google/callback?code=CODE&state=STATE-abc", jar: jar3 });
+    check("takeover attempt then 303",          attack.status === 303);
+    // Bounced to login with the conflict notice — NOT signed in.
+    check("takeover attempt bounces to login",  (attack.headers.location || "").indexOf("/account/login") === 0);
+    check("takeover attempt flags email-conflict", (attack.headers.location || "").indexOf("error=email-conflict") !== -1);
+    check("takeover attempt minted no session", !jar3.get("shop_auth"));
+    // The attacker's subject was never linked to anyone.
+    check("attacker subject left unlinked",     (await customers2.byOAuthIdentity("google", "attacker-sub-999")) === null);
+    // The victim's account is untouched — no federated identity grafted on.
+    var victimOauth = await query2(
+      "SELECT * FROM customer_oauth_identities WHERE customer_id = ?1", [victim.id],
+    );
+    check("victim account untouched",           victimOauth.rows.length === 0);
+    // The conflict notice renders as friendly, escaped copy on the login page
+    // (no provider/internal detail leaked; the message is a fixed string).
+    var conflictPage = await helpers.httpRequest({ port: handle2.port, path: "/account/login?error=email-conflict" });
+    check("conflict page then 200",             conflictPage.status === 200);
+    check("conflict page shows friendly notice", conflictPage.body.indexOf("That email already has an account") !== -1);
+  } finally {
+    try { await handle2.app.shutdown(); } catch (_e) { /* */ }
+    try { nodeFs.rmSync(handle2.dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
+  }
+
+  // --- Unconfigured graceful state: no adapter wired → no button, no route. ---
+  // When the operator hasn't supplied GOOGLE_OAUTH_CLIENT_ID/SECRET the
+  // adapter is never built and `deps.oauthGoogle` is absent. The login page
+  // must NOT advertise a Google button (a dead link), and the start/callback
+  // routes must not exist (a 404, never a 500). This is the "ship disabled
+  // when credentials absent" contract — the button is opt-in on real config.
+  var query3 = _makeQuery();
+  var customers3 = bShop.customers.create({ query: query3 });
+  var handle3 = await _boot(query3, customers3, undefined);
+  try {
+    var bare = await helpers.httpRequest({ port: handle3.port, path: "/account/login" });
+    check("unconfigured login then 200",        bare.status === 200);
+    check("unconfigured login hides the button", bare.body.indexOf("/account/login/google") === -1);
+    // The start route isn't mounted at all → 404 (not a 500 from a missing dep).
+    var noStart = await helpers.httpRequest({ port: handle3.port, path: "/account/login/google" });
+    check("unconfigured start route is 404",    noStart.status === 404);
+    var noCb = await helpers.httpRequest({ port: handle3.port, path: "/account/auth/google/callback?code=C&state=S" });
+    check("unconfigured callback route is 404", noCb.status === 404);
+  } finally {
+    try { await handle3.app.shutdown(); } catch (_e) { /* */ }
+    try { nodeFs.rmSync(handle3.dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
   }
 }
 

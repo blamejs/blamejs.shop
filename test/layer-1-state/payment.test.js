@@ -584,7 +584,99 @@ async function _circuitBreakerTripsAndRecovers() {
   check("breaker:false disables the per-adapter breaker", sNB.breaker === null);
 }
 
+// ---- egress hardening: PSP dials pin allowedHosts to the configured host -
+//
+// b.httpClient already SSRF-gates the IP class + pins DNS even on the PSP
+// caller-agent path. The added defense-in-depth is the HOST allowlist: every
+// Stripe / PayPal dial must carry `allowedHosts: [<configured host>]` so a
+// compromised process can't redirect the dial to a non-PSP upstream.
+async function _egressAllowedHostsPinned() {
+  // Default Stripe base → api.stripe.com.
+  var fake = _fakeHttp([{ status: 200, body: { id: "pi_e1" } }]);
+  var s = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", httpClient: fake.httpClient, breaker: false });
+  await s.createPaymentIntent({ amount_minor: 100, currency: "usd" });
+  check("stripe dial pins allowedHosts to api.stripe.com",
+    fake.calls.length === 1 &&
+    Array.isArray(fake.calls[0].allowedHosts) &&
+    fake.calls[0].allowedHosts.length === 1 &&
+    fake.calls[0].allowedHosts[0] === "api.stripe.com");
+
+  // Custom (e.g. test-proxy) apiBase → that host is pinned, not the default.
+  var fake2 = _fakeHttp([{ status: 200, body: { id: "pi_e2" } }]);
+  var s2 = payment.create({
+    apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx",
+    httpClient: fake2.httpClient, breaker: false, apiBase: "https://stripe-proxy.internal-mesh.example/v1",
+  });
+  await s2.createPaymentIntent({ amount_minor: 100, currency: "usd" });
+  check("stripe dial pins allowedHosts to the configured apiBase host",
+    fake2.calls[0].allowedHosts[0] === "stripe-proxy.internal-mesh.example");
+
+  // A non-https / malformed apiBase fails CLOSED at the first dial (config
+  // typo surfaces as a clean TypeError, not a plaintext payment dial).
+  var s3 = payment.create({
+    apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx",
+    httpClient: _fakeHttp([{ status: 200, body: {} }]).httpClient, breaker: false,
+    apiBase: "http://api.stripe.com/v1",
+  });
+  await assert.rejects(s3.retrievePaymentIntent("pi_test_abcdef"), /apiBase must be https/);
+
+  // PayPal: token exchange + Orders-v2 dial both pin the configured host.
+  var ppFake = _fakeHttp([
+    { status: 200, body: { access_token: "A", expires_in: 3600 } }, // token
+    { status: 201, body: { id: "ORD-1", status: "CREATED" } },       // create order
+  ]);
+  var pp = payment.paypal({ clientId: "clientidxxxx", secret: "secretxxxxxx", sandbox: true, httpClient: ppFake.httpClient, breaker: false });
+  await pp.createOrder({ amount_minor: 500, currency: "USD", order_id: "ord-1" }, null);
+  check("paypal token dial pins allowedHosts to the sandbox host",
+    ppFake.calls[0].allowedHosts[0] === "api-m.sandbox.paypal.com");
+  check("paypal order dial pins allowedHosts to the sandbox host",
+    ppFake.calls[1].allowedHosts[0] === "api-m.sandbox.paypal.com");
+}
+
+// ---- outbound idempotency-key validation (b.guardIdempotencyKey, strict) --
+//
+// The key crosses the wire as the Stripe `Idempotency-Key` / PayPal
+// `PayPal-Request-Id` header. A traversal / control-char / slash / oversize
+// shape is refused BEFORE the dial so it never reaches the processor or the
+// local replay cache.
+async function _outboundKeyValidation() {
+  // Slash / path-traversal shapes refused on the wire (no query → the dial
+  // path's outbound guard is the only gate, proving the wire-level check).
+  var bad = ["../../etc/passwd", "key/with/slash", "key\\with\\backslash", "abell"];
+  for (var i = 0; i < bad.length; i += 1) {
+    var fake = _fakeHttp([{ status: 200, body: { id: "pi_b" } }]);
+    var s = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", httpClient: fake.httpClient, breaker: false });
+    await assert.rejects(
+      s.confirmPaymentIntent("pi_test_abcdef", {}, bad[i]),
+      /idempotency_key —/,
+      "outbound key refused: " + JSON.stringify(bad[i]));
+    check("refused outbound key never dialed: " + JSON.stringify(bad[i]), fake.calls.length === 0);
+  }
+
+  // A clean key passes the guard and is sent verbatim.
+  var fakeOk = _fakeHttp([{ status: 200, body: { id: "pi_ok" } }]);
+  var sOk = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", httpClient: fakeOk.httpClient, breaker: false });
+  await sOk.confirmPaymentIntent("pi_test_abcdef", {}, "order-confirm-2026-06-06-abc123");
+  check("clean outbound key sent as Idempotency-Key header",
+    fakeOk.calls.length === 1 && fakeOk.calls[0].headers["idempotency-key"] === "order-confirm-2026-06-06-abc123");
+
+  // PayPal: a slash in an operator-supplied id is refused before the order
+  // dial (the token exchange may dial first; assert no ORDER dial lands).
+  var ppFake = _fakeHttp([
+    { status: 200, body: { access_token: "A", expires_in: 3600 } },
+    { status: 201, body: { id: "ORD-2" } },
+  ]);
+  var pp = payment.paypal({ clientId: "clientidxxxx", secret: "secretxxxxxx", sandbox: true, httpClient: ppFake.httpClient, breaker: false });
+  await assert.rejects(
+    pp.captureOrder("PAYID/../escape", "../traversal"),
+    /paypal_request_id —/);
+  var orderDials = ppFake.calls.filter(function (c) { return /\/v2\/checkout\/orders\//.test(c.url); });
+  check("paypal traversal request-id never reaches the capture dial", orderDials.length === 0);
+}
+
 async function run() {
+  await _egressAllowedHostsPinned();
+  await _outboundKeyValidation();
   await _verifierHappyPath();
   await _verifierHeaderCaseInsensitive();
   await _verifierMultipleSignatures();
