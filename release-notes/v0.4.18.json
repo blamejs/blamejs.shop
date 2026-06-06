@@ -1,0 +1,26 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.18",
+  "date": "2026-06-06",
+  "headline": "Staff accounts: per-operator credentials with owner, manager, and viewer roles — the shared admin key becomes break-glass",
+  "summary": "The admin console gains multi-operator support. Create staff accounts at the new Operators screen, each with its own password and optional API key, and assign a least-privilege role: owner (everything, including operator management), manager (catalog, orders, customers, marketing), or viewer (read-only). Role enforcement happens at the admin write layer on every state-changing request — a viewer is refused the write itself, not just the menu link. The shared ADMIN_API_KEY keeps working as the bootstrap and break-glass owner credential, so upgrading can never lock a store out; once staff accounts exist, treat it like a recovery key.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Operators console with per-operator credentials",
+          "body": "`/admin/operators` creates and disables staff accounts. Each operator gets their own password (Argon2id) and optionally a personal API key for the JSON surface, shown once at creation. The screen lists who created each operator and when; disabling one takes effect on their very next request — the signed-in session re-reads the live account row, so there is no revocation lag."
+        },
+        {
+          "title": "Owner / manager / viewer roles, enforced on the write itself",
+          "body": "Every admin mutation passes a single permission gate keyed to the action being performed: owner holds every permission including operator management and settings; manager covers catalog, orders, customers, and marketing; viewer holds none — every POST, PUT, and DELETE is refused with a 403, regardless of how the request arrives (browser form or bearer JSON). Read screens remain available to any authenticated operator. Role-denied attempts are recorded in the audit chain alongside every operator-management action."
+        },
+        {
+          "title": "Bootstrap and break-glass: the shared key still works",
+          "body": "`ADMIN_API_KEY` resolves to the owner role exactly as before — a store with no operator rows behaves identically to the previous release, and the first staff account is created while signed in with the shared key. Unknown sign-in attempts burn a real password verification against a fixed dummy hash, so response timing does not reveal whether an account exists."
+        }
+      ]
+    }
+  ]
+}

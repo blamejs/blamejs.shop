@@ -112,6 +112,17 @@ node -e "
 
 ## Application checklist
 
+- **Create per-operator staff accounts; keep the shared key as
+  break-glass.** `/admin/operators` mints individual operator accounts
+  (Argon2id password and/or a per-operator API key) with least-privilege
+  roles — owner, manager, or viewer — enforced at the admin write
+  chokepoint on every POST/PUT/DELETE, not by menu hiding. Disabling an
+  operator revokes them on their next request (the sealed session
+  re-reads the live row). `ADMIN_API_KEY` keeps working as the
+  bootstrap / break-glass owner credential; once staff accounts exist,
+  treat it like a recovery key — store it offline and use the
+  per-operator credentials day to day. Every operator-management action
+  and every role-denied attempt lands in the audit chain.
 - **Guest order pages are access-gated, not capability URLs.** A guest
   order's confirmation page (name, address, items) requires the placing
   browser's sealed device cookie, the signed `?k=` token carried by the
