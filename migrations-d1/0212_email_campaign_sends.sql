@@ -11,7 +11,13 @@
 --   * It is the per-recipient dedupe key. The UNIQUE (campaign_slug,
 --     email_hash) constraint means a campaign never sends the same
 --     mailbox twice, and a resumed / re-run broadcast skips recipients
---     already attempted instead of re-mailing them.
+--     already attempted instead of re-mailing them. The send path
+--     CLAIMS the row (outcome 'claimed') atomically BEFORE the mailer
+--     is awaited — overlapping drains (an operator Send racing the
+--     scheduled tick) have exactly one winner per recipient — and the
+--     claim is finalized to sent / failed once the mailer answers. A
+--     row left at 'claimed' marks a drain interrupted between claim
+--     and send; it is never re-mailed (at-most-once delivery).
 --
 --   * It records the CONSENT DECISION made at send time, not just a
 --     delivered event. `outcome` distinguishes a real send from a
@@ -37,7 +43,7 @@ CREATE TABLE IF NOT EXISTS email_campaign_sends (
   id             TEXT    NOT NULL PRIMARY KEY,
   campaign_slug  TEXT    NOT NULL,
   email_hash     TEXT    NOT NULL,
-  outcome        TEXT    NOT NULL CHECK (outcome IN ('sent', 'failed', 'skipped_unsubscribed', 'skipped_suppressed')),
+  outcome        TEXT    NOT NULL CHECK (outcome IN ('claimed', 'sent', 'failed', 'skipped_unsubscribed', 'skipped_suppressed')),
   fail_reason    TEXT,
   attempted_at   INTEGER NOT NULL,
   UNIQUE (campaign_slug, email_hash)

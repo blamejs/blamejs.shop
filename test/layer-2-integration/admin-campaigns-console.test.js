@@ -244,6 +244,15 @@ async function _run() {
     check("sent body carries an in-body unsubscribe link",
       aliceMsg.html.indexOf("/newsletter/unsubscribe?token=") !== -1);
 
+    // ---- the broadcast renders the SOURCE body — recipients get exactly
+    //      the escaped markup the preview showed, never raw operator input
+    check("delivered html escapes the script payload (matches the preview)",
+      aliceMsg.html.indexOf("<script>alert(1)</script>") === -1 && aliceMsg.html.indexOf("&lt;script&gt;") !== -1);
+    check("delivered html renders the safe https link",
+      aliceMsg.html.indexOf("href=\"https://shop.example/sale\"") !== -1);
+    check("delivered text strips markup and keeps the link target",
+      typeof aliceMsg.text === "string" && aliceMsg.text.indexOf("https://shop.example/sale") !== -1);
+
     // ---- send ledger rollup reflects every consent decision ------------
     var counts = await emailCampaigns.sendCounts("spring-launch");
     check("ledger: 1 sent",                  counts.sent === 1);
@@ -263,6 +272,49 @@ async function _run() {
     });
     check("re-send of a sent campaign is 4xx", resend.status >= 400 && resend.status < 500);
     check("re-send mailed nobody",           sent.length === 0);
+
+    // ---- concurrent broadcasts claim each recipient exactly once -------
+    // An operator Send racing the cron tick must not double-mail: the
+    // per-recipient ledger row is claimed atomically BEFORE the mailer
+    // await, so overlapping drains have exactly one winner per recipient
+    // (the loser's INSERT writes zero rows and skips). alice is the only
+    // reachable recipient by this point.
+    var mkRace = await helpers.httpRequest({
+      port: port, path: "/admin/campaigns", method: "POST",
+      headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ slug: "race-check", subject: "Race check", body_html: "One copy only", audience_slug: "all-news", from_address: "news@shop.example", from_name: "Test Shop" }),
+    });
+    check("race-check campaign created", mkRace.status >= 200 && mkRace.status < 400);
+    sent.length = 0;
+    onSend = null;
+    var raceResults = await Promise.all([
+      emailCampaigns.broadcast("race-check").catch(function (e) { return { refused: String(e && e.message) }; }),
+      emailCampaigns.broadcast("race-check").catch(function (e) { return { refused: String(e && e.message) }; }),
+    ]);
+    check("at least one of the racing broadcasts completed",
+      raceResults.some(function (r) { return !(r && r.refused); }));
+    check("concurrent broadcasts mailed alice exactly once",
+      sent.length === 1 && sent[0].to === "alice@example.com");
+    var raceCounts = await emailCampaigns.sendCounts("race-check");
+    check("race ledger holds exactly one sent row", raceCounts.sent === 1);
+
+    // ---- a non-https unsubscribe origin keeps the send path disabled ---
+    // guardListUnsubscribe refuses http at compose time, which would
+    // strip the unsubscribe path from every message while Send stayed
+    // enabled — so the origin is refused up front and the console shows
+    // the unconfigured notice instead.
+    var httpGated = bShop.emailCampaigns.create({
+      query: query, mailingAudiences: audiences, email: mailer,
+      emailSuppressions: suppressions, newsletter: newsletter,
+      unsubscribeBaseUrl: "http://shop.example",
+    });
+    check("http unsubscribe origin leaves canBroadcast() false", httpGated.canBroadcast() === false);
+    var slashGated = bShop.emailCampaigns.create({
+      query: query, mailingAudiences: audiences, email: mailer,
+      emailSuppressions: suppressions, newsletter: newsletter,
+      unsubscribeBaseUrl: "https://shop.example///",
+    });
+    check("https origin with trailing slashes stays broadcastable", slashGated.canBroadcast() === true);
 
     // ---- bad create -> clean 4xx, no partial write ---------------------
     var badCreate = await helpers.httpRequest({
