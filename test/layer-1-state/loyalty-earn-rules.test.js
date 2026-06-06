@@ -625,6 +625,52 @@ async function _reverseForEventClawsBack() {
 
 // ---- reverseForEvent: idempotent ----------------------------------------
 
+async function _reverseForEventReleasesClaimOnClawbackFailure() {
+  // A clawback that fails for a NON-balance reason (a transient DB fault)
+  // must not strand the earn-log rows as reversed — the claim is released
+  // so a later reversal can run; otherwise the refunded order keeps the
+  // points forever while the log says they were reversed.
+  var f = _realLoyaltyFactory();
+  await f.rules.defineRule({
+    slug:             "spend-per-dollar",
+    trigger:          "per_dollar_spent",
+    points_per_unit:  10,
+  });
+  var customerId = _uuid();
+  var orderRef   = "order:" + _uuid();
+  await f.rules.awardForEvent({
+    trigger:           "per_dollar_spent",
+    customer_id:       customerId,
+    dollars_spent:     50,
+    trigger_event_ref: orderRef,
+  });
+
+  // A rules instance whose loyalty handle fails transiently on adjust —
+  // same query (same DB), so the claim lands in the same earn log.
+  var flakyLoyalty = {
+    balance: function (cid) { return f.loyalty.balance(cid); },
+    adjust:  function () { var e = new Error("transient ledger fault"); e.code = "LEDGER_DOWN"; return Promise.reject(e); },
+  };
+  var flakyRules = earnRules.create({ query: f.query, loyalty: flakyLoyalty });
+
+  var threw = null;
+  try {
+    await flakyRules.reverseForEvent({ customer_id: customerId, trigger_event_ref: orderRef });
+  } catch (e) { threw = e; }
+  check("claim release: the transient failure propagates", !!threw && threw.code === "LEDGER_DOWN");
+  var unreversed = f.db.prepare(
+    "SELECT COUNT(*) AS n FROM loyalty_earn_log WHERE trigger_event_ref = ? AND reversed_at IS NULL"
+  ).get(orderRef);
+  check("claim release: earn-log rows released back to un-reversed", Number(unreversed.n) === 1);
+  check("claim release: balance untouched by the failed attempt",
+    (await f.loyalty.balance(customerId)).balance === 500);
+
+  // A later reversal with the healthy handle completes the clawback.
+  var rev = await f.rules.reverseForEvent({ customer_id: customerId, trigger_event_ref: orderRef });
+  check("claim release: retry claws back the full award", rev.reversed_points === 500 && rev.clawed_points === 500);
+  check("claim release: balance settled at zero", (await f.loyalty.balance(customerId)).balance === 0);
+}
+
 async function _reverseForEventIdempotent() {
   var f = _realLoyaltyFactory();
   await f.rules.defineRule({
@@ -863,6 +909,7 @@ async function run() {
   await _reverseForEventClawsBack();
   await _reverseForEventIdempotent();
   await _reverseForEventFloorsAtZero();
+  await _reverseForEventReleasesClaimOnClawbackFailure();
   await _validationSurface();
   await _exportedConstants();
 }
