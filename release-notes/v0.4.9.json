@@ -1,0 +1,39 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.9",
+  "date": "2026-06-05",
+  "headline": "Scheduled jobs actually run now, the cart's discount-code entry renders, and low-stock alerts reach the admin console",
+  "summary": "Three shipped features were unreachable in a deployed store because the production composition never connected them. The worker's scheduled ticks and inventory events carry no browser headers, so the bot guard rejected every one of them before the shared-secret check ran — cart recovery, back-in-stock scans, wishlist alerts and digests, abandoned-checkout reaping, and customer-portal expiry never executed on a deployment fronted by the bundled worker. The cart page's discount-code entry and the low-stock alert pipeline were similarly disconnected: each renders or mounts only when the server hands the backing engine to the surface, and the server never did. All three are wired now, and the boot test gains a full-composition pass that fails the build when a gated surface stops reaching the wire.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Internal scheduled and event endpoints are no longer rejected by the bot guard",
+          "body": "The worker calls the container's internal endpoints (`/_/cart-recovery-tick`, `/_/stock-alert-sweep`, `/_/wishlist-alerts-sweep`, `/_/wishlist-digest-sweep`, `/_/customer-portal-expire`, `/_/stale-order-reap`, `/_/low-stock-alert`) with no browser fingerprint, and the bot guard's missing-header heuristic returned 403 before each handler's constant-time shared-secret check ever ran. Because the worker fires these calls without reading the response, the failures were invisible: on a deployment fronted by the bundled worker, none of these jobs had ever executed — abandoned checkouts kept their stock holds, recovery and wishlist passes never ran, and expired portal grants were never cleaned. These paths now skip the browser-fingerprint heuristics only; every one of them still refuses callers without the shared bridge secret, and `/_/health` keeps its bot-guard coverage unchanged."
+        },
+        {
+          "title": "The cart page's discount-code entry renders",
+          "body": "The \"Have a discount code?\" block and its `POST /cart/coupon` / `POST /cart/coupon/remove` routes mount only when the storefront receives the discount engine, and the server never passed it — so the entry introduced in 0.3.69 was invisible in a deployed store even though checkout already honoured codes submitted through its own field. The engine is now threaded to the storefront: shoppers can apply and remove codes on the cart, and the applied code carries through the same quote-and-confirm path checkout always used."
+        },
+        {
+          "title": "Low-stock alerts flow end to end",
+          "body": "Crossing a SKU's low-stock threshold produced no alert, for two independent reasons. The catalog's stock-mutating operations — the checkout hold, a release, a decrement, an admin restock — expose an observer hook for exactly this, and the server never connected it, so the threshold check simply never ran. And the worker-side path (the inventory lock posting the alert to the container) had no `/_/low-stock-alert` endpoint to receive it, so even a directly-posted alert was dropped: no `inventory_alerts` row, no `inventory.low_stock` webhook, and a `/admin/inventory/alerts` screen that never mounted. Both halves are wired now: every stock mutation that leaves a SKU under its configured threshold writes the alert row, fans out the webhook through the shared dispatcher, and emits the warning log line; the intake endpoint exists (secret-gated, like the other internal endpoints); and the admin alert-history screen is reachable."
+        },
+        {
+          "title": "Stray editor artifact removed from release-notes/",
+          "body": "A temporary file accidentally committed alongside the 0.3.74 notes is gone from the repository."
+        }
+      ]
+    },
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Boot test proves the full composition on the wire",
+          "body": "The integration boot test now boots `server.js` twice: once bare (the container health-check contract, unchanged) and once against an in-memory stand-in for the worker's SQL bridge, which mounts the full catalog + cart + storefront + admin composition exactly as a deployment runs it. The bridged pass adds to cart through the production middleware stack, applies a discount code end to end (the entry renders, the code resolves, the applied chip persists), proves the worker-shaped scheduled tick reaches its handler, and drives a real stock mutation — an admin restock on a SKU under its threshold — into a persisted low-stock alert row without ever touching the intake endpoint directly. A feature gated on a dependency the server forgets to hand over now fails this gate instead of shipping invisible — the failure mode behind all three fixes above."
+        }
+      ]
+    }
+  ]
+}

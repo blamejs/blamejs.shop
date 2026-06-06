@@ -18,36 +18,22 @@ process.env.BLAMEJS_SKIP_NTP_CHECK = "1";
 var nodeFs   = require("node:fs");
 var nodeOs   = require("node:os");
 var nodePath = require("node:path");
-var { DatabaseSync } = require("node:sqlite");
 
+var helpers = require("../helpers");
 var bShop = require("../../lib");
 var b = bShop.framework;
 
 var PORT = parseInt(process.env.E2E_PORT || "8099", 10);
 
+// The storefront-core migrations only — helpers.memD1Query stays in its
+// strict default here, so a schema break in any of these five fails the
+// harness boot loudly instead of degrading.
 var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0004_shop_config.sql",
   "0206_orders_email_hash.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
-function _split(t) { return t.replace(/--[^\n]*\n/g, "\n").split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean); }
-function _makeQuery() {
-  var db = new DatabaseSync(":memory:");
-  db.prepare("PRAGMA foreign_keys = ON").run();
-  MIGS.forEach(function (p) { _split(nodeFs.readFileSync(p, "utf8")).forEach(function (s) { db.prepare(s).run(); }); });
-  return async function (sql, params) {
-    var stmt = db.prepare(sql);
-    var verb = sql.trim().split(/\s+/)[0].toUpperCase();
-    if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
-      var info = stmt.run.apply(stmt, params || []);
-      return { rows: [], rowCount: Number(info.changes), lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
-    }
-    var rows = stmt.all.apply(stmt, params || []);
-    return { rows: rows, rowCount: rows.length };
-  };
-}
-
 (async function main() {
-  var query   = _makeQuery();
+  var query   = helpers.memD1Query(MIGS).query;
   var catalog = bShop.catalog.create({ query: query });
   var cart    = bShop.cart.create({ query: query, catalog: catalog });
   var order   = bShop.order.create({ query: query, cursorSecret: "e2e-order" });

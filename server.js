@@ -459,6 +459,16 @@ async function main() {
   // the framework's cluster-mode boot picks it up automatically.
   var catalog = null;
   var cart    = null;
+  // Stock observer slot — the inventory module fires it after every
+  // stock-mutating op (hold / release / decrement / restock). It points
+  // at the low-stock alerts engine, which composes the shared webhooks
+  // dispatcher built inside the routes composition below — so the
+  // catalog construction takes a late-bound indirection and the routes
+  // block assigns the real handler once the alerts instance exists.
+  // Null until then (and on any boot where alerts aren't composed); the
+  // inventory module wraps the call drop-silent, so an alert-side
+  // failure can never roll back the stock op that triggered it.
+  var lowStockObserver = null;
   // Operator-readable error log — captures server-side 5xx-class
   // failure messages into D1 (lib/error-log.js) so they're reachable
   // from the admin console + the admin JSON API, not just the
@@ -502,7 +512,16 @@ async function main() {
     // namespace doesn't expose the other. Stable across container
     // restarts; rotating D1_BRIDGE_SECRET also rotates cursors.
     var cursorSecret = b.crypto.namespaceHash("catalog-cursor", process.env.D1_BRIDGE_SECRET);
-    catalog = bShop.catalog.create({ cursorSecret: cursorSecret });
+    catalog = bShop.catalog.create({
+      cursorSecret: cursorSecret,
+      // The trigger half of the low-stock alert chain: every stock
+      // mutation reports its SKU through the observer slot above, and
+      // the alerts engine decides whether available crossed the
+      // configured threshold (no threshold / still above → no-op).
+      onStockChange: function (sku) {
+        return lowStockObserver ? lowStockObserver(sku) : null;
+      },
+    });
     cart    = bShop.cart.create({ catalog: catalog });
   }
 
@@ -666,6 +685,13 @@ async function main() {
     middleware: {
       securityHeaders: bShop.securityMiddleware.securityHeadersOpts(),
       rateLimit:       bShop.securityMiddleware.globalRateLimitOpts(),
+      // Bot-guard keeps the vendored block-mode defaults but skips the
+      // worker→container internal endpoints: those calls carry no browser
+      // fingerprint (no User-Agent / Accept-Language), so the default
+      // heuristics 403 them before each handler's constant-time
+      // D1_BRIDGE_SECRET gate — the stronger check — ever runs. See
+      // INTERNAL_BRIDGE_PATHS in lib/security-middleware.js.
+      botGuard:        bShop.securityMiddleware.botGuardOpts(),
       csrf:            false,
       bodyParser:      false,
       fetchMetadata:   false,
@@ -938,6 +964,50 @@ async function main() {
         }
       });
 
+      // Low-stock alert intake — the InventoryLock DO POSTs here (over the
+      // worker's service-binding forward) the moment a checkout decrement
+      // crosses a SKU's low_stock_threshold. The DO computed available /
+      // threshold under its write lock, so the posted values are
+      // authoritative for that instant; the handler validates shape and
+      // fires the alerts primitive (inventory_alerts row + the
+      // inventory.low_stock webhook + the warn log line). Same
+      // D1_BRIDGE_SECRET timing-safe gate as the other internal endpoints,
+      // and the same never-5xx shape: alert delivery is best-effort and a
+      // handler failure must not fail the DO's decrement caller.
+      r.post("/_/low-stock-alert", async function (req, res) {
+        var got = req.headers && req.headers["x-d1-bridge-secret"];
+        var want = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !want ||
+          typeof got !== "string" ||
+          got.length !== want.length ||
+          !b.crypto.timingSafeEqual(got, want)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!inventoryAlerts) {
+          res.json({ ok: true, enabled: false, reason: "inventory alerts not composed (no catalog/cart)" });
+          return;
+        }
+        var body = req.body || {};
+        try {
+          var fired = await inventoryAlerts.fire(body.sku, body.available, body.threshold);
+          res.json({ ok: true, enabled: true, id: fired.id });
+        } catch (e) {
+          // The primitive throws TypeError on a malformed sku/available/
+          // threshold — that's a caller bug, answer 400. Anything else
+          // (e.g. a transient bridge failure on the INSERT) stays
+          // never-5xx: the JSON body carries the error, the DO's
+          // fire-and-forget caller is already gone either way.
+          if (e instanceof TypeError) {
+            res.status(400).json({ ok: false, error: "INVALID_REQUEST" });
+            return;
+          }
+          res.json({ ok: false, error: (e && e.message) || String(e) });
+        }
+      });
+
       // Shared config primitive — operator-tunable runtime
       // configuration (tax rules, shipping services, brand name).
       // Built once at boot so the admin write-path and the storefront
@@ -1158,6 +1228,27 @@ async function main() {
       // endpoints + monitors deliveries. No external credentials — the
       // signing secret is generated per endpoint on create.
       var webhooks = (catalog && cart) ? bShop.webhooks.create({}) : null;
+
+      // Inventory low-stock alerts — the fan-out half of the InventoryLock
+      // DO's threshold check. The DO detects the crossing at decrement time
+      // and POSTs /_/low-stock-alert (the internal endpoint above); this
+      // instance writes the inventory_alerts row, fans the
+      // inventory.low_stock event out through the shared webhooks
+      // dispatcher, and emits the warn log line. The same instance backs
+      // the /admin/inventory/alerts history screen.
+      var inventoryAlerts = (catalog && cart)
+        ? bShop.inventoryAlerts.create({ webhooks: webhooks })
+        : null;
+      // Connect the catalog's stock observer (late-bound at catalog
+      // construction) to the alerts engine: a checkout hold, a release,
+      // a decrement, or an admin restock that leaves a SKU under its
+      // threshold now writes the inventory_alerts row, fans out
+      // inventory.low_stock, and emits the warn line — the same
+      // checkAndFire the /_/low-stock-alert intake serves for the
+      // worker-side path.
+      if (inventoryAlerts) {
+        lowStockObserver = function (sku) { return inventoryAlerts.checkAndFire(sku); };
+      }
 
       // Order — the FSM-driven post-checkout record. ONE shared instance
       // drives the storefront account/order pages, the storefront checkout
@@ -2056,6 +2147,9 @@ async function main() {
           giftcards:     giftcards,
           giftCardLedger: giftCardLedger,
           webhooks:      webhooks,
+          // Low-stock alert history (/admin/inventory/alerts) — the same
+          // instance the /_/low-stock-alert intake fires through.
+          inventoryAlerts: inventoryAlerts,
           collections:   collections,
           announcementBar: announcementBar,
           promoBanners:    promoBanners,
@@ -2310,6 +2404,14 @@ async function main() {
         // repricing. Both price server-side from the live catalog.
         if (bundles) sfDeps.bundles = bundles;
         if (quantityDiscounts) sfDeps.quantityDiscounts = quantityDiscounts;
+        // Auto-discount engine — backs the cart-page coupon entry. The
+        // storefront renders the "Have a discount code?" block and mounts
+        // POST /cart/coupon[/remove] only when this dep is wired; the cart
+        // already exposes addDiscountCode/listDiscountCodes/removeDiscountCode,
+        // and the checkout path (which holds the same instance) honours the
+        // applied code at confirm. The admin console manages the rules; this
+        // is the shopper-facing redemption surface.
+        if (autoDiscount) sfDeps.autoDiscount = autoDiscount;
         // Search synonyms + facets — opt the /search route into query
         // expansion + filterable facet chrome. Synonyms is the shared
         // rewrite instance; facets is the per-request factory.
