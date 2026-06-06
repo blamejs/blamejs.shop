@@ -175,6 +175,45 @@ async function _run() {
     var addBeginAnon = await helpers.httpRequest({ port: handle.port, path: "/account/passkey/add-begin", method: "POST", body: "{}", headers: { "content-type": "application/json" } });
     check("anon add-begin then 303 login",        addBeginAnon.status === 303);
 
+    // ---- SECURITY: public register cannot take over an existing account
+    //      by email knowledge alone ----------------------------------------
+    // An anonymous attacker who knows a registered email must NOT be able to
+    // enroll their own authenticator onto that account. register-begin reuses
+    // an existing customer row ONLY for an interrupted first registration
+    // (no credentials yet); an account that already has a passkey is refused
+    // so the attacker never receives a challenge bound to the victim's id.
+    var preTakeover = (await customers.listPasskeys(custA.id)).length;
+    var takeover = await helpers.httpRequest({
+      port: handle.port, path: "/account/passkey/register-begin", method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "alice@example.com", display_name: "Mallory" }),
+    });
+    check("takeover register-begin on an established account then 409", takeover.status === 409);
+    check("takeover response mints NO challenge",  takeover.body.indexOf("challenge") === -1);
+    check("takeover response says account_exists",  takeover.body.indexOf("account_exists") !== -1);
+    check("victim credential count unchanged",      (await customers.listPasskeys(custA.id)).length === preTakeover);
+
+    // A brand-new email still registers — begin mints a challenge.
+    var freshBegin = await helpers.httpRequest({
+      port: handle.port, path: "/account/passkey/register-begin", method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "newcomer@example.com", display_name: "Newcomer" }),
+    });
+    check("new-email register-begin then 200",     freshBegin.status === 200);
+    check("new-email register-begin mints a challenge", JSON.parse(freshBegin.body).challenge.length > 0);
+
+    // The legitimate retry is preserved: an existing row with ZERO
+    // credentials (a first registration interrupted before enrollment) can
+    // begin again rather than being refused.
+    await customers.register({ email: "halfway@example.com", display_name: "Halfway" });
+    var retryBegin = await helpers.httpRequest({
+      port: handle.port, path: "/account/passkey/register-begin", method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "halfway@example.com", display_name: "Halfway" }),
+    });
+    check("credential-less retry register-begin then 200", retryBegin.status === 200);
+    check("credential-less retry mints a challenge",        JSON.parse(retryBegin.body).challenge.length > 0);
+
     // ---- profile edit -------------------------------------------------
     var profGet = await helpers.httpRequest({ port: handle.port, path: "/account/profile", jar: jarA });
     check("profile page then 200",                profGet.status === 200);
