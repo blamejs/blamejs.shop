@@ -1,0 +1,30 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.16",
+  "date": "2026-06-06",
+  "headline": "Quotes: customers request a quote from the cart, operators respond with custom pricing, and an accepted quote becomes an order",
+  "summary": "A full request-for-quote flow for bulk and negotiated purchases. A signed-in customer requests a quote from their cart with an optional message; the operator answers from a new Quotes console screen with per-line pricing and a validity window; the customer reviews the offer from their account or through a single-use link and accepts or declines. Accepting converts the quote into a normal pending order — stock is held the same way a checkout hold works — and an expired offer can no longer be accepted.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Request a quote from the cart",
+          "body": "A signed-in customer with items in the cart can request a quote — line quantities plus an optional message — from a new cart panel. The request appears under `/account/quotes` with its status, and the optional message is HTML-escaped wherever it renders."
+        },
+        {
+          "title": "Quotes console for responding with custom pricing",
+          "body": "`/admin/quotes` lists open requests newest-first with status filters. Opening a request shows its lines and the customer's message; the operator responds with per-line unit pricing and a validity window — the total is computed in minor units — or withdraws a response. The screen appears in the admin nav when the quotes primitive is wired."
+        },
+        {
+          "title": "Review and accept through the account or a single-use link",
+          "body": "A responded quote can be reviewed and accepted or declined from the customer's account, or through a capability link (`/quote/{token}`) suited to sharing by whatever channel the store uses to reach the customer. The token is stored only as a namespaced hash and compared in constant time; an unknown token answers 404. Account access is owner-checked — another customer's quote id answers 404."
+        },
+        {
+          "title": "Accepted quotes convert to real orders with stock holds",
+          "body": "Acceptance places inventory holds first and then creates a pending order through the same path checkout uses — if order creation fails the holds are rolled back, and the order annotates its held quantities so fulfillment sees them. A quote whose validity window has elapsed is refused at acceptance, so a stale price is never honored. The whole lifecycle (requested → responded → accepted, declined, expired, withdrawn, converted) is enforced by a state machine — out-of-order transitions are refused."
+        }
+      ]
+    }
+  ]
+}
