@@ -47,6 +47,7 @@ var MIGS = [
   "0012_wishlist.sql",
   "0072_customer_portal_sessions.sql",
   "0156_wishlist_alerts.sql",
+  "0214_wishlist_alert_state.sql",
   "0198_wishlist_digest.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 

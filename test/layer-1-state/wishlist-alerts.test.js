@@ -42,6 +42,7 @@ var MIGS = [
   "0001_catalog.sql",
   "0012_wishlist.sql",
   "0156_wishlist_alerts.sql",
+  "0214_wishlist_alert_state.sql",
 ].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
@@ -196,11 +197,19 @@ async function _scanAndDispatchFiresOnPriceDrop() {
   check("email handle got product title",          w.email.calls[0].product_title === "Widget");
   check("email handle got discount_pct",           w.email.calls[0].discount_pct === "30%");
 
-  // Re-scan within dedupe window — no fresh fire.
+  // Re-scan against the SAME drop depth — no fresh fire. The transition
+  // gate catches the steady drop (the price hasn't dropped further) before
+  // the dedupe window would; either way the steady state never re-fires.
   var rv2 = await w.alerts.scanAndDispatch({});
-  check("re-scan dedupes — sent = 0",              rv2.sent === 0);
+  check("re-scan steady drop — sent = 0",          rv2.sent === 0);
   check("re-scan accounted in skipped",            rv2.skipped >= 1);
-  check("re-scan skipped_by.recent_dedupe = 1",    rv2.skipped_by.recent_dedupe === 1);
+  check("re-scan skipped_by.no_deeper_drop = 1",   rv2.skipped_by.no_deeper_drop === 1);
+
+  // Even a re-scan a full dedupe window later still does not re-fire a
+  // steady drop — the transition gate, not the dedupe window, is the
+  // guard now (P2-A: steady state must never re-fire, dedupe or not).
+  var rv3 = await w.alerts.scanAndDispatch({ now: Date.now() + 8 * 86400000 });
+  check("re-scan past dedupe window still no re-fire", rv3.sent === 0);
 
   // metricsForPolicy reflects the one delivery.
   var metrics = await w.alerts.metricsForPolicy({
@@ -212,25 +221,56 @@ async function _scanAndDispatchFiresOnPriceDrop() {
   check("metricsForPolicy by_channel.email = 1",   metrics.by_channel.email === 1);
 }
 
+// back_in_stock fires on the out -> in TRANSITION, never on a steady
+// in-stock state. An item already in stock when first wishlisted has no
+// observed restock event, so it does NOT fire; a restock AFTER an
+// observed out-of-stock sweep does. A steady in-stock state never
+// re-fires, dedupe window or not (P2-A).
 async function _scanAndDispatchFiresOnBackInStock() {
   var customerId = _uuid();
   var w = _wire({ emails: (function () { var m = {}; m[customerId] = "bob@example.com"; return m; })() });
   await w.alerts.defineAlertPolicy({
     slug: "restock-any", trigger: "back_in_stock", threshold: {},
   });
-  var seed = await _seedCatalog(w.query, { initial_stock: 5 });
+  // Seed OUT of stock so the scanner observes the out state first.
+  var seed = await _seedCatalog(w.query, { initial_stock: 0 });
   await w.wishlist.add({ customer_id: customerId, product_id: seed.product.id, variant_id: seed.variant.id });
 
-  var rv = await w.alerts.scanAndDispatch({});
-  check("back_in_stock fires when in-stock",       rv.sent === 1);
-  check("email handle called once",                w.email.calls.length === 1);
-  check("email handle product title rendered",     w.email.calls[0].product_title === "Widget");
-  check("email handle price slot is dash",         w.email.calls[0].old_price === "—" && w.email.calls[0].new_price === "—");
+  // Sweep 1: out of stock — observe the out state, fire nothing.
+  var rv0 = await w.alerts.scanAndDispatch({});
+  check("out-of-stock first sweep fires nothing",  rv0.sent === 0);
+  check("out-of-stock accounted still_out_of_stock", rv0.skipped_by.still_out_of_stock === 1);
 
-  // Drain stock to zero — next scan does not fire (still dedupe + zero).
+  // Sweep 2: an item that was ALREADY in stock at first observation does
+  // NOT fire — there's no observed restock. Verify with a second item.
+  var inStockSeed = await _seedCatalog(w.query, { slug: "already-in", title: "AlreadyIn", sku: "SKU-AI", initial_stock: 7 });
+  await w.wishlist.add({ customer_id: customerId, product_id: inStockSeed.product.id, variant_id: inStockSeed.variant.id });
+  var rvFirstSeen = await w.alerts.scanAndDispatch({});
+  check("already-in-stock first observation does not fire", rvFirstSeen.sent === 0);
+  check("already-in accounted no_restock_transition",
+    rvFirstSeen.skipped_by.no_restock_transition >= 1);
+
+  // Restock the originally-out item: out -> in transition fires once.
+  await w.query("UPDATE inventory SET stock_on_hand = 5 WHERE sku = ?1", [seed.variant.sku]);
+  var beforeCalls = w.email.calls.length;
+  var rv = await w.alerts.scanAndDispatch({});
+  check("back_in_stock fires on out->in transition", rv.sent === 1);
+  check("email handle called for the restock",      w.email.calls.length === beforeCalls + 1);
+  var restockCall = w.email.calls[w.email.calls.length - 1];
+  check("email handle product title rendered",      restockCall.product_title === "Widget");
+  check("email handle price slot is dash",          restockCall.old_price === "—" && restockCall.new_price === "—");
+
+  // Steady in-stock — a re-scan a full dedupe window later does NOT
+  // re-fire (P2-A: steady state never re-fires).
+  var rv2 = await w.alerts.scanAndDispatch({ now: Date.now() + 8 * 86400000 });
+  check("steady in-stock does not re-fire",          rv2.sent === 0);
+
+  // Drain to zero then restock again — a SECOND genuine transition fires.
   await w.query("UPDATE inventory SET stock_on_hand = 0 WHERE sku = ?1", [seed.variant.sku]);
-  var rv2 = await w.alerts.scanAndDispatch({});
-  check("post-drain scan does not re-fire",        rv2.sent === 0);
+  await w.alerts.scanAndDispatch({ now: Date.now() + 16 * 86400000 });   // observe out
+  await w.query("UPDATE inventory SET stock_on_hand = 3 WHERE sku = ?1", [seed.variant.sku]);
+  var rv3 = await w.alerts.scanAndDispatch({ now: Date.now() + 17 * 86400000 });
+  check("second out->in transition fires again",     rv3.sent === 1);
 }
 
 async function _scanAndDispatchBelowThresholdDoesNotFire() {
@@ -281,7 +321,8 @@ async function _unsubscribeFromAlertKindBlocks() {
   await w.alerts.defineAlertPolicy({
     slug: "drop", trigger: "price_drop", threshold: { percent_off_bps_min: 1000 },
   });
-  var seed = await _seedCatalog(w.query, { initial_amount_minor: 5000 });
+  // Seed OUT of stock so a later restock is an observable transition.
+  var seed = await _seedCatalog(w.query, { initial_amount_minor: 5000, initial_stock: 0 });
   await seed.catalog.prices.set(seed.variant.id, { currency: "USD", amount_minor: 3500 });
   await w.wishlist.add({ customer_id: customerId, product_id: seed.product.id, variant_id: seed.variant.id });
 
@@ -298,9 +339,12 @@ async function _unsubscribeFromAlertKindBlocks() {
   var u2 = await w.alerts.unsubscribeFromAlertKind({ customer_id: customerId, trigger: "price_drop" });
   check("re-unsubscribe returns already-unsubscribed", u2.status === "already-unsubscribed");
 
-  // Different trigger still fires (opt-out is per-trigger).
+  // Different trigger still fires (opt-out is per-trigger). Define the
+  // back_in_stock policy, observe the out state, then restock so the
+  // out -> in transition fires through the price_drop opt-out.
   await w.alerts.defineAlertPolicy({ slug: "back", trigger: "back_in_stock", threshold: {} });
-  // back_in_stock evaluator finds inventory > 0 — should fire.
+  await w.alerts.scanAndDispatch({});   // observe out-of-stock for the back policy
+  await w.query("UPDATE inventory SET stock_on_hand = 4 WHERE sku = ?1", [seed.variant.sku]);
   var rv2 = await w.alerts.scanAndDispatch({});
   check("back_in_stock fires through price_drop opt-out",  rv2.sent === 1);
 }
@@ -577,10 +621,104 @@ async function _optOutReadAndResubscribe() {
   );
 }
 
+// P2-A regression: a steady state must NEVER re-fire across an unbounded
+// number of sweeps spanning many dedupe windows — the transition gate,
+// not the 24h dedupe window, is what suppresses the flood. Walks a steady
+// in-stock item AND a steady-depth price drop across 30 daily sweeps and
+// asserts exactly one fire each (on the genuine transition only).
+async function _steadyStateNeverRefiresAcrossManyWindows() {
+  var customerId = _uuid();
+  var w = _wire({ emails: (function () { var m = {}; m[customerId] = "steady@example.com"; return m; })() });
+  await w.alerts.defineAlertPolicy({ slug: "bis", trigger: "back_in_stock", threshold: {} });
+  await w.alerts.defineAlertPolicy({
+    slug: "pd", trigger: "price_drop", threshold: { percent_off_bps_min: 1000 },
+  });
+  // Item starts OUT of stock at its baseline price.
+  var seed = await _seedCatalog(w.query, { initial_amount_minor: 5000, initial_stock: 0 });
+  await w.wishlist.add({ customer_id: customerId, product_id: seed.product.id, variant_id: seed.variant.id });
+
+  var DAY = 86400000;
+  var t0  = Date.now();
+  // Sweep 0: observe out-of-stock, baseline price → nothing fires.
+  await w.alerts.scanAndDispatch({ now: t0 });
+  // Now restock AND drop the price 30% — both are genuine transitions.
+  await w.query("UPDATE inventory SET stock_on_hand = 9 WHERE sku = ?1", [seed.variant.sku]);
+  await seed.catalog.prices.set(seed.variant.id, { currency: "USD", amount_minor: 3500 });
+
+  var totalSent = 0;
+  for (var d = 1; d <= 30; d += 1) {
+    var rv = await w.alerts.scanAndDispatch({ now: t0 + d * DAY });
+    totalSent += rv.sent;
+  }
+  // The transition happened ONCE per policy (the day-1 sweep); the other
+  // 29 sweeps see steady state and fire nothing. Two policies → 2 total.
+  check("steady state across 30 windows fires exactly twice (one per policy)", totalSent === 2);
+  var ledger = await w.query("SELECT COUNT(*) AS n FROM wishlist_alerts_sent WHERE customer_id = ?1", [customerId]);
+  check("ledger holds exactly the two transition fires", Number(ledger.rows[0].n) === 2);
+}
+
+// P3-C regression: two concurrent sweeps racing the SAME (customer, sku,
+// policy) transition must result in exactly ONE delivery — the dedupe +
+// weekly-cap guard is an atomic conditional INSERT (the claim), not a
+// read-then-write. The query wrapper yields the event loop before every
+// statement so the two sweeps genuinely interleave their reads + writes.
+async function _concurrentSweepsClaimAtomically() {
+  var customerId = _uuid();
+  var query    = _makeQuery();
+  // Latency-injecting wrapper: yield a macrotask before each statement so
+  // two in-flight sweeps interleave (models the D1 network round-trip).
+  var slowQuery = async function (sql, params) {
+    await new Promise(function (r) { setTimeout(r, 0); });   // allow:test-promise-settimeout-sleep — models per-statement network latency to force interleaving, not a wait-for-event sleep
+    return query(sql, params);
+  };
+  var catalog  = bShop.catalog.create({ query: query });
+  var wishlist = bShop.wishlist.create({ query: query });
+  var mk = function () {
+    var emailStub = _stubEmail();
+    return {
+      email: emailStub,
+      alerts: wishlistAlerts.create({
+        query:    slowQuery,
+        wishlist: wishlist,
+        catalog:  catalog,
+        email:    emailStub.handle,
+        emailForCustomer: async function () { return "race@example.com"; },
+      }),
+    };
+  };
+  var setup = mk();
+  // weekly cap = 1: at most one alert this week for this customer.
+  await setup.alerts.defineAlertPolicy({
+    slug: "race", trigger: "back_in_stock", threshold: {}, max_alerts_per_week_per_customer: 1,
+  });
+  var seed = await _seedCatalog(query, { initial_stock: 0 });
+  await wishlist.add({ customer_id: customerId, product_id: seed.product.id, variant_id: seed.variant.id });
+  // Observe the out state, then restock so the next sweep has a real
+  // out -> in transition to race on.
+  await setup.alerts.scanAndDispatch({ now: Date.now() });
+  await query("UPDATE inventory SET stock_on_hand = 6 WHERE sku = ?1", [seed.variant.sku]);
+
+  var a = mk(), c = mk();
+  var now = Date.now() + 1000;
+  var results = await Promise.all([
+    a.alerts.scanAndDispatch({ now: now }),
+    c.alerts.scanAndDispatch({ now: now }),
+  ]);
+  var totalSent = results[0].sent + results[1].sent;
+  check("concurrent sweeps: exactly one wins the claim", totalSent === 1);
+  var ledger = await query("SELECT COUNT(*) AS n FROM wishlist_alerts_sent WHERE customer_id = ?1", [customerId]);
+  check("concurrent sweeps: exactly one ledger row (no double-send past cap)",
+    Number(ledger.rows[0].n) === 1);
+  var emailCount = a.email.calls.length + c.email.calls.length;
+  check("concurrent sweeps: exactly one email sent", emailCount === 1);
+}
+
 async function run() {
   await _defineAlertPolicyPersistsAndRefusesRedefine();
   await _scanAndDispatchFiresOnPriceDrop();
   await _scanAndDispatchFiresOnBackInStock();
+  await _steadyStateNeverRefiresAcrossManyWindows();
+  await _concurrentSweepsClaimAtomically();
   await _scanAndDispatchBelowThresholdDoesNotFire();
   await _weeklyCapBlocksDelivery();
   await _unsubscribeFromAlertKindBlocks();
