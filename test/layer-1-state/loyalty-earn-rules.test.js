@@ -32,7 +32,9 @@ var helpers    = require("../helpers");
 var check      = helpers.check;
 var assert     = helpers.assert;
 
-var MIG_RULES = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0163_loyalty_earn_rules.sql");
+var MIG_RULES    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0163_loyalty_earn_rules.sql");
+var MIG_REVERSAL = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0217_loyalty_earn_reversal.sql");
+var MIG_LOYALTY  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0022_loyalty.sql");
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -43,6 +45,11 @@ function _makeQuery() {
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
   _splitSchema(nodeFs.readFileSync(MIG_RULES, "utf8")).forEach(function (s) {
+    db.prepare(s).run();
+  });
+  // The reversal marker (reversed_at + its partial index) is additive on
+  // loyalty_earn_log — load it so every fixture sees the column.
+  _splitSchema(nodeFs.readFileSync(MIG_REVERSAL, "utf8")).forEach(function (s) {
     db.prepare(s).run();
   });
   return {
@@ -93,6 +100,24 @@ function _factory(loyaltyHandle) {
     query:   h.query,
     loyalty: loyaltyHandle,
     rules:   earnRules.create({ query: h.query, loyalty: loyaltyHandle || null }),
+  };
+}
+
+// A fixture backed by the REAL loyalty primitive (not the earn stub) so
+// the reversal path exercises the genuine balance read + the atomic
+// non-negative adjust guard. The loyalty schema rides alongside the
+// earn-rules schema on one shared in-memory DB.
+function _realLoyaltyFactory() {
+  var h = _makeQuery();
+  _splitSchema(nodeFs.readFileSync(MIG_LOYALTY, "utf8")).forEach(function (s) {
+    h.db.prepare(s).run();
+  });
+  var loyalty = bShop.loyalty.create({ query: h.query });
+  return {
+    db:      h.db,
+    query:   h.query,
+    loyalty: loyalty,
+    rules:   earnRules.create({ query: h.query, loyalty: loyalty }),
   };
 }
 
@@ -552,6 +577,145 @@ async function _archiveAndUpdateAndBatch() {
   check("batch failed[1] index 4",         batchResult.failed[1].index === 4);
 }
 
+// ---- reverseForEvent: claw back on refund/cancel ------------------------
+
+async function _reverseForEventClawsBack() {
+  var f = _realLoyaltyFactory();
+  await f.rules.defineRule({
+    slug:             "spend-per-dollar",
+    trigger:          "per_dollar_spent",
+    points_per_unit:  10,
+  });
+
+  var customerId = _uuid();
+  var orderRef   = "order:" + _uuid();
+
+  // Award on the paid edge: $50 * 10 = 500 points into the balance.
+  var award = await f.rules.awardForEvent({
+    trigger:           "per_dollar_spent",
+    customer_id:       customerId,
+    dollars_spent:     50,
+    trigger_event_ref: orderRef,
+  });
+  check("reverse: award posted 500", award.total_points === 500);
+  var balAfterAward = await f.loyalty.balance(customerId);
+  check("reverse: balance is 500 after award", balAfterAward.balance === 500);
+
+  // The order is refunded → reverse. The full 500 comes back off the
+  // balance and the earn-log row is marked reversed.
+  var rev = await f.rules.reverseForEvent({
+    customer_id:       customerId,
+    trigger_event_ref: orderRef,
+  });
+  check("reverse: reversed_points 500", rev.reversed_points === 500);
+  check("reverse: clawed_points 500",   rev.clawed_points === 500);
+
+  var balAfterReverse = await f.loyalty.balance(customerId);
+  check("reverse: balance clawed to 0", balAfterReverse.balance === 0);
+
+  // Lifetime is NOT decremented — tier never downgrades retroactively.
+  check("reverse: lifetime unchanged at 500", balAfterReverse.lifetime === 500);
+
+  // The earn-log row carries a reversed_at timestamp.
+  var logRow = f.db.prepare(
+    "SELECT reversed_at FROM loyalty_earn_log WHERE customer_id = ? AND trigger_event_ref = ?",
+  ).all(customerId, orderRef)[0];
+  check("reverse: earn-log row carries reversed_at", logRow && typeof logRow.reversed_at === "number");
+}
+
+// ---- reverseForEvent: idempotent ----------------------------------------
+
+async function _reverseForEventIdempotent() {
+  var f = _realLoyaltyFactory();
+  await f.rules.defineRule({
+    slug:             "flat-purchase",
+    trigger:          "per_purchase",
+    points_per_unit:  100,
+  });
+
+  var customerId = _uuid();
+  var orderRef   = "order:" + _uuid();
+
+  await f.rules.awardForEvent({
+    trigger:           "per_purchase",
+    customer_id:       customerId,
+    trigger_event_ref: orderRef,
+  });
+
+  var first = await f.rules.reverseForEvent({ customer_id: customerId, trigger_event_ref: orderRef });
+  check("idempotent: first reverse claws 100", first.reversed_points === 100 && first.clawed_points === 100);
+  var balAfterFirst = await f.loyalty.balance(customerId);
+  check("idempotent: balance 0 after first", balAfterFirst.balance === 0);
+
+  // A re-delivered cancel / reaper race: the second reverse claims no
+  // unreversed rows → {0, 0}, balance untouched.
+  var second = await f.rules.reverseForEvent({ customer_id: customerId, trigger_event_ref: orderRef });
+  check("idempotent: second reverse is {0,0}", second.reversed_points === 0 && second.clawed_points === 0);
+  var balAfterSecond = await f.loyalty.balance(customerId);
+  check("idempotent: balance unchanged after second", balAfterSecond.balance === 0);
+
+  // A never-awarded event is also a natural no-op.
+  var neverAwarded = await f.rules.reverseForEvent({
+    customer_id:       _uuid(),
+    trigger_event_ref: "order:" + _uuid(),
+  });
+  check("idempotent: never-awarded is {0,0}", neverAwarded.reversed_points === 0 && neverAwarded.clawed_points === 0);
+}
+
+// ---- reverseForEvent: floor at zero -------------------------------------
+
+async function _reverseForEventFloorsAtZero() {
+  var f = _realLoyaltyFactory();
+  await f.rules.defineRule({
+    slug:             "spend-per-dollar",
+    trigger:          "per_dollar_spent",
+    points_per_unit:  10,
+  });
+
+  var customerId = _uuid();
+  var orderRef   = "order:" + _uuid();
+
+  // Award 500 points, then the customer spends 300 of them before the
+  // refund lands — only 200 remain to claw back.
+  await f.rules.awardForEvent({
+    trigger:           "per_dollar_spent",
+    customer_id:       customerId,
+    dollars_spent:     50,
+    trigger_event_ref: orderRef,
+  });
+  await f.loyalty.redeem({ customer_id: customerId, points: 300, notes: "spent before refund" });
+  var balBeforeReverse = await f.loyalty.balance(customerId);
+  check("floor: 200 points remain before reverse", balBeforeReverse.balance === 200);
+
+  // Reverse the full 500-point award: clawback is capped at the 200
+  // remaining, balance floors at zero, never negative, no throw.
+  var rev = await f.rules.reverseForEvent({
+    customer_id:       customerId,
+    trigger_event_ref: orderRef,
+  });
+  check("floor: reversed_points still 500", rev.reversed_points === 500);
+  check("floor: clawed_points capped at 200", rev.clawed_points === 200);
+
+  var balAfterReverse = await f.loyalty.balance(customerId);
+  check("floor: balance floors at 0", balAfterReverse.balance === 0);
+
+  // A fully-drained balance claws nothing back (and still no throw).
+  var customerId2 = _uuid();
+  var orderRef2   = "order:" + _uuid();
+  await f.rules.awardForEvent({
+    trigger:           "per_dollar_spent",
+    customer_id:       customerId2,
+    dollars_spent:     20,
+    trigger_event_ref: orderRef2,
+  });
+  await f.loyalty.redeem({ customer_id: customerId2, points: 200, notes: "drained" });
+  var rev2 = await f.rules.reverseForEvent({ customer_id: customerId2, trigger_event_ref: orderRef2 });
+  check("floor: drained balance reversed_points 200", rev2.reversed_points === 200);
+  check("floor: drained balance claws 0", rev2.clawed_points === 0);
+  var bal2 = await f.loyalty.balance(customerId2);
+  check("floor: drained balance stays 0", bal2.balance === 0);
+}
+
 // ---- validation surface -------------------------------------------------
 
 async function _validationSurface() {
@@ -629,6 +793,15 @@ async function _validationSurface() {
     /trigger_event_ref/,
   );
 
+  // reverseForEvent
+  await assert.rejects(f.rules.reverseForEvent(),                                                /input object required/);
+  await assert.rejects(f.rules.reverseForEvent({ trigger_event_ref: "order:x" }),                /customer_id/);
+  await assert.rejects(f.rules.reverseForEvent({ customer_id: "not-a-uuid", trigger_event_ref: "order:x" }), /customer_id/);
+  await assert.rejects(
+    f.rules.reverseForEvent({ customer_id: _uuid(), trigger_event_ref: "  has spaces  " }),
+    /trigger_event_ref/,
+  );
+
   // updateRule
   await assert.rejects(f.rules.updateRule("Bad Slug", {}),                                         /slug/);
   await assert.rejects(f.rules.updateRule("live"),                                                 /patch object required/);
@@ -687,6 +860,9 @@ async function run() {
   await _customerStatusFilter();
   await _metricsForRuleWindow();
   await _archiveAndUpdateAndBatch();
+  await _reverseForEventClawsBack();
+  await _reverseForEventIdempotent();
+  await _reverseForEventFloorsAtZero();
   await _validationSurface();
   await _exportedConstants();
 }
