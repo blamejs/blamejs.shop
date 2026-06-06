@@ -238,9 +238,55 @@ async function _passkeyOnlyFlow() {
   }
 }
 
+// ---- timing parity: the send is off the response's critical path -------
+
+async function _magicLinkNonBlocking() {
+  // SECURITY (no account-existence timing oracle): the magic-link POST must
+  // answer with the generic confirmation WITHOUT waiting on the session
+  // mint + the outbound email send. A registered address does that work
+  // and an unregistered one skips it; if the work is awaited before the
+  // 303, the registered address answers measurably slower — restoring the
+  // oracle the identical response body removes. Prove the send is
+  // fire-and-forget: wire a mailer whose sendMagicLink NEVER resolves and
+  // confirm a known-email POST still returns the 303 promptly (a regression
+  // that re-awaited the send would hang here until the test ceiling fires).
+  var query     = _makeQuery();
+  var catalog   = bShop.catalog.create({ query: query });
+  var cart      = bShop.cart.create({ query: query, catalog: catalog });
+  var customers = bShop.customers.create({ query: query });
+  var customerPortal = bShop.customerPortal.create({ query: query });
+  var hangingEmail = { sendMagicLink: function () { return new Promise(function () { /* never resolves */ }); } };
+
+  var nowTs = Date.now();
+  await query(
+    "INSERT INTO customers (id, email_hash, display_name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+    [b.uuid.v7(), customers.hashEmail("hang@example.com"), "Hang", nowTs],
+  );
+
+  var sf = await _bootStorefront({
+    catalog: catalog, cart: cart, customers: customers,
+    customerPortal: customerPortal, customerPortalEmail: hangingEmail,
+    shop_name: "Timing Shop",
+  });
+
+  try {
+    var resp = await helpers.withTestTimeout("magic-link non-blocking POST", function () {
+      return helpers.httpRequest({
+        port: sf.port, path: "/account/login/link", method: "POST", jar: helpers.cookieJar(),
+        form: { email: "hang@example.com" },
+      });
+    }, { timeoutMs: 4000 });
+    check("known-email POST returns despite a hanging mailer (send off the critical path)",
+      resp.status === 303 && (resp.headers["location"] || "") === "/account/login/link?sent=1");
+  } finally {
+    await _teardown(sf);
+  }
+}
+
 async function _run() {
   await _unifiedFlow();
   await _passkeyOnlyFlow();
+  await _magicLinkNonBlocking();
 }
 
 module.exports = { run: _run };
