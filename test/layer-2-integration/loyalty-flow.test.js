@@ -38,7 +38,7 @@ var b = bShop.framework;
 var MIGS = [
   "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql",
   "0006_customers.sql", "0022_loyalty.sql", "0085_loyalty_redemptions.sql",
-  "0163_loyalty_earn_rules.sql",
+  "0163_loyalty_earn_rules.sql", "0217_loyalty_earn_reversal.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
@@ -193,6 +193,37 @@ async function _run() {
     check("ledger shows an earn row",   loaded.body.indexOf("loyalty-tx--earn") !== -1);
     check("affordable reward redeemable", loaded.body.indexOf(">Redeem<") !== -1);
     check("unaffordable reward disabled", loaded.body.indexOf("Not enough points") !== -1);
+
+    // --- earn-reversal on refund --------------------------------------
+    // A buy-then-refund must claw the awarded points back off the
+    // balance, or a customer farms rewards for free. Seed + pay a second
+    // $50 order (another 525 points → 1050 total), then refund it through
+    // the order FSM. The reversal is fire-and-forget on the transition,
+    // so poll for the balance to settle back to 525.
+    var refundOrderId = await _seedPendingOrder(query, buyer, variant.id, variant.sku);
+    await order.transition(refundOrderId, "mark_paid", { reason: "test" });
+    await helpers.waitUntil(async function () {
+      var bal = await loyalty.balance(buyer);
+      return bal.balance >= 1050;
+    }, { timeoutMs: 5000, label: "loyalty: second purchase posts 525 more points" });
+    check("second purchase posted to 1050", (await loyalty.balance(buyer)).balance === 1050);
+
+    await order.transition(refundOrderId, "refund", { reason: "test refund" });
+    await helpers.waitUntil(async function () {
+      var bal = await loyalty.balance(buyer);
+      return bal.balance <= 525;
+    }, { timeoutMs: 5000, label: "loyalty: refund reverses the 525 awarded points" });
+    var balAfterRefund = await loyalty.balance(buyer);
+    check("refund clawed the 525 back to 525", balAfterRefund.balance === 525);
+    // Lifetime is not decremented — tier never downgrades retroactively.
+    check("refund left lifetime at 1050", balAfterRefund.lifetime === 1050);
+
+    // Idempotent: a re-delivered refund (or the reaper) doesn't double-claw.
+    var reRev = await loyaltyEarnRules.reverseForEvent({
+      customer_id: buyer, trigger_event_ref: "order:" + refundOrderId,
+    });
+    check("re-reverse is a no-op", reRev.reversed_points === 0 && reRev.clawed_points === 0);
+    check("balance unchanged after re-reverse", (await loyalty.balance(buyer)).balance === 525);
 
     // --- redeem a reward ----------------------------------------------
     var redeem = await helpers.httpRequest({

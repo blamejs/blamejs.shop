@@ -1,0 +1,34 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.21",
+  "date": "2026-06-06",
+  "headline": "Subscription changes reach the payment processor, smart collections match real products, refunds claw back earned points, and the remaining balance races are closed",
+  "summary": "A correctness release across the commerce surfaces. Changing a subscription's quantity now updates the processor before the local record — what the customer sees is what they're billed — and a cadence change on a processor-backed plan is honestly refused rather than silently ignored. Smart collections, which matched zero products in production because their rules read fields the catalog rows never carried, now evaluate against the real product data. Loyalty points earned on a purchase are reversed when the order is refunded or cancelled. And the loyalty, store-credit, gift-registry, and gift-card-ledger write paths that could lose updates or oversell under concurrency now use atomic guards.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Subscription quantity changes reach the payment processor",
+          "body": "Changing a subscription's quantity updated the local record and showed a success message while the processor kept billing the original amount. The change is now pushed to the processor first — a processor failure leaves the local record untouched and surfaces the error, so the customer-visible state and the billed state can no longer diverge. Changing delivery frequency on a processor-backed subscription is refused with honest guidance (the billing cadence is bound to the plan's price and cannot be re-cadenced in place); self-managed local subscriptions keep their frequency controls. Self-manage controls also now respect the processor's status — a subscription the processor reports as cancelled or expired shows its state instead of live controls."
+        },
+        {
+          "title": "Smart collections match real catalog products",
+          "body": "Smart-collection rules read fields like tags, price, and stock from each product row — fields the real catalog listing never carried, so every smart collection matched zero products in production even though admin previews built on richer mock rows looked right. Rule evaluation now joins the real tag, category, vendor, price, and inventory data onto each product page, and the admin preview routes through the same path the storefront uses. Smart-collection pages also stop re-walking the entire catalog on every paginated request — the matched set is briefly cached and a rule edit invalidates it."
+        },
+        {
+          "title": "Refunds and cancellations reverse the loyalty points the order earned",
+          "body": "Points awarded when an order was paid survived a refund or cancellation — buying, earning, and refunding farmed points indefinitely. The earn record is now claimed atomically on the order's refund or cancel transition and the awarded points are clawed back from the balance, floored at zero when some were already spent. The reversal is idempotent (a re-delivered payment webhook reverses exactly once) and lifetime points — which drive tier — are deliberately untouched."
+        },
+        {
+          "title": "Balance and inventory-adjacent races closed across loyalty, store credit, gift registry, and gift-card ledger",
+          "body": "Loyalty earn and adjust used read-then-write absolute updates that could lose concurrent updates; the gift-registry purchase check could oversell a registry item under two simultaneous purchases; and the gift-card ledger's overdraft check could let two concurrent debits both pass. All of these now use single-statement conditional writes that refuse cleanly when the guard fails. Store-credit expiry sweeps also stop under-expiring when operator-initiated deductions exist — the sweep now keys on its own prior output rather than netting all expiry rows together."
+        },
+        {
+          "title": "Search-ranking click-through metrics are bounded and attributed",
+          "body": "The ranking metrics screen could show click-through rates above 100%, and clicks were attributed from the query string alone — trivially spoofable. A click now only counts when the same session recorded a real impression for that query, and displayed rates are bounded at 100%."
+        }
+      ]
+    }
+  ]
+}
