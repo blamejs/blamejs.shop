@@ -250,8 +250,8 @@ async function _run() {
       aliceMsg.html.indexOf("<script>alert(1)</script>") === -1 && aliceMsg.html.indexOf("&lt;script&gt;") !== -1);
     check("delivered html renders the safe https link",
       aliceMsg.html.indexOf("href=\"https://shop.example/sale\"") !== -1);
-    check("delivered text strips markup and keeps the link target",
-      typeof aliceMsg.text === "string" && aliceMsg.text.indexOf("https://shop.example/sale") !== -1);
+    check("delivered text strips markup and keeps the link in label (url) form",
+      typeof aliceMsg.text === "string" && aliceMsg.text.indexOf("our shop (https") !== -1 && aliceMsg.text.indexOf("/sale)") !== -1);
 
     // ---- send ledger rollup reflects every consent decision ------------
     var counts = await emailCampaigns.sendCounts("spring-launch");
