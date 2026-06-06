@@ -66,7 +66,7 @@
   }
 
   function abortInflight() {
-    if (inflight) { try { inflight.abort(); } catch (e) { /* ignore */ } inflight = null; }
+    if (inflight) { try { inflight.abort(); } catch (_e) { /* ignore — an already-settled fetch has nothing to abort */ } inflight = null; }
   }
 
   // Only same-origin absolute paths and http(s) URLs are followed. A

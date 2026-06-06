@@ -54,8 +54,8 @@
       "fingerprinted": "js/saved-card.d7fd750d746dbe4d.js"
     },
     "js/search-suggest.js": {
-      "integrity": "sha384-aEhn0Rh3MTTODiHIX+AiYr83tAWTmOS3jAo2Kf8hbbvxfhaeKlHXzQZwu6VGxUPi",
-      "fingerprinted": "js/search-suggest.72b6b86250b34e72.js"
+      "integrity": "sha384-Hw1PLzUPkH0rjuz/4wTjrK+jAVqfGAVuTHNPmZcwbqUvJAuFTk7DjbuAFRHyliuc",
+      "fingerprinted": "js/search-suggest.f25cfda1fed825bf.js"
     }
   }
 }
