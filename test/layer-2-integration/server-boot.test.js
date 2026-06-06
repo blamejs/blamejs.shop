@@ -218,6 +218,19 @@ async function _runBridged() {
   await searchRanking.defineWeights({ slug: "boot-weights", name: "Boot weights", weights: { in_stock: 1 } });
   await searchRanking.setActiveWeights("boot-weights");
 
+  // A sidebar widget + a home-page placement, seeded PRE-BOOT so the server's
+  // first sidebar-page request warms the short-TTL widget cache from a
+  // populated table (seeding after the cache's first refresh would be blocked
+  // by the 30s TTL until it expired). Proves the operator-curated right rail
+  // reaches the storefront render when sidebarWidgets is wired into sfDeps.
+  var sidebarSeed = bShop.sidebarWidgets.create({ query: mem.query });
+  await sidebarSeed.defineWidget({
+    slug: "boot-trust", title: "Boot Shop With Confidence", kind: "trust_badges",
+    payload: { badges: ["secure-checkout", "free-returns"] }, audience: "all",
+    starts_at: 1, expires_at: Date.now() + 315360000000,
+  });
+  await sidebarSeed.setPagePlacement("home", ["boot-trust"]);
+
   var bridge = await helpers.startD1Bridge({ query: mem.query, secret: BRIDGE_SECRET });
   var state = null;
   try {
@@ -322,6 +335,65 @@ async function _runBridged() {
     ).get("boot-weights");
     check("bridged boot: /search writes a search_events impression row through the bridge",
       impressionRows && Number(impressionRows.n) >= 1);
+
+    // 6d. Dep-wiring liveness — the customer suggestion box. The primitive is
+    //     handed to BOTH the storefront (sfDeps.suggestionBox → the public
+    //     /suggestions board) and the admin console (deps.suggestionBox → the
+    //     triage queue); a missing injection darkens both even though the unit
+    //     tests (which inject the dep directly) pass. Seed a suggestion through
+    //     the SAME bridge-backed query the running server reads, then prove the
+    //     public board renders it and the admin console lists it (bearer JSON).
+    var suggestionSeed = bShop.suggestionBox.create({ query: mem.query, cursorSecret: "boot-suggestion-secret" });
+    var seededSuggestion = await suggestionSeed.submitSuggestion({
+      title: "Boot suggestion add a dark theme", body: "A dark theme would be great.", category: "feature_request",
+    });
+    check("bridged boot: suggestion seeded (open status)", !!seededSuggestion && seededSuggestion.status === "open");
+    var suggestionsPage = await helpers.httpRequest({
+      port: state.port, path: "/suggestions", jar: jar, headers: browserHeaders,
+    });
+    check("bridged boot: GET /suggestions is 2xx (suggestionBox storefront wired)",
+      suggestionsPage.status >= 200 && suggestionsPage.status < 400);
+    check("bridged boot: /suggestions board lists the seeded suggestion",
+      suggestionsPage.body.indexOf("Boot suggestion add a dark theme") !== -1);
+    check("bridged boot: /suggestions board carries the submit form",
+      suggestionsPage.body.indexOf("action=\"/suggestions\"") !== -1);
+    var adminSuggestions = await _rawGet(state.port, "/admin/suggestions",
+      { "authorization": "Bearer " + ADMIN_KEY, "user-agent": "curl/8.5.0", "accept": "*/*" });
+    check("bridged boot: GET /admin/suggestions reaches the console (2xx, suggestionBox wired)",
+      adminSuggestions.status >= 200 && adminSuggestions.status < 300);
+    var adminSuggestionsJson = null;
+    try { adminSuggestionsJson = JSON.parse(adminSuggestions.body); } catch (_e) { adminSuggestionsJson = null; }
+    check("bridged boot: /admin/suggestions lists the seeded suggestion",
+      !!adminSuggestionsJson && Array.isArray(adminSuggestionsJson.rows) &&
+      adminSuggestionsJson.rows.some(function (r) { return r && r.id === seededSuggestion.id; }));
+
+    // 6e. Dep-wiring liveness — the operator-curated sidebar widgets. The
+    //     primitive is handed to BOTH the storefront (sfDeps.sidebarWidgets →
+    //     the right-rail render) and the admin console (deps.sidebarWidgets →
+    //     the widget CRUD + placement editor). The widget + its home-page
+    //     placement are seeded PRE-BOOT (above) so the server's first sidebar-
+    //     page request warms the cache from a populated table. Prove the home
+    //     page renders the rail (the resolver caches out-of-band — poll the
+    //     render) and the admin console lists the widget (bearer JSON).
+    var adminSidebar = await _rawGet(state.port, "/admin/sidebar-widgets",
+      { "authorization": "Bearer " + ADMIN_KEY, "user-agent": "curl/8.5.0", "accept": "*/*" });
+    check("bridged boot: GET /admin/sidebar-widgets reaches the console (2xx, sidebarWidgets wired)",
+      adminSidebar.status >= 200 && adminSidebar.status < 300);
+    var adminSidebarJson = null;
+    try { adminSidebarJson = JSON.parse(adminSidebar.body); } catch (_e) { adminSidebarJson = null; }
+    check("bridged boot: /admin/sidebar-widgets lists the seeded widget",
+      !!adminSidebarJson && Array.isArray(adminSidebarJson.widgets) &&
+      adminSidebarJson.widgets.some(function (w) { return w && w.slug === "boot-trust"; }));
+    // The storefront rail is resolved from a short-TTL in-memory cache refreshed
+    // fire-and-forget on the request middleware, so the FIRST home render after
+    // seeding may serve a cold (empty) cache — poll the render until the cache
+    // populates and the rail appears, rather than asserting off a single hit.
+    await helpers.waitUntil(async function () {
+      var home = await helpers.httpRequest({ port: state.port, path: "/", jar: jar, headers: browserHeaders });
+      return home.status >= 200 && home.status < 400 &&
+        home.body.indexOf("data-widget-slug=\"boot-trust\"") !== -1;
+    }, { timeoutMs: 5000, label: "bridged boot: home page renders the seeded sidebar widget" });
+    check("bridged boot: home renders the operator sidebar rail (sidebarWidgets storefront wired)", true);
 
     // 7. Internal-endpoint liveness, WORKER-SHAPED. The worker's
     //    service-binding POSTs carry no browser fingerprint (no

@@ -72,6 +72,7 @@ export var CHROME_DEFAULTS = Object.freeze({
   footer_operators_heading: "Your account",
   footer_operators_account: "Account",
   footer_operators_orders:  "Orders",
+  footer_operators_suggestions: "Suggestion box",
   footer_operators_contact: "Contact",
 
   footer_copy_suffix:  "built on blamejs · Apache 2.0 licensed.",

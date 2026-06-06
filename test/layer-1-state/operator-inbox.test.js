@@ -566,12 +566,98 @@ async function _exportedConstants() {
   );
 }
 
+// ---- role-scoped read + write surface ----------------------------------
+//
+// inboxForRole / unreadCountForRole / markReadForRole / archiveForRole back
+// a console that addresses notifications to a role and has no per-operator
+// session to fold role membership through (a single-credential admin). They
+// return / mutate ONLY `role = ?` rows, never operator-id-addressed ones.
+async function _roleScopedSurface() {
+  var f = _factory();   // no operatorRoles peer — pure role addressing
+
+  // Two role-broadcasts to "fulfillment", one to a different role, one to
+  // an operator id. The fulfillment reads must see ONLY the two fulfillment
+  // rows.
+  var a = await f.inbox.enqueueMessage({
+    role: "fulfillment", kind: "order_paid", severity: "info",
+    subject: "New order A", body: "Order A paid.",
+  });
+  var b2 = await f.inbox.enqueueMessage({
+    role: "fulfillment", kind: "order_paid", severity: "warning",
+    subject: "New order B", body: "Order B paid.",
+  });
+  await f.inbox.enqueueMessage({
+    role: "support", kind: "ticket", severity: "info",
+    subject: "Support row", body: "Not for fulfillment.",
+  });
+  await f.inbox.enqueueMessage({
+    operator_id: _uuid(), kind: "order_paid", severity: "info",
+    subject: "Operator-addressed", body: "Not a role broadcast.",
+  });
+
+  var feed = await f.inbox.inboxForRole({ role: "fulfillment", limit: 50 });
+  check("inboxForRole returns only the role's rows", feed.rows.length === 2);
+  check("inboxForRole excludes other roles",
+    feed.rows.every(function (r) { return r.role === "fulfillment"; }));
+  check("inboxForRole excludes operator-id rows",
+    feed.rows.every(function (r) { return r.operator_id == null; }));
+  check("inboxForRole newest-first",
+    feed.rows[0].id === b2.id && feed.rows[1].id === a.id);
+
+  // unreadCountForRole — both unread now.
+  var c0 = await f.inbox.unreadCountForRole({ role: "fulfillment" });
+  check("unreadCountForRole counts the role's unread", c0 === 2);
+  // severity_min floors the rank ladder.
+  var cWarn = await f.inbox.unreadCountForRole({ role: "fulfillment", severity_min: "warning" });
+  check("unreadCountForRole severity_min floors", cWarn === 1);
+
+  // markReadForRole clears one — drops the unread count, idempotent.
+  var read = await f.inbox.markReadForRole({ id: a.id, role: "fulfillment" });
+  check("markReadForRole stamps read_at", read.read_at != null);
+  check("unreadCountForRole drops after read",
+    (await f.inbox.unreadCountForRole({ role: "fulfillment" })) === 1);
+  var readAgain = await f.inbox.markReadForRole({ id: a.id, role: "fulfillment" });
+  check("markReadForRole idempotent", readAgain.read_at === read.read_at);
+
+  // A row addressed to a DIFFERENT role can't be cleared via "fulfillment".
+  var support = (await f.inbox.inboxForRole({ role: "support", limit: 10 })).rows[0];
+  await assert.rejects(
+    function () { return f.inbox.markReadForRole({ id: support.id, role: "fulfillment" }); },
+    /not addressed to this role/,
+  );
+  check("cross-role row left unread",
+    (await f.inbox.inboxForRole({ role: "support", limit: 10 })).rows[0].read_at == null);
+
+  // archiveForRole drops the row from the default feed; include_archived
+  // brings it back.
+  await f.inbox.archiveForRole({ id: b2.id, role: "fulfillment" });
+  var active = await f.inbox.inboxForRole({ role: "fulfillment", limit: 50 });
+  check("archiveForRole drops from active feed",
+    active.rows.every(function (r) { return r.id !== b2.id; }));
+  var withArchived = await f.inbox.inboxForRole({ role: "fulfillment", include_archived: true, limit: 50 });
+  check("include_archived surfaces the archived row",
+    withArchived.rows.some(function (r) { return r.id === b2.id; }));
+  check("unreadCountForRole excludes archived",
+    (await f.inbox.unreadCountForRole({ role: "fulfillment" })) === 0);
+
+  // An unknown id is a coded not-found; a malformed id is a TypeError.
+  await assert.rejects(
+    function () { return f.inbox.markReadForRole({ id: _uuid(), role: "fulfillment" }); },
+    function (e) { return e.code === "INBOX_MESSAGE_NOT_FOUND"; },
+  );
+  await assert.rejects(
+    function () { return f.inbox.archiveForRole({ id: "not-a-uuid", role: "fulfillment" }); },
+    /id —/,
+  );
+}
+
 async function run() {
   await _enqueueAddressing();
   await _inboxFilters();
   await _markReadUnreadFsm();
   await _archiveBehaviour();
   await _unreadCountBadge();
+  await _roleScopedSurface();
   await _cleanupSweep();
   await _metricsHistogram();
   await _exportedConstants();

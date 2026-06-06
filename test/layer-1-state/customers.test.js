@@ -32,6 +32,7 @@ var assert  = helpers.assert;
 
 var MIG_CUSTOMERS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0006_customers.sql");
 var MIG_OAUTH     = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0205_customer_oauth_identities.sql");
+var MIG_REVOCATIONS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0222_customer_session_revocations.sql");
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -45,6 +46,9 @@ function _makeQuery() {
     db.prepare(s).run();
   });
   _splitSchema(nodeFs.readFileSync(MIG_OAUTH, "utf8")).forEach(function (s) {
+    db.prepare(s).run();
+  });
+  _splitSchema(nodeFs.readFileSync(MIG_REVOCATIONS, "utf8")).forEach(function (s) {
     db.prepare(s).run();
   });
   return async function (sql, params) {

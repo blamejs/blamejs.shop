@@ -63,6 +63,7 @@ import {
 import { hasCurrencyCookie } from "./data/currency.js";
 import { resolveAnnouncement } from "./data/announcement.js";
 import { resolvePromoBanners } from "./data/promo-banners.js";
+import { resolveSidebarWidgets } from "./data/sidebar-widgets.js";
 
 // Cloudflare Worker — edge router for blamejs.shop.
 //
@@ -335,6 +336,7 @@ export class ShopContainer extends Container {
       STRIPE_API_KEY:                    env.STRIPE_API_KEY            || "",
       STRIPE_WEBHOOK_SECRET:             env.STRIPE_WEBHOOK_SECRET     || "",
       STRIPE_PUBLISHABLE_KEY:            env.STRIPE_PUBLISHABLE_KEY    || "",
+      APPLE_PAY_DOMAIN_ASSOCIATION:      env.APPLE_PAY_DOMAIN_ASSOCIATION || "",
       ADMIN_API_KEY:                     env.ADMIN_API_KEY             || "",
     };
   }
@@ -582,6 +584,43 @@ export default {
           headers: _withSecurityHeaders({
             "content-type":  "text/plain; charset=utf-8",
             "cache-control": "public, max-age=3600, s-maxage=86400", // allow:raw-time-literal — HTTP Cache-Control directive seconds in a header string, not a duration expression
+          }),
+        });
+      }
+      if (pathname === "/.well-known/apple-developer-merchantid-domain-association") {
+        // Apple Pay (via the Stripe Express Checkout Element) only renders
+        // once Apple has verified the domain, and it verifies by crawling
+        // this exact path — which lands on the edge, not the container. The
+        // file's bytes are Stripe-provided (download from the Stripe
+        // dashboard / docs.stripe.com/apple-pay); the operator stores them
+        // verbatim in the APPLE_PAY_DOMAIN_ASSOCIATION binding. We serve
+        // them unchanged as text/plain: Apple's crawl rejects any wrapping
+        // or redirect, so no transform, no HTML shell, no trailing newline
+        // added. Unset → 404 (the documented fail-open posture: the Apple
+        // Pay button simply does not appear, every other payment method is
+        // unaffected). Cached short so a freshly-pasted association
+        // propagates without a redeploy.
+        const assoc = env.APPLE_PAY_DOMAIN_ASSOCIATION || "";
+        if (!assoc) {
+          return new Response("Not Found", {
+            status:  404,
+            headers: _withSecurityHeaders({ "content-type": "text/plain; charset=utf-8" }),
+          });
+        }
+        if (request.method === "HEAD") {
+          return new Response(null, {
+            status:  200,
+            headers: _withSecurityHeaders({
+              "content-type":  "text/plain; charset=utf-8",
+              "cache-control": "public, max-age=300", // allow:raw-time-literal — HTTP Cache-Control directive seconds in a header string, not a duration expression
+            }),
+          });
+        }
+        return new Response(assoc, {
+          status:  200,
+          headers: _withSecurityHeaders({
+            "content-type":  "text/plain; charset=utf-8",
+            "cache-control": "public, max-age=300", // allow:raw-time-literal — HTTP Cache-Control directive seconds in a header string, not a duration expression
           }),
         });
       }
@@ -1236,6 +1275,8 @@ async function _edgeCartEmpty(request, env, version, shopName) {
       defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
       announcement:  await resolveAnnouncement(env.DB, {}),
       promoBanners:  await resolvePromoBanners(env.DB, {}),
+      sidebarWidgets: await resolveSidebarWidgets(env.DB, { page_key: "cart" }),
+      sidebarPageKey: "cart",
     }, _currencyRenderOpts(env, { pathname: "/cart" })));
     // /cart is a session-bound surface even when the guest cart is
     // empty — crawlers indexing it dilute search results with
@@ -1436,6 +1477,10 @@ async function _edgeHome(request, env, _url, version, shopName) {
     let collections = [];
     try { collections = await listActiveCollections(env.DB, { limit: 6 }); }
     catch (_e) { collections = []; }
+    // Operator-curated right-rail widgets for the home page (guest audience —
+    // the edge serves cacheable anonymous reads). Best-effort: a read failure
+    // degrades to no rail. Byte-identical to the container's home rail.
+    const sidebarWidgets = await resolveSidebarWidgets(env.DB, { page_key: "home" });
     const html = renderHome(Object.assign({
       products:  page.rows,
       collections: collections,
@@ -1444,6 +1489,8 @@ async function _edgeHome(request, env, _url, version, shopName) {
       version:   version,
       announcement: ann,
       promoBanners: promos,
+      sidebarWidgets: sidebarWidgets,
+      sidebarPageKey: "home",
       // The edge serves the storefront's default locale; any explicit
       // locale choice bypasses the edge to the container.
       defaultLocale: env.SHOP_DEFAULT_LOCALE || "en",
@@ -1595,6 +1642,8 @@ async function _edgeSearch(request, env, url, version, shopName) {
       defaultLocale:  env.SHOP_DEFAULT_LOCALE || "en",
       announcement:   await resolveAnnouncement(env.DB, {}),
       promoBanners:   await resolvePromoBanners(env.DB, {}),
+      sidebarWidgets: await resolveSidebarWidgets(env.DB, { page_key: "search" }),
+      sidebarPageKey: "search",
     }, _localeRenderOpts(env, url), _canonicalRenderOpts(url), _currencyRenderOpts(env, url)));
     return _html(html, request.method, env);
   } catch (e) {
@@ -1714,6 +1763,8 @@ async function _edgeProduct(request, env, url, version, shopName, slug) {
       preorderNotice:   url && url.searchParams ? url.searchParams.get("preorder") : null,
       announcement:  await resolveAnnouncement(env.DB, {}),
       promoBanners:  await resolvePromoBanners(env.DB, {}),
+      sidebarWidgets: await resolveSidebarWidgets(env.DB, { page_key: "product" }),
+      sidebarPageKey: "product",
       shopName:      shopName,
       cartCount:     0,
       version:       version,

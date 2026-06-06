@@ -34,6 +34,7 @@ var assert         = helpers.assert;
 
 var MIG_GIFTCARDS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0013_giftcards.sql");
 var MIG_LEDGER    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0081_gift_card_ledger.sql");
+var MIG_CHAIN     = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0220_gift_card_ledger_chain.sql");
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -49,6 +50,9 @@ function _makeQuery() {
     db.prepare(s).run();
   });
   _splitSchema(nodeFs.readFileSync(MIG_LEDGER, "utf8")).forEach(function (s) {
+    db.prepare(s).run();
+  });
+  _splitSchema(nodeFs.readFileSync(MIG_CHAIN, "utf8")).forEach(function (s) {
     db.prepare(s).run();
   });
   return {

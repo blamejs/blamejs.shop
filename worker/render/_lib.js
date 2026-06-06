@@ -415,6 +415,103 @@ export function promoBannerHtml(promoMap, placement) {
   return row ? promoBanner(row) : "";
 }
 
+// The page_key for a request path — BYTE-IDENTICAL to lib/storefront.js's
+// `_sidebarPageKeyForPath`. Derived purely from the path (the edge cache key)
+// so the sidebar rail stays edge-cacheable.
+export function sidebarPageKeyForPath(pathname) {
+  if (typeof pathname !== "string" || !pathname.length) return null;
+  if (pathname === "/")                        return "home";
+  if (pathname === "/cart")                    return "cart";
+  if (pathname === "/search")                  return "search";
+  if (pathname.indexOf("/collections/") === 0) return "collection";
+  if (pathname.indexOf("/products/") === 0)    return "product";
+  return null;
+}
+
+// Markup for a single resolved sidebar-widget row — BYTE-IDENTICAL to the
+// container's `_buildSidebarWidget` (lib/storefront.js) so an edge-cached page
+// and a container page render the same widget for the same page + audience
+// (the asset-fingerprint parity test guards this). Every operator field is
+// HTML-escaped; the kind-specific body surfaces the operator's static config,
+// and an outbound link routes through the container click counter (slug-only
+// charset → identical href on both substrates). `pageKey` is the page the
+// widget renders on (drives the click counter's per-page breakdown).
+export function sidebarWidget(w, pageKey) {
+  if (!w || typeof w !== "object") return "";
+  var esc = function (s) { return escapeHtml(String(s == null ? "" : s)); };
+  var kind    = esc(w.kind);
+  var slug    = esc(w.slug);
+  var title   = esc(w.title);
+  var payload = (w.payload && typeof w.payload === "object") ? w.payload : {};
+  var _clickHref = function (dest) {
+    if (!pageKey) return dest;
+    return "/sidebar/" + slug + "/click?to=" + encodeURIComponent(dest) + "&page_key=" + esc(pageKey);
+  };
+  var inner;
+
+  if (w.kind === "newsletter_signup") {
+    inner =
+      "<form class=\"sidebar-widget__newsletter\" method=\"post\" action=\"/newsletter\">" +
+        "<input type=\"hidden\" name=\"list_id\" value=\"" + esc(payload.list_id) + "\">" +
+        "<label class=\"skip-link\" for=\"sw-news-" + slug + "\">Email</label>" +
+        "<input id=\"sw-news-" + slug + "\" type=\"email\" name=\"email\" required placeholder=\"you@example.com\" autocomplete=\"email\">" +
+        "<button type=\"submit\">" + esc(payload.cta_label || "Subscribe") + "</button>" +
+      "</form>" +
+      (payload.headline ? "<p class=\"sidebar-widget__lede\">" + esc(payload.headline) + "</p>" : "");
+  } else if (w.kind === "trust_badges") {
+    var badges = Array.isArray(payload.badges) ? payload.badges : [];
+    var items = "";
+    for (var i = 0; i < badges.length; i += 1) {
+      items += "<li class=\"sidebar-widget__badge\" data-badge=\"" + esc(badges[i]) + "\">" + esc(badges[i]) + "</li>";
+    }
+    inner = "<ul class=\"sidebar-widget__badges\">" + items + "</ul>";
+  } else if (w.kind === "social_proof") {
+    inner = (payload.headline ? "<p class=\"sidebar-widget__lede\">" + esc(payload.headline) + "</p>" : "") +
+      "<p class=\"sidebar-widget__proof\" data-message-template=\"" + esc(payload.message_template) + "\">" +
+        esc(payload.message_template) + "</p>";
+  } else if (w.kind === "size_chart") {
+    inner = "<a class=\"sidebar-widget__link\" href=\"" + esc(_clickHref("/pages/" + String(payload.chart_slug == null ? "" : payload.chart_slug))) + "\">View size chart</a>";
+  } else if (w.kind === "featured_collection") {
+    inner = "<a class=\"sidebar-widget__link\" href=\"" + esc(_clickHref("/collections/" + String(payload.collection_slug == null ? "" : payload.collection_slug))) +
+      "\" data-collection-slug=\"" + esc(payload.collection_slug) + "\" data-limit=\"" + esc(String(payload.limit == null ? "" : payload.limit)) + "\">Shop the collection</a>";
+  } else if (w.kind === "recently_viewed") {
+    inner = "<div class=\"sidebar-widget__recent\" data-limit=\"" + esc(String(payload.limit == null ? "" : payload.limit)) +
+      "\"><p class=\"sidebar-widget__hint\">Items you've looked at appear here.</p></div>";
+  } else if (w.kind === "live_visitors") {
+    inner = "<div class=\"sidebar-widget__live\" data-window-minutes=\"" + esc(String(payload.window_minutes == null ? "" : payload.window_minutes)) +
+      "\" data-min-threshold=\"" + esc(String(payload.min_threshold == null ? "" : payload.min_threshold)) + "\"></div>";
+  } else if (w.kind === "countdown_timer") {
+    inner = "<div class=\"sidebar-widget__countdown\" data-target-at=\"" + esc(String(payload.target_at == null ? "" : payload.target_at)) + "\">" +
+      "<span class=\"sidebar-widget__countdown-done\">" + esc(payload.completed_label) + "</span></div>";
+  } else if (w.kind === "sticky_addtocart") {
+    inner = "<div class=\"sidebar-widget__sticky\" data-variant-slug=\"" + esc(payload.variant_slug) + "\"></div>";
+  } else {
+    inner = "";
+  }
+
+  return "<section class=\"sidebar-widget sidebar-widget--" + kind +
+      "\" data-widget-slug=\"" + slug + "\" data-widget-kind=\"" + kind + "\">" +
+      "<h2 class=\"sidebar-widget__title\">" + title + "</h2>" +
+      inner +
+    "</section>";
+}
+
+// The right-rail `<aside>` for a page from an ordered list of resolved widget
+// rows — BYTE-IDENTICAL to the container's `_buildSidebarRail`. Returns "" for
+// an empty list. Impression/click counters are container-only (the edge can't
+// write the counter, and an edge-cached page can't bump a per-view count); the
+// container twin fires the impression on its render path.
+export function sidebarRail(rows, pageKey) {
+  if (!Array.isArray(rows) || !rows.length) return "";
+  var inner = "";
+  for (var i = 0; i < rows.length; i += 1) {
+    var html = sidebarWidget(rows[i], pageKey);
+    if (html) inner += html;
+  }
+  if (!inner) return "";
+  return "<aside class=\"sidebar-rail\" role=\"complementary\" aria-label=\"More from the shop\">" + inner + "</aside>";
+}
+
 export function formatPrice(minorUnits, currency) {
   if (!Number.isInteger(minorUnits)) {
     throw new TypeError("formatPrice: minorUnits must be an integer, got " + JSON.stringify(minorUnits));

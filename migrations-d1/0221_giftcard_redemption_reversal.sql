@@ -1,0 +1,18 @@
+-- Gift-card redemption: cumulative spend already credited back.
+--
+-- A refund returns money to the buyer; the gift-card spend tied to that
+-- order must be re-minted in the SAME proportion or the buyer keeps value
+-- they no longer paid for. The earlier binary marker
+-- giftcard_redemptions.reversed_at (0216) modelled all-or-nothing — a full
+-- refund re-minted everything, a partial refund nothing — so a partial
+-- refund that reached the terminal refund edge over-credited the card and a
+-- balance-leaving partial slice credited nothing.
+--
+-- reversed_minor carries the CUMULATIVE minor-units already credited back
+-- against this redemption. A reversal computes the proportional target
+-- floor(amount_minor * refunded / order_total) and credits target -
+-- reversed_minor, then advances this column, so a partial-then-final refund
+-- sequence converges on exactly the amount refunded. Bounded by amount_minor
+-- in the application layer so it can never exceed the original spend. NULL-safe
+-- via DEFAULT 0 so existing rows read as nothing-reversed-yet.
+ALTER TABLE giftcard_redemptions ADD COLUMN reversed_minor INTEGER NOT NULL DEFAULT 0;

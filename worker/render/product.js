@@ -1,4 +1,4 @@
-import { renderTemplate, escapeHtml, escapeAttr, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, searchSuggestScriptTag, announcementBar, announcementScriptTag, promoBannerHtml, makeFormatPrice, currencySwitcher, spliceRaw, absoluteBase, absolutizeOgImage } from "./_lib.js";
+import { renderTemplate, escapeHtml, escapeAttr, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, searchSuggestScriptTag, announcementBar, announcementScriptTag, promoBannerHtml, sidebarRail, makeFormatPrice, currencySwitcher, spliceRaw, absoluteBase, absolutizeOgImage } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout, alternateLinks } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -74,7 +74,10 @@ var LAYOUT =
   "    </div>\n" +
   "  </header>\n" +
   "\n" +
+  "  <div class=\"page-shell\">\n" +
   "  <main id=\"main\">{{body}}</main>\n" +
+  "RAW_SIDEBAR_RAIL" +
+  "  </div>\n" +
   "\n" +
   "  <section class=\"newsletter-band\" aria-labelledby=\"newsletter-title\">\n" +
   "    <div class=\"newsletter-band__inner\">\n" +
@@ -128,6 +131,7 @@ var LAYOUT =
   "        <ul>\n" +
   "          <li><a href=\"/account\">{{footer_operators_account}}</a></li>\n" +
   "          <li><a href=\"/orders\">{{footer_operators_orders}}</a></li>\n" +
+  "          <li><a href=\"/suggestions\">{{footer_operators_suggestions}}</a></li>\n" +
   "          <li><a href=\"mailto:hello@blamejs.shop\">{{footer_operators_contact}}</a></li>\n" +
   "        </ul>\n" +
   "      </div>\n" +
@@ -817,6 +821,8 @@ function _wrap(opts) {
   // Sitewide promo banners — byte-identical to the container LAYOUT.
   assembled = spliceRaw(assembled, "RAW_PROMO_TOP_STRIP", promoBannerHtml(opts.promo_banners, "top_strip"));
   assembled = spliceRaw(assembled, "RAW_PROMO_FOOTER", promoBannerHtml(opts.promo_banners, "footer"));
+  assembled = spliceRaw(assembled, "RAW_SIDEBAR_RAIL",
+    sidebarRail(opts.sidebar_widgets || null, opts.sidebar_page_key || null));
   return spliceRaw(assembled, "RAW_BODY_PLACEHOLDER", opts.body);
 }
 
@@ -1310,6 +1316,8 @@ export function renderProduct(opts) {
     body:          promoPdpSide + body + (jsonLd || ""),
     announcement:        opts.announcement,
     promo_banners:       opts.promoBanners,
+    sidebar_widgets:     opts.sidebarWidgets,
+    sidebar_page_key:    opts.sidebarPageKey,
     currencyOptions:     opts.currencyOptions,
     currencySelected:    opts.currencySelected,
     currencyNote:        opts.currencyNote,
