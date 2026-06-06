@@ -269,6 +269,65 @@ async function _purchaseAggregatesProgress() {
   );
 }
 
+// The over-purchase check and the purchase write are ONE atomic guarded
+// INSERT, so concurrent buyers racing for the last unit can't both pass
+// the prior-sum check and both insert (the read-then-write race that let
+// purchases exceed quantity_desired). The aggregate never overshoots.
+async function _concurrentPurchaseDoesNotOversell() {
+  var f = _factory();
+  await f.reg.createRegistry({
+    owner_customer_id: _uuid(),
+    slug:              "wedding-race",
+    title:             "Wedding",
+    occasion:          "wedding",
+    recipient_name:    "A and B",
+    privacy:           "public",
+  });
+
+  // desired = 1, two concurrent qty-1 purchases: exactly one wins.
+  var blender = await f.reg.addItem({ registry_slug: "wedding-race", sku: "BLENDER-1", quantity_desired: 1 });
+  var settled = await Promise.allSettled([
+    f.reg.purchaseItem({ registry_slug: "wedding-race", item_id: blender.id, quantity: 1 }),
+    f.reg.purchaseItem({ registry_slug: "wedding-race", item_id: blender.id, quantity: 1 }),
+  ]);
+  var ok = settled.filter(function (s) { return s.status === "fulfilled"; });
+  var no = settled.filter(function (s) { return s.status === "rejected"; });
+  check("concurrent purchase desired=1: exactly one wins", ok.length === 1);
+  check("concurrent purchase desired=1: one refused", no.length === 1);
+  check("concurrent purchase desired=1: refusal coded",
+    no[0] && no[0].reason && no[0].reason.code === "GIFT_REGISTRY_OVER_PURCHASE");
+  var blenderSum = f.db.prepare(
+    "SELECT COALESCE(SUM(quantity), 0) AS s FROM gift_registry_purchases WHERE item_id = ?"
+  ).all(blender.id)[0].s;
+  check("concurrent purchase desired=1: total never exceeds desired", blenderSum === 1);
+
+  // desired = 3, four concurrent qty-1 purchases: exactly three win.
+  var towel = await f.reg.addItem({ registry_slug: "wedding-race", sku: "TOWEL-1", quantity_desired: 3 });
+  var settled2 = await Promise.allSettled([0, 1, 2, 3].map(function () {
+    return f.reg.purchaseItem({ registry_slug: "wedding-race", item_id: towel.id, quantity: 1 });
+  }));
+  var ok2 = settled2.filter(function (s) { return s.status === "fulfilled"; });
+  check("concurrent purchase desired=3: exactly three win", ok2.length === 3);
+  var towelSum = f.db.prepare(
+    "SELECT COALESCE(SUM(quantity), 0) AS s FROM gift_registry_purchases WHERE item_id = ?"
+  ).all(towel.id)[0].s;
+  check("concurrent purchase desired=3: total caps at desired", towelSum === 3);
+
+  // Partial-quantity over: desired = 2, two concurrent qty-2 buyers:
+  // exactly one wins (a third blender would be a return).
+  var pan = await f.reg.addItem({ registry_slug: "wedding-race", sku: "PAN-1", quantity_desired: 2 });
+  var settled3 = await Promise.allSettled([
+    f.reg.purchaseItem({ registry_slug: "wedding-race", item_id: pan.id, quantity: 2 }),
+    f.reg.purchaseItem({ registry_slug: "wedding-race", item_id: pan.id, quantity: 2 }),
+  ]);
+  var ok3 = settled3.filter(function (s) { return s.status === "fulfilled"; });
+  check("concurrent purchase qty=2 desired=2: exactly one wins", ok3.length === 1);
+  var panSum = f.db.prepare(
+    "SELECT COALESCE(SUM(quantity), 0) AS s FROM gift_registry_purchases WHERE item_id = ?"
+  ).all(pan.id)[0].s;
+  check("concurrent purchase qty=2 desired=2: total caps at desired", panSum === 2);
+}
+
 async function _searchPublicPrivacyFilter() {
   var f = _factory();
   var ownerId = _uuid();
@@ -683,6 +742,7 @@ async function run() {
   await _createRegistryShape();
   await _addItemBehaviour();
   await _purchaseAggregatesProgress();
+  await _concurrentPurchaseDoesNotOversell();
   await _searchPublicPrivacyFilter();
   await _revealBuyerHidesIdentity();
   await _closeRegistryFsm();

@@ -444,6 +444,68 @@ async function _recordSearchEventAndMetrics() {
   await assert.rejects(ctx.sr.metricsForWeights({ weights_slug: "BAD CAPS",    from: 0,  to: 10 }),              /slug/);
 }
 
+// A click carrying a session is only recorded when THAT session already
+// logged an impression for the same (weights_slug, query). A spoofed
+// click — a `?from=search&sq=<query>` hit from a session that never saw
+// a real result list — is dropped, so CTR can't be inflated past the
+// impressions actually rendered. The reported CTR is additionally bound
+// at 1.0 so multi-click-from-one-impression reality can't show >100%.
+async function _clickAttributionAndCtrCap() {
+  var ctx = _setup();
+  await ctx.sr.defineWeights({ slug: "attr", name: "Attribution", weights: { relevance: 1.0 } });
+  var from = 0, to = Date.now() + 1e9;
+
+  // A real impression for session "shopper", query "dress".
+  await ctx.sr.recordSearchEvent({
+    query: "dress", weights_slug: "attr", event_type: "impression", session_id: "shopper",
+  });
+
+  // Five spoofed clicks from sessions that never saw an impression —
+  // each is dropped, never lands in the event log.
+  var dropped = 0;
+  for (var i = 0; i < 5; i += 1) {
+    var spoof = await ctx.sr.recordSearchEvent({
+      query: "dress", weights_slug: "attr", event_type: "click", session_id: "attacker-" + i,
+    });
+    if (spoof.recorded === false) dropped += 1;
+  }
+  check("spoofed clicks (no matching impression) are dropped", dropped === 5);
+
+  // The legitimate session's click — it has the matching impression —
+  // records.
+  var legit = await ctx.sr.recordSearchEvent({
+    query: "dress", weights_slug: "attr", event_type: "click", session_id: "shopper",
+  });
+  check("attributed click records", legit.recorded === true);
+
+  var m = await ctx.sr.metricsForWeights({ weights_slug: "attr", from: from, to: to });
+  check("only the attributed click counts", m.impressions === 1 && m.clicks === 1);
+  check("CTR reflects the single real click", m.ctr === 1);
+
+  // Two more attributed clicks from the same session/impression — raw
+  // CTR would be 3/1 = 3.0, but the reported CTR is capped at 1.0.
+  await ctx.sr.recordSearchEvent({ query: "dress", weights_slug: "attr", event_type: "click", session_id: "shopper" });
+  await ctx.sr.recordSearchEvent({ query: "dress", weights_slug: "attr", event_type: "click", session_id: "shopper" });
+  var m2 = await ctx.sr.metricsForWeights({ weights_slug: "attr", from: from, to: to });
+  check("multi-click raw count preserved", m2.clicks === 3);
+  check("reported CTR bounded at 1.0", m2.ctr === 1);
+
+  // A click whose session DID see an impression but for a DIFFERENT
+  // query is not attributed to the target query.
+  await ctx.sr.recordSearchEvent({ query: "boots", weights_slug: "attr", event_type: "impression", session_id: "shopper" });
+  var crossQuery = await ctx.sr.recordSearchEvent({
+    query: "sandals", weights_slug: "attr", event_type: "click", session_id: "shopper",
+  });
+  check("click for an unseen query is dropped", crossQuery.recorded === false);
+
+  // A session-less click (the legacy / session-less-worker path) still
+  // records — attribution can't be checked without a session, and the
+  // storefront attaches the session whenever one exists.
+  await ctx.sr.recordSearchEvent({ query: "hat", weights_slug: "attr", event_type: "impression" });
+  var sessionless = await ctx.sr.recordSearchEvent({ query: "hat", weights_slug: "attr", event_type: "click" });
+  check("session-less click still records (legacy path)", sessionless.recorded === true);
+}
+
 async function _listAndArchiveSurface() {
   var ctx = _setup();
   await ctx.sr.defineWeights({ slug: "alpha", name: "Alpha", weights: { popularity: 1.0 } });
@@ -537,6 +599,7 @@ async function run() {
   await _applyToResultsScoring();
   await _manualPinsOverride();
   await _recordSearchEventAndMetrics();
+  await _clickAttributionAndCtrCap();
   await _listAndArchiveSurface();
   await _catalogPassthrough();
   await _monotonicClockDiscipline();

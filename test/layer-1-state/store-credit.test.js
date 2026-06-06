@@ -342,6 +342,55 @@ async function _cleanupExpiredWalksExpiredRows() {
   check("custA expire row recorded",         aExpire.length === 1 && aExpire[0].source_ref === "scheduled-expiry-sweep");
 }
 
+// The sweep keys its idempotency on its OWN prior output (expire rows
+// stamped 'scheduled-expiry-sweep'), NOT on every expire row. A prior
+// operator-initiated `expire()` (or any non-sweep expire) must NOT be
+// netted out of the expired-credit pool — doing so suppressed a
+// legitimate expiry, leaving genuinely-expired credit spendable.
+async function _cleanupExpiredIgnoresOperatorExpires() {
+  var f = _factory();
+  var now = Date.now();
+  var past = now - (10 * 86400 * 1000);
+
+  // 1000 of expired credit + 500 of non-expiring credit + a 300
+  // operator-initiated expire (a clawback). Wallet sits at 1200 when the
+  // sweep runs; the genuinely-expired 1000 must come out, leaving 200.
+  var cust = _uuid();
+  await f.credit.credit({ customer_id: cust, amount_minor: 1000, source: "promotional",
+                           expires_at: past, occurred_at: past - 2000 });
+  await f.credit.credit({ customer_id: cust, amount_minor: 500, source: "goodwill",
+                           occurred_at: past - 1000 });
+  await f.credit.expire({ customer_id: cust, amount_minor: 300, reason: "operator-clawback",
+                           occurred_at: past + 500 });
+
+  check("pre-sweep balance is 1200", (await f.credit.balance(cust)).balance_minor === 1200);
+
+  var swept = await f.credit.cleanupExpired({ now: now });
+  var mine = swept.processed.filter(function (p) { return p.customer_id === cust; });
+  check("operator-expire does not suppress sweep", mine.length === 1 && mine[0].amount_minor === 1000);
+  check("genuine expiry leaves the non-expiring remainder",
+    (await f.credit.balance(cust)).balance_minor === 200);
+
+  // Idempotent: a second sweep finds nothing more to burn even though
+  // operator-expire rows still exist on the ledger.
+  var swept2 = await f.credit.cleanupExpired({ now: now });
+  check("re-run after operator-expire is a no-op",
+    swept2.processed.filter(function (p) { return p.customer_id === cust; }).length === 0);
+  check("balance stable after re-run", (await f.credit.balance(cust)).balance_minor === 200);
+
+  // A non-expiring credit ADDED AFTER a sweep is never burned by a
+  // later sweep — the sweep only ever expires the expired-credit pool.
+  var cust2 = _uuid();
+  await f.credit.credit({ customer_id: cust2, amount_minor: 1000, source: "promotional",
+                           expires_at: past, occurred_at: past - 1000 });
+  await f.credit.cleanupExpired({ now: now });
+  check("post-sweep wallet drained", (await f.credit.balance(cust2)).balance_minor === 0);
+  await f.credit.credit({ customer_id: cust2, amount_minor: 400, source: "goodwill" });
+  await f.credit.cleanupExpired({ now: now });
+  check("non-expiring credit after sweep stays safe",
+    (await f.credit.balance(cust2)).balance_minor === 400);
+}
+
 async function _validation() {
   var f = _factory();
   var ok = _uuid();
@@ -436,6 +485,7 @@ async function run() {
   await _expireReducesBalance();
   await _transactionsForOrder();
   await _cleanupExpiredWalksExpiredRows();
+  await _cleanupExpiredIgnoresOperatorExpires();
   await _validation();
   await _exportedConstants();
 }

@@ -607,6 +607,154 @@ async function _updateAndArchiveAndFactory() {
   }
 }
 
+// A query bound to a DB carrying the REAL catalog + supporting tables a
+// smart rule reads from, so the test drives smart membership against
+// rows created through the live catalog API rather than the mock. This
+// is the regression gate for the dark feature where smart collections
+// read fields the bare product row never has and matched zero products
+// in production.
+function _makeCatalogQuery() {
+  var db = new DatabaseSync(":memory:");
+  db.prepare("PRAGMA foreign_keys = ON").run();
+  ["0001_catalog.sql", "0043_collections.sql", "0104_product_bulk_ops.sql", "0084_vendors.sql"]
+    .forEach(function (f) {
+      var p = nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
+      _splitSchema(nodeFs.readFileSync(p, "utf8")).forEach(function (s) { db.prepare(s).run(); });
+    });
+  return async function (sql, params) {
+    var stmt = db.prepare(sql);
+    var verb = sql.replace(/^\s+|\s*--[^\n]*\n/g, "").trim().split(/\s+/)[0].toUpperCase();
+    if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
+      var info = stmt.run.apply(stmt, params || []);
+      return { rows: [], rowCount: Number(info.changes), lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
+    }
+    var rows = stmt.all.apply(stmt, params || []);
+    return { rows: rows, rowCount: rows.length };
+  };
+}
+
+async function _smartAgainstRealCatalog() {
+  var q = _makeCatalogQuery();
+  var catalog = bShop.catalog.create({ query: q });
+  var col = collections.create({ query: q, catalog: catalog, cursorSecret: "real-catalog-secret" });
+  var ts = Date.now();
+
+  // Product 1: qualifies — price 1500 (< 5000), tagged "sale", category
+  // "apparel", vendor "acme", 7 in stock. Built entirely through the
+  // real catalog + bulk-ops + vendor tables.
+  var p1 = await catalog.products.create({ slug: "sale-widget", title: "Sale Widget", status: "active" });
+  var v1 = await catalog.variants.create(p1.id, { sku: "SW-1", options: {} });
+  await catalog.prices.set(v1.id, { currency: "USD", amount_minor: 1500 });
+  await catalog.inventory.create("SW-1", { stock_on_hand: 7 });
+  await q("INSERT INTO product_tags (product_id, tag, added_at) VALUES (?1, 'sale', ?2)", [p1.id, ts]);
+  await q("INSERT INTO product_categories (product_id, category, added_at) VALUES (?1, 'apparel', ?2)", [p1.id, ts]);
+  await q(
+    "INSERT INTO vendors (slug, name, contact_email_hash, contact_email_normalised, payout_method, payout_address, commission_split_bps, status, created_at, updated_at) " +
+    "VALUES ('acme', 'Acme', 'h', 'e@x', 'paypal', 'p@x', 1000, 'active', ?1, ?1)", [ts]);
+  await q("INSERT INTO vendor_skus (vendor_slug, sku, assigned_at) VALUES ('acme', 'SW-1', ?1)", [ts]);
+
+  // Product 2: priced 8000 (> 5000), tagged "sale" — does NOT qualify
+  // for the under-$50 sale collection.
+  var p2 = await catalog.products.create({ slug: "pricey", title: "Pricey", status: "active" });
+  var v2 = await catalog.variants.create(p2.id, { sku: "PR-1", options: {} });
+  await catalog.prices.set(v2.id, { currency: "USD", amount_minor: 8000 });
+  await catalog.inventory.create("PR-1", { stock_on_hand: 3 });
+  await q("INSERT INTO product_tags (product_id, tag, added_at) VALUES (?1, 'sale', ?2)", [p2.id, ts]);
+
+  // price_minor < 5000 AND tagged "sale" — only Product 1 qualifies.
+  await col.defineSmart({
+    slug: "on-sale", title: "On Sale", sort_strategy: "newest",
+    rules: { all: [
+      { field: "price_minor", op: "lt", value: 5000 },
+      { field: "tags", op: "contains", value: "sale" },
+    ] },
+  });
+  var onSale = await col.productsIn({ slug: "on-sale", limit: 50 });
+  check("smart price+tag matches the real qualifying product", onSale.rows.length === 1);
+  check("smart match is the right product", onSale.rows[0] && onSale.rows[0].id === p1.id);
+
+  // category eq "apparel" — Product 1 only.
+  await col.defineSmart({
+    slug: "apparel", title: "Apparel", sort_strategy: "newest",
+    rules: { all: [{ field: "category", op: "eq", value: "apparel" }] },
+  });
+  check("smart category eq matches", (await col.productsIn({ slug: "apparel", limit: 50 })).rows.length === 1);
+
+  // vendor eq "acme" — Product 1 only.
+  await col.defineSmart({
+    slug: "by-acme", title: "By Acme", sort_strategy: "newest",
+    rules: { all: [{ field: "vendor", op: "eq", value: "acme" }] },
+  });
+  check("smart vendor eq matches", (await col.productsIn({ slug: "by-acme", limit: 50 })).rows.length === 1);
+
+  // inventory_count > 0 — both products are in stock.
+  await col.defineSmart({
+    slug: "in-stock", title: "In Stock", sort_strategy: "newest",
+    rules: { all: [{ field: "inventory_count", op: "gt", value: 0 }] },
+  });
+  check("smart inventory rule matches both in-stock products",
+    (await col.productsIn({ slug: "in-stock", limit: 50 })).rows.length === 2);
+
+  // countIn preview drives the SAME enriched path.
+  var cnt = await col.countIn("on-sale");
+  check("countIn preview matches productsIn", cnt.approx === 1);
+
+  // Reverse lookup resolves smart memberships for the real product.
+  var rev = await col.collectionsForProduct(p1.id);
+  var revSlugs = rev.map(function (c) { return c.slug; }).sort().join(",");
+  check("collectionsForProduct unions smart memberships", revSlugs === "apparel,by-acme,in-stock,on-sale");
+}
+
+async function _smartPaginationWalksCatalogOnce() {
+  var q = _makeCatalogQuery();
+  var catalog = bShop.catalog.create({ query: q });
+  // Count how many times the catalog is walked across a paginated read.
+  var listCalls = 0;
+  var realList = catalog.products.list.bind(catalog.products);
+  catalog.products.list = function (o) { listCalls += 1; return realList(o); };
+  var col = collections.create({ query: q, catalog: catalog, cursorSecret: "pagination-secret" });
+  var ts = Date.now();
+
+  // 30 active products, all tagged "sale", all priced under 5000.
+  for (var i = 0; i < 30; i += 1) {
+    var p = await catalog.products.create({ slug: "prod-" + i, title: "Prod " + i, status: "active" });
+    var v = await catalog.variants.create(p.id, { sku: "SKU-" + i, options: {} });
+    await catalog.prices.set(v.id, { currency: "USD", amount_minor: 1000 + i });
+    await q("INSERT INTO product_tags (product_id, tag, added_at) VALUES (?1, 'sale', ?2)", [p.id, ts]);
+  }
+  await col.defineSmart({
+    slug: "sale", title: "Sale", sort_strategy: "newest",
+    rules: { all: [
+      { field: "tags", op: "contains", value: "sale" },
+      { field: "price_minor", op: "lt", value: 5000 },
+    ] },
+  });
+
+  // Paginate the whole collection in pages of 10 (3 pages). Without the
+  // matched-roster cache each page re-walked the entire catalog; with it,
+  // the catalog is walked exactly once.
+  listCalls = 0;
+  var cur = null, pages = 0, seen = {};
+  do {
+    var r = await col.productsIn({ slug: "sale", limit: 10, cursor: cur });
+    for (var k = 0; k < r.rows.length; k += 1) seen[r.rows[k].id] = true;
+    cur = r.next_cursor;
+    pages += 1;
+  } while (cur && pages < 10);
+
+  check("smart pagination walked 3 pages", pages === 3);
+  check("smart pagination surfaced all 30 members", Object.keys(seen).length === 30);
+  check("smart pagination walks the catalog only once (cached roster)", listCalls === 1);
+
+  // A rule edit invalidates the cache — the next read re-walks and
+  // reflects the new rule.
+  await col.update("sale", { rules: { all: [{ field: "price_minor", op: "lt", value: 1005 }] } });
+  listCalls = 0;
+  var narrowed = await col.productsIn({ slug: "sale", limit: 50 });
+  check("rule edit re-walks the catalog", listCalls === 1);
+  check("rule edit reflects the narrowed rule", narrowed.rows.length === 5);
+}
+
 async function run() {
   await _defineManualHappy();
   await _defineSmartHappy();
@@ -616,6 +764,8 @@ async function run() {
   await _smartProductsInSortStrategies();
   await _collectionsForProduct();
   await _updateAndArchiveAndFactory();
+  await _smartAgainstRealCatalog();
+  await _smartPaginationWalksCatalogOnce();
   console.log("collections: " + helpers.getChecks() + " checks passed");
 }
 
