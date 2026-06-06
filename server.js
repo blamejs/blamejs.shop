@@ -1352,15 +1352,28 @@ async function main() {
         ? bShop.inventoryWriteoffs.create({ inventoryLocations: inventoryLocations, cursorSecret: inventoryWriteoffsCursorSecret })
         : null;
 
+      // Gift cards — the bearer prepaid-balance credential plus the
+      // append-only ledger of credit/debit/expire events. The card primitive
+      // owns the code + the balance snapshot; the ledger is the audit trail
+      // surfaced in the admin console. Both only need the externalDb query
+      // handle. Built BEFORE the order primitive so the order FSM can credit
+      // a gift-card spend back when an order dies without completing (the
+      // partial-coverage abandon/cancel/refund path).
+      var giftcards      = (catalog && cart) ? bShop.giftcards.create({}) : null;
+      var giftCardLedger = (catalog && cart) ? bShop.giftCardLedger.create({}) : null;
+
       // Order — the FSM-driven post-checkout record. ONE shared instance
       // drives the storefront account/order pages, the storefront checkout
       // confirm, and the admin console — so a transition fired from one
       // surface fans webhooks + loyalty + referrals identically regardless
       // of which surface triggered it. Built here (after webhooks /
       // loyaltyEarnRules / referrals exist) so both the admin block and the
-      // storefront block reuse it instead of each standing up its own.
+      // storefront block reuse it instead of each standing up its own. The
+      // giftCards + giftCardLedger handles let the cancel / refund edges
+      // credit a gift-card spend back to the card (mirroring the inventory-
+      // hold release on the same edges).
       var order = (catalog && cart)
-        ? bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals, inventory: catalog.inventory, errorLog: errorLog })
+        ? bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals, inventory: catalog.inventory, errorLog: errorLog, giftCards: giftcards, giftCardLedger: giftCardLedger })
         : null;
 
       // Quotes — the B2B request-for-quote negotiation surface. ONE shared
@@ -1881,13 +1894,9 @@ async function main() {
       var printReceipts = (catalog && cart) ? bShop.printReceipts.create({ order: order }) : null;
       var packingSlips  = (catalog && cart) ? bShop.packingSlips.create({ order: order }) : null;
 
-      // Gift cards — prepaid bearer balance redeemable at checkout, plus
-      // the append-only ledger of credit/debit/expire events. The card
-      // primitive owns the code + the balance snapshot; the ledger is
-      // the audit trail surfaced in the admin console. Both only need
-      // the externalDb query handle.
-      var giftcards      = (catalog && cart) ? bShop.giftcards.create({}) : null;
-      var giftCardLedger = (catalog && cart) ? bShop.giftCardLedger.create({}) : null;
+      // (giftcards + giftCardLedger are constructed above, before the order
+      // primitive, so the order FSM's cancel / refund edges can credit a
+      // gift-card spend back to the card.)
 
       // Announcement bar — sitewide operator promo/notice strip. The
       // primitive resolves the highest-priority active announcement for a

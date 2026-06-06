@@ -348,10 +348,13 @@ async function _fsmTransitions() {
   // namespaceHash deterministically.
   var expectedHash = bShop.framework.crypto.namespaceHash(clickAndCollect.SIGNATURE_NAMESPACE, sigRaw);
   check("signature_hash matches namespaceHash", done.signature_hash === expectedHash);
-  // Order primitive driven to delivered
+  // Order primitive driven to delivered via the BOPIS pickup edge. A pickup
+  // order is normally `paid`/`fulfilling` at collection, for which the order
+  // FSM's mark_picked_up edge goes straight to delivered (no carrier ship
+  // leg) — so markPickedUp fires mark_picked_up, not mark_delivered.
   check("order.transition called",           ord.transitions.length === 1 &&
                                              ord.transitions[0].id === orderId &&
-                                             ord.transitions[0].event === "mark_delivered");
+                                             ord.transitions[0].event === "mark_picked_up");
 
   // Re-pickup refused
   await assert.rejects(w.svc.markPickedUp({

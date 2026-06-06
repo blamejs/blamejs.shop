@@ -32,7 +32,9 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIG_GIFTCARDS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0013_giftcards.sql");
+var MIGS = ["0013_giftcards.sql", "0214_giftcard_redemption_reversal.sql"].map(function (n) {
+  return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n);
+});
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -42,8 +44,8 @@ function _splitSchema(text) {
 function _makeQuery() {
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
-  _splitSchema(nodeFs.readFileSync(MIG_GIFTCARDS, "utf8")).forEach(function (s) {
-    db.prepare(s).run();
+  MIGS.forEach(function (p) {
+    _splitSchema(nodeFs.readFileSync(p, "utf8")).forEach(function (s) { db.prepare(s).run(); });
   });
   return {
     db:    db,
@@ -215,6 +217,46 @@ async function _redeemFullAndPartial() {
   check("non-order ledger row has null order",  adjRow.order_id === null);
 }
 
+// reverseRedemption credits a gift-card spend back when the order that
+// redeemed it dies. The card-row balance is restored, a drained ('redeemed')
+// card reactivates, and the reversal is idempotent (a re-fire credits back
+// exactly once). This is what the order FSM calls on its cancel / refund edges.
+async function _reverseRedemption() {
+  var f = _gcFactory();
+  var issued = await f.gc.issue({ amount_minor: 5000, currency: "USD" });
+  var orderId = bShop.framework.uuid.v7();
+
+  // Partial spend then reverse: balance returns to face value.
+  await f.gc.redeem({ code: issued.code, order_id: orderId, amount_minor: 2000 });
+  check("balance debited after redeem",          (await f.gc.balance(issued.code)).balance_minor === 3000);
+  var reversed = await f.gc.reverseRedemption(orderId);
+  check("reverse returns the reversed redemption", reversed.length === 1 &&
+    reversed[0].amount_minor === 2000 && reversed[0].gift_card_id === issued.id);
+  check("balance restored to face value",         (await f.gc.balance(issued.code)).balance_minor === 5000);
+  check("redemption row marked reversed",
+    f.db.prepare("SELECT reversed_at FROM giftcard_redemptions WHERE order_id = ?").all(orderId)[0].reversed_at != null);
+
+  // Idempotent: a second reverse of the same order is a no-op.
+  var again = await f.gc.reverseRedemption(orderId);
+  check("second reverse is a no-op",              again.length === 0 &&
+    (await f.gc.balance(issued.code)).balance_minor === 5000);
+
+  // A card drained to 'redeemed' by a full spend reactivates on reversal.
+  var full = await f.gc.issue({ amount_minor: 1000, currency: "USD" });
+  var orderId2 = bShop.framework.uuid.v7();
+  await f.gc.redeem({ code: full.code, order_id: orderId2, amount_minor: 1000 });
+  check("full spend drains + redeems",            (await f.gc.balance(full.code)).status === "redeemed");
+  await f.gc.reverseRedemption(orderId2);
+  var reactivated = await f.gc.balance(full.code);
+  check("reversal reactivates a drained card",    reactivated.status === "active" && reactivated.balance_minor === 1000);
+
+  // An order with no gift-card spend reverses to nothing.
+  check("reverse of an unrelated order is empty", (await f.gc.reverseRedemption(bShop.framework.uuid.v7())).length === 0);
+
+  // Validation.
+  await assert.rejects(f.gc.reverseRedemption("not-a-uuid"), /order_id/);
+}
+
 async function _redeemRefusals() {
   var f = _gcFactory();
 
@@ -347,6 +389,7 @@ async function run() {
   await _balanceAndLookup();
   await _codeFormatTolerance();
   await _redeemFullAndPartial();
+  await _reverseRedemption();
   await _redeemRefusals();
   await _voidBehavior();
   await _listForCustomer();

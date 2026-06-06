@@ -222,6 +222,23 @@ async function _run() {
     // markPickedUp drives the parent order to delivered (order handle wired).
     check("order driven to delivered", (await order.get(orderId)).status === "delivered");
 
+    // A pickup order in the REAL BOPIS state — 'paid' (not pre-advanced to
+    // shipped) — must also reach delivered. mark_delivered is illegal from
+    // paid; before the pickup edge the transition threw and was swallowed,
+    // leaving the schedule picked_up while the order stayed stuck at paid.
+    // The order FSM now carries a paid → delivered pickup edge so the parent
+    // order really reaches its terminal state.
+    var paidPickup = await _seedOrder(query, buyer, variant.id, variant.sku, "paid");
+    await clickAndCollect.scheduleAtLocation({
+      order_id: paidPickup, location_code: "store-1",
+      scheduled_window_start: now + 3600000, scheduled_window_end: now + 7200000,
+    });
+    await helpers.httpRequest({ port: port, path: "/admin/pickups/" + paidPickup + "/ready", method: "POST", jar: adminJar, form: {} });
+    var paidPicked = await helpers.httpRequest({ port: port, path: "/admin/pickups/" + paidPickup + "/picked-up", method: "POST", jar: adminJar, form: { proof_kind: "store_credential" } });
+    check("paid pickup picked-up -> 303 ?moved=1", paidPicked.status === 303 && (paidPicked.headers["location"] || "").indexOf("?moved=1") !== -1);
+    check("paid pickup schedule is picked_up", (await clickAndCollect.getScheduleByOrder(paidPickup)).status === "picked_up");
+    check("paid pickup order reaches delivered (not stuck at paid)", (await order.get(paidPickup)).status === "delivered");
+
     // ---- /account/pickups shows the buyer's pickup ------------------
     var buyerPickups = await helpers.httpRequest({ port: port, path: "/account/pickups", jar: buyerJar });
     check("buyer pickups list -> 200", buyerPickups.status === 200);
