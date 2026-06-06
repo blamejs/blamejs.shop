@@ -228,7 +228,16 @@ async function _run() {
     stopwords: { the: true },
   };
 
-  var queries = ["tee", "the tee", "tshrit", "i-phone", "iphone", "running shoes", "the", "  ", "<script>"];
+  var queries = [
+    "tee", "the tee", "tshrit", "i-phone", "iphone", "running shoes",
+    "the", "  ", "<script>",
+    // Plural stemming parity — the edge mirror must strip the same way the
+    // lib does: vowel+es keeps the singular's trailing `e` (tees -> tee,
+    // shoes -> shoe, does -> doe) while sibilant -es strips fully
+    // (dishes -> dish, churches -> church). A drift here means a plural
+    // query matches different products edge vs container.
+    "tees", "shoes", "does", "dishes churches glasses",
+  ];
   for (var q = 0; q < queries.length; q += 1) {
     var libR  = await libSyn.rewrite(queries[q]);
     var edgeR = edge.rewriteQuery(queries[q], vocab);

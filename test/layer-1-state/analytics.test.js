@@ -432,6 +432,24 @@ async function _topSearchTerms() {
 
   var limited = await analytics.topSearchTerms({ from: from, to: now, limit: 1 });
   check("topSearchTerms honors limit=1",        limited.length === 1 && limited[0].search_q === "boots");
+
+  // Case-insensitive aggregation — historical rows written before the
+  // storefront record site lowercased can carry mixed case; topSearchTerms
+  // GROUPs on lower(search_q) so "Hat", "HAT", and "hat" collapse into one
+  // lowercased row. This matches how the autocomplete "Popular searches"
+  // aggregate (which lowercases on write) already counts them.
+  var q2 = _makeQuery();
+  var analytics2 = bShop.analytics.create({ query: q2.query });
+  await analytics2.recordEvent({ event_type: "search_query", session_id: "c-a", search_q: "Hat", occurred_at: from + 1 * DAY });
+  await analytics2.recordEvent({ event_type: "search_query", session_id: "c-b", search_q: "HAT", occurred_at: from + 2 * DAY });
+  await analytics2.recordEvent({ event_type: "search_query", session_id: "c-c", search_q: "hat", occurred_at: from + 3 * DAY });
+  await analytics2.recordEvent({ event_type: "search_query", session_id: "c-d", search_q: "Glove", occurred_at: from + 4 * DAY });
+  var caseRows = await analytics2.topSearchTerms({ from: from, to: now, limit: 10 });
+  check("topSearchTerms folds mixed case into one row", caseRows.length === 2);
+  check("topSearchTerms case-folded winner is lowercased 'hat' with count 3",
+    caseRows[0].search_q === "hat" && caseRows[0].count === 3);
+  check("topSearchTerms case-folded runner-up is lowercased 'glove' with count 1",
+    caseRows[1].search_q === "glove" && caseRows[1].count === 1);
 }
 
 async function _topViewedProducts() {

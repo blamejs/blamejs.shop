@@ -1,10 +1,10 @@
 // Blog list + article-detail renderers. Composed off the same
 // minimal layout the policy pages use — read-once editorial content,
-// not a commerce surface. Body renders as plain text wrapped in
-// <p> tags (blamejs ships markdown rendering as `b.template.render`
-// but it's file-backed; inline-string body needs a separate path).
-// Operators who want markdown formatting compose `b.template`
-// elsewhere and pass the rendered HTML in.
+// not a commerce surface. The article body is authored in the Markdown
+// subset blogArticles.renderHtml documents (headings, lists, blockquote,
+// rule, inline code / bold / italic, https-or-rooted links) and rendered
+// to sanitized HTML here by a byte-for-byte port of that primitive's
+// renderer, so the edge-served post matches the lib's output exactly.
 import { renderTemplate, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, spliceRaw, absolutizeOgImage } from "./_lib.js";
 import { dirFor, alternateLinks } from "./chrome-i18n.js";
 import b from "../b.js";
@@ -138,19 +138,173 @@ function _isoDate(epochMs) {
   return new Date(epochMs).toISOString().slice(0, 10);
 }
 
-// Plain body text → HTML paragraphs. Splits on blank lines; escapes
-// each paragraph via b.template.escapeHtml; wraps in <p>. Markdown
-// is intentionally NOT interpreted at the edge — operators who want
-// markdown rendering compose `b.template` upstream and store the
-// rendered HTML, OR the body column carries pre-escaped HTML that
-// the storefront passes through.
-function _paragraphsFromPlainText(body) {
-  if (typeof body !== "string") return "";
-  return body.split(/\n\s*\n/).map(function (para) {
-    var trimmed = para.trim();
-    if (trimmed.length === 0) return "";
-    return "<p>" + b.template.escapeHtml(trimmed).replace(/\n/g, "<br>") + "</p>";
-  }).filter(Boolean).join("\n");
+// Markdown body → sanitized HTML. Byte-for-byte port of the renderer in
+// lib/blog-articles.js (#_renderMarkdown / #_renderInline) — the blog is
+// edge-served, so the public post page is painted HERE; this mirror keeps
+// the rendered HTML identical to what blogArticles.renderHtml produces so a
+// post reads the same regardless of which substrate served it (and so the
+// admin preview, which composes the lib primitive, matches the live page).
+//
+// XSS posture is the lib's: every operator-authored text run is HTML-escaped
+// via b.template.escapeHtml; every link URL passes b.safeUrl.parse (https
+// only) OR the `/`-rooted absolute-path allow-list; any URL that fails the
+// gate is dropped and the anchor text falls back to inert escaped text. Raw
+// HTML in the body is never passed through — any `<` lands as `&lt;`.
+var CONTROL_BYTE_LINE_RE = new RegExp("[\\x00-\\x1f\\x7f]");
+var ZERO_WIDTH_RE = new RegExp(
+  "[\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u2066-\\u2069\\uFEFF\\u061C]"
+);
+
+function _esc(s) {
+  return b.template.escapeHtml(s);
+}
+
+function _safeLinkUrl(url) {
+  if (typeof url !== "string" || !url.length || url.length > 2048) return null;
+  if (CONTROL_BYTE_LINE_RE.test(url) || ZERO_WIDTH_RE.test(url)) return null;
+  if (url.charCodeAt(0) === 47 /* "/" */) {
+    if (url.length > 1 && url.charCodeAt(1) === 47) return null;
+    if (url.indexOf("..") !== -1) return null;
+    return url;
+  }
+  // https-only absolute URL. The parse throws on anything else (other
+  // scheme, malformed) — treat a throw as "not a safe link". The result is
+  // assigned and returned after the try so the catch body holds no
+  // `return null` (which the edge-handler detector reserves for routing
+  // dispatch); the rendered output is identical to lib/blog-articles.js.
+  var safe = null;
+  try {
+    b.safeUrl.parse(url, { allowedProtocols: ["https:"] });
+    safe = url;
+  } catch (_e) {
+    safe = null;
+  }
+  return safe;
+}
+
+function _renderInline(line) {
+  var out = "";
+  var i = 0;
+  while (i < line.length) {
+    var ch = line.charAt(i);
+    if (ch === "`") {
+      var end = line.indexOf("`", i + 1);
+      if (end !== -1) {
+        out += "<code>" + _esc(line.slice(i + 1, end)) + "</code>";
+        i = end + 1;
+        continue;
+      }
+    }
+    if (ch === "[") {
+      var closeBracket = line.indexOf("]", i + 1);
+      if (closeBracket !== -1 && line.charAt(closeBracket + 1) === "(") {
+        var closeParen = line.indexOf(")", closeBracket + 2);
+        if (closeParen !== -1) {
+          var text = line.slice(i + 1, closeBracket);
+          var url  = line.slice(closeBracket + 2, closeParen);
+          var safe = _safeLinkUrl(url);
+          if (safe) {
+            out += '<a href="' + _esc(safe) + '">' + _renderInline(text) + "</a>";
+          } else {
+            out += _renderInline(text);
+          }
+          i = closeParen + 1;
+          continue;
+        }
+      }
+    }
+    if (ch === "*" && line.charAt(i + 1) === "*") {
+      var endBold = line.indexOf("**", i + 2);
+      if (endBold !== -1) {
+        out += "<strong>" + _renderInline(line.slice(i + 2, endBold)) + "</strong>";
+        i = endBold + 2;
+        continue;
+      }
+    }
+    if (ch === "*" || ch === "_") {
+      var endItalic = line.indexOf(ch, i + 1);
+      if (endItalic !== -1 && endItalic !== i + 1) {
+        out += "<em>" + _renderInline(line.slice(i + 1, endItalic)) + "</em>";
+        i = endItalic + 1;
+        continue;
+      }
+    }
+    out += _esc(ch);
+    i += 1;
+  }
+  return out;
+}
+
+function _renderMarkdown(body) {
+  var normalized = String(body).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  var lines = normalized.split("\n");
+  var out = [];
+  var i = 0;
+  while (i < lines.length) {
+    var line = lines[i];
+    if (line.trim() === "") { i += 1; continue; }
+    if (/^-{3,}\s*$/.test(line)) {
+      out.push("<hr />");
+      i += 1;
+      continue;
+    }
+    var hMatch = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (hMatch) {
+      var level = hMatch[1].length;
+      out.push("<h" + level + ">" + _renderInline(hMatch[2].trim()) + "</h" + level + ">");
+      i += 1;
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      var quoteLines = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        quoteLines.push(lines[i].replace(/^>\s?/, ""));
+        i += 1;
+      }
+      out.push("<blockquote><p>" + _renderInline(quoteLines.join(" ")) + "</p></blockquote>");
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      var ulItems = [];
+      while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
+        ulItems.push(lines[i].replace(/^[-*]\s+/, ""));
+        i += 1;
+      }
+      var ulHtml = ulItems.map(function (item) {
+        return "<li>" + _renderInline(item) + "</li>";
+      }).join("");
+      out.push("<ul>" + ulHtml + "</ul>");
+      continue;
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      var olItems = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+        olItems.push(lines[i].replace(/^\d+\.\s+/, ""));
+        i += 1;
+      }
+      var olHtml = olItems.map(function (item) {
+        return "<li>" + _renderInline(item) + "</li>";
+      }).join("");
+      out.push("<ol>" + olHtml + "</ol>");
+      continue;
+    }
+    var paraLines = [line];
+    i += 1;
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      !/^#{1,6}\s+/.test(lines[i]) &&
+      !/^[-*]\s+/.test(lines[i]) &&
+      !/^\d+\.\s+/.test(lines[i]) &&
+      !/^>\s?/.test(lines[i]) &&
+      !/^-{3,}\s*$/.test(lines[i])
+    ) {
+      paraLines.push(lines[i]);
+      i += 1;
+    }
+    out.push("<p>" + _renderInline(paraLines.join(" ")) + "</p>");
+  }
+  return out.join("\n");
 }
 
 var ARTICLE_CARD_TPL =
@@ -273,7 +427,7 @@ export function renderBlogArticle(opts) {
   // cleanest non-leaking source — surfaced in both the on-page byline
   // and the Article JSON-LD author Google reads.
   var byline   = shopName;
-  var bodyHtml = _paragraphsFromPlainText(article.body || "");
+  var bodyHtml = _renderMarkdown(article.body || "");
   // Splice the rendered body paragraphs literally so a `$`-bearing post
   // body can't trip `String.replace`'s dollar substitution. See `spliceRaw`.
   var articleHtml = spliceRaw(renderTemplate(ARTICLE_TPL, {

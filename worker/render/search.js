@@ -556,6 +556,13 @@ export function renderSearch(opts) {
   } else {
     var assetPrefix = typeof opts.assetPrefix === "string" ? opts.assetPrefix : "/assets/";
     var fmt = makeFormatPrice(opts.currencyContext);
+    // `?from=search&sq=<query>` marks the click as originating in a ranked
+    // result list. The PDP route reads it to log a click event against the
+    // active ranking weight set (the impression/click signals the admin
+    // search-metrics view aggregates); `sq` carries the query the list was
+    // ranked for, which recordSearchEvent requires. Works with JS off; no
+    // beacon. Mirrored byte-for-byte by lib/storefront.js#renderSearch.
+    var resultLinkSuffix = "?from=search&sq=" + encodeURIComponent(qTrim.slice(0, 200));
     var cards = products.map(function (p) {
       var priceStr = p.starting_price_minor != null
         ? fmt(p.starting_price_minor, p.starting_price_currency || "USD")
@@ -565,7 +572,7 @@ export function renderSearch(opts) {
       return _buildProductCard({
         title:     p.title,
         price:     priceStr,
-        slug:      p.slug,
+        slug:      p.slug + resultLinkSuffix,
         image_url: imageUrl,
         image_alt: imageAlt,
       });

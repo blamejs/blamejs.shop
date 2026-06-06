@@ -192,6 +192,13 @@ async function _runBridged() {
   await catalog.inventory.create("BOOT-LOW", { stock_on_hand: 1 });
   await catalog.inventory.setThreshold("BOOT-LOW", 5);
 
+  // An ACTIVE search-ranking weight set, so the /search impression sink has
+  // a weight set to attribute against (recordSearchEvent no-ops without one).
+  // The container reranks through this same primitive over the bridge.
+  var searchRanking = bShop.searchRanking.create({ query: mem.query });
+  await searchRanking.defineWeights({ slug: "boot-weights", name: "Boot weights", weights: { in_stock: 1 } });
+  await searchRanking.setActiveWeights("boot-weights");
+
   var bridge = await helpers.startD1Bridge({ query: mem.query, secret: BRIDGE_SECRET });
   var state = null;
   try {
@@ -259,6 +266,33 @@ async function _runBridged() {
       }));
     check("bridged boot: cart page carries the search-suggest island hook (data-suggest)",
       cart.body.indexOf("data-suggest=\"/search/suggestions\"") !== -1);
+
+    // 6c. Search-ranking impression intake. The /search handler reranks its
+    //     universe through searchRanking.applyToResults and then logs one
+    //     impression per rendered result list against the ACTIVE weight set
+    //     (seeded above). The event is a drop-silent, fire-and-forget write,
+    //     so poll the table rather than asserting synchronously off the
+    //     response. A regression that drops the impression call (the intake-
+    //     without-trigger gap) leaves the search_events table empty here
+    //     even though /search itself still 200s.
+    var searchPage = await helpers.httpRequest({
+      port: state.port, path: "/search?q=boot", jar: jar, headers: browserHeaders,
+    });
+    check("bridged boot: GET /search is 2xx (storefront search mounted)",
+      searchPage.status >= 200 && searchPage.status < 400);
+    check("bridged boot: search result links carry the ?from=search click marker",
+      searchPage.body.indexOf("?from=search") !== -1);
+    await helpers.waitUntil(function () {
+      var r = mem.db.prepare(
+        "SELECT COUNT(*) AS n FROM search_events WHERE event_type = 'impression' AND weights_slug = ?"
+      ).get("boot-weights");
+      return r && Number(r.n) >= 1;
+    }, { timeoutMs: 5000, label: "bridged boot: /search writes a search_events impression row" });
+    var impressionRows = mem.db.prepare(
+      "SELECT COUNT(*) AS n FROM search_events WHERE event_type = 'impression' AND weights_slug = ?"
+    ).get("boot-weights");
+    check("bridged boot: /search writes a search_events impression row through the bridge",
+      impressionRows && Number(impressionRows.n) >= 1);
 
     // 7. Internal-endpoint liveness, WORKER-SHAPED. The worker's
     //    service-binding POSTs carry no browser fingerprint (no

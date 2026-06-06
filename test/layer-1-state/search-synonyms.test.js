@@ -269,6 +269,36 @@ async function _rewriteEndToEnd() {
   check("rewrite: stemming -ing", r5.canonical.split(" ").indexOf("walk") !== -1);
   check("rewrite: stemming -es",  r5.canonical.split(" ").indexOf("box")  !== -1);
 
+  // Sibilant `-es` plurals strip the full suffix (boxes -> box above;
+  // dishes -> dish, churches -> church), but vowel-final `-es` plurals
+  // keep the trailing `e` the singular carries — stripping `-es` there
+  // over-strips (tees -> te, shoes -> sho, does -> do). The stemmer must
+  // take the bare `-s` for those so plural queries still match their
+  // singular synonym terms.
+  var r5b = await ctx.ss.rewrite("tees shoes does");
+  var r5bToks = r5b.canonical.split(" ");
+  check("rewrite: stemming vowel+es tees -> tee",  r5bToks.indexOf("tee")  !== -1);
+  check("rewrite: stemming vowel+es shoes -> shoe", r5bToks.indexOf("shoe") !== -1);
+  check("rewrite: stemming vowel+es does -> doe",  r5bToks.indexOf("doe")  !== -1);
+  check("rewrite: vowel+es not over-stripped",
+    r5bToks.indexOf("te") === -1 && r5bToks.indexOf("sho") === -1 && r5bToks.indexOf("do") === -1);
+
+  var r5c = await ctx.ss.rewrite("dishes churches glasses");
+  var r5cToks = r5c.canonical.split(" ");
+  check("rewrite: sibilant -es dishes -> dish",     r5cToks.indexOf("dish")   !== -1);
+  check("rewrite: sibilant -es churches -> church", r5cToks.indexOf("church") !== -1);
+  check("rewrite: sibilant -es glasses -> glass",   r5cToks.indexOf("glass")  !== -1);
+
+  // Plural query reaches its singular synonym group. A "tee"/"t-shirt"
+  // group must still expand when the shopper typed the plural "tees"
+  // (regression: tees -> te missed the group entirely).
+  await ctx.ss.addGroup({
+    slug: "tee-plural", kind: "bidirectional", terms: ["tee", "t-shirt"],
+  });
+  var r5d = await ctx.ss.rewrite("tees");
+  check("rewrite: plural query expands via singular synonym group",
+    r5d.canonical === "tee" && r5d.expansions.indexOf("t-shirt") !== -1);
+
   // include_corrections=false suppresses the diff
   var r6 = await ctx.ss.rewrite("the widgt", { include_corrections: false });
   check("rewrite: include_corrections=false yields empty diff", r6.corrections.length === 0);
