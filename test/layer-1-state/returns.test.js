@@ -164,6 +164,43 @@ async function _happyPath() {
   check("markReceived honors caller-supplied ts", stamped.received_at === 1700000000000);
 }
 
+// Two concurrent refund() calls on the same received RMA must NOT both
+// succeed — the atomic `WHERE status = 'received'` claim serializes them so
+// exactly one transitions to refunded and the other is refused. Before the
+// claim the read-then-write let both pass (a double provider-refund on the
+// admin flow, which calls payment.refund per winner). releaseRefundClaim
+// reverts the winner's claim so a provider-failure retry can run.
+async function _concurrentRefundClaim() {
+  var q = _makeQuery();
+  var seed = await _seedOrder(q);
+  var ret  = bShop.returns.create({ query: q });
+
+  var r = await ret.request(_requestInput(seed));
+  await ret.approve(r.id, { refund_amount_minor: 4999 });
+  await ret.markReceived(r.id);
+
+  // Genuinely concurrent: both start before either resolves.
+  var results = await Promise.allSettled([ ret.refund(r.id, {}), ret.refund(r.id, {}) ]);
+  var won  = results.filter(function (x) { return x.status === "fulfilled"; }).length;
+  var lost = results.filter(function (x) { return x.status === "rejected"; }).length;
+  check("concurrent refund: exactly one wins",   won === 1);
+  check("concurrent refund: the other is refused", lost === 1);
+  var loser = results.find(function (x) { return x.status === "rejected"; });
+  check("loser is RMA_TRANSITION_REFUSED",       loser && loser.reason && loser.reason.code === "RMA_TRANSITION_REFUSED");
+  check("RMA ends refunded exactly once",        (await ret.get(r.id)).status === "refunded");
+
+  // releaseRefundClaim reverts refunded → received (provider-failure retry).
+  var r2 = await ret.request(_requestInput(seed));
+  await ret.approve(r2.id, { refund_amount_minor: 1000 });
+  await ret.markReceived(r2.id);
+  await ret.refund(r2.id, {});                       // claim it (refunded)
+  var released = await ret.releaseRefundClaim(r2.id);
+  check("releaseRefundClaim reverts the claim",  released === true && (await ret.get(r2.id)).status === "received");
+  // A second release (now in 'received', not 'refunded') is a no-op.
+  check("double release is a no-op",             (await ret.releaseRefundClaim(r2.id)) === false);
+  check("released claim is re-refundable",       (await ret.refund(r2.id, {})).status === "refunded");
+}
+
 async function _rejectPath() {
   var q = _makeQuery();
   var seed = await _seedOrder(q);
@@ -383,6 +420,7 @@ async function _validation() {
 async function run() {
   await _request();
   await _happyPath();
+  await _concurrentRefundClaim();
   await _rejectPath();
   await _illegalTransitions();
   await _byCode();

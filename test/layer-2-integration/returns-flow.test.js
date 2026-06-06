@@ -54,7 +54,7 @@ function _makeQuery() {
 
 // Seed a paid order with one line for `customerId`. Returns the order id
 // and the order_line id (the return form keys checkboxes by line id).
-async function _seedOrder(query, customerId, variantId, sku) {
+async function _seedOrder(query, customerId, variantId, sku, status) {
   var now = Date.now();
   var cartId = b.uuid.v7(); var orderId = b.uuid.v7(); var lineId = b.uuid.v7();
   await query(
@@ -65,8 +65,8 @@ async function _seedOrder(query, customerId, variantId, sku) {
   await query(
     "INSERT INTO orders (id, cart_id, customer_id, session_id, status, currency, subtotal_minor, " +
     "discount_minor, tax_minor, shipping_minor, grand_total_minor, payment_intent_id, ship_to_json, created_at, updated_at) " +
-    "VALUES (?1, ?2, ?3, ?4, 'paid', 'USD', 2999, 0, 0, 0, 2999, NULL, '{}', ?5, ?5)",
-    [orderId, cartId, customerId, b.uuid.v7(), now],
+    "VALUES (?1, ?2, ?3, ?4, ?6, 'USD', 2999, 0, 0, 0, 2999, NULL, '{}', ?5, ?5)",
+    [orderId, cartId, customerId, b.uuid.v7(), now, status || "paid"],
   );
   await query(
     "INSERT INTO order_lines (id, order_id, variant_id, sku, qty, unit_amount_minor, unit_currency, line_total_minor) " +
@@ -117,6 +117,9 @@ async function _run() {
   var stranger = b.uuid.v7();
   var seeded = await _seedOrder(query, buyer, variant.id, variant.sku);
   var strangerOrder = await _seedOrder(query, stranger, variant.id, variant.sku);
+  // An already-refunded order the buyer owns — a return on it would enable a
+  // second provider refund, so the route must refuse both the form and POST.
+  var refundedOrder = await _seedOrder(query, buyer, variant.id, variant.sku, "refunded");
 
   var handle = await _bootApp({ catalog: catalog, cart: cart, order: order, returns: returns, customers: customers });
 
@@ -172,6 +175,24 @@ async function _run() {
     var list = await helpers.httpRequest({ port: handle.port, path: "/account/returns", jar: jar });
     check("list shows the RMA code",            list.body.indexOf(rmas.rows[0].rma_code) !== -1);
     check("list shows pending status",          list.body.indexOf("return-status--pending") !== -1);
+
+    // Eligibility gate: a return on the buyer's OWN refunded order is refused.
+    // The form refuses (400 + notice) and the POST refuses (400 + no RMA
+    // created) — opening an RMA on a refunded order would enable a second
+    // provider refund downstream.
+    var refForm = await helpers.httpRequest({ port: handle.port, path: "/account/orders/" + refundedOrder.orderId + "/return", jar: jar });
+    check("refunded-order return form then 400", refForm.status === 400);
+    check("refunded-order form shows ineligible notice", refForm.body.indexOf("eligible for a return") !== -1);
+
+    var refReq = {};
+    refReq["return_" + refundedOrder.lineId] = "1";
+    refReq["qty_" + refundedOrder.lineId] = "1";
+    refReq.reason = "defective";
+    var refundedPost = await helpers.httpRequest({ port: handle.port, path: "/account/orders/" + refundedOrder.orderId + "/return", method: "POST", jar: jar, form: refReq });
+    check("refunded-order return POST then 400", refundedPost.status === 400);
+    check("refunded-order POST shows ineligible notice", refundedPost.body.indexOf("eligible for a return") !== -1);
+    var stillOne = await returns.listForCustomer(buyer, { limit: 10 });
+    check("no RMA created for the refunded order", stillOne.rows.length === 1);
   } finally {
     await _teardown(handle);
   }
