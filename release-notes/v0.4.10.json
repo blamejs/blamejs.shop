@@ -1,0 +1,27 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.10",
+  "date": "2026-06-05",
+  "headline": "The Promo banners console is back in the admin nav",
+  "summary": "The promo-banners management screen introduced in 0.4.4 was fully built and mounted, but the admin nav never showed its link: the nav filters items against an availability map, and the map was missing the one key the Promo banners item checks, so the link was filtered off every page and the screen was reachable only by typing /admin/promo-banners. The key is in the map now, and a contract test pins every nav item's gate key to the map so a future screen can't ship undiscoverable the same way.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Promo banners nav link renders",
+          "body": "The admin nav gates each item on an availability map keyed by the deps the console was mounted with. The Promo banners item checked a key the map never defined, which reads as permanently unavailable — so the link was hidden on every authenticated admin page even though the screen itself mounted and worked. Operators see the link again wherever the promo-banners primitive is wired."
+        }
+      ]
+    },
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Nav gate keys are contract-tested",
+          "body": "A test now parses every nav item's gate key against the availability map and fails the suite on any mismatch, in either direction of drift — a new screen whose key is forgotten can't ship with a permanently hidden link again."
+        }
+      ]
+    }
+  ]
+}
