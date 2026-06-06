@@ -18,7 +18,7 @@
         },
         {
           "title": "Low-stock alerts flow end to end",
-          "body": "When a checkout decrement crosses a SKU's low-stock threshold, the inventory lock posts the alert to the container — but the container had no `/_/low-stock-alert` endpoint, so the alert was dropped: no `inventory_alerts` row, no `inventory.low_stock` webhook, and a `/admin/inventory/alerts` screen that never mounted. The endpoint now exists (secret-gated, like the other internal endpoints), writes the alert row, fans out the webhook through the shared dispatcher, emits the warning log line, and the admin alert-history screen is reachable."
+          "body": "Crossing a SKU's low-stock threshold produced no alert, for two independent reasons. The catalog's stock-mutating operations — the checkout hold, a release, a decrement, an admin restock — expose an observer hook for exactly this, and the server never connected it, so the threshold check simply never ran. And the worker-side path (the inventory lock posting the alert to the container) had no `/_/low-stock-alert` endpoint to receive it, so even a directly-posted alert was dropped: no `inventory_alerts` row, no `inventory.low_stock` webhook, and a `/admin/inventory/alerts` screen that never mounted. Both halves are wired now: every stock mutation that leaves a SKU under its configured threshold writes the alert row, fans out the webhook through the shared dispatcher, and emits the warning log line; the intake endpoint exists (secret-gated, like the other internal endpoints); and the admin alert-history screen is reachable."
         },
         {
           "title": "Stray editor artifact removed from release-notes/",
@@ -31,7 +31,7 @@
       "items": [
         {
           "title": "Boot test proves the full composition on the wire",
-          "body": "The integration boot test now boots `server.js` twice: once bare (the container health-check contract, unchanged) and once against an in-memory stand-in for the worker's SQL bridge, which mounts the full catalog + cart + storefront + admin composition exactly as a deployment runs it. The bridged pass adds to cart through the production middleware stack and asserts the discount-code entry renders, the worker-shaped scheduled tick reaches its handler, and a low-stock alert round-trips to a persisted row. A feature gated on a dependency the server forgets to hand over now fails this gate instead of shipping invisible — the failure mode behind all three fixes above."
+          "body": "The integration boot test now boots `server.js` twice: once bare (the container health-check contract, unchanged) and once against an in-memory stand-in for the worker's SQL bridge, which mounts the full catalog + cart + storefront + admin composition exactly as a deployment runs it. The bridged pass adds to cart through the production middleware stack, applies a discount code end to end (the entry renders, the code resolves, the applied chip persists), proves the worker-shaped scheduled tick reaches its handler, and drives a real stock mutation — an admin restock on a SKU under its threshold — into a persisted low-stock alert row without ever touching the intake endpoint directly. A feature gated on a dependency the server forgets to hand over now fails this gate instead of shipping invisible — the failure mode behind all three fixes above."
         }
       ]
     }

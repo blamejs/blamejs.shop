@@ -181,10 +181,21 @@ async function _runBridged() {
     unlock_code: "BOOTCODE10",
   });
 
+  // A second SKU sitting under its low-stock threshold — the trigger
+  // check below mutates ITS stock through the admin surface and expects
+  // the catalog's stock observer to fire the alert, with no direct POST
+  // to the intake endpoint anywhere near it.
+  var ADMIN_KEY = "boot-test-admin-key-01";
+  var lowProduct = await catalog.products.create({ slug: "boot-low-widget", title: "Boot Low Widget", status: "active" });
+  var lowVariant = await catalog.variants.create(lowProduct.id, { sku: "BOOT-LOW", title: "Default" });
+  await catalog.prices.set(lowVariant.id, { currency: "USD", amount_minor: 900 });
+  await catalog.inventory.create("BOOT-LOW", { stock_on_hand: 1 });
+  await catalog.inventory.setThreshold("BOOT-LOW", 5);
+
   var bridge = await helpers.startD1Bridge({ query: mem.query, secret: BRIDGE_SECRET });
   var state = null;
   try {
-    state = await _boot({ D1_BRIDGE_URL: bridge.url, D1_BRIDGE_SECRET: BRIDGE_SECRET }, "bridged");
+    state = await _boot({ D1_BRIDGE_URL: bridge.url, D1_BRIDGE_SECRET: BRIDGE_SECRET, ADMIN_API_KEY: ADMIN_KEY }, "bridged");
 
     // 5. The bridge-gated composition mounts: /cart is a storefront page,
     //    not the bare-mode JSON identity ping / 404.
@@ -253,13 +264,37 @@ async function _runBridged() {
       { "content-type": "application/json; charset=utf-8", "x-d1-bridge-secret": BRIDGE_SECRET },
       JSON.stringify({ sku: "BOOT-1", available: 1, threshold: 5 }));
     check("bridged boot: /_/low-stock-alert fires (2xx ok:true)", alert.status === 200 && /"ok":true/.test(alert.body) && /"enabled":true/.test(alert.body));
-    var alertRows = mem.db.prepare("SELECT COUNT(*) AS n FROM inventory_alerts").get();
+    var alertRows = mem.db.prepare("SELECT COUNT(*) AS n FROM inventory_alerts WHERE sku = ?").get("BOOT-1");
     check("bridged boot: inventory_alerts row persisted through the bridge", alertRows && Number(alertRows.n) === 1);
 
     var badShape = await _rawPost(state.port, "/_/low-stock-alert",
       { "content-type": "application/json; charset=utf-8", "x-d1-bridge-secret": BRIDGE_SECRET },
       JSON.stringify({ sku: "BOOT-1", available: -2, threshold: 5 }));
     check("bridged boot: malformed low-stock body is 400", badShape.status === 400);
+
+    // 9. The low-stock TRIGGER, end to end. An admin restock through the
+    //    wire mutates stock on a SKU sitting under its threshold
+    //    (1 → 2, threshold 5), and the catalog's stock observer drives
+    //    the alerts engine into a persisted row — no direct POST to the
+    //    intake endpoint anywhere in this step. This is the check that
+    //    fails when the observer wiring between catalog.create and the
+    //    alerts instance is dropped: every shipped stock path (checkout
+    //    hold, release, decrement, restock) reports through the same
+    //    observer, and restock is the one reachable over plain HTTP
+    //    here. Bearer-token JSON call, browser-shaped enough for
+    //    bot-guard (UA + accept-language).
+    var restock = await _rawPost(state.port, "/admin/inventory/BOOT-LOW/restock",
+      {
+        "content-type":    "application/json; charset=utf-8",
+        "authorization":   "Bearer " + ADMIN_KEY,
+        "user-agent":      "Mozilla/5.0 (compatible; blamejs-shop-boot-test)",
+        "accept-language": "en-US",
+      },
+      JSON.stringify({ qty: 1 }));
+    check("bridged boot: admin restock accepted (2xx)", restock.status >= 200 && restock.status < 400);
+    var triggered = mem.db.prepare("SELECT COUNT(*) AS n FROM inventory_alerts WHERE sku = ?").get("BOOT-LOW");
+    check("bridged boot: a stock mutation fires the low-stock alert through the catalog observer",
+      triggered && Number(triggered.n) === 1);
   } finally {
     if (state) _cleanup(state);
     await bridge.close();

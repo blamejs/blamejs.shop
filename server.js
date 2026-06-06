@@ -459,6 +459,16 @@ async function main() {
   // the framework's cluster-mode boot picks it up automatically.
   var catalog = null;
   var cart    = null;
+  // Stock observer slot — the inventory module fires it after every
+  // stock-mutating op (hold / release / decrement / restock). It points
+  // at the low-stock alerts engine, which composes the shared webhooks
+  // dispatcher built inside the routes composition below — so the
+  // catalog construction takes a late-bound indirection and the routes
+  // block assigns the real handler once the alerts instance exists.
+  // Null until then (and on any boot where alerts aren't composed); the
+  // inventory module wraps the call drop-silent, so an alert-side
+  // failure can never roll back the stock op that triggered it.
+  var lowStockObserver = null;
   // Operator-readable error log — captures server-side 5xx-class
   // failure messages into D1 (lib/error-log.js) so they're reachable
   // from the admin console + the admin JSON API, not just the
@@ -502,7 +512,16 @@ async function main() {
     // namespace doesn't expose the other. Stable across container
     // restarts; rotating D1_BRIDGE_SECRET also rotates cursors.
     var cursorSecret = b.crypto.namespaceHash("catalog-cursor", process.env.D1_BRIDGE_SECRET);
-    catalog = bShop.catalog.create({ cursorSecret: cursorSecret });
+    catalog = bShop.catalog.create({
+      cursorSecret: cursorSecret,
+      // The trigger half of the low-stock alert chain: every stock
+      // mutation reports its SKU through the observer slot above, and
+      // the alerts engine decides whether available crossed the
+      // configured threshold (no threshold / still above → no-op).
+      onStockChange: function (sku) {
+        return lowStockObserver ? lowStockObserver(sku) : null;
+      },
+    });
     cart    = bShop.cart.create({ catalog: catalog });
   }
 
@@ -1220,6 +1239,16 @@ async function main() {
       var inventoryAlerts = (catalog && cart)
         ? bShop.inventoryAlerts.create({ webhooks: webhooks })
         : null;
+      // Connect the catalog's stock observer (late-bound at catalog
+      // construction) to the alerts engine: a checkout hold, a release,
+      // a decrement, or an admin restock that leaves a SKU under its
+      // threshold now writes the inventory_alerts row, fans out
+      // inventory.low_stock, and emits the warn line — the same
+      // checkAndFire the /_/low-stock-alert intake serves for the
+      // worker-side path.
+      if (inventoryAlerts) {
+        lowStockObserver = function (sku) { return inventoryAlerts.checkAndFire(sku); };
+      }
 
       // Order — the FSM-driven post-checkout record. ONE shared instance
       // drives the storefront account/order pages, the storefront checkout
