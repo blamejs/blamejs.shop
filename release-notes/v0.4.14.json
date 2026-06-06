@@ -1,0 +1,39 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.14",
+  "date": "2026-06-06",
+  "headline": "Gift wrap charges exactly the fee it displays, the per-order wrap cap is enforced, low-stock events reach subscribed webhooks, and the admin API accepts curl as documented",
+  "summary": "Three storefront fixes and two admin-surface fixes. Gift wrap now charges the configured wrap fee rather than the wrap variant's catalog price, and a wrap's per-order cap is enforced at the cart with a clear message. The low-stock inventory event is now a registered webhook event, so endpoints subscribed to specific events receive it. The account profile explains plainly why an email address cannot be changed. And the admin JSON API now answers automation clients such as curl the way the documentation has always shown, with the bearer key as the deciding check.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Gift wrap charges the configured fee, not the wrap variant's catalog price",
+          "body": "The gift-wrap selector displayed the wrap fee configured in the admin console, but checkout added the wrap to the order at the underlying catalog variant's price — when the two diverged, the customer was silently charged a different amount than the page showed. The cart now snapshots the configured fee onto the wrap line, so the displayed fee and the charged fee always agree. A regression test keeps the two amounts pinned together with deliberately different fee and catalog values."
+        },
+        {
+          "title": "A gift wrap's per-order cap is enforced at the cart",
+          "body": "A wrap option's maximum-per-order value was validated, stored, and shown in the admin console but never enforced — any quantity could be applied. Applying a wrap beyond its cap is now rejected with a 422 and the cart page re-renders with a readable message; an application at the cap continues to succeed and the cart is left unchanged on rejection."
+        },
+        {
+          "title": "The low-stock event is a registered webhook event",
+          "body": "Inventory low-stock alerts emitted `inventory.low_stock`, but the event was missing from the webhook event registry — endpoints subscribed to specific events never received it, and the admin endpoint form never offered it. The event is now registered, appears in the endpoint form's event checklist, and is delivered to endpoints that subscribe to it. Wildcard subscriptions, which already received it, are unchanged."
+        },
+        {
+          "title": "Documented curl commands against the admin API work as written",
+          "body": "Every admin endpoint is bearer-key-gated JSON, and the documentation drives it with plain curl — but the bot guard's user-agent deny list refused automation clients on `/admin` before the key was ever checked, so the documented commands answered 403. The admin surface now runs the bot guard in tag mode: automation is recorded in the audit trail (`system.botguard.tag`) instead of refused, and the timing-safe bearer key remains the deciding check. A curl call with a valid key reaches the endpoint; one without a key is refused by the key check with a 401."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "The account profile explains why the email address cannot be changed",
+          "body": "The store keeps only a one-way hash of each account's email address, so an address can never be read back or rewritten — an email change is not possible by design. The profile screen now says this plainly where an email-change control would normally sit, and points to the alternatives: create a new account under the new address, or contact the store to reconcile order history."
+        }
+      ]
+    }
+  ]
+}

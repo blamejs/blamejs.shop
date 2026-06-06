@@ -106,11 +106,24 @@ async function _run() {
   await catalog.prices.set(variant.id, { currency: "USD", amount_minor: 4000 });
   await catalog.inventory.create("MUG-1", { stock_on_hand: 100 });
 
+  // The wrap is a real catalog variant (so inventory + cost flow through the
+  // normal channels), but its catalog PRICE is deliberately DIFFERENT from the
+  // operator-configured wrap fee. The authoritative wrap fee is gift_wraps
+  // .fee_minor — what the admin sets and the cart selector displays — so the
+  // charge must use fee_minor, NOT this catalog price. Diverging the two here
+  // is what proves the display fee and the charged fee can't silently drift.
   var wrapProduct = await catalog.products.create({ slug: "giftwrap", title: "Gift Wrap", description: "w", status: "active" });
   var wrapVariant = await catalog.variants.create(wrapProduct.id, { sku: "WRAP-1" });
-  await catalog.prices.set(wrapVariant.id, { currency: "USD", amount_minor: 500 });
+  await catalog.prices.set(wrapVariant.id, { currency: "USD", amount_minor: 999 }); // catalog price — intentionally NOT the wrap fee
   await catalog.inventory.create("WRAP-1", { stock_on_hand: 1000 });
-  var WRAP_FEE = 500;
+  var WRAP_FEE = 500; // the operator-configured, authoritative gift_wraps.fee_minor
+
+  // A second wrap variant used to exercise gift_wraps.max_per_order — the
+  // operator caps it at 2 per order below.
+  var cappedVariant = await catalog.variants.create(wrapProduct.id, { sku: "WRAP-CAP" });
+  await catalog.prices.set(cappedVariant.id, { currency: "USD", amount_minor: 300 });
+  await catalog.inventory.create("WRAP-CAP", { stock_on_hand: 1000 });
+  var CAP = 2;
 
   // Zero tax + zero shipping so the money assertion is exact + obvious.
   var checkout = bShop.checkout.create({
@@ -166,6 +179,15 @@ async function _run() {
     var wraps = await giftOptions.listWraps({});
     check("wrap persisted", wraps.length === 1 && wraps[0].wrap_sku === "WRAP-1" && wraps[0].fee_minor === WRAP_FEE);
 
+    // A second wrap carrying a max_per_order cap (for the enforcement section).
+    var defCapped = await helpers.httpRequest({
+      port: port, path: "/admin/gift-wraps", method: "POST", jar: adminJar,
+      form: { wrap_sku: "WRAP-CAP", title: "Capped wrap", fee_minor: "300", max_per_order: String(CAP), active: "1" },
+    });
+    check("define capped wrap -> 303 ?saved=1", defCapped.status === 303 && (defCapped.headers["location"] || "").indexOf("?saved=1") !== -1);
+    var cappedRow = await giftOptions.getWrap("WRAP-CAP");
+    check("capped wrap stores max_per_order", cappedRow && cappedRow.max_per_order === CAP);
+
     var wrapList = await helpers.httpRequest({ port: port, path: "/admin/gift-wraps", jar: adminJar });
     check("admin wrap list -> 200", wrapList.status === 200);
     check("admin wrap list shows the wrap", wrapList.body.indexOf("Premium wrap") !== -1);
@@ -183,20 +205,28 @@ async function _run() {
     var add = await helpers.httpRequest({ port: port, path: "/cart/lines", method: "POST", jar: buyerJar, form: { variant_id: variant.id, qty: "1" } });
     check("add item -> 303", add.status === 303);
 
-    // Cart page offers the gift wrap selector.
+    // Cart page offers the gift wrap selector. The selector DISPLAYS the
+    // authoritative wrap fee (gift_wraps.fee_minor → "$5.00"), and never the
+    // diverging catalog price ("$9.99"). This is the display half of the
+    // display==charge invariant the money guard below proves end to end.
     var cartPage = await helpers.httpRequest({ port: port, path: "/cart", jar: buyerJar });
     check("cart -> 200", cartPage.status === 200);
     check("cart offers the gift wrap", cartPage.body.indexOf("Premium wrap") !== -1);
     check("cart gift form posts to /cart/gift", cartPage.body.indexOf("action=\"/cart/gift\"") !== -1);
+    check("cart selector displays the configured wrap fee ($5.00)", cartPage.body.indexOf("$5.00") !== -1);
+    check("cart selector does NOT display the catalog price ($9.99)", cartPage.body.indexOf("$9.99") === -1);
 
     // Select the wrap — it becomes a real cart LINE.
     var pickWrap = await helpers.httpRequest({ port: port, path: "/cart/gift", method: "POST", jar: buyerJar, form: { wrap_sku: "WRAP-1" } });
     check("select wrap -> 303", pickWrap.status === 303);
 
     // The cart now has TWO lines and the subtotal includes the wrap fee. The
-    // cart is keyed by session; the cart page render proves the line landed.
+    // cart is keyed by session; the cart page render proves the line landed at
+    // the AUTHORITATIVE fee — the wrap line shows "$5.00" (fee_minor), not the
+    // "$9.99" catalog price, so the displayed and charged figures can't drift.
     var cartAfter = await helpers.httpRequest({ port: port, path: "/cart", jar: buyerJar });
     check("cart shows the wrap line (WRAP-1)", cartAfter.body.indexOf("WRAP-1") !== -1);
+    check("wrap line priced at the configured fee, not the catalog price", cartAfter.body.indexOf("$9.99") === -1);
 
     // ---- confirm the order through the payment stub -----------------
     var confirmRes = await helpers.httpRequest({
@@ -215,14 +245,22 @@ async function _run() {
 
     var placed = await order.get(orderId);
     // THE MONEY-PRECISION GUARD: the order subtotal/grand total INCLUDE the
-    // wrap fee, and the amount the payment stub was asked to charge EQUALS the
-    // grand total (integer minor units) — proving the fee is in the quote and
-    // charged, never dropped or post-commit.
-    var EXPECTED_GRAND = 4000 + WRAP_FEE; // item + wrap, zero tax/shipping
-    check("order subtotal includes the wrap fee", placed.subtotal_minor === EXPECTED_GRAND);
-    check("order grand total includes the wrap fee", placed.grand_total_minor === EXPECTED_GRAND);
+    // wrap fee at its AUTHORITATIVE value (gift_wraps.fee_minor = 500), and the
+    // amount the payment stub was asked to charge EQUALS that grand total
+    // (integer minor units) — proving the fee is in the quote, charged, never
+    // dropped or post-commit, AND read from fee_minor rather than the diverging
+    // $9.99 catalog price. A regression to the catalog price would make the
+    // grand total 4999, not 4500, and every assertion below would fail.
+    var EXPECTED_GRAND = 4000 + WRAP_FEE; // item + wrap fee, zero tax/shipping
+    check("order subtotal includes the configured wrap fee (not the catalog price)", placed.subtotal_minor === EXPECTED_GRAND);
+    check("order grand total includes the configured wrap fee", placed.grand_total_minor === EXPECTED_GRAND);
     check("charged amount == grand total incl wrap fee (integer minor)",
       placed.payment_intent_id && _chargeByPi[placed.payment_intent_id] === EXPECTED_GRAND);
+    // Displayed fee == charged fee: the cart selector showed "$5.00" and the
+    // charge carried exactly WRAP_FEE on top of the $40 item — the two halves
+    // of the invariant meet here.
+    check("displayed wrap fee equals the charged wrap fee",
+      placed.payment_intent_id && (_chargeByPi[placed.payment_intent_id] - 4000) === WRAP_FEE);
 
     // ---- gift options round-trip on the placed order ----------------
     var gift = await giftOptions.getForOrder(orderId);
@@ -271,6 +309,47 @@ async function _run() {
     try { await giftOptions.setForOrder({ order_id: orderId, gift_message: "badbyte" }); }
     catch (e) { ctrlRefused = e instanceof TypeError; }
     check("control-byte gift message refused (TypeError)", ctrlRefused);
+
+    // ---- max_per_order enforced at /cart/gift -----------------------
+    // The capped wrap allows at most CAP (2) per order. A fresh cart with one
+    // item exercises both the at-limit accept and the over-limit reject. Cart
+    // lines are read back through the cart primitive (resolving the session via
+    // the jar's shop_sid cookie) so the assertions see the persisted qty.
+    var capBuyer = b.uuid.v7();
+    var capJar = helpers.cookieJar();
+    capJar.capture({ "set-cookie": [helpers.authCookie(b, capBuyer)] });
+    async function _capLines() {
+      var sidVal = capJar.get("shop_sid");
+      var cRow = sidVal ? await cart.bySession(sidVal) : null;
+      return cRow ? await cart.listLines(cRow.id) : [];
+    }
+    await helpers.httpRequest({ port: port, path: "/cart", jar: capJar }); // prime CSRF + session
+    await helpers.httpRequest({ port: port, path: "/cart/lines", method: "POST", jar: capJar, form: { variant_id: variant.id, qty: "1" } });
+
+    // At the limit (qty == CAP): accepted, the wrap line lands at qty CAP.
+    var atLimit = await helpers.httpRequest({
+      port: port, path: "/cart/gift", method: "POST", jar: capJar,
+      form: { wrap_sku: "WRAP-CAP", qty: String(CAP) },
+    });
+    check("at-limit wrap apply -> 303", atLimit.status === 303);
+    var capCart = await _capLines();
+    check("at-limit wrap line present at qty CAP",
+      capCart.some(function (l) { return l.sku === "WRAP-CAP" && l.qty === CAP; }));
+
+    // Over the limit (qty == CAP+1): rejected with a 422, the cart unchanged
+    // (the wrap line stays at the at-limit qty, never bumped to CAP+1), and a
+    // customer-readable error banner rendered into the gift block.
+    var overLimit = await helpers.httpRequest({
+      port: port, path: "/cart/gift", method: "POST", jar: capJar,
+      form: { wrap_sku: "WRAP-CAP", qty: String(CAP + 1) },
+    });
+    check("over-limit wrap apply -> 422", overLimit.status === 422);
+    check("over-limit response renders a readable cap error",
+      overLimit.body.indexOf("at most " + CAP) !== -1 && overLimit.body.indexOf("Capped wrap") !== -1);
+    check("over-limit response leaks no raw error", _noLeak(overLimit.body));
+    var capCartAfter = await _capLines();
+    check("over-limit left the cart unchanged (wrap still at CAP, not CAP+1)",
+      capCartAfter.some(function (l) { return l.sku === "WRAP-CAP" && l.qty === CAP; }));
   } finally {
     try { await app.shutdown(); } catch (_e) { /* best-effort */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* best-effort */ }

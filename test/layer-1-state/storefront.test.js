@@ -1421,6 +1421,7 @@ async function _profilePage() {
   check("profile posts to /account/profile",       html.indexOf("action=\"/account/profile\"") !== -1);
   check("profile email field is disabled",          html.indexOf("disabled") !== -1);
   check("profile explains hash-only email",         html.indexOf("never stored in readable form") !== -1);
+  check("profile tells the user what to do instead", html.indexOf("create a new account") !== -1 && html.indexOf("contact support") !== -1);
   check("profile success notice via role=status",   storefront.renderProfile({ customer: { display_name: "x" }, success: "Profile updated.", shop_name: "Acme" }).indexOf("role=\"status\"") !== -1);
 
   // XSS: a display name with a script tag is escaped into the value attr.
