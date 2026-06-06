@@ -125,10 +125,16 @@ node -e "
   reaches D1 through a Worker service binding. The bridge is gated by
   a shared-secret header (`X-D1-Bridge-Secret`) so the route only
   accepts SQL from the bound container even if the binding is
-  accidentally exposed. Generate ≥ 32 bytes of OS randomness and set
-  the value identically on the Worker (`wrangler secret put
-  D1_BRIDGE_SECRET`) and the container env. Rotate quarterly or after
-  any Worker-credential compromise.
+  accidentally exposed. The same secret gates the container's internal
+  scheduled/event endpoints (`/_/cart-recovery-tick`,
+  `/_/stock-alert-sweep`, `/_/low-stock-alert`, and the other `/_/`
+  ticks): those paths skip the bot guard's browser-fingerprint
+  heuristics — the Worker's machine-to-machine calls carry no browser
+  headers — so the constant-time secret check is the deciding gate,
+  and an unauthenticated caller gets a 401. Generate ≥ 32 bytes of OS
+  randomness and set the value identically on the Worker (`wrangler
+  secret put D1_BRIDGE_SECRET`) and the container env. Rotate
+  quarterly or after any Worker-credential compromise.
 - **Referrer-Policy is load-bearing for CSRF.** The app sends
   `Referrer-Policy: same-origin` on both the edge and the container.
   Browsers serialize the `Origin` header as `null` on same-origin

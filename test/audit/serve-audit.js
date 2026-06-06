@@ -49,76 +49,40 @@ if (!process.env.SHOP_PUBLIC_ORIGINS) {
 var nodeFs   = require("node:fs");
 var nodeOs   = require("node:os");
 var nodePath = require("node:path");
-var { DatabaseSync } = require("node:sqlite");
 
+var helpers = require("../helpers");
 var bShop = require("../../lib");
 var b     = bShop.framework;
 
 var PORT       = _AUDIT_PORT;
 var ADMIN_KEY  = process.env.ADMIN_API_KEY;
-var MIG_DIR    = nodePath.resolve(__dirname, "..", "..", "migrations-d1");
 
 // ---- in-memory SQLite query fn -----------------------------------------
 //
-// Cloned from test/e2e/serve.js _makeQuery, but loads EVERY migration in
-// migrations-d1/ (numeric order) rather than the four storefront-core ones —
-// the full admin console + checkout engines each back their own table. Each
-// migration file is applied statement-by-statement inside a try/catch: a
-// node:sqlite parse failure on a single D1-flavoured statement (or a table a
-// later engine doesn't need) is logged to stderr and skipped, so one bad table
-// can never wedge the boot. The verb-dispatch return shape matches the D1
-// bridge adapter the engines expect.
-
-function _splitSchema(text) {
-  return text.replace(/--[^\n]*\n/g, "\n")
-    .split(/;\s*(?:\n|$)/)
-    .map(function (s) { return s.trim(); })
-    .filter(Boolean);
-}
-
-function _allMigrations() {
-  return nodeFs.readdirSync(MIG_DIR)
-    .filter(function (n) { return /^\d+.*\.sql$/.test(n); })
-    .sort()
-    .map(function (n) { return nodePath.join(MIG_DIR, n); });
-}
+// helpers.memD1Query over EVERY migration in migrations-d1/ (numeric
+// order) — the full admin console + checkout engines each back their own
+// table. Tolerant mode: a node:sqlite parse failure on a single
+// D1-flavoured statement (or a table a later engine doesn't need) is
+// logged to stderr and skipped, so one bad table can never wedge the
+// boot. The verb-dispatch return shape matches the D1 bridge adapter the
+// engines expect.
 
 function _makeQuery() {
-  var db = new DatabaseSync(":memory:");
-  db.prepare("PRAGMA foreign_keys = ON").run();
-  var migs = _allMigrations();
-  var loaded = 0, skippedFiles = 0, skippedStmts = 0;
-  migs.forEach(function (p) {
-    var text;
-    try { text = nodeFs.readFileSync(p, "utf8"); }
-    catch (e) { skippedFiles += 1; process.stderr.write("[audit] migration read failed " + nodePath.basename(p) + ": " + (e && e.message) + "\n"); return; }
-    var fileHadError = false;
-    _splitSchema(text).forEach(function (s) {
-      try { db.prepare(s).run(); }
-      catch (e) {
-        skippedStmts += 1;
-        if (!fileHadError) {
-          fileHadError = true;
-          process.stderr.write("[audit] migration stmt skipped in " + nodePath.basename(p) + ": " + (e && e.message) + "\n");
-        }
-      }
-    });
-    loaded += 1;
+  var lastFileWithError = null;
+  var made = helpers.memD1Query(helpers.allMigrationPaths(), {
+    tolerant: true,
+    onSkippedStatement: function (p, e) {
+      // One stderr line per file with a skipped statement — enough to
+      // debug a schema gap without flooding the boot log.
+      if (lastFileWithError === p) return;
+      lastFileWithError = p;
+      process.stderr.write("[audit] migration stmt skipped in " + nodePath.basename(p) + ": " + (e && e.message) + "\n");
+    },
   });
-  process.stderr.write("[audit] migrations: " + loaded + " files applied, " +
-    skippedStmts + " statements skipped, " + skippedFiles + " files unreadable\n");
-
-  var query = async function (sql, params) {
-    var stmt = db.prepare(sql);
-    var verb = sql.replace(/^\s+|\s*--[^\n]*\n/g, "").trim().split(/\s+/)[0].toUpperCase();
-    if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
-      var info = stmt.run.apply(stmt, params || []);
-      return { rows: [], rowCount: Number(info.changes), lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
-    }
-    var rows = stmt.all.apply(stmt, params || []);
-    return { rows: rows, rowCount: rows.length };
-  };
-  query._db = db;   // exposed for the direct-SQL order seed (the tax-filings pattern)
+  process.stderr.write("[audit] migrations: " + helpers.allMigrationPaths().length + " files applied, " +
+    made.skippedStatements + " statements skipped\n");
+  var query = made.query;
+  query._db = made.db;   // exposed for the direct-SQL order seed (the tax-filings pattern)
   return query;
 }
 

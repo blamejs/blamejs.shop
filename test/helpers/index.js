@@ -11,9 +11,10 @@
  * generations.
  */
 
-var assert = require("node:assert");
-var http   = require("node:http");
-var nodeFs = require("node:fs");
+var assert   = require("node:assert");
+var http     = require("node:http");
+var nodeFs   = require("node:fs");
+var nodePath = require("node:path");
 var { DatabaseSync } = require("node:sqlite");
 
 var _checks = 0;
@@ -102,14 +103,30 @@ function _splitSchema(text) {
   return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
 }
 
-function memD1Query(migrationPaths) {
+// `opts.tolerant` loads best-effort: a statement node:sqlite can't
+// prepare (the occasional D1-flavoured construct) is counted — and
+// reported through `opts.onSkippedStatement(path, err)` when supplied —
+// instead of throwing. That's the full-schema mode (`allMigrationPaths()`)
+// the audit harness and the bridge-backed boot test run on; targeted
+// fixtures keep the strict default so a schema break in the migrations
+// they pin still fails loudly.
+function memD1Query(migrationPaths, opts) {
+  opts = opts || {};
   var paths = Array.isArray(migrationPaths) ? migrationPaths : [migrationPaths];
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
+  var skippedStatements = 0;
   for (var p = 0; p < paths.length; p += 1) {
     var schema = nodeFs.readFileSync(paths[p], "utf8");
     var stmts = _splitSchema(schema);
-    for (var i = 0; i < stmts.length; i += 1) db.prepare(stmts[i]).run();
+    for (var i = 0; i < stmts.length; i += 1) {
+      if (!opts.tolerant) { db.prepare(stmts[i]).run(); continue; }
+      try { db.prepare(stmts[i]).run(); }
+      catch (e) {
+        skippedStatements += 1;
+        if (typeof opts.onSkippedStatement === "function") opts.onSkippedStatement(paths[p], e);
+      }
+    }
   }
   function query(sql, params) {
     var stmt = db.prepare(sql);
@@ -125,7 +142,73 @@ function memD1Query(migrationPaths) {
     var rows = stmt.all.apply(stmt, params || []);
     return Promise.resolve({ rows: rows, rowCount: rows.length });
   }
-  return { query: query, db: db };
+  return { query: query, db: db, skippedStatements: skippedStatements };
+}
+
+// Every migration in migrations-d1/, numeric order — the full-schema
+// list. `memD1Query(allMigrationPaths(), { tolerant: true })` stands the
+// whole shop schema up in memory.
+function allMigrationPaths() {
+  var dir = nodePath.resolve(__dirname, "..", "..", "migrations-d1");
+  return nodeFs.readdirSync(dir)
+    .filter(function (n) { return /^\d+.*\.sql$/.test(n); })
+    .sort()
+    .map(function (n) { return nodePath.join(dir, n); });
+}
+
+// ---- loopback D1-bridge stub (layer-2 full-composition boots) -----------
+//
+// A node:http stand-in for the Worker's `POST /_/db/query` SQL bridge,
+// speaking the exact wire shape worker/index.js serves: the
+// `x-d1-bridge-secret` header gate, a `{ sql, params, mode }` JSON body,
+// and a `{ ok, rows, rowCount, lastRowId }` reply ("run" mode returns no
+// rows). Backed by a `memD1Query(...).query` handle, so the data both
+// sides see lives in one in-memory database the test can also inspect
+// directly. The point: server.js gates its ENTIRE catalog + cart +
+// storefront + admin composition on D1_BRIDGE_URL/SECRET — without a
+// bridge the boot falls back to a JSON identity ping, so no bare boot
+// can ever prove a dep-gated surface reaches the wire. Point
+// D1_BRIDGE_URL here and the production composition mounts for real.
+// Plain `===` on the secret — loopback test traffic needs no
+// timing-safe compare.
+function startD1Bridge(opts) {
+  if (!opts || typeof opts.query !== "function") throw new TypeError("startD1Bridge: opts.query (async sql fn) required");
+  if (!opts.secret || typeof opts.secret !== "string") throw new TypeError("startD1Bridge: opts.secret required");
+  var server = http.createServer(function (req, res) {
+    function _json(status, obj) {
+      res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify(obj));
+    }
+    if (req.method !== "POST" || req.url !== "/_/db/query") return _json(404, { ok: false, error: "UNKNOWN_ROUTE" });
+    if ((req.headers["x-d1-bridge-secret"] || "") !== opts.secret) return _json(401, { ok: false, error: "UNAUTHORIZED" });
+    var chunks = [];
+    req.on("data", function (c) { chunks.push(c); });
+    req.on("end", function () {
+      var body = null;
+      try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch (_e) { body = null; }
+      if (!body || typeof body.sql !== "string") return _json(400, { ok: false, error: "INVALID_REQUEST" });
+      Promise.resolve(opts.query(body.sql, Array.isArray(body.params) ? body.params : []))
+        .then(function (r) {
+          if (body.mode === "run") {
+            return _json(200, { ok: true, rows: [], rowCount: r.rowCount || 0, lastRowId: r.lastRowId != null ? r.lastRowId : null });
+          }
+          return _json(200, { ok: true, rows: r.rows || [], rowCount: r.rowCount || 0 });
+        })
+        .catch(function (e) {
+          return _json(500, { ok: false, error: "QUERY_FAILED", message: (e && e.message) || String(e) });
+        });
+    });
+  });
+  return new Promise(function (resolve) {
+    server.listen(0, "127.0.0.1", function () {
+      var port = server.address().port;
+      resolve({
+        port:  port,
+        url:   "http://127.0.0.1:" + port,
+        close: function () { return new Promise(function (r) { server.close(r); }); },
+      });
+    });
+  });
 }
 
 // ---- HTTP integration-test client + cookie jar -------------------------
@@ -354,6 +437,8 @@ module.exports = {
   waitUntilEqual: waitUntilEqual,
   withTestTimeout: withTestTimeout,
   memD1Query:     memD1Query,
+  allMigrationPaths: allMigrationPaths,
+  startD1Bridge:  startD1Bridge,
   cookieJar:      cookieJar,
   httpRequest:    httpRequest,
   sealedCookie:   sealedCookie,
