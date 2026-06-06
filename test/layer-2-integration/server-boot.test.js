@@ -478,6 +478,56 @@ async function _runBridged() {
       jar: helpers.cookieJar(), headers: browserHeaders,
     });
     check("bridged boot: unknown quote token is 404", badQuote.status === 404);
+
+    // 13. Dep-wiring liveness — the multi-operator staff console. The
+    //     operatorAccounts primitive is dep-gated in server.js; a missed
+    //     injection re-darkens /admin/operators and per-operator auth even
+    //     though the unit tests (which inject the dep directly) pass.
+    //     Bootstrap the FIRST operator with the ADMIN_API_KEY owner, sign
+    //     that operator in via their own minted API key, and prove the
+    //     ROLE GATE on the write chokepoint: a viewer is refused a catalog
+    //     write POST (403), not merely hidden in the nav. Read the rows
+    //     back THROUGH the bridge so the writes are proven to land in D1.
+    var opHeaders = {
+      "content-type":    "application/json; charset=utf-8",
+      "authorization":   "Bearer " + ADMIN_KEY,
+      "user-agent":      "Mozilla/5.0 (compatible; blamejs-shop-boot-test)",
+      "accept-language": "en-US",
+    };
+    var mkViewer = await _rawPost(state.port, "/admin/operators", opHeaders,
+      JSON.stringify({ email: "boot-viewer@example.com", display_name: "Boot Viewer", password: "boot-viewer-pass-1", role: "viewer", mint_api_key: true }));
+    check("bridged boot: owner bootstraps an operator (2xx)", mkViewer.status >= 200 && mkViewer.status < 300);
+    var viewerJson = null;
+    try { viewerJson = JSON.parse(mkViewer.body); } catch (_e) { viewerJson = null; }
+    check("bridged boot: operator create returns a minted api_key once",
+      !!viewerJson && typeof viewerJson.api_key === "string" && viewerJson.api_key.length > 20);
+    var opRow = mem.db.prepare("SELECT COUNT(*) AS n FROM operator_accounts WHERE email = ?").get("boot-viewer@example.com");
+    check("bridged boot: operator_accounts row persisted through the bridge", opRow && Number(opRow.n) === 1);
+
+    // The viewer authenticates with their OWN key (proves per-operator auth
+    // resolves over the live composition).
+    var viewerHeaders = {
+      "authorization":   "Bearer " + (viewerJson ? viewerJson.api_key : "x"),
+      "user-agent":      "Mozilla/5.0 (compatible; blamejs-shop-boot-test)",
+      "accept-language": "en-US", "accept": "*/*",
+    };
+    var viewerRead = await _rawGet(state.port, "/admin/products/search?q=boot", viewerHeaders);
+    check("bridged boot: viewer's own API key authenticates a read (2xx)",
+      viewerRead.status >= 200 && viewerRead.status < 300);
+
+    // The role gate refuses the viewer a catalog write POST (403), and the
+    // product never lands in D1.
+    var viewerWrite = await _rawPost(state.port, "/admin/products",
+      {
+        "content-type":    "application/json; charset=utf-8",
+        "authorization":   "Bearer " + (viewerJson ? viewerJson.api_key : "x"),
+        "user-agent":      "Mozilla/5.0 (compatible; blamejs-shop-boot-test)",
+        "accept-language": "en-US",
+      },
+      JSON.stringify({ title: "Viewer Boot Widget", slug: "viewer-boot-widget", status: "active" }));
+    check("bridged boot: viewer DENIED a catalog write (403 from the role gate)", viewerWrite.status === 403);
+    var deniedRow = mem.db.prepare("SELECT COUNT(*) AS n FROM products WHERE slug = ?").get("viewer-boot-widget");
+    check("bridged boot: viewer's denied write did not land in D1", deniedRow && Number(deniedRow.n) === 0);
   } finally {
     if (state) _cleanup(state);
     await bridge.close();

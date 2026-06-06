@@ -475,6 +475,8 @@ async function main() {
   // container's local audit sink. Wired only when D1 is present (it
   // defaults to b.externalDb.query, valid after externalDb.init below).
   var errorLog = null;
+  var operatorAccounts = null;
+  var operatorAuditLog = null;
   if (process.env.D1_BRIDGE_URL && process.env.D1_BRIDGE_SECRET) {
     // Entropy floor on the bridge secret. The Worker route POST
     // /_/db/query is a single-statement SQL oracle on the live D1, and
@@ -506,6 +508,14 @@ async function main() {
     // Now that externalDb is initialized, the error-log factory's
     // default query handle (b.externalDb.query) is live.
     errorLog = bShop.errorLog.create({});
+    // Multi-operator staff console. operatorAuditLog is the chained-hash
+    // audit trail every operator-management action + role-denied attempt
+    // writes through; operatorAccounts is the per-operator credential store
+    // (Argon2id password + optional bearer key). Both default to the
+    // externalDb query handle. ADMIN_API_KEY remains the bootstrap /
+    // break-glass owner credential regardless of these.
+    operatorAuditLog = bShop.operatorAuditLog.create({});
+    operatorAccounts = bShop.operatorAccounts.create({ operatorAuditLog: operatorAuditLog });
     // Cursor HMAC key — derived from the deployment-scoped bridge
     // secret via b.crypto.namespaceHash, which domain-separates the
     // derived value by the "catalog-cursor" prefix so a leak in one
@@ -2241,6 +2251,11 @@ async function main() {
           // Operator-readable error feed at /admin/errors (+ the
           // /admin/errors JSON API). Present whenever D1 is wired.
           errorLog:      errorLog,
+          // Multi-operator staff console (/admin/operators) + per-operator
+          // credentials. ADMIN_API_KEY stays the bootstrap/break-glass owner.
+          // Present whenever D1 is wired.
+          operatorAccounts: operatorAccounts,
+          operatorAuditLog: operatorAuditLog,
           orderTracking: orderTracking,
           pickLists:      pickLists,
           shippingLabels: shippingLabels,
