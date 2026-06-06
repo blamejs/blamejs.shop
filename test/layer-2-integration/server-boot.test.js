@@ -63,6 +63,25 @@ function _get(port, headers) {
   });
 }
 
+// Raw GET with EXACTLY the caller-supplied headers — used to mimic a
+// plain curl invocation (curl UA, Accept: */*, no Accept-Language),
+// which helpers.httpRequest would decorate into a browser shape.
+function _rawGet(port, path, headers) {
+  return new Promise(function (resolve, reject) {
+    var req = nodeHttp.request({
+      host: "127.0.0.1", port: port, path: path, method: "GET", timeout: 5000,
+      headers: headers || {},
+    }, function (res) {
+      var body = "";
+      res.on("data", function (c) { body += c.toString(); });
+      res.on("end", function () { resolve({ status: res.statusCode, body: body }); });
+    });
+    req.on("error", reject);
+    req.on("timeout", function () { req.destroy(); reject(new Error("timeout")); });
+    req.end();
+  });
+}
+
 // Raw POST with EXACTLY the caller-supplied headers — used to mimic the
 // worker's internal service-binding POSTs (x-d1-bridge-secret + JSON, no
 // browser shape at all), which helpers.httpRequest would decorate.
@@ -351,6 +370,25 @@ async function _runBridged() {
     var triggered = mem.db.prepare("SELECT COUNT(*) AS n FROM inventory_alerts WHERE sku = ?").get("BOOT-LOW");
     check("bridged boot: a stock mutation fires the low-stock alert through the catalog observer",
       triggered && Number(triggered.n) === 1);
+
+    // 10. The documented admin JSON surface really is one curl away.
+    //     curl's User-Agent sits on bot-guard's deny list and the UA
+    //     check runs before auth is ever consulted, so the app-level
+    //     block-mode bot-guard skips /admin and mountRouteGuards
+    //     re-mounts it there in TAG mode — automation is audited
+    //     (system.botguard.tag) but never refused, and the timing-safe
+    //     bearer gate stays the deciding check. Prove both halves
+    //     through the real composition: a curl-shaped call WITH the key
+    //     reaches the handler, and the same call WITHOUT the key is
+    //     refused by the auth gate (401), not mistaken for a bot (403).
+    var curlOk = await _rawGet(state.port, "/admin/products/search?q=boot",
+      { "authorization": "Bearer " + ADMIN_KEY, "user-agent": "curl/8.5.0", "accept": "*/*" });
+    check("bridged boot: curl-shaped bearer call reaches the admin JSON surface (2xx)",
+      curlOk.status >= 200 && curlOk.status < 300);
+    var curlNoKey = await _rawGet(state.port, "/admin/products/search?q=boot",
+      { "user-agent": "curl/8.5.0", "accept": "*/*" });
+    check("bridged boot: curl-shaped call without the key answers 401 from the bearer gate, not 403 from bot-guard",
+      curlNoKey.status === 401);
   } finally {
     if (state) _cleanup(state);
     await bridge.close();
