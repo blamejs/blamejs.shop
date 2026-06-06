@@ -2509,7 +2509,38 @@ async function main() {
         }
         try {
           var reapSummary = await staleOrderReaper.reapStalePending({ ttl_minutes: STALE_ORDER_TTL_MINUTES });
-          res.json(Object.assign({ enabled: true }, reapSummary));
+          // Best-effort sweep of expired Stripe webhook-replay rows. Their
+          // TTL is the 5-minute signature tolerance, so the table is
+          // self-limiting; this keeps it from accreting rows from old
+          // events. Drop-silent + never blocks the reap summary.
+          var replaySwept = null;
+          try {
+            var rr = await b.externalDb.query(
+              "DELETE FROM stripe_webhook_events WHERE expires_at < ?1",
+              [Date.now()],
+            );
+            replaySwept = (rr && rr.meta && typeof rr.meta.changes === "number") ? rr.meta.changes
+              : (rr && typeof rr.rowCount === "number") ? rr.rowCount : 0;
+          } catch (_eSweep) { /* drop-silent — sweep is best-effort */ }
+          // Best-effort: anchor the operator audit chain's tip with a fresh
+          // PQC checkpoint when it has advanced since the last one
+          // (skipIfUnchanged → no row when the chain is quiet). The signed
+          // anchor is what makes a full-chain rewrite detectable. Drop-
+          // silent — a checkpoint failure must never fail the cron run, and
+          // the chain stays hash-linked regardless.
+          var checkpointAnchored = null;
+          if (operatorAuditLog && typeof operatorAuditLog.checkpoint === "function" &&
+              operatorAuditLog.signingAvailable && operatorAuditLog.signingAvailable()) {
+            try {
+              var ck = await operatorAuditLog.checkpoint({ skipIfUnchanged: true });
+              checkpointAnchored = ck ? ck.id : null;
+            } catch (_eCk) { /* drop-silent — checkpoint is best-effort */ }
+          }
+          res.json(Object.assign({
+            enabled: true,
+            webhook_replay_swept: replaySwept,
+            operator_audit_checkpoint: checkpointAnchored,
+          }, reapSummary));
         } catch (e) {
           // Never 5xx — a thrown reap would mark the cron run failed.
           res.json({ ok: false, enabled: true, error: (e && e.message) || String(e) });
@@ -3199,6 +3230,11 @@ async function main() {
             loyalty: loyalty, quantityDiscounts: quantityDiscounts,
             autoDiscount: autoDiscount,
             discountAllocation: discountAllocation,
+            // Inbound Stripe webhook replay defense — every verified event
+            // id is atomically recorded in D1 so a captured payload can't be
+            // re-applied inside the signature tolerance window. Uses the same
+            // externalDb query handle the rest of the composition runs on.
+            webhookReplayQuery: function (sql, params) { return b.externalDb.query(sql, params); },
             // Pre-order SKUs sell beyond the shelf by design — exempt their
             // lines from the confirm-time stock hold. (backorder is not
             // mounted on the buy path today; the checkout hook accepts it

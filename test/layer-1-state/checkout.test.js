@@ -27,7 +27,8 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql"].map(function (f) {
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql",
+  "0218_stripe_webhook_events.sql"].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
 
@@ -78,7 +79,7 @@ function _fakePayment(webhookSecret) {
   };
 }
 
-async function _setup() {
+async function _setup(opts) {
   var query = _makeQuery();
   var catalog = bShop.catalog.create({ query: query });
   var cart    = bShop.cart.create({ query: query, catalog: catalog });
@@ -91,10 +92,16 @@ async function _setup() {
   ]});
   var webhookSecret = "whsec_test_" + bShop.framework.crypto.generateToken(8);
   var payment = _fakePayment(webhookSecret);
-  var checkout = bShop.checkout.create({
+  // `opts.webhookReplay` (default off) lets a caller opt the replay-defense
+  // store in. Off keeps the happy-path test exercising the ORDER-STATE
+  // idempotency (a distinct, still-live defense) without the event-id
+  // dedupe catching the re-delivery first.
+  var checkoutOpts = {
     catalog: catalog, cart: cart, pricing: bShop.pricing,
     tax: tax, shipping: shipping, payment: payment, order: order,
-  });
+  };
+  if (opts && opts.webhookReplay) checkoutOpts.webhookReplayQuery = query;
+  var checkout = bShop.checkout.create(checkoutOpts);
 
   // Seed product + variant + price + cart with one line.
   var p = await catalog.products.create({ slug: "co-test", title: "Checkout Test", status: "active" });
@@ -358,6 +365,56 @@ async function _webhookBadSig() {
     /webhook signature invalid/);
 }
 
+// Replay defense: a validly-signed event replayed within the signature
+// tolerance window is refused by the event-id dedupe — independent of, and
+// AHEAD of, the order-state idempotency. The dedupe is what catches a
+// replay the order-state check can't (a refund replay, or a race where the
+// order hasn't yet advanced). A DIFFERENT event id is unaffected.
+async function _webhookReplayDefense() {
+  var s = await _setup({ webhookReplay: true });
+  var result = await s.checkout.confirm({
+    cart_id: s.cartRow.id,
+    ship_to: { country: "US", state: "CA", postal: "94103" },
+    selected_shipping_id: "std",
+    customer: { email: "buyer@example.com" },
+    idempotency_key: "idemp_replay_xxxxxxxx",
+  });
+
+  function _signed(eventId, type) {
+    var event = {
+      id:   eventId, type: type,
+      data: { object: { id: result.payment_intent.id, payment_intent: result.payment_intent.id } },
+    };
+    var rawBody = JSON.stringify(event);
+    var ts = Math.floor(Date.now() / 1000);
+    var sig = nodeCrypto.createHmac("sha256", s.webhookSecret).update(ts + "." + rawBody).digest("hex");
+    return { headers: { "stripe-signature": "t=" + ts + ",v1=" + sig }, rawBody: rawBody };
+  }
+
+  // First delivery of evt_replay_1 → processed (order → paid).
+  var d1 = _signed("evt_replay_1", "payment_intent.succeeded");
+  var first = await s.checkout.handleStripeEvent(d1);
+  check("replay: first delivery processed", first.handled === true && first.order && first.order.status === "paid");
+  // The event id is now recorded in the dedupe table.
+  var rec = await s.query("SELECT COUNT(*) AS n FROM stripe_webhook_events WHERE event_id = ?1", ["evt_replay_1"]);
+  check("replay: first delivery recorded the event id", Number(rec.rows[0].n) === 1);
+
+  // A verbatim replay of the SAME signed event id → refused as a replay
+  // no-op (the event-id dedupe short-circuits BEFORE any transition).
+  var replayDup = await s.checkout.handleStripeEvent(d1);
+  check("replay: re-delivered same event id is a replay no-op",
+    replayDup.handled === true && replayDup.skipped === "replay" && replayDup.event_id === "evt_replay_1");
+
+  // A replay carrying a DIFFERENT event id is NOT blocked by the dedupe —
+  // it reaches the handler (here it's absorbed by the order-state
+  // idempotency since the order is already paid, but it is NOT a replay
+  // skip — proving the dedupe keys on event id, not a blanket block).
+  var d2 = _signed("evt_replay_2", "payment_intent.succeeded");
+  var other = await s.checkout.handleStripeEvent(d2);
+  check("replay: a distinct event id is not dedupe-blocked",
+    other.handled === true && other.skipped !== "replay");
+}
+
 async function run() {
   await _quote();
   await _confirm();
@@ -368,6 +425,7 @@ async function run() {
   await _confirmRefusesZeroTotal();
   await _webhookDispatchHappyPath();
   await _webhookBadSig();
+  await _webhookReplayDefense();
 }
 
 module.exports = { run: run };
