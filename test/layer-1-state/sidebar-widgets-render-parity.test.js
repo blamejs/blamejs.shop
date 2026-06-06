@@ -98,7 +98,7 @@ async function _run() {
   // --- the rail wraps placed widgets in a single <aside> -------------------
   var rail = storefront.buildSidebarRail(rows, { _sidebar_page_key: "home" });
   check("rail is a single <aside>", rail.indexOf("<aside class=\"sidebar-rail\"") === 0);
-  check("rail closes the <aside>", rail.lastIndexOf("</aside>") === rail.length - "</aside>".length);
+  check("rail closes the <aside>", rail.endsWith("</aside>"));
   check("rail contains every kind", rows.every(function (r) {
     return rail.indexOf("data-widget-slug=\"" + r.slug + "\"") !== -1;
   }));
