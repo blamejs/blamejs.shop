@@ -524,6 +524,66 @@ async function _setupIntentAndCustomer() {
   check("off-session PI sends off_session",        (fake2.calls[0].body || "").indexOf("off_session=true") !== -1);
 }
 
+// PSP dial resilience: a brown-out (a run of upstream 5xx) trips the
+// per-adapter circuit breaker open, the open circuit fast-fails WITHOUT
+// touching the network and surfaces a NON-TypeError CIRCUIT_OPEN (so the
+// storefront renders the recoverable payment-unavailable page, not a 400
+// field error), and a recovery (reset + a healthy response) closes it.
+async function _circuitBreakerTripsAndRecovers() {
+  // Keyless createPaymentIntent: the breaker counts each 5xx as a failure
+  // and (being keyless) the dial does NOT retry, so one POST == one HTTP
+  // hit == one breaker tick. Five consecutive failures (the threshold)
+  // open the breaker.
+  var fake = _fakeHttp([{ status: 503, body: { error: { message: "stripe is down" } } }]);
+  var s = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", httpClient: fake.httpClient });
+  check("breaker starts closed", s.breaker && s.breaker.getState() === "closed");
+
+  var opened = false;
+  var circuitOpenErr = null;
+  for (var i = 0; i < 6; i += 1) {
+    try { await s.createPaymentIntent({ amount_minor: 100, currency: "usd" }); }
+    catch (e) {
+      if (e && e.code === "CIRCUIT_OPEN") { opened = true; circuitOpenErr = e; break; }
+    }
+  }
+  check("brown-out trips the breaker open", opened === true && s.breaker.getState() === "open");
+  check("open-circuit error is a CIRCUIT_OPEN code", circuitOpenErr && circuitOpenErr.code === "CIRCUIT_OPEN");
+  // It must NOT be a TypeError — the storefront treats a TypeError as a
+  // shopper-fixable 400 field error; a payment-unavailable must render the
+  // recoverable 500-class page instead.
+  check("open-circuit error is NOT a TypeError", !(circuitOpenErr instanceof TypeError));
+  // The breaker stops the network hit while open: the http stub saw exactly
+  // the 5 failures that opened it, not the 6th call.
+  check("open circuit fast-fails without a network hit", fake.calls.length === 5);
+
+  // Recovery: reset the breaker (the operator-visible recovery action) and
+  // a healthy response closes the loop again.
+  s.breaker.reset();
+  check("reset returns the breaker to closed", s.breaker.getState() === "closed");
+  var fakeOk = _fakeHttp([{ status: 200, body: { id: "pi_recovered", status: "succeeded" } }]);
+  var sOk = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", httpClient: fakeOk.httpClient });
+  var r = await sOk.createPaymentIntent({ amount_minor: 100, currency: "usd" });
+  check("recovery: a healthy dial succeeds with the breaker closed",
+    r.id === "pi_recovered" && sOk.breaker.getState() === "closed");
+
+  // Idempotent dials (GET reads / keyed writes) ride the bounded retry: a
+  // transient 503 → 503 → 200 is ridden out within ONE breaker call, so the
+  // breaker never opens on a blip the retry absorbs.
+  var fakeRetry = _fakeHttp([
+    { status: 503, body: { error: { message: "blip" } } },
+    { status: 503, body: { error: { message: "blip" } } },
+    { status: 200, body: { id: "pi_retried", status: "succeeded" } },
+  ]);
+  var sR = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", httpClient: fakeRetry.httpClient });
+  var rr = await sR.retrievePaymentIntent("pi_abcdefgh");
+  check("idempotent GET retries through a transient blip (breaker stays closed)",
+    rr.id === "pi_retried" && fakeRetry.calls.length === 3 && sR.breaker.getState() === "closed");
+
+  // The breaker is skippable for callers that don't want it.
+  var sNB = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx", httpClient: fakeOk.httpClient, breaker: false });
+  check("breaker:false disables the per-adapter breaker", sNB.breaker === null);
+}
+
 async function run() {
   await _verifierHappyPath();
   await _verifierHeaderCaseInsensitive();
@@ -543,6 +603,7 @@ async function run() {
   await _factoryRejectsBadOptionTypes();
   await _paymentMethodDomains();
   await _setupIntentAndCustomer();
+  await _circuitBreakerTripsAndRecovers();
 }
 
 module.exports = { run: run };

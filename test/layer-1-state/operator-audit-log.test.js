@@ -27,15 +27,19 @@
  */
 
 var nodeFs   = require("node:fs");
+var nodeOs   = require("node:os");
 var nodePath = require("node:path");
 var { DatabaseSync } = require("node:sqlite");
 
+var bShop            = require("../../lib");
+var b                = bShop.framework;
 var operatorAuditLog = require("../../lib/operator-audit-log");
 var helpers          = require("../helpers");
 var check            = helpers.check;
 var assert           = helpers.assert;
 
 var MIG = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0074_operator_audit_log.sql");
+var MIG_CHECKPOINTS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0218_operator_audit_checkpoints.sql");
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -565,6 +569,91 @@ async function _searchAction() {
   await assert.rejects(ctx.log.searchAction(), /input object required/);
 }
 
+// ---- checkpoint anchoring ----------------------------------------------
+//
+// The hash chain catches a SINGLE edited row but not a full-chain rewrite
+// (re-hash from a forged genesis stays internally consistent). Signing the
+// tip with the framework's PQC audit-signing key — whose private half
+// never touches D1 — closes that hole. These checks drive the real
+// b.auditSign keypair (ml-dsa-65 for fast tests) over a temp dataDir.
+
+function _makeCheckpointQuery() {
+  var db = new DatabaseSync(":memory:");
+  db.prepare("PRAGMA foreign_keys = ON").run();
+  [MIG, MIG_CHECKPOINTS].forEach(function (p) {
+    _splitSchema(nodeFs.readFileSync(p, "utf8")).forEach(function (s) { db.prepare(s).run(); });
+  });
+  var q = async function (sql, params) {
+    var stmt = db.prepare(sql);
+    var verb = sql.replace(/^\s+|\s*--[^\n]*\n/g, "").trim().split(/\s+/)[0].toUpperCase();
+    if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
+      var info = stmt.run.apply(stmt, params || []);
+      return { rows: [], rowCount: Number(info.changes), lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
+    }
+    var rows = stmt.all.apply(stmt, params || []);
+    return { rows: rows, rowCount: rows.length };
+  };
+  q._db = db;
+  return q;
+}
+
+async function _checkpointAnchoring() {
+  var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "oal-ckpt-"));
+  var prevPass = process.env.BLAMEJS_AUDIT_SIGNING_PASSPHRASE;
+  process.env.BLAMEJS_AUDIT_SIGNING_PASSPHRASE = "operator-audit-checkpoint-test-passphrase";
+  b.auditSign._resetForTest();
+  try {
+    // ml-dsa-65: same code path as the default SLH-DSA, far faster to
+    // generate + verify for a unit test.
+    await b.auditSign.init({ dataDir: dataDir, mode: "wrapped", algorithm: "ml-dsa-65" });
+
+    var query = _makeCheckpointQuery();
+    var log = operatorAuditLog.create({ query: query });
+    check("checkpoint: signing is available", log.signingAvailable() === true);
+
+    // Empty chain → nothing to anchor.
+    var empty = await log.checkpoint({ skipIfUnchanged: true });
+    check("checkpoint: empty chain anchors nothing", empty === null);
+
+    await log.record({ actor_type: "operator", actor_id: "op-1", action: "product.update", resource_kind: "product", resource_id: "p-1", after: { title: "x" } });
+    await log.record({ actor_type: "operator", actor_id: "op-1", action: "price.set", resource_kind: "variant", resource_id: "v-1", after: { amount: 100 } });
+
+    var head = await log.chainHead();
+    var ck = await log.checkpoint();
+    check("checkpoint: anchors the current head", ck && ck.at_row_hash === head);
+    check("checkpoint: records the signing-key fingerprint",
+      ck && typeof ck.public_key_fingerprint === "string" && ck.public_key_fingerprint.length > 0);
+
+    var clean = await log.verifyCheckpoints();
+    check("checkpoint: verifyCheckpoints clean", clean.ok === true && clean.checkpoints_verified === 1);
+
+    // skipIfUnchanged when the tip hasn't moved → no new checkpoint.
+    var skip = await log.checkpoint({ skipIfUnchanged: true });
+    check("checkpoint: skipIfUnchanged no-ops on an unmoved tip", skip === null);
+
+    // A NEW row advances the tip → a fresh checkpoint anchors it.
+    await log.record({ actor_type: "operator", actor_id: "op-1", action: "order.refund.manual", resource_kind: "order", resource_id: "o-1", after: { amount: 500 } });
+    var ck2 = await log.checkpoint({ skipIfUnchanged: true });
+    check("checkpoint: advanced tip anchors a fresh checkpoint", ck2 && ck2.at_row_hash === (await log.chainHead()));
+    var clean2 = await log.verifyCheckpoints();
+    check("checkpoint: verifyCheckpoints clean after a second anchor", clean2.ok === true && clean2.checkpoints_verified === 2);
+
+    // Full-chain rewrite: re-hash the anchored row (the kind of tamper the
+    // hash linkage alone can't catch). The signed checkpoint over the OLD
+    // hash no longer matches → verifyCheckpoints fails.
+    query._db.prepare("UPDATE operator_audit_events SET row_hash = ?1 WHERE id = ?2")
+      .run("f".repeat(128), ck.at_row_id);
+    var tampered = await log.verifyCheckpoints();
+    check("checkpoint: a rewritten anchored row fails verifyCheckpoints",
+      tampered.ok === false && /rewritten/.test(tampered.reason || ""));
+  } finally {
+    b.auditSign._resetForTest();
+    if (prevPass === undefined) delete process.env.BLAMEJS_AUDIT_SIGNING_PASSPHRASE;
+    else process.env.BLAMEJS_AUDIT_SIGNING_PASSPHRASE = prevPass;
+    try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* best-effort */ }
+  }
+}
+
 async function run() {
   await _recordHappy();
   await _recordRefusals();
@@ -575,6 +664,7 @@ async function run() {
   await _listByActor();
   await _listByResource();
   await _searchAction();
+  await _checkpointAnchoring();
 }
 
 module.exports = { run: run };
