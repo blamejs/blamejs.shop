@@ -3464,9 +3464,13 @@ async function main() {
             var url    = new URL(req.url, "http://localhost");
             var limitS = url.searchParams.get("limit");
             var cursor = url.searchParams.get("cursor");
-            var status = url.searchParams.get("status") || "active";
+            // Public, unauthenticated API: only ever lists published products.
+            // The status filter is NOT caller-controllable here — accepting
+            // ?status=draft / archived would leak unpublished catalog rows to
+            // anyone. Operators browse other statuses through the authed admin
+            // catalog screens, never this endpoint.
             var limit  = limitS == null ? 20 : parseInt(limitS, 10);
-            var page   = await catalog.products.list({ status: status, limit: limit, cursor: cursor });
+            var page   = await catalog.products.list({ status: "active", limit: limit, cursor: cursor });
             res.json(page);
           } catch (e) { _problemFromError(res, e, { errorLog: errorLog, route: "/api/catalog/products" }); }
         });

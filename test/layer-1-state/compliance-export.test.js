@@ -529,6 +529,55 @@ async function _auditHistory() {
   await assert.rejects(ce.auditForCustomer("not-a-uuid"), /customer_id/);
 }
 
+// ---- statutory response-window clock -----------------------------------
+//
+// Every hydrated request carries a derived `statutory_deadline` computed
+// from jurisdiction + requested_at: GDPR one month (30d), CCPA 45d, LGPD
+// 15d; `other` carries no statutory clock. The deadline is never persisted —
+// it always reflects the current registry — so an export/erasure request
+// surfaces the wall a supervisory authority measures the controller against.
+var _DAY_MS = bShop.framework.constants.TIME.days(1);
+
+async function _statutoryDeadline() {
+  var q  = _makeQuery();
+  var ce = complianceExport.create({ query: q });
+  var cid = _uuid();
+
+  var gdpr = await ce.requestExport({ customer_id: cid, requested_by: "p", jurisdiction: "gdpr", scope: "full" });
+  check("gdpr deadline present",     gdpr.statutory_deadline && gdpr.statutory_deadline.days === 30);
+  check("gdpr deadline = +30 days",  gdpr.statutory_deadline.due_by === gdpr.requested_at + 30 * _DAY_MS);
+  check("gdpr deadline cites Art. 12(3)", gdpr.statutory_deadline.statute.indexOf("Art. 12(3)") !== -1);
+
+  var ccpa = await ce.requestExport({ customer_id: cid, requested_by: "p", jurisdiction: "ccpa", scope: "full" });
+  check("ccpa deadline = +45 days",  ccpa.statutory_deadline.days === 45 &&
+    ccpa.statutory_deadline.due_by === ccpa.requested_at + 45 * _DAY_MS);
+
+  var lgpd = await ce.requestDeletion({ customer_id: cid, requested_by: "p", jurisdiction: "lgpd", reason: "erasure" });
+  check("lgpd deadline = +15 days",  lgpd.statutory_deadline.days === 15 &&
+    lgpd.statutory_deadline.due_by === lgpd.requested_at + 15 * _DAY_MS);
+
+  var other = await ce.requestExport({ customer_id: cid, requested_by: "p", jurisdiction: "other", scope: "full" });
+  check("other jurisdiction has no statutory clock", other.statutory_deadline === null);
+
+  // The deadline survives a round-trip through getRequest (it's derived in
+  // _hydrate, so listRequests/getRequest/auditForCustomer all carry it).
+  var fetched = await ce.getRequest(gdpr.id);
+  check("getRequest carries the derived deadline",
+    fetched.statutory_deadline && fetched.statutory_deadline.due_by === gdpr.statutory_deadline.due_by);
+
+  // The exported registry + calculator are the single source of truth.
+  var direct = complianceExport.statutoryDeadline("gdpr", 1_700_000_000_000);
+  check("statutoryDeadline helper matches registry",
+    direct.due_by === 1_700_000_000_000 + 30 * _DAY_MS);
+  check("statutoryDeadline returns null for `other`",
+    complianceExport.statutoryDeadline("other", 1_700_000_000_000) === null);
+  check("DSR_RESPONSE_WINDOW registry exported",
+    complianceExport.DSR_RESPONSE_WINDOW.gdpr.days === 30 &&
+    complianceExport.DSR_RESPONSE_WINDOW.ccpa.days === 45 &&
+    complianceExport.DSR_RESPONSE_WINDOW.lgpd.days === 15 &&
+    complianceExport.DSR_RESPONSE_WINDOW.other === null);
+}
+
 async function run() {
   await _requestExportShape();
   await _listRequestsFilter();
@@ -537,6 +586,7 @@ async function run() {
   await _dispatchExport();
   await _deletionFlow();
   await _auditHistory();
+  await _statutoryDeadline();
 }
 
 module.exports = { run: run };

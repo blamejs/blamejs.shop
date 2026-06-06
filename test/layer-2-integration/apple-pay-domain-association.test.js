@@ -163,8 +163,19 @@ async function _run() {
   check("(e) PUBLIC_WELL_KNOWN_PATHS includes the apple-pay path",
     Array.isArray(sm.PUBLIC_WELL_KNOWN_PATHS) &&
     sm.PUBLIC_WELL_KNOWN_PATHS.indexOf(WELL_KNOWN_PATH) !== -1);
-  check("(e) botGuardOpts().skipPaths includes the apple-pay path",
-    (sm.botGuardOpts().skipPaths || []).indexOf(WELL_KNOWN_PATH) !== -1);
+  // The skip is matched the way the bot guard matches it: a string entry is a
+  // prefix, a RegExp entry is .test()'d. The well-known skip is an EXACT regex,
+  // so it must exempt the association path itself but NOT a sibling under it.
+  function _skipMatches(skipPaths, p) {
+    return (skipPaths || []).some(function (sp) {
+      return (sp instanceof RegExp) ? sp.test(p) : (typeof sp === "string" && p.indexOf(sp) === 0);
+    });
+  }
+  var skips = sm.botGuardOpts().skipPaths;
+  check("(e) botGuardOpts() exempts the exact apple-pay path",
+    _skipMatches(skips, WELL_KNOWN_PATH));
+  check("(e) botGuardOpts() does NOT exempt a sibling under the well-known path",
+    !_skipMatches(skips, WELL_KNOWN_PATH + "/evil"));
 
   // ---- (d) edge worker parity (guarded source-shape) ------------------
   var workerPath = nodePath.resolve(__dirname, "..", "..", "worker", "index.js");
