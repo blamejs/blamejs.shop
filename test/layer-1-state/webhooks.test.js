@@ -198,6 +198,41 @@ async function _eventFiltering() {
   check("inactive B skipped — only A fires", d3.length === 1 && d3[0].endpoint_id === epA.id);
 }
 
+// inventory.low_stock is a framework-emitted event (lib/inventory-alerts.js
+// dispatches it when a SKU drops below threshold). It must be a recognized
+// event type so an operator can subscribe an endpoint to it by name — not
+// only catch it through a `*` wildcard. This guard pins it into KNOWN_EVENTS
+// and exercises the named-subscription delivery path.
+async function _inventoryLowStockSubscribable() {
+  var q = _makeQuery();
+  var transport = _captureTransport([{ statusCode: 200 }]);
+  var webhooks = bShop.webhooks.create({ query: q, transport: transport });
+
+  check("inventory.low_stock is a known event",
+    (webhooks.KNOWN_EVENTS || []).indexOf("inventory.low_stock") !== -1);
+
+  // An endpoint can subscribe to it by name (no throw on create).
+  var epNamed = await webhooks.endpoints.create({
+    url: "https://inv.example.com/", events: "inventory.low_stock",
+  });
+  check("named inventory.low_stock subscription accepted",
+    epNamed.events === "inventory.low_stock");
+
+  // An endpoint subscribed only to order events must NOT receive it.
+  var epOrders = await webhooks.endpoints.create({
+    url: "https://orders.example.com/", events: "order.mark_paid",
+  });
+
+  var d = await webhooks.send("inventory.low_stock", { sku: "SKU-1", on_hand: 2 });
+  check("inventory.low_stock fans only to the named subscriber", d.length === 1);
+  check("delivered to the inventory endpoint", d[0].endpoint_id === epNamed.id);
+  check("not delivered to the order-only endpoint",
+    d[0].endpoint_id !== epOrders.id);
+  check("delivery succeeded", d[0].delivered_at != null && d[0].last_status === 200);
+  check("Webhook-Event header carries inventory.low_stock",
+    transport.received[0].headers["Webhook-Event"] === "inventory.low_stock");
+}
+
 async function _failurePersisted() {
   var q = _makeQuery();
   var transport = _captureTransport([{ statusCode: 500 }]);
@@ -573,6 +608,7 @@ async function run() {
   await _signingRoundTrip();
   await _defaultTransportHoldsPqcDefault();
   await _eventFiltering();
+  await _inventoryLowStockSubscribable();
   await _failurePersisted();
   await _retryOnTransient();
   await _manualRetry();
