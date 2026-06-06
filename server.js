@@ -1250,6 +1250,51 @@ async function main() {
         lowStockObserver = function (sku) { return inventoryAlerts.checkAndFire(sku); };
       }
 
+      // Inventory-ops back-office — per-location stock, audited moves.
+      //
+      // `inventoryLocations` owns the (sku, location_code) ledger
+      // (`inventory_stock`) and the append-only `inventory_adjustments`
+      // audit trail. It is the SOLE owner of per-location stock mutation;
+      // every move runs through an atomic conditional-UPDATE guard
+      // (`quantity >= need`) so a transfer racing a checkout debit for the
+      // last unit can't oversell — the same serialization the catalog
+      // hold/decrement guards give the single-bucket aggregate.
+      //
+      // The catalog `inventory.stock_on_hand` stays the storefront source
+      // of truth. A store that never defines a location keeps using the
+      // existing /admin/inventory restock unchanged — the default location
+      // is implicit, zero config. The inventory-ops admin screens drive
+      // BOTH ledgers in step (receive credits the location AND the catalog
+      // aggregate; a write-off debits both; a transfer touches only the
+      // per-location detail because the aggregate total is unchanged), so
+      // the storefront count never diverges from the warehouse breakdown
+      // and a receive/transfer that crosses a SKU's threshold still fires
+      // the shared low-stock observer through the catalog mutation.
+      var inventoryLocations = (catalog && cart)
+        ? bShop.inventoryLocations.create({ catalog: catalog })
+        : null;
+
+      var inventoryReceiveCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("inventory-receive-cursor", process.env.D1_BRIDGE_SECRET)
+        : "inventory-receive-cursor-secret-dev-only";
+      var inventoryReceive = (catalog && cart)
+        ? bShop.inventoryReceive.create({ catalog: catalog, cursorSecret: inventoryReceiveCursorSecret })
+        : null;
+
+      var stockTransfersCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("stock-transfers-cursor", process.env.D1_BRIDGE_SECRET)
+        : "stock-transfers-cursor-secret-dev-only";
+      var stockTransfers = inventoryLocations
+        ? bShop.stockTransfers.create({ inventoryLocations: inventoryLocations, cursorSecret: stockTransfersCursorSecret })
+        : null;
+
+      var inventoryWriteoffsCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("inventory-writeoffs-cursor", process.env.D1_BRIDGE_SECRET)
+        : "inventory-writeoffs-cursor-secret-dev-only";
+      var inventoryWriteoffs = inventoryLocations
+        ? bShop.inventoryWriteoffs.create({ inventoryLocations: inventoryLocations, cursorSecret: inventoryWriteoffsCursorSecret })
+        : null;
+
       // Order — the FSM-driven post-checkout record. ONE shared instance
       // drives the storefront account/order pages, the storefront checkout
       // confirm, and the admin console — so a transition fired from one
@@ -2161,6 +2206,17 @@ async function main() {
           // Low-stock alert history (/admin/inventory/alerts) — the same
           // instance the /_/low-stock-alert intake fires through.
           inventoryAlerts: inventoryAlerts,
+          // Inventory-ops back-office — stock-location CRUD + per-location
+          // levels (/admin/inventory/locations), audited receive
+          // (/admin/inventory/receive), location→location transfers with a
+          // dispatch/receive state machine (/admin/inventory/transfers),
+          // and reason-coded write-offs (/admin/inventory/writeoffs). The
+          // catalog handle lets the receive/write-off screens keep the
+          // storefront aggregate in step with the per-location detail.
+          inventoryLocations: inventoryLocations,
+          inventoryReceive:   inventoryReceive,
+          stockTransfers:     stockTransfers,
+          inventoryWriteoffs: inventoryWriteoffs,
           collections:   collections,
           announcementBar: announcementBar,
           promoBanners:    promoBanners,

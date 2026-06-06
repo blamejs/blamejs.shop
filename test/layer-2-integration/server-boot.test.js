@@ -389,6 +389,39 @@ async function _runBridged() {
       { "user-agent": "curl/8.5.0", "accept": "*/*" });
     check("bridged boot: curl-shaped call without the key answers 401 from the bearer gate, not 403 from bot-guard",
       curlNoKey.status === 401);
+
+    // 11. Dep-wiring liveness — the inventory-ops back-office. The
+    //     inventoryLocations / inventoryReceive / stockTransfers /
+    //     inventoryWriteoffs primitives are dep-gated in server.js; a missed
+    //     injection re-darkens the whole console. Drive the bearer-token
+    //     JSON contract over the wire (define a location, receive stock
+    //     against it), then read the rows back THROUGH the bridge's shared
+    //     in-memory DB — proving the deps mounted, the request lifecycle
+    //     reaches their handlers, and the writes land in D1, not a stub.
+    var defLoc = await _rawPost(state.port, "/admin/inventory/locations",
+      {
+        "content-type":    "application/json; charset=utf-8",
+        "authorization":   "Bearer " + ADMIN_KEY,
+        "user-agent":      "Mozilla/5.0 (compatible; blamejs-shop-boot-test)",
+        "accept-language": "en-US",
+      },
+      JSON.stringify({ code: "BOOT-WH", name: "Boot Warehouse", type: "warehouse", priority: 10 }));
+    check("bridged boot: admin define-location accepted (2xx)", defLoc.status >= 200 && defLoc.status < 400);
+    var locRow = mem.db.prepare("SELECT COUNT(*) AS n FROM inventory_locations WHERE code = ?").get("BOOT-WH");
+    check("bridged boot: inventory_locations row persisted through the bridge", locRow && Number(locRow.n) === 1);
+
+    var recv = await _rawPost(state.port, "/admin/inventory/receive",
+      {
+        "content-type":    "application/json; charset=utf-8",
+        "authorization":   "Bearer " + ADMIN_KEY,
+        "user-agent":      "Mozilla/5.0 (compatible; blamejs-shop-boot-test)",
+        "accept-language": "en-US",
+      },
+      JSON.stringify({ sku: "BOOT-1", location_code: "BOOT-WH", quantity: 7 }));
+    check("bridged boot: admin receive-stock accepted (2xx)", recv.status >= 200 && recv.status < 400);
+    var stockRow = mem.db.prepare("SELECT quantity FROM inventory_stock WHERE sku = ? AND location_code = ?").get("BOOT-1", "BOOT-WH");
+    check("bridged boot: per-location stock landed through the bridge (7 at BOOT-WH)",
+      stockRow && Number(stockRow.quantity) === 7);
   } finally {
     if (state) _cleanup(state);
     await bridge.close();
