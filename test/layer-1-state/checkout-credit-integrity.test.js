@@ -184,10 +184,35 @@ async function _postCreateRedeemFailureNeverStrands() {
   check("exactly one order row",                   (await s.query("SELECT id FROM orders", [])).rows.length === 1);
 }
 
+async function _fullyCoveredRedeemFailureNeverStrands() {
+  var s = await _setup({ price_minor: 2000 });
+  // Card FULLY covers the order (amountDue === 0 — the no-PaymentIntent
+  // branch). The ledger isn't seeded, so the post-create ledger debit
+  // throws — the failure must be captured by the same settlement wrapper
+  // as the PaymentIntent branch: the order still advances to paid, the
+  // cart converts, and the authoritative card-row debit lands.
+  var card = await s.giftcards.issue({ amount_minor: 5000, currency: "USD" });
+  var c = await _freshCart(s);
+
+  var result = await s.checkout.confirm({
+    cart_id: c.id, ship_to: { country: "US" }, selected_shipping_id: "std",
+    customer: { email: "buyer@example.com" }, gift_card_code: card.code,
+    idempotency_key: "checkout:" + c.id + ":seed",
+  });
+  check("fully covered: confirm returns a paid order (not a throw)",
+    result && result.order && result.order.status === "paid");
+  check("fully covered: no PaymentIntent on the zero-due path", !result.payment_intent);
+  check("fully covered: cart converted (never stranded active)",
+    (await s.cart.get(c.id)).status === "converted");
+  check("fully covered: exactly one order row",
+    (await s.query("SELECT id FROM orders", [])).rows.length === 1);
+}
+
 async function run() {
   await _concurrentConfirmSingleCharge();
   await _giftCardReversedOnCancel();
   await _postCreateRedeemFailureNeverStrands();
+  await _fullyCoveredRedeemFailureNeverStrands();
 }
 
 module.exports = { run: run };
