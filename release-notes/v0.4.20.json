@@ -1,0 +1,42 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.20",
+  "date": "2026-06-06",
+  "headline": "Payment integrity: refunds, gift-card balances, and checkout submission are race-proof, and abandoned checkouts return gift-card funds",
+  "summary": "A money-path hardening release. Concurrent refund clicks on the same return can no longer reach the payment provider twice. A gift card that part-paid a checkout gets its balance back when the order is cancelled, fails payment, or is reaped as stale. Double-submitting checkout can no longer create two charges and two orders. Return requests are refused server-side on orders that aren't in a returnable state, the refund confirmation screen shows the currency the provider will actually refund, and a buy-online-pickup-in-store order now reaches its delivered state when picked up.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "A return can only be refunded once, even under concurrent requests",
+          "body": "Two simultaneous refund requests for the same approved return could both pass the status check and both reach the payment provider, each with a fresh idempotency key — a double refund. The refund now claims the return atomically before the provider is called (the second request answers 409), the provider call uses a key derived from the return itself so even a retry collapses into the same refund, and a provider failure releases the claim so the refund can be retried."
+        },
+        {
+          "title": "Gift-card funds come back when a part-paid checkout dies",
+          "body": "When a gift card partially covered a checkout and the order was then cancelled, failed payment, or sat abandoned until reaped, the card's debit was never returned — the balance was permanently gone. Redemptions are now reversed on those order transitions: the card balance is restored (a fully drained card is reactivated), the reversal is idempotent, and it rides the same order lifecycle that releases inventory holds."
+        },
+        {
+          "title": "Double-submitting checkout creates one charge and one order",
+          "body": "Two concurrent checkout submissions could both pass the cart-status read and each create a payment intent and an order. The cart is now claimed atomically as the single gate — the second submission is redirected back to the cart — and the payment-provider idempotency key is derived from the cart, so even a duplicate that slipped through would collapse into one charge on the provider's side. A failure before the order exists releases the claim so the customer can retry."
+        },
+        {
+          "title": "Return requests are validated server-side",
+          "body": "The return-request form and its submission are now refused on orders that are not in a returnable state — a refunded, cancelled, or unpaid order answers with a clear message instead of opening a return that could feed a second refund downstream. Previously only the button's visibility enforced this."
+        },
+        {
+          "title": "A failed gift-card settlement no longer strands a completed payment",
+          "body": "If recording a gift card's redemption failed after the payment had already succeeded and the order existed, the checkout aborted mid-way — leaving a paid order with a cart that never converted. The settlement step now completes the order regardless and surfaces the failure for follow-up instead of stranding the purchase."
+        },
+        {
+          "title": "The refund confirmation shows the currency the provider refunds",
+          "body": "The confirmation screen displayed the return's approved currency, but the provider refunds in the original charge's currency. The screen now reads the same source the refund uses."
+        },
+        {
+          "title": "Pickup orders reach their delivered state",
+          "body": "Marking a pickup order as picked up drove an order transition that was only legal for shipped orders, and the failure was silently swallowed — the pickup schedule said picked up while the order stayed in its paid state. The order lifecycle now has a pickup-completion transition, so a picked-up order genuinely lands in delivered and downstream reporting sees it."
+        }
+      ]
+    }
+  ]
+}

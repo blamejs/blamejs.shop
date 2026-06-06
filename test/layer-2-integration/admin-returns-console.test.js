@@ -192,7 +192,10 @@ async function _run() {
 
 // Seed a paid order WITH a captured payment intent + an approved-then-
 // received RMA so the next legal RMA action is refund. Returns the ids.
-async function _seedRefundableReturn(query, returns) {
+async function _seedRefundableReturn(query, returns, ccyOpts) {
+  ccyOpts = ccyOpts || {};
+  var orderCcy = ccyOpts.order_currency || "USD";
+  var rmaCcy   = ccyOpts.rma_currency || "USD";
   var now = Date.now();
   var cartId = b.uuid.v7(), orderId = b.uuid.v7(), lineId = b.uuid.v7();
   // Derive the captured-intent id from the FULL order id, not a 12-char
@@ -203,26 +206,26 @@ async function _seedRefundableReturn(query, returns) {
   var intent = "pi_test_" + orderId;
   await query(
     "INSERT INTO carts (id, session_id, customer_id, currency, status, created_at, updated_at, expires_at) " +
-    "VALUES (?1, ?2, NULL, 'USD', 'converted', ?3, ?3, ?4)",
-    [cartId, b.uuid.v7(), now, now + 86400000],
+    "VALUES (?1, ?2, NULL, ?5, 'converted', ?3, ?3, ?4)",
+    [cartId, b.uuid.v7(), now, now + 86400000, orderCcy],
   );
   await query(
     "INSERT INTO orders (id, cart_id, customer_id, session_id, status, currency, subtotal_minor, " +
     "discount_minor, tax_minor, shipping_minor, grand_total_minor, payment_intent_id, ship_to_json, " +
     "customer_email_hash, created_at, updated_at) " +
-    "VALUES (?1, ?2, NULL, ?3, 'paid', 'USD', 5998, 0, 0, 0, 5998, ?4, '{}', NULL, ?5, ?5)",
-    [orderId, cartId, b.uuid.v7(), intent, now],
+    "VALUES (?1, ?2, NULL, ?3, 'paid', ?6, 5998, 0, 0, 0, 5998, ?4, '{}', NULL, ?5, ?5)",
+    [orderId, cartId, b.uuid.v7(), intent, now, orderCcy],
   );
   await query(
     "INSERT INTO order_lines (id, order_id, variant_id, sku, qty, unit_amount_minor, unit_currency, line_total_minor) " +
-    "VALUES (?1, ?2, ?3, 'WIDGET-1', 1, 5998, 'USD', 5998)",
-    [lineId, orderId, b.uuid.v7()],
+    "VALUES (?1, ?2, ?3, 'WIDGET-1', 1, 5998, ?4, 5998)",
+    [lineId, orderId, b.uuid.v7(), orderCcy],
   );
   var rma = await returns.request({
     order_id: orderId, reason: "defective",
     customer_notes: "Cracked.", lines: [{ sku: "WIDGET-1", qty: 1, order_line_id: lineId }],
   });
-  await returns.approve(rma.id, { refund_amount_minor: 5998, refund_currency: "USD" });
+  await returns.approve(rma.id, { refund_amount_minor: 5998, refund_currency: rmaCcy });
   await returns.markReceived(rma.id, {});
   return { orderId: orderId, rmaId: rma.id, rmaCode: rma.rma_code, intent: intent };
 }
@@ -290,6 +293,16 @@ async function _runProviderRefund() {
     check("refund used the order's intent",       refundCalls[0].input.payment_intent === seeded.intent);
     check("refund used the RMA amount",           refundCalls[0].input.amount_minor === 5998);
     check("RMA now refunded",                    (await returns.get(rid)).status === "refunded");
+    // The Stripe idempotency key is DETERMINISTIC in the return id (no
+    // per-request uuid) so a double-fire collapses onto one Refund on
+    // Stripe's side — even a logic regression can't double-charge.
+    check("idempotency key is rma-deterministic", refundCalls[0].idem === "rma-refund:" + rid);
+
+    // A refund on an already-refunded RMA is refused (the atomic claim) —
+    // the provider is NOT called a second time.
+    var reRefund = await helpers.httpRequest({ port: port, path: "/admin/returns/" + rid + "/refund", method: "POST", headers: { authorization: "Bearer " + TOKEN }, form: {} });
+    check("re-refund of a refunded RMA is 409",  reRefund.status === 409);
+    check("provider not called again on re-refund", refundCalls.length === 1);
 
     // JSON API path: a second RMA on a refundable order refunds via the
     // canonical endpoint with a bearer token (no interstitial).
@@ -298,6 +311,17 @@ async function _runProviderRefund() {
     check("API refund then 200 JSON",            apiRefund.status === 200 && (apiRefund.headers["content-type"] || "").indexOf("application/json") === 0);
     check("API RMA now refunded",                (await returns.get(seeded2.rmaId)).status === "refunded");
     check("provider.refund called for API too",   refundCalls.length === 2);
+
+    // Currency display: the confirm interstitial must show the ORDER'S charge
+    // currency, not the RMA's approved refund_currency. A Stripe refund
+    // against a captured intent settles in the charge currency — so an EUR
+    // order with a USD-approved RMA must display the EUR figure (the amount
+    // the provider actually refunds), never the USD one.
+    var seededEur = await _seedRefundableReturn(query, returns, { order_currency: "EUR", rma_currency: "USD" });
+    var eurConfirm = await helpers.httpRequest({ port: port, path: "/admin/returns/" + seededEur.rmaId + "/refund/confirm", method: "POST", jar: jar, form: {} });
+    check("EUR confirm interstitial then 200",   eurConfirm.status === 200);
+    check("interstitial shows the EUR charge currency", eurConfirm.body.indexOf("€59.98") !== -1 || eurConfirm.body.indexOf("€") !== -1);
+    check("interstitial does NOT show the RMA's USD currency", eurConfirm.body.indexOf("$59.98") === -1);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
