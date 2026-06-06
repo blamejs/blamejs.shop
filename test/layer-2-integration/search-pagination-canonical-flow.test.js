@@ -102,7 +102,11 @@ function _ogUrl(html) {
 // Count product-card anchors in a results grid.
 function _slugsOf(html) {
   var slugs = [];
-  var re = /href="\/products\/([a-z0-9-]+)"/g;
+  // Search result cards carry a `?from=search&sq=<q>` attribution suffix
+  // (the click marker the PDP reads to log a ranking click event), so the
+  // slug is followed by either the closing quote or the `?`-prefixed query
+  // string.
+  var re = /href="\/products\/([a-z0-9-]+)(?:\?[^"]*)?"/g;
   var m;
   while ((m = re.exec(html)) !== null) slugs.push(m[1]);
   return slugs;
