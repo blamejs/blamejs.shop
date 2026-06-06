@@ -774,6 +774,12 @@ async function main() {
       // AND the back-in-stock sweep so both transactional surfaces share the
       // same transport rather than each building its own.
       var txEmail = null;
+      // The raw b.mail.create mailer (the `.send(msg)` surface). The shop
+      // email factory wraps it with templated methods (orderReceipt, …);
+      // the broadcast campaign path needs the raw mailer to compose its
+      // own marketing message + RFC 8058 headers, so capture it at
+      // function scope (null when SMTP isn't configured).
+      var campaignMailer = null;
       if (process.env.SMTP_HOST && process.env.MAIL_FROM) {
         var txMailer = b.mail.create({
           transport: b.mail.transports.smtp({
@@ -784,6 +790,7 @@ async function main() {
           }),
           defaults: { from: process.env.MAIL_FROM },
         });
+        campaignMailer = txMailer;
         txEmail = bShop.email.create({
           mailer: txMailer,
           // Order-confirmation deep-link signing. Derived (domain-separated)
@@ -1195,6 +1202,56 @@ async function main() {
         : "customer-segments-cursor-secret-dev-only";
       var customerSegments = (catalog && cart)
         ? bShop.customerSegments.create({ cursorSecret: customerSegmentsCursorSecret })
+        : null;
+
+      // ---- email campaigns (consent-gated broadcast) ------------------
+      //
+      // Marketing broadcast: an operator authors a campaign, targets a
+      // mailing audience, and sends — but ONLY to marketing-consented,
+      // reachable subscribers, resolved at send time, every message
+      // carrying a one-click unsubscribe. Customer email is stored
+      // hash-only in this store, so the ONLY deliverable-address source
+      // is the newsletter subscriber list (which persists the plaintext
+      // address alongside the hash + the opt-out flag). The campaign
+      // composition wires that newsletter list as the reachability +
+      // consent source. Without SMTP configured (no campaignMailer) the
+      // console still mounts (draft / preview) but Send refuses cleanly.
+      var newsletter = (catalog && cart) ? bShop.newsletter.create({}) : null;
+      var campaignSuppressions = (catalog && cart)
+        ? bShop.emailSuppressions.create({
+            cursorSecret: process.env.D1_BRIDGE_SECRET
+              ? b.crypto.namespaceHash("email-suppressions-cursor", process.env.D1_BRIDGE_SECRET)
+              : "email-suppressions-cursor-dev-only",
+          })
+        : null;
+      var mailingAudiencesCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("mailing-audiences-cursor", process.env.D1_BRIDGE_SECRET)
+        : "mailing-audiences-cursor-dev-only";
+      var mailingAudiences = (catalog && cart)
+        ? bShop.mailingAudiences.create({
+            newsletter:        newsletter,
+            emailSuppressions: campaignSuppressions,
+            cursorSecret:      mailingAudiencesCursorSecret,
+          })
+        : null;
+      // The broadcast needs an https origin for the one-click unsubscribe
+      // link; the RFC 8058 guard refuses anything else. Absent SHOP_ORIGIN
+      // the broadcast path stays unavailable (canBroadcast() === false) and
+      // the console says so — never a silent no-op.
+      var campaignUnsubBase = process.env.SHOP_ORIGIN
+        ? process.env.SHOP_ORIGIN.replace(/\/+$/, "")
+        : null;
+      var emailCampaigns = (catalog && cart && campaignMailer && mailingAudiences)
+        ? bShop.emailCampaigns.create({
+            mailingAudiences:   mailingAudiences,
+            email:              campaignMailer,
+            emailSuppressions:  campaignSuppressions,
+            newsletter:         newsletter,
+            unsubscribeBaseUrl: campaignUnsubBase,
+            listId:             process.env.SHOP_ORIGIN
+              ? "marketing." + (function () { try { return new URL(process.env.SHOP_ORIGIN).host; } catch (_e) { return "shop.local"; } })()
+              : undefined,
+          })
         : null;
       // Customer activity — the read-only chronological per-customer timeline
       // surfaced on the customer-detail screen. It WRITES no event rows of its
@@ -1687,6 +1744,39 @@ async function main() {
         }
         var summary = await wishlistDigest.dispatchTick({ now: Date.now() });
         res.json({ ok: true, enabled: true, summary: summary });
+      });
+
+      // Email-campaign broadcast tick — the Worker's scheduled() POSTs here
+      // over the SHOP service binding. Drains campaigns due for send
+      // (scheduled with schedule_at <= now) plus any parked in `sending` by
+      // a prior pass's rate-budget pause, sending each as a consent-gated,
+      // RFC 8058-unsubscribable broadcast against the deliverable plaintext
+      // address source. Same shared-secret timing-safe gate + never-5xx
+      // shape as the other ticks. Inert (enabled:false) on a deploy with no
+      // SMTP / no deliverable-address source.
+      r.post("/_/campaign-send-tick", async function (req, res) {
+        var got = req.headers && req.headers["x-d1-bridge-secret"];
+        var want = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !want ||
+          typeof got !== "string" ||
+          got.length !== want.length ||
+          !b.crypto.timingSafeEqual(got, want)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!emailCampaigns) {
+          res.json({ ok: true, enabled: false, reason: "email campaigns not composed (no mailer / no address source)" });
+          return;
+        }
+        try {
+          var summary = await emailCampaigns.broadcastTick({ now: Date.now() });
+          res.json({ ok: true, enabled: summary.enabled, dispatched: summary.dispatched });
+        } catch (e) {
+          // Never 5xx — a thrown tick would mark the cron run failed.
+          res.json({ ok: false, error: (e && e.message) || String(e) });
+        }
       });
 
       // Customer-portal session-expiry tick — flips stale `issued`
@@ -2304,6 +2394,11 @@ async function main() {
           inventoryReceive:   inventoryReceive,
           stockTransfers:     stockTransfers,
           inventoryWriteoffs: inventoryWriteoffs,
+          // Consent-gated broadcast/campaign console (/admin/campaigns) —
+          // the emailCampaigns instance plus the mailingAudiences handle
+          // the new-campaign form reads to populate its audience picker.
+          emailCampaigns:   emailCampaigns,
+          mailingAudiences: mailingAudiences,
           collections:   collections,
           // Quotes console — the RFQ response queue + detail (respond /
           // withdraw). The notifier sends the quote-responded email when the

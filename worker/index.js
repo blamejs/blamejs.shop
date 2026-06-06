@@ -903,6 +903,29 @@ export default {
           console.error("customer-portal-expire failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
         }
       })());
+
+      // Email-campaign broadcast tick — drains campaigns due for send (and
+      // any parked mid-audience by a rate-budget pause) as consent-gated,
+      // one-click-unsubscribable broadcasts. SEPARATE ctx.waitUntil so a
+      // slow drain never blocks the others. The container handler self-
+      // limits per pass via the send-rate window; inert without a mailer /
+      // deliverable-address source.
+      ctx.waitUntil((async function () {
+        try {
+          var csUrl = new URL("/_/campaign-send-tick", "http://shop.container");
+          var csReq = new Request(csUrl.toString(), {
+            method:  "POST",
+            headers: {
+              "content-type":       "application/json; charset=utf-8",
+              "x-d1-bridge-secret": env.D1_BRIDGE_SECRET || "",
+            },
+            body: "{}",
+          });
+          await _shopContainer(env).fetch(csReq);
+        } catch (e) {
+          console.error("campaign-send-tick failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        }
+      })());
     }
 
     if (env.EDGE_RENDER !== "on") return;

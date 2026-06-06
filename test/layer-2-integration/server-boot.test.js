@@ -221,7 +221,15 @@ async function _runBridged() {
   var bridge = await helpers.startD1Bridge({ query: mem.query, secret: BRIDGE_SECRET });
   var state = null;
   try {
-    state = await _boot({ D1_BRIDGE_URL: bridge.url, D1_BRIDGE_SECRET: BRIDGE_SECRET, ADMIN_API_KEY: ADMIN_KEY }, "bridged");
+    state = await _boot({
+      D1_BRIDGE_URL: bridge.url, D1_BRIDGE_SECRET: BRIDGE_SECRET, ADMIN_API_KEY: ADMIN_KEY,
+      // SMTP + origin so the consent-gated broadcast path wires (the
+      // campaign console + /_/campaign-send-tick mount only when a mailer
+      // and an https unsubscribe origin are present). The tick below has
+      // no due campaigns, so no real SMTP connection is attempted.
+      SMTP_HOST: "127.0.0.1", SMTP_PORT: "2525", MAIL_FROM: "shop@boot.example",
+      SHOP_ORIGIN: "https://boot.example",
+    }, "bridged");
 
     // 5. The bridge-gated composition mounts: /cart is a storefront page,
     //    not the bare-mode JSON identity ping / 404.
@@ -478,6 +486,74 @@ async function _runBridged() {
       jar: helpers.cookieJar(), headers: browserHeaders,
     });
     check("bridged boot: unknown quote token is 404", badQuote.status === 404);
+
+    // 13. Dep-wiring liveness — the consent-gated email-campaign console +
+    //     the worker-shaped broadcast tick. emailCampaigns is dep-gated in
+    //     server.js on (SMTP mailer + a deliverable-address source + an
+    //     https unsubscribe origin); a missed injection re-darkens the
+    //     console AND the tick. Prove three halves: the console route
+    //     mounts (the nav link + an authored campaign render through the
+    //     browser cookie surface and the bearer JSON contract), the create
+    //     persists through the bridge, and the WORKER-SHAPED tick (no
+    //     browser fingerprint — the exact shape bot-guard 403'd this whole
+    //     family before INTERNAL_BRIDGE_PATHS exempted it) reaches its
+    //     handler with 2xx ok:true enabled:true.
+    var campJar = helpers.cookieJar();
+    var campLogin = await helpers.httpRequest({ port: state.port, path: "/admin/login", method: "POST", form: { token: ADMIN_KEY }, jar: campJar });
+    check("bridged boot: admin login for campaign console (303)", campLogin.status === 303);
+
+    var campList = await helpers.httpRequest({ port: state.port, path: "/admin/campaigns", jar: campJar });
+    check("bridged boot: /admin/campaigns mounts (2xx, emailCampaigns wired)", campList.status === 200);
+    check("bridged boot: campaign nav link renders", campList.body.indexOf("href=\"/admin/campaigns\"") !== -1);
+
+    // Seed a mailing audience over a newsletter signup so the campaign has
+    // a real reachable target, then author + send through the wire.
+    var nlNow = Date.now();
+    var nlId = bShop.framework.uuid.v7();
+    var nlHash = bShop.framework.crypto.namespaceHash("newsletter-email", "subscriber@boot.example");
+    mem.db.prepare(
+      "INSERT INTO newsletter_signups (id, email_hash, email_normalized, source, created_at) VALUES (?, ?, ?, 'storefront-footer', ?)"
+    ).run(nlId, nlHash, "subscriber@boot.example", nlNow);
+    mem.db.prepare(
+      "INSERT INTO mailing_audiences (slug, title, rules_json, archived_at, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?)"
+    ).run("boot-news", "Boot newsletter", JSON.stringify({ source_in: ["storefront-footer"] }), nlNow, nlNow);
+    mem.db.prepare(
+      "INSERT INTO mailing_audience_membership_cache (slug, signup_id, refreshed_at) VALUES (?, ?, ?)"
+    ).run("boot-news", nlId, nlNow);
+
+    var campCreate = await helpers.httpRequest({
+      port: state.port, path: "/admin/campaigns", method: "POST",
+      headers: { authorization: "Bearer " + ADMIN_KEY, "content-type": "application/json" },
+      body: JSON.stringify({
+        slug: "boot-launch", subject: "Boot launch", body_html: "# Hi\n\nWelcome.",
+        audience_slug: "boot-news", from_address: "news@boot.example", from_name: "Boot Shop",
+      }),
+    });
+    check("bridged boot: campaign create accepted (2xx)", campCreate.status >= 200 && campCreate.status < 300);
+    var campRow = mem.db.prepare("SELECT status FROM email_campaigns WHERE slug = ?").get("boot-launch");
+    check("bridged boot: campaign persisted through the bridge (draft)", campRow && campRow.status === "draft");
+
+    // Detail screen resolves the reachable count live (1 marketing-
+    // consented subscriber) and exposes the send action.
+    var campDetail = await _rawGet(state.port, "/admin/campaigns/boot-launch",
+      { authorization: "Bearer " + ADMIN_KEY, "user-agent": "curl/8.5.0", accept: "*/*" });
+    check("bridged boot: campaign detail JSON reachable (2xx)", campDetail.status >= 200 && campDetail.status < 300);
+    var campJson = null;
+    try { campJson = JSON.parse(campDetail.body); } catch (_e) { campJson = null; }
+    check("bridged boot: campaign reachability resolves the consented subscriber",
+      campJson && campJson.reachability && campJson.reachability.reachable === 1 && campJson.can_broadcast === true);
+
+    // The worker-shaped broadcast tick reaches its handler. No due
+    // campaigns are scheduled, so it returns enabled:true with an empty
+    // dispatch list — proving the route mounted, the secret gate passes,
+    // and bot-guard's UA-less exemption holds.
+    var campTickUnauth = await _rawPost(state.port, "/_/campaign-send-tick",
+      { "content-type": "application/json; charset=utf-8" }, "{}");
+    check("bridged boot: /_/campaign-send-tick without secret is 401", campTickUnauth.status === 401);
+    var campTick = await _rawPost(state.port, "/_/campaign-send-tick",
+      { "content-type": "application/json; charset=utf-8", "x-d1-bridge-secret": BRIDGE_SECRET }, "{}");
+    check("bridged boot: worker-shaped /_/campaign-send-tick reaches its handler (2xx ok:true enabled:true)",
+      campTick.status === 200 && /"ok":true/.test(campTick.body) && /"enabled":true/.test(campTick.body));
   } finally {
     if (state) _cleanup(state);
     await bridge.close();
