@@ -32,7 +32,7 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIGS = ["0013_giftcards.sql", "0214_giftcard_redemption_reversal.sql"].map(function (n) {
+var MIGS = ["0013_giftcards.sql", "0216_giftcard_redemption_reversal.sql"].map(function (n) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n);
 });
 

@@ -32,7 +32,7 @@ var b       = bShop.framework;
 
 var MIGS = [
   "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql",
-  "0013_giftcards.sql", "0081_gift_card_ledger.sql", "0214_giftcard_redemption_reversal.sql",
+  "0013_giftcards.sql", "0081_gift_card_ledger.sql", "0216_giftcard_redemption_reversal.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) {
