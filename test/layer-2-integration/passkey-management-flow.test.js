@@ -178,20 +178,47 @@ async function _run() {
     // ---- SECURITY: public register cannot take over an existing account
     //      by email knowledge alone ----------------------------------------
     // An anonymous attacker who knows a registered email must NOT be able to
-    // enroll their own authenticator onto that account. register-begin reuses
-    // an existing customer row ONLY for an interrupted first registration
-    // (no credentials yet); an account that already has a passkey is refused
+    // enroll their own authenticator onto that account. The public
+    // register-begin path creates NEW accounts only — it refuses ANY email
+    // that already has an account (passkey, OAuth, or guest-claim-pending),
     // so the attacker never receives a challenge bound to the victim's id.
+
+    // (a) An account WITH a passkey (custA).
     var preTakeover = (await customers.listPasskeys(custA.id)).length;
     var takeover = await helpers.httpRequest({
       port: handle.port, path: "/account/passkey/register-begin", method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: "alice@example.com", display_name: "Mallory" }),
     });
-    check("takeover register-begin on an established account then 409", takeover.status === 409);
+    check("takeover register-begin on a passkey account then 409", takeover.status === 409);
     check("takeover response mints NO challenge",  takeover.body.indexOf("challenge") === -1);
     check("takeover response says account_exists",  takeover.body.indexOf("account_exists") !== -1);
     check("victim credential count unchanged",      (await customers.listPasskeys(custA.id)).length === preTakeover);
+
+    // (b) An account with NO passkey but a linked OAuth identity (custB —
+    //     Bob's last passkey was revoked above; his Google identity remains).
+    //     A zero-passkey account is NOT a safely-reusable shell; this is the
+    //     exact gap a passkey-count-only check would miss.
+    check("precondition: B has zero passkeys, OAuth only", (await customers.listPasskeys(custB.id)).length === 0);
+    var oauthTakeover = await helpers.httpRequest({
+      port: handle.port, path: "/account/passkey/register-begin", method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "bob@example.com", display_name: "Mallory" }),
+    });
+    check("takeover register-begin on an OAuth-only account then 409", oauthTakeover.status === 409);
+    check("OAuth-account takeover mints NO challenge",  oauthTakeover.body.indexOf("challenge") === -1);
+    check("B gains no passkey from the attempt",        (await customers.listPasskeys(custB.id)).length === 0);
+
+    // (c) A bare existing row with no sign-in method (e.g. a guest-order
+    //     claim row awaiting a magic-link) is ALSO refused — it has a real
+    //     owner reachable by the claim email.
+    await customers.register({ email: "guest@example.com", display_name: "Guest" });
+    var guestTakeover = await helpers.httpRequest({
+      port: handle.port, path: "/account/passkey/register-begin", method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "guest@example.com", display_name: "Mallory" }),
+    });
+    check("takeover register-begin on a credential-less account then 409", guestTakeover.status === 409);
 
     // A brand-new email still registers — begin mints a challenge.
     var freshBegin = await helpers.httpRequest({
@@ -201,18 +228,6 @@ async function _run() {
     });
     check("new-email register-begin then 200",     freshBegin.status === 200);
     check("new-email register-begin mints a challenge", JSON.parse(freshBegin.body).challenge.length > 0);
-
-    // The legitimate retry is preserved: an existing row with ZERO
-    // credentials (a first registration interrupted before enrollment) can
-    // begin again rather than being refused.
-    await customers.register({ email: "halfway@example.com", display_name: "Halfway" });
-    var retryBegin = await helpers.httpRequest({
-      port: handle.port, path: "/account/passkey/register-begin", method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "halfway@example.com", display_name: "Halfway" }),
-    });
-    check("credential-less retry register-begin then 200", retryBegin.status === 200);
-    check("credential-less retry mints a challenge",        JSON.parse(retryBegin.body).challenge.length > 0);
 
     // ---- profile edit -------------------------------------------------
     var profGet = await helpers.httpRequest({ port: handle.port, path: "/account/profile", jar: jarA });
