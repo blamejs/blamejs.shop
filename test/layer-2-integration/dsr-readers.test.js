@@ -9,15 +9,19 @@
  * existing read / soft-delete surface onto that contract. The shims aren't
  * exported, so this test re-declares the SAME shims over real handles on a
  * shared in-memory DB and exercises them through the primitive — proving:
- *   - a populated customer's `full` export has every section present and
- *     `sections_absent` empty (the bug this whole group fixes — passing
- *     raw handles ships an empty bundle),
+ *   - a populated customer's `full` export has every customer-keyed section
+ *     present (identity / orders / subscriptions / addresses / tickets /
+ *     loyalty / reviews / consent ledger / wishlist / surveys / recently-
+ *     viewed), `sections_absent` empty, plus a completeness manifest,
  *   - scope narrowing (orders_only / identity_only),
  *   - processDeletion dry-run reports counts WITHOUT mutating (re-read
  *     proves no archive happened),
- *   - processDeletion wet-run archives addresses + subscriptions and
- *     anonymizes the customer row, while orders / loyalty / tickets are
- *     retained (deleted: 0),
+ *   - processDeletion wet-run archives addresses + subscriptions, erases the
+ *     wishlist + recently-viewed, anonymizes the customer row, AND revokes
+ *     every sign-in path (passkey deleted, OAuth link removed, email-hash
+ *     lookup severed, live portal session revoked) so a deleted customer
+ *     can't sign back in, while orders / loyalty / tickets / reviews /
+ *     consent ledger are retained (deleted: 0),
  *   - a failing adapter (unmigrated table) returns null/[] and the bundle
  *     still assembles.
  *
@@ -37,6 +41,11 @@ var MIGS = [
   "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql",
   "0006_customers.sql", "0026_customer_addresses.sql", "0009_subscriptions.sql",
   "0047_support_tickets.sql", "0022_loyalty.sql", "0109_compliance_export.sql",
+  // The customer-keyed personalization / feedback / consent domains the
+  // full export now covers, plus the auth tables erasure must revoke.
+  "0011_reviews.sql", "0185_consent_ledger.sql", "0012_wishlist.sql",
+  "0128_customer_surveys.sql", "0050_recently_viewed.sql",
+  "0205_customer_oauth_identities.sql", "0072_customer_portal_sessions.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 // The SAME adapter shims server.js builds (kept in sync with _dsrReader).
@@ -59,6 +68,13 @@ function _buildReaders(handles, query) {
           var existing = await handles.customers.get(id);
           if (!existing) return { table: "customers", deleted: 0 };
           if (dryRun) return { table: "customers", deleted: 1 };
+          // Erasure revokes every sign-in path before anonymizing the row.
+          if (typeof handles.customers.eraseAuthForCustomer === "function") {
+            try { await handles.customers.eraseAuthForCustomer(id); } catch (_eAuth) { /* drop-silent */ }
+          }
+          if (handles.customerPortal && typeof handles.customerPortal.revokeAllForCustomer === "function") {
+            try { await handles.customerPortal.revokeAllForCustomer(id, "account-erasure"); } catch (_eSess) { /* drop-silent */ }
+          }
           await handles.customers.update(id, { display_name: "[erased customer " + String(id).slice(0, 8) + "]" });
           return { table: "customers", deleted: 1 };
         } catch (_e) { return { table: "customers", deleted: 0 }; }
@@ -132,6 +148,57 @@ function _buildReaders(handles, query) {
       },
       forCustomerDeletion: async function () { return { table: "loyalty", deleted: 0, note: "retained-ledger" }; },
     },
+    reviews: {
+      forCustomerExport: async function (id) {
+        try { return (await handles.reviews.byCustomer(handles.reviews.hashCustomerId(id), { limit: 100 })).rows; }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function () { return { table: "reviews", deleted: 0, note: "retained-published-content" }; },
+    },
+    consentLedger: {
+      forCustomerExport: async function (id) {
+        try { return await handles.consentLedger.historyForCustomer(id); } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function () { return { table: "consent_ledger", deleted: 0, note: "retained-consent-evidence" }; },
+    },
+    wishlist: {
+      forCustomerExport: async function (id) {
+        try { return (await handles.wishlist.listForCustomer(id, { limit: 100 })).rows; } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var c = (await query("SELECT COUNT(*) AS n FROM wishlist_entries WHERE customer_id = ?1", [id])).rows[0];
+            return { table: "wishlist_entries", deleted: c ? Number(c.n) : 0 };
+          }
+          var res = await query("DELETE FROM wishlist_entries WHERE customer_id = ?1", [id]);
+          return { table: "wishlist_entries", deleted: Number((res && res.rowCount) || 0) };
+        } catch (_e) { return { table: "wishlist_entries", deleted: 0 }; }
+      },
+    },
+    surveys: {
+      forCustomerExport: async function (id) {
+        try { return await handles.customerSurveys.invitationsForCustomer(id, { limit: 100 }); } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function () { return { table: "survey_invitations", deleted: 0, note: "retained" }; },
+    },
+    recentlyViewed: {
+      forCustomerExport: async function (id) {
+        try { return await handles.recentlyViewed.forCustomer(id, { limit: 100 }); } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var c = (await query("SELECT COUNT(*) AS n FROM recently_viewed WHERE customer_id = ?1", [id])).rows[0];
+            return { table: "recently_viewed", deleted: c ? Number(c.n) : 0 };
+          }
+          var out = await handles.recentlyViewed.purgeCustomer(id);
+          return { table: "recently_viewed", deleted: Number((out && out.removed) || 0) };
+        } catch (_e) { return { table: "recently_viewed", deleted: 0 }; }
+      },
+    },
   };
 }
 
@@ -189,16 +256,26 @@ async function _run() {
   var mem     = helpers.memD1Query(MIGS);
   var query   = mem.query;
 
+  var catalog       = bShop.catalog.create({ query: query });
   var customers     = bShop.customers.create({ query: query, cursorSecret: "dsr-readers-cust" });
   var addresses     = bShop.addresses.create({ query: query });
   var order         = bShop.order.create({ query: query, cursorSecret: "dsr-readers-order" });
   var subscriptions = bShop.subscriptions.create({ query: query, payment: null });
   var supportTickets = bShop.supportTickets.create({ query: query, cursorSecret: "dsr-readers-support" });
   var loyalty       = bShop.loyalty.create({ query: query });
+  var reviews        = bShop.reviews.create({ query: query, cursorSecret: "dsr-readers-reviews" });
+  var consentLedger  = bShop.consentLedger.create({ query: query });
+  var wishlist       = bShop.wishlist.create({ query: query, cursorSecret: "dsr-readers-wishlist" });
+  var customerSurveys = bShop.customerSurveys.create({ query: query });
+  var recentlyViewed = bShop.recentlyViewed.create({ query: query, catalog: catalog });
+  var customerPortal = bShop.customerPortal.create({ query: query });
 
   var handles = {
     customers: customers, addresses: addresses, order: order,
     subscriptions: subscriptions, supportTickets: supportTickets, loyalty: loyalty,
+    reviews: reviews, consentLedger: consentLedger, wishlist: wishlist,
+    customerSurveys: customerSurveys, recentlyViewed: recentlyViewed,
+    customerPortal: customerPortal,
   };
   var readers = _buildReaders(handles, query);
 
@@ -212,6 +289,11 @@ async function _run() {
     paymentMethods: readers.paymentMethods,
     supportTickets: readers.supportTickets,
     loyalty:        readers.loyalty,
+    reviews:        readers.reviews,
+    consentLedger:  readers.consentLedger,
+    wishlist:       readers.wishlist,
+    surveys:        readers.surveys,
+    recentlyViewed: readers.recentlyViewed,
   });
 
   // ---- populate a customer across every domain ----
@@ -228,12 +310,34 @@ async function _run() {
     body: "Tracking hasn't updated.", category: "order_issue",
   });
   await loyalty.earn({ customer_id: cid, points: 120, source: "purchase" });
+  // The customer-keyed personalization / feedback / consent domains. The
+  // reviews row needs a real product (hard FK); wishlist / recently-viewed
+  // product ids are soft FKs and need no product row.
+  var seedProduct = await catalog.products.create({ slug: "dsr-widget", title: "DSR Widget", status: "active" });
+  await wishlist.add({ customer_id: cid, product_id: b.uuid.v7() });
+  await consentLedger.recordConsentChange({ customer_id: cid, consent_kind: "marketing_email", state: "granted", source: "signup_form" });
+  await recentlyViewed.recordView({ customer_id: cid, product_id: b.uuid.v7() });
+  await query(
+    "INSERT INTO reviews (id, product_id, customer_id, customer_id_hash, rating, title, body, verified_purchase, status, created_at, updated_at) " +
+    "VALUES (?1, ?2, ?3, ?4, 5, 'Great', 'Loved it', 1, 'published', ?5, ?5)",
+    [b.uuid.v7(), seedProduct.id, cid, reviews.hashCustomerId(cid), Date.now()],
+  );
+  // Auth credentials the erasure must revoke: a passkey, a federated link,
+  // and a live portal session.
+  await customers.addPasskey(cid, { credential_id: "dsr-cred", public_key: "k", transports: "internal" });
+  await query(
+    "INSERT INTO customer_oauth_identities (id, customer_id, provider, subject, email, email_verified, created_at, updated_at) " +
+    "VALUES (?1, ?2, 'google', 'dsr-sub', 'dana@example.com', 1, ?3, ?3)",
+    [b.uuid.v7(), cid, Date.now()],
+  );
+  await customerPortal.createSession({ customer_id: cid, scope: "full" });
 
   // ---- 1. full export: every section present, sections_absent EMPTY ----
   var exReq = await dsr.requestExport({ customer_id: cid, requested_by: "operator-1", jurisdiction: "gdpr", scope: "full" });
   var bundle = await dsr.fulfillRequest({ request_id: exReq.id });
   check("full export sections_absent is empty", Array.isArray(bundle.sections_absent) && bundle.sections_absent.length === 0);
-  ["customers", "addresses", "order", "subscriptions", "supportTickets", "loyalty"].forEach(function (name) {
+  ["customers", "addresses", "order", "subscriptions", "supportTickets", "loyalty",
+   "reviews", "consentLedger", "wishlist", "surveys", "recentlyViewed"].forEach(function (name) {
     check("full export has section " + name, bundle.sections_present.indexOf(name) !== -1);
   });
   check("customers section carries the row",  bundle.data.customers && bundle.data.customers.customer && bundle.data.customers.customer.id === cid);
@@ -242,6 +346,12 @@ async function _run() {
   check("subscriptions section is non-empty", Array.isArray(bundle.data.subscriptions) && bundle.data.subscriptions.length === 1);
   check("supportTickets section is non-empty", Array.isArray(bundle.data.supportTickets) && bundle.data.supportTickets.length === 1);
   check("loyalty section carries balance",    bundle.data.loyalty && bundle.data.loyalty.balance && bundle.data.loyalty.balance.balance === 120);
+  check("reviews section is non-empty",       Array.isArray(bundle.data.reviews) && bundle.data.reviews.length === 1);
+  check("consentLedger section is non-empty", Array.isArray(bundle.data.consentLedger) && bundle.data.consentLedger.length >= 1);
+  check("wishlist section is non-empty",      Array.isArray(bundle.data.wishlist) && bundle.data.wishlist.length === 1);
+  check("recentlyViewed section is non-empty", Array.isArray(bundle.data.recentlyViewed) && bundle.data.recentlyViewed.length === 1);
+  // The completeness manifest covers every scope section.
+  check("export carries a manifest",          Array.isArray(bundle.manifest) && bundle.manifest.length === bShop.complianceExport.SCOPE_SECTIONS.full.length);
 
   // ---- 2. scope narrowing ----
   var ordersOnlyReq = await dsr.requestExport({ customer_id: cid, requested_by: "op", jurisdiction: "ccpa", scope: "orders_only" });
@@ -278,6 +388,21 @@ async function _run() {
   check("wet-run canceled the subscription",   subRows.length === 1 && subRows[0].status === "canceled");
   var custRow = await customers.get(cid);
   check("wet-run anonymized the customer row", custRow && custRow.display_name.indexOf("[erased customer") === 0);
+  // ---- erasure revoked EVERY sign-in path (a deleted customer can't re-enter) ----
+  check("wet-run deleted the passkey",         (await customers.listPasskeys(cid)).length === 0);
+  check("wet-run unlinked the OAuth identity", (await customers.byOAuthIdentity("google", "dsr-sub")) === null);
+  check("wet-run severed the email-hash lookup", (await customers.byEmailHash("hash-" + cid)) === null);
+  var liveSessions = (await customerPortal.listForCustomer(cid, {})).filter(function (s) { return s.status === "issued"; });
+  check("wet-run revoked the live portal session", liveSessions.length === 0);
+  // ---- personalization erased; reviews / consent retained ----
+  var wishlistAfter = (await wishlist.listForCustomer(cid, {})).rows;
+  check("wet-run erased the wishlist",         wishlistAfter.length === 0);
+  var rvAfter = await recentlyViewed.forCustomer(cid, {});
+  check("wet-run erased recently-viewed",      rvAfter.length === 0);
+  var reviewsRetained = result.domains.filter(function (d) { return d.domain === "reviews"; })[0];
+  var consentRetained = result.domains.filter(function (d) { return d.domain === "consentLedger"; })[0];
+  check("reviews retained (deleted: 0)",       reviewsRetained && reviewsRetained.deleted === 0);
+  check("consent ledger retained (deleted: 0)", consentRetained && consentRetained.deleted === 0);
   var ordersRetained  = result.domains.filter(function (d) { return d.domain === "order"; })[0];
   var loyaltyRetained = result.domains.filter(function (d) { return d.domain === "loyalty"; })[0];
   var ticketsRetained = result.domains.filter(function (d) { return d.domain === "supportTickets"; })[0];

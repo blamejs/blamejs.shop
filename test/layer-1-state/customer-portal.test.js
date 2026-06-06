@@ -418,6 +418,48 @@ async function _expireOlderThanWalk() {
   await assert.rejects(cp.expireOlderThan("60"), /seconds/);
 }
 
+// revokeAllForCustomer — the right-to-erasure / password-reset bulk eject:
+// every LIVE (issued) session for one customer flips to revoked in a single
+// statement, while terminal rows + other customers' sessions stay untouched.
+async function _revokeAllForCustomer() {
+  var q  = _makeQuery();
+  var cp = customerPortal.create({ query: q });
+  var victim = _newCustomerId();
+  var other  = _newCustomerId();
+
+  var live1   = await cp.createSession({ customer_id: victim, scope: "full" });
+  var live2   = await cp.createSession({ customer_id: victim, scope: "billing_only" });
+  var consumed = await cp.createSession({ customer_id: victim, scope: "address_only" });
+  var otherLive = await cp.createSession({ customer_id: other, scope: "full" });
+
+  // Consume one so the bulk revoke must skip the terminal row.
+  await cp.verifyToken(consumed.plaintext_token);
+
+  var result = await cp.revokeAllForCustomer(victim, "account-erasure");
+  check("revokeAll flips both live sessions", result.revoked === 2);
+
+  var l1 = (await q("SELECT status, revoke_reason FROM customer_portal_sessions WHERE id = ?1", [live1.session_id])).rows[0];
+  var l2 = (await q("SELECT status FROM customer_portal_sessions WHERE id = ?1", [live2.session_id])).rows[0];
+  var co = (await q("SELECT status FROM customer_portal_sessions WHERE id = ?1", [consumed.session_id])).rows[0];
+  var ot = (await q("SELECT status FROM customer_portal_sessions WHERE id = ?1", [otherLive.session_id])).rows[0];
+  check("revokeAll live1 -> revoked",      l1.status === "revoked");
+  check("revokeAll stamps the reason",     l1.revoke_reason === "account-erasure");
+  check("revokeAll live2 -> revoked",      l2.status === "revoked");
+  check("revokeAll leaves consumed row",   co.status === "consumed");
+  check("revokeAll leaves other customer", ot.status === "issued");
+
+  // A revoked session no longer verifies.
+  check("revoked session fails verify",    (await cp.verifyToken(live1.plaintext_token)) === null);
+
+  // Idempotent — a re-run flips nothing.
+  var again = await cp.revokeAllForCustomer(victim, "account-erasure");
+  check("revokeAll idempotent",            again.revoked === 0);
+
+  // Bad input refused.
+  await assert.rejects(cp.revokeAllForCustomer("not-a-uuid", "x"), /customer_id/);
+  await assert.rejects(cp.revokeAllForCustomer(victim, ""),        /reason/);
+}
+
 async function run() {
   await _createHappyPath();
   await _createBadInput();
@@ -426,6 +468,7 @@ async function run() {
   await _verifyUnknownAndBadInput();
   await _scopeRoundTrip();
   await _revokeBlocksVerify();
+  await _revokeAllForCustomer();
   await _listForCustomerOrdering();
   await _expireOlderThanWalk();
 }
