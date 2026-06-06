@@ -433,7 +433,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: var(--space-6) 0; }
 }
 .brand:hover { opacity: 0.85; }
 
-.site-search { display: flex; min-width: 0; max-width: 32rem; width: 100%; justify-self: center; }
+.site-search { display: flex; min-width: 0; max-width: 32rem; width: 100%; justify-self: center; position: relative; }
 .site-search__inner {
   display: flex; align-items: center; width: 100%;
   background: var(--surface-raised);
@@ -472,6 +472,43 @@ hr { border: 0; border-top: 1px solid var(--border); margin: var(--space-6) 0; }
   transition: background var(--duration-fast) var(--ease-out), box-shadow var(--duration-mid) var(--ease-out);
 }
 .site-search button:hover { background: var(--color-accent-hover); box-shadow: var(--glow-soft); }
+
+/* Autocomplete dropdown (search-suggest island). Hidden until the island
+   populates it; anchored under the search form. The island sets [hidden]
+   to toggle visibility. */
+.search-suggest {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0; right: 0;
+  z-index: 60;
+  max-height: 60vh; overflow-y: auto;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg, 0 8px 28px rgba(0, 0, 0, 0.35));
+  padding: var(--space-2) 0;
+}
+.search-suggest[hidden] { display: none; }
+.search-suggest__heading {
+  padding: var(--space-2) var(--space-4) var(--space-1);
+  font: 700 var(--text-xs)/1 var(--font-mono);
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--text-subtle);
+}
+.search-suggest__option {
+  display: block;
+  padding: 0.55rem var(--space-4);
+  font: 400 var(--text-sm)/1.4 var(--font-body);
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.search-suggest__option:hover,
+.search-suggest__option--active {
+  background: var(--surface-sunken, rgba(173, 56, 219, 0.12));
+  color: var(--text);
+}
 
 .site-nav {
   display: inline-flex; align-items: center;

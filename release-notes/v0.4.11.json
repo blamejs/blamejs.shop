@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.11",
+  "date": "2026-06-05",
+  "headline": "Search autocomplete: a live suggestions dropdown in the header, plus an admin screen to curate it",
+  "summary": "Typing in the storefront search box now opens an autocomplete dropdown with matching products, what other shoppers are searching for, and operator-curated featured links. A new admin screen pins those featured suggestions and surfaces a popular-searches report so you can see demand and spot terms that return nothing. The search box keeps working with JavaScript off — the dropdown is a progressive enhancement on top of the plain form.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Search autocomplete in the storefront header",
+          "body": "As a shopper types in the header search box, a dropdown opens beneath it with up to three groups: matching products (linking straight to the product page), popular recent searches (click one to run it), and operator-curated featured suggestions (linking wherever you point them). It's keyboard-navigable — arrow keys move through the list, Enter picks, Escape dismisses — and announces itself to screen readers as a combobox. The dropdown is served from a cacheable JSON endpoint that carries no per-visitor data, and it's a pure enhancement: with JavaScript off, or before the data loads, the box stays an ordinary search form that submits to the results page."
+        },
+        {
+          "title": "Search-suggestions admin screen",
+          "body": "A new Search suggestions screen under the admin console lets you curate featured suggestions: pin a typed prefix (for example, prefix \"free\" surfaces \"Free shipping over $50\"), set its destination link, priority, and an optional active window, then edit the priority or status inline or remove it. Below the curation table, a read-only Popular searches view reports what shoppers have typed over the last 30 days — each term's search count, its zero-result share, and when it was last seen — so a high zero-result term flags a stock or naming gap worth closing. Every search a shopper runs is logged for this report (the visitor's session identifier is hashed before storage), and entries older than 90 days are pruned automatically."
+        }
+      ]
+    }
+  ]
+}
