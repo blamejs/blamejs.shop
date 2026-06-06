@@ -1306,6 +1306,93 @@ async function main() {
         ? bShop.order.create({ cursorSecret: orderCursorSecret, webhooks: webhooks, loyaltyEarnRules: loyaltyEarnRules, referrals: referrals, inventory: catalog.inventory, errorLog: errorLog })
         : null;
 
+      // Quotes — the B2B request-for-quote negotiation surface. ONE shared
+      // instance backs the customer storefront pages (request from cart, the
+      // tokened /quote/:token review + accept/decline, the account quote list)
+      // AND the admin console (response queue, detail, respond, withdraw). The
+      // `cart` handle lets a customer's request derive its lines from their
+      // active cart; the `order` + `inventory` handles let an accepted quote
+      // convert into a pending order that reserves shelf stock at conversion
+      // (the same hold checkout takes), so a quote can't oversell against a
+      // concurrent cart checkout — the pending order owns the holds and settles
+      // them on its own paid/cancel edge.
+      var quotes = (catalog && cart && order)
+        ? bShop.quotes.create({ cart: cart, order: order, inventory: catalog.inventory })
+        : null;
+
+      // Convert an accepted quote into a pending order. Resolves the
+      // customer's default shipping address for the order ship_to (the order
+      // primitive requires only the country, which every saved address
+      // carries); a customer with no saved address yet leaves conversion to
+      // the operator from the console. Used by the storefront accept routes so
+      // the inventory holds land at acceptance. Returns the converted quote,
+      // or null when conversion isn't possible (no address / no handles).
+      var convertQuoteToOrder = (quotes && addresses && cart)
+        ? async function (quoteId) {
+            var q = await quotes.getQuote(quoteId);
+            if (!q || q.status !== "accepted") return null;
+            var shipAddr = await addresses.defaultShipping(q.customer_id);
+            if (!shipAddr || !shipAddr.country) return null;
+            var shipTo = {
+              name:         shipAddr.recipient_name || null,
+              street_line1: shipAddr.street_line1 || "",
+              street_line2: shipAddr.street_line2 || null,
+              city:         shipAddr.city || "",
+              region:       shipAddr.region || "",
+              postal_code:  shipAddr.postal_code || "",
+              country:      shipAddr.country,
+            };
+            // The orders.cart_id column is FK-constrained to carts(id), so a
+            // quote-driven order needs a real backing cart row. Mint a fresh
+            // converted-status cart pinned to the customer (the quote already
+            // snapshotted the lines + prices; this cart is the order's stable
+            // pointer back to the negotiation, not a live shopping cart).
+            var convSession = "quote_" + quoteId.replace(/-/g, "").slice(0, 24);
+            var convCart = await cart.create(convSession, { currency: q.currency || "USD" });
+            try { await cart.setCustomer(convCart.id, q.customer_id); } catch (_e) { /* best-effort pin */ }
+            try { await cart.setStatus(convCart.id, "converted"); } catch (_e) { /* best-effort */ }
+            return await quotes.convertToOrder({
+              quote_id:   quoteId,
+              ship_to:    shipTo,
+              cart_id:    convCart.id,
+              session_id: convCart.id,
+            });
+          }
+        : null;
+
+      // Notify a customer that their quote was priced. Resolves the quote's
+      // owner + a fresh single-use view token, formats the quoted total
+      // through pricing, and sends the quote-responded email via the shared
+      // transactional mailer. Drop-silent + best-effort — a mail hiccup must
+      // never fail the operator's respond action. Null (no-op) when SMTP /
+      // a shop origin isn't configured, since the email needs an absolute
+      // link the customer can open.
+      var notifyQuoteResponded = (quotes && txEmail && customers && process.env.SHOP_ORIGIN)
+        ? async function (quoteId) {
+            var q = await quotes.getQuote(quoteId);
+            if (!q || q.status !== "responded") return;
+            var customer = await customers.get(q.customer_id);
+            // The default deploy persists only the email HASH, so there is no
+            // deliverable plaintext address unless the operator wired a lookup.
+            // Absent a deliverable address the notify is a silent no-op (the
+            // customer still finds the quote in their account).
+            var toEmail = customer && customer.email ? customer.email : null;
+            if (!toEmail) return;
+            var issued = await quotes.issueViewToken(quoteId);
+            if (!issued) return;
+            var base = process.env.SHOP_ORIGIN.replace(/\/+$/, "");
+            var quoteUrl = base + "/quote/" + encodeURIComponent(issued.plaintext_token);
+            var validUntil = q.valid_until ? new Date(Number(q.valid_until)).toUTCString() : "—";
+            await txEmail.quoteResponded({
+              customer_email:  toEmail,
+              customer_name:   (customer && customer.display_name) || "there",
+              total_formatted: bShop.pricing.format(q.total_minor || 0, q.currency || "USD"),
+              valid_until:     validUntil,
+              quote_url:       quoteUrl,
+            });
+          }
+        : null;
+
       // Order notes — threaded customer-service notes attached to an order,
       // surfaced as a panel on the admin order-detail screen. ONE shared
       // instance backs the console add/list/lifecycle. The listForOrder
@@ -2218,6 +2305,11 @@ async function main() {
           stockTransfers:     stockTransfers,
           inventoryWriteoffs: inventoryWriteoffs,
           collections:   collections,
+          // Quotes console — the RFQ response queue + detail (respond /
+          // withdraw). The notifier sends the quote-responded email when the
+          // operator prices a quote (drop-silent without SMTP / a shop origin).
+          quotes:          quotes,
+          notifyQuoteResponded: notifyQuoteResponded,
           announcementBar: announcementBar,
           promoBanners:    promoBanners,
           customerSurveys: customerSurveys,
@@ -2452,6 +2544,13 @@ async function main() {
         if (promoBanners) sfDeps.promoBanners = promoBanners;
         // Customer surveys — the token survey page + response submit.
         if (customerSurveys) sfDeps.customerSurveys = customerSurveys;
+        // Quotes — the customer RFQ surface: request from cart, the tokened
+        // /quote/:token review + accept/decline, and the account quote list.
+        // `convertQuoteToOrder` lets an accepted quote land a pending order
+        // (reserving stock) at acceptance; absent it (no saved address /
+        // handles) the operator converts from the console.
+        if (quotes) sfDeps.quotes = quotes;
+        if (convertQuoteToOrder) sfDeps.convertQuoteToOrder = convertQuoteToOrder;
         // Knowledge base — the public /help reader (index + article + vote).
         if (knowledgeBase) sfDeps.knowledgeBase = knowledgeBase;
         // Storefront CMS pages — the sitemap reads published page slugs from
