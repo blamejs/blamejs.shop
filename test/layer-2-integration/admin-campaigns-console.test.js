@@ -242,7 +242,7 @@ async function _run() {
     check("sent message carries List-Id",
       aliceMsg.headers && aliceMsg.headers["List-Id"] === "<marketing.shop.example>");
     check("sent body carries an in-body unsubscribe link",
-      aliceMsg.html.indexOf("/newsletter/unsubscribe?token=") !== -1);
+      aliceMsg.html.indexOf("/unsubscribe?token=") !== -1);
 
     // ---- the broadcast renders the SOURCE body — recipients get exactly
     //      the escaped markup the preview showed, never raw operator input

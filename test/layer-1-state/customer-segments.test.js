@@ -549,14 +549,19 @@ async function _membersCsvExport() {
   check("export: carries the ordinary display name", body.indexOf("Bob Buyer") !== -1);
   check("export: order_count column populated", body.indexOf("\"1\"") !== -1);
   // CSV-injection neutralization — the "=cmd()" display_name is prefixed
-  // with a single quote so a spreadsheet treats it as text, never a formula.
-  check("export: neutralizes the formula-injection name", body.indexOf("\"'=cmd()") !== -1);
+  // with a TAB (the shared b.guardCsv.escapeCell, OWASP prefix-tab) so a
+  // spreadsheet treats it as text, never a formula.
+  check("export: neutralizes the formula-injection name", body.indexOf("\"\t=cmd()") !== -1);
   check("export: no raw leading-= cell", body.indexOf(",\"=cmd()") === -1);
 
-  // Unit-level injection neutralizer.
-  check("neutralize: leading = escaped",  customerSegments._neutralizeInjection("=SUM(A1)") === "'=SUM(A1)");
-  check("neutralize: leading @ escaped",  customerSegments._neutralizeInjection("@foo") === "'@foo");
-  check("neutralize: signed number passes", customerSegments._neutralizeInjection("-3.50") === "-3.50");
+  // Unit-level injection neutralizer — now the shared vendored primitive,
+  // which prefixes a leading TAB for ANY formula-trigger char (= + - @ plus
+  // the tab / CR / LF / pipe / full-width variants an `= + - @`-only check
+  // missed). Signed numerics are prefixed too (the safe OWASP posture).
+  check("neutralize: leading = escaped",  customerSegments._neutralizeInjection("=SUM(A1)") === "\t=SUM(A1)");
+  check("neutralize: leading @ escaped",  customerSegments._neutralizeInjection("@foo") === "\t@foo");
+  check("neutralize: leading pipe escaped", customerSegments._neutralizeInjection("|calc") === "\t|calc");
+  check("neutralize: signed number escaped", customerSegments._neutralizeInjection("-3.50") === "\t-3.50");
   check("neutralize: plain text passes",  customerSegments._neutralizeInjection("Bob") === "Bob");
 
   // Batched streaming — with a tiny seed set the stream still yields the

@@ -165,10 +165,10 @@ async function _run() {
     check("CSV excludes the out-of-window order", csv.body.indexOf("Out of range") === -1);
 
     // The CSV-injection assertion: the "=cmd()..." shipping-address cell
-    // must be neutralized — the primitive prefixes a dangerous leading
-    // metacharacter with `'` inside the RFC-4180 quotes. So the cell is
-    // `"'=cmd()..."`, NEVER a raw `"=cmd()..."`.
-    check("CSV neutralizes the formula cell",     csv.body.indexOf("\"'=cmd()") !== -1);
+    // must be neutralized — the shared b.guardCsv.escapeCell prefixes a
+    // dangerous leading metacharacter with a TAB inside the RFC-4180 quotes.
+    // So the cell is `"\t=cmd()..."`, NEVER a raw `"=cmd()..."`.
+    check("CSV neutralizes the formula cell",     csv.body.indexOf("\"\t=cmd()") !== -1);
     check("CSV never emits a raw leading = cell",  csv.body.indexOf("\"=cmd()") === -1);
 
     // ---- NDJSON download ----

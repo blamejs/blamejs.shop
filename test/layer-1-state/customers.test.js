@@ -348,6 +348,55 @@ function _appleClientSecret() {
   }, /EC P-256/);
 }
 
+// Right-to-erasure auth revocation. A deleted customer must be unable to
+// sign back in: every durable credential is gone and the magic-link lookup
+// key is severed, while the row itself survives for FK integrity.
+async function _eraseAuthForCustomer() {
+  var q = _makeQuery();
+  var customers = bShop.customers.create({ query: q });
+  var c = await customers.register({ email: "erase-me@example.com", display_name: "Erase Me" });
+  await customers.addPasskey(c.id, { credential_id: "erase-cred", public_key: "k", transports: "internal" });
+  // Link a federated identity directly (signInWithOIDC writes the same row).
+  await q(
+    "INSERT INTO customer_oauth_identities (id, customer_id, provider, subject, email, email_verified, created_at, updated_at) " +
+    "VALUES (?1, ?2, 'google', 'erase-sub', 'erase-me@example.com', 1, ?3, ?3)",
+    [bShop.framework.uuid.v7(), c.id, Date.now()],
+  );
+  var emailHash = customers.hashEmail("erase-me@example.com");
+
+  // Dry-run reports the blast radius without mutating.
+  var preview = await customers.eraseAuthForCustomer(c.id, { dry_run: true });
+  check("erase dry-run counts passkey",      preview.passkeys === 1);
+  check("erase dry-run counts oauth",        preview.oauth_identities === 1);
+  check("erase dry-run flags email-hash",    preview.email_hash_cleared === 1);
+  check("erase dry-run leaves passkey",      (await customers.listPasskeys(c.id)).length === 1);
+  check("erase dry-run leaves email lookup", !!(await customers.byEmailHash(emailHash)));
+
+  // Pre-condition: every sign-in path resolves.
+  check("pre-erase byEmailHash resolves",    !!(await customers.byEmailHash(emailHash)));
+  check("pre-erase byOAuthIdentity resolves", !!(await customers.byOAuthIdentity("google", "erase-sub")));
+
+  var result = await customers.eraseAuthForCustomer(c.id);
+  check("erase deletes the passkey",         result.passkeys === 1);
+  check("erase deletes the oauth link",      result.oauth_identities === 1);
+  check("erase clears the email hash",       result.email_hash_cleared === 1);
+
+  // Post-condition: NO sign-in path resolves; the row survives.
+  check("post-erase passkey gone",           (await customers.listPasskeys(c.id)).length === 0);
+  check("post-erase byEmailHash misses",     (await customers.byEmailHash(emailHash)) === null);
+  check("post-erase byOAuthIdentity misses", (await customers.byOAuthIdentity("google", "erase-sub")) === null);
+  check("post-erase row still exists",       !!(await customers.get(c.id)));
+
+  // Idempotent — a re-run removes nothing more.
+  var again = await customers.eraseAuthForCustomer(c.id);
+  check("erase idempotent passkeys",         again.passkeys === 0);
+  check("erase idempotent oauth",            again.oauth_identities === 0);
+  check("erase idempotent email-hash",       again.email_hash_cleared === 0);
+
+  // Bad input throws (entry-point validation).
+  await assert.rejects(customers.eraseAuthForCustomer("not-a-uuid"), /customer id/);
+}
+
 async function run() {
   await _register();
   await _byEmailHash();
@@ -367,6 +416,7 @@ async function run() {
   await _oidcRefusesUnverifiedEmailConflict();
   await _oidcUnverifiedNoCollisionCreates();
   await _oidcValidation();
+  await _eraseAuthForCustomer();
   _appleClientSecret();
 }
 

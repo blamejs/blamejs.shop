@@ -229,6 +229,8 @@ async function _runBridged() {
       // no due campaigns, so no real SMTP connection is attempted.
       SMTP_HOST: "127.0.0.1", SMTP_PORT: "2525", MAIL_FROM: "shop@boot.example",
       SHOP_ORIGIN: "https://boot.example",
+      // Arm the ESP bounce / complaint intake so block 15 can drive it.
+      MAIL_BOUNCE_SECRET: "boot-test-mail-bounce-secret", MAIL_BOUNCE_VENDOR: "postmark",
     }, "bridged");
 
     // 5. The bridge-gated composition mounts: /cart is a storefront page,
@@ -604,6 +606,49 @@ async function _runBridged() {
     check("bridged boot: viewer DENIED a catalog write (403 from the role gate)", viewerWrite.status === 403);
     var deniedRow = mem.db.prepare("SELECT COUNT(*) AS n FROM products WHERE slug = ?").get("viewer-boot-widget");
     check("bridged boot: viewer's denied write did not land in D1", deniedRow && Number(deniedRow.n) === 0);
+
+    // 15. Dep-wiring liveness — the ESP bounce / complaint intake. The
+    //     POST /api/webhooks/mail-bounce route is dep-gated in server.js on
+    //     the suppression list being wired AND mounts under /api/webhooks/
+    //     (bot-guard /api/* skip + the WEBHOOK_PATHS CSRF/fetch-metadata/
+    //     rate-limit exemption); the per-endpoint MAIL_BOUNCE_SECRET is the
+    //     deciding gate. A missed injection re-darkens the only path a
+    //     bounce has to reach the suppression list, so the campaign keeps
+    //     mailing dead addresses forever. Prove the gate AND the durable
+    //     side effect: an unauthenticated POST is refused; a signed hard-
+    //     bounce suppresses the address (marketing scope) AND backfills a
+    //     `bounced` campaign event for a campaign that mailed it.
+    var bounceEmail = "bounced@boot.example";
+    var bounceHash = bShop.framework.crypto.namespaceHash("newsletter-email", bounceEmail);
+    var suppHash = bShop.framework.crypto.namespaceHash("email-suppression", bounceEmail);
+    // Seed a campaign-send ledger row so the events backfill has a target.
+    mem.db.prepare(
+      "INSERT INTO email_campaign_sends (id, campaign_slug, email_hash, outcome, attempted_at) VALUES (?, 'boot-launch', ?, 'sent', ?)"
+    ).run(bShop.framework.uuid.v7(), bounceHash, Date.now());
+
+    var bouncePayload = JSON.stringify({
+      RecordType: "Bounce", Type: "HardBounce", Email: bounceEmail,
+      MessageID: "boot-msg-1", Description: "550 No such mailbox", BouncedAt: new Date().toISOString(),
+    });
+    // Unauthenticated (no secret header) → 401, nothing suppressed.
+    var bounceUnauth = await _rawPost(state.port, "/api/webhooks/mail-bounce",
+      { "content-type": "application/json", accept: "application/json" }, bouncePayload);
+    check("bridged boot: mail-bounce without secret is 401", bounceUnauth.status === 401);
+
+    // Signed hard-bounce → 200, the address suppressed (marketing) + a
+    // bounced event backfilled for the seeded campaign.
+    var bounceOk = await _rawPost(state.port, "/api/webhooks/mail-bounce",
+      { "content-type": "application/json", accept: "application/json", "x-mail-bounce-secret": "boot-test-mail-bounce-secret" },
+      bouncePayload);
+    check("bridged boot: signed mail-bounce reaches its handler (2xx)", bounceOk.status === 200);
+    check("bridged boot: mail-bounce reports the parsed type", /"type":"bounce"/.test(bounceOk.body));
+    var supp = mem.db.prepare("SELECT scope, suppression_type FROM email_suppressions WHERE email_hash = ?").get(suppHash);
+    check("bridged boot: hard bounce landed on the suppression list (marketing)",
+      supp && supp.scope === "marketing" && supp.suppression_type === "hard-bounce");
+    var bouncedEvent = mem.db.prepare(
+      "SELECT COUNT(*) AS n FROM email_campaign_events WHERE campaign_slug = 'boot-launch' AND recipient_hash = ? AND event_type = 'bounced'"
+    ).get(bounceHash);
+    check("bridged boot: a bounced campaign event was backfilled", bouncedEvent && Number(bouncedEvent.n) === 1);
   } finally {
     if (state) _cleanup(state);
     await bridge.close();

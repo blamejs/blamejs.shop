@@ -248,7 +248,9 @@ async function _replyFlipsStatus() {
   });
   check("system reply preserves status",        afterSys.status === "in_progress");
 
-  // Internal note from operator allowed; internal=true with author!=operator refused.
+  // Internal note from operator allowed (appended to the thread); the
+  // ticket was already in_progress, so it stays there. internal=true with
+  // author!=operator refused.
   var afterInternal = await ctx.tickets.reply({
     ticket_id: t.id, author: "operator", body: "Internal note: VIP flag.", internal: true,
   });
@@ -281,6 +283,110 @@ async function _replyFlipsStatus() {
   await assert.rejects(ctx.tickets.reply({
     ticket_id: t.id, author: "operator", body: "",
   }), /body/);
+}
+
+// An INTERNAL operator note (internal=true) is operator-to-operator: the
+// customer never sees it, so it must NOT count as a first response or move
+// a `new` ticket into the workflow. Only a customer-visible operator reply
+// stamps first_response_at — otherwise the response SLA is satisfied by
+// content the customer never received.
+async function _internalNoteDoesNotStampFirstResponse() {
+  var ctx = _setup();
+  var t = await ctx.tickets.open({
+    customer_email: "alice@example.com",
+    subject: "Q", body: "Initial body.", category: "other",
+  });
+  check("internal-note: opens at new",          t.status === "new");
+
+  var operatorId = _validUUID();
+  var afterInternal = await ctx.tickets.reply({
+    ticket_id: t.id, author: "operator", author_id: operatorId,
+    body: "Internal: flag for billing review.", internal: true,
+  });
+  check("internal note keeps status='new'",                afterInternal.status === "new");
+  check("internal note does NOT stamp first_response_at",  afterInternal.first_response_at == null);
+  check("internal note does NOT bump last_action_at",      afterInternal.last_action_at === t.last_action_at);
+
+  // The internal message WAS appended to the thread (operator-visible).
+  var thread = await ctx.tickets.thread(t.id);
+  var internalMsgs = thread.messages.filter(function (m) { return m.internal === 1 || m.internal === true; });
+  check("internal note appended to the thread", internalMsgs.length === 1);
+
+  // A subsequent customer-visible operator reply IS the first response.
+  await helpers.waitUntil(function () { return Date.now() > t.opened_at; }, { timeoutMs: 5000, intervalMs: 2 });
+  var afterVisible = await ctx.tickets.reply({
+    ticket_id: t.id, author: "operator", author_id: operatorId, body: "Hi — here's the answer.",
+  });
+  check("customer-visible reply flips -> in_progress",  afterVisible.status === "in_progress");
+  check("customer-visible reply stamps first_response_at", typeof afterVisible.first_response_at === "number");
+}
+
+// A customer reply to a RESOLVED ticket must reopen it (resolved ->
+// reopened) so it lands back in an operator queue — never silently dropped.
+async function _customerReplyReopensResolved() {
+  var ctx = _setup();
+  var operatorId = _validUUID();
+  var t = await ctx.tickets.open({
+    customer_email: "alice@example.com",
+    subject: "Q", body: "Initial body.", category: "other",
+  });
+  await ctx.tickets.reply({ ticket_id: t.id, author: "operator", author_id: operatorId, body: "Try this fix." });
+  var resolved = await ctx.tickets.transition({ ticket_id: t.id, to_status: "resolved" });
+  check("resolved status set",                  resolved.status === "resolved");
+
+  await helpers.waitUntil(function () { return Date.now() > resolved.last_action_at; }, { timeoutMs: 5000, intervalMs: 2 });
+  var afterReply = await ctx.tickets.reply({
+    ticket_id: t.id, author: "customer", body: "That didn't work — still broken.",
+  });
+  check("customer reply to resolved -> reopened",       afterReply.status === "reopened");
+  check("reopen bumps last_action_at (fresh SLA clock)", afterReply.last_action_at > resolved.last_action_at);
+
+  // The reopen is recorded in the status history (auditable, not silent).
+  var thread = await ctx.tickets.thread(t.id);
+  check("reopen message appended", thread.messages.some(function (m) { return m.author === "customer" && m.body.indexOf("still broken") !== -1; }));
+}
+
+// addTag / removeTag mutate tags_json in a SINGLE atomic JSON1 statement,
+// so two concurrent adds of distinct tags can't lose one. The prior
+// read-modify-write (decode -> push in JS -> write back) dropped a write.
+async function _concurrentTagWritesAtomic() {
+  var ctx = _setup();
+  var t = await ctx.tickets.open({
+    customer_email: "alice@example.com",
+    subject: "Q", body: "Initial body.", category: "other",
+  });
+  await Promise.all([
+    ctx.tickets.addTag({ ticket_id: t.id, tag: "alpha" }),
+    ctx.tickets.addTag({ ticket_id: t.id, tag: "beta" }),
+    ctx.tickets.addTag({ ticket_id: t.id, tag: "gamma" }),
+  ]);
+  var after = await ctx.tickets.get(t.id);
+  check("concurrent addTag keeps alpha", after.tags.indexOf("alpha") !== -1);
+  check("concurrent addTag keeps beta",  after.tags.indexOf("beta") !== -1);
+  check("concurrent addTag keeps gamma", after.tags.indexOf("gamma") !== -1);
+  check("concurrent addTag no lost write", after.tags.length === 3);
+
+  // Idempotent re-add over the atomic path is still a no-op.
+  var dup = await ctx.tickets.addTag({ ticket_id: t.id, tag: "alpha" });
+  check("atomic addTag idempotent",      dup.tags.length === 3);
+
+  // Atomic remove of a present tag; no-op on an absent one.
+  var removed = await ctx.tickets.removeTag({ ticket_id: t.id, tag: "beta" });
+  check("atomic removeTag drops beta",   removed.tags.indexOf("beta") === -1 && removed.tags.length === 2);
+  var noop = await ctx.tickets.removeTag({ ticket_id: t.id, tag: "not-present" });
+  check("atomic removeTag no-op absent", noop.tags.length === 2);
+
+  // Cap still enforced through the atomic path.
+  var u = await ctx.tickets.open({
+    customer_email: "bob@example.com", subject: "Q", body: "Body.", category: "other",
+  });
+  for (var i = 0; i < 16; i += 1) {
+    await ctx.tickets.addTag({ ticket_id: u.id, tag: "t-" + i });
+  }
+  await assert.rejects(ctx.tickets.addTag({ ticket_id: u.id, tag: "overflow" }), /tags/);
+  // A missing ticket is still a hard error on both paths.
+  await assert.rejects(ctx.tickets.addTag({ ticket_id: _validUUID(), tag: "x" }), /not found/);
+  await assert.rejects(ctx.tickets.removeTag({ ticket_id: _validUUID(), tag: "x" }), /not found/);
 }
 
 async function _fsmTransitions() {
@@ -638,6 +744,9 @@ async function run() {
   await _openHappyPath();
   await _openRefusalClasses();
   await _replyFlipsStatus();
+  await _internalNoteDoesNotStampFirstResponse();
+  await _customerReplyReopensResolved();
+  await _concurrentTagWritesAtomic();
   await _fsmTransitions();
   await _assignUnassign();
   await _tagCRUD();
