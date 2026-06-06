@@ -307,6 +307,19 @@ export function cartCountScriptTag() {
     (sri ? " integrity=\"" + sri + "\"" : "") + " defer></script>";
 }
 
+// `<script>` tag for the search-suggest island — byte-identical to the
+// container's `_islandScript("search-suggest.js", { id })` (no policy attr).
+// Always emitted: the header search box carries the `data-suggest` hook on
+// every chrome page, and this island fetches `/search/suggestions` to show
+// the autocomplete dropdown. When that route isn't mounted (the dep is off)
+// the fetch 404s and the island no-ops, leaving a plain search form. `defer`
+// keeps it off the critical path.
+export function searchSuggestScriptTag() {
+  var sri = assetSri("js/search-suggest.js");
+  return "<script id=\"search-suggest-island\" src=\"" + assetUrl("js/search-suggest.js") + "\"" +
+    (sri ? " integrity=\"" + sri + "\"" : "") + " defer></script>";
+}
+
 // Announcement-bar markup for a resolved row — BYTE-IDENTICAL to the
 // container's `_buildAnnouncementBar` (lib/storefront.js) so the edge +
 // container outputs match (the asset-fingerprint parity test guards this).

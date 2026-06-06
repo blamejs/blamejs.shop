@@ -161,6 +161,25 @@ async function _suggestReturnsThreeArrays() {
   check("suggest: limit honoured for queries",  trimmed.queries.length === 1);
   check("suggest: limit honoured for featured", trimmed.featured.length === 1);
 
+  // listFeatured — the console read: full set regardless of status or
+  // schedule window (suggest() is prefix-scoped + active-only), reading
+  // through the SAME injected query handle the writes used.
+  var drafted = await ctx.ss.addFeatured({
+    prefix: "zzz", display_text: "Draft row", link_url: "/collections/zzz",
+  });
+  await ctx.ss.updateFeatured(drafted.id, { status: "draft", priority: 9 });
+  var all = await ctx.ss.listFeatured({});
+  check("listFeatured: returns every row regardless of status", all.length === 2);
+  check("listFeatured: priority-desc ordering", all[0].priority === 9 && all[1].priority === 5);
+  check("listFeatured: carries the full curation shape",
+    all[0].prefix === "zzz" && all[0].status === "draft" &&
+    typeof all[0].id === "string" && Number.isInteger(all[0].created_at));
+  var paged = await ctx.ss.listFeatured({ limit: 1, offset: 1 });
+  check("listFeatured: limit + offset page the set", paged.length === 1 && paged[0].priority === 5);
+  var badLimit = null;
+  try { await ctx.ss.listFeatured({ limit: 0 }); } catch (e) { badLimit = e; }
+  check("listFeatured: limit 0 refused with TypeError", badLimit instanceof TypeError);
+
   // Default limit (no opts)
   var def = await ctx.ss.suggest({ q: "blue" });
   check("suggest: default limit works", def.products.length >= 1 && def.queries.length >= 1);

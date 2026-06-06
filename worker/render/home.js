@@ -1,4 +1,4 @@
-import { renderTemplate, escapeHtml, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, announcementBar, announcementScriptTag, promoBannerHtml, makeFormatPrice, currencySwitcher, spliceRaw, absolutizeOgImage } from "./_lib.js";
+import { renderTemplate, escapeHtml, jsonLdScript, assetUrl, stylesheetIntegrityAttr, CONSENT_BANNER, consentScriptTag, cartCountScriptTag, searchSuggestScriptTag, announcementBar, announcementScriptTag, promoBannerHtml, makeFormatPrice, currencySwitcher, spliceRaw, absolutizeOgImage } from "./_lib.js";
 import { resolveChrome, dirFor, localizeLayout, alternateLinks } from "./chrome-i18n.js";
 
 var LAYOUT =
@@ -48,7 +48,7 @@ var LAYOUT =
   "        <div class=\"site-search__inner\">\n" +
   "          <label for=\"site-search-q\" class=\"skip-link\">{{search_label}}</label>\n" +
   "          <svg class=\"site-search__icon\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path d=\"M21 21l-4.35-4.35M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16Z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\"/></svg>\n" +
-  "          <input id=\"site-search-q\" type=\"search\" name=\"q\" value=\"{{search_q}}\" placeholder=\"{{search_placeholder}}\" autocomplete=\"off\" spellcheck=\"false\" maxlength=\"200\">\n" +
+  "          <input id=\"site-search-q\" type=\"search\" name=\"q\" value=\"{{search_q}}\" placeholder=\"{{search_placeholder}}\" autocomplete=\"off\" spellcheck=\"false\" maxlength=\"200\" data-suggest=\"/search/suggestions\" role=\"combobox\" aria-expanded=\"false\" aria-autocomplete=\"list\" aria-controls=\"site-search-suggest\">\n" +
   "          <button type=\"submit\">{{search_submit}}</button>\n" +
   "        </div>\n" +
   "      </form>\n" +
@@ -147,6 +147,7 @@ var LAYOUT =
   CONSENT_BANNER +
   "RAW_CONSENT_SCRIPT" +
   "RAW_CART_COUNT_SCRIPT" +
+  "RAW_SEARCH_SUGGEST_SCRIPT" +
   "RAW_ANNOUNCEMENT_SCRIPT" +
   "</body>\n" +
   "</html>\n";
@@ -444,6 +445,7 @@ function _wrap(opts) {
     }))
     .replace("RAW_CONSENT_SCRIPT", consentScriptTag())
     .replace("RAW_CART_COUNT_SCRIPT", cartCountScriptTag())
+    .replace("RAW_SEARCH_SUGGEST_SCRIPT", searchSuggestScriptTag())
     .replace("RAW_ANNOUNCEMENT_SCRIPT", (opts.announcement && opts.announcement.dismissible) ? announcementScriptTag() : "")
     .replace("RAW_CURRENCY_SWITCHER", currencySwitcher({
       currencies:  opts.currency_options,

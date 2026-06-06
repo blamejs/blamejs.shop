@@ -238,6 +238,28 @@ async function _runBridged() {
     var cartApplied = await helpers.httpRequest({ port: state.port, path: "/cart", jar: jar, headers: browserHeaders });
     check("bridged boot: applied-code chip renders on the cart", cartApplied.body.indexOf("BOOTCODE10") !== -1);
 
+    // 6b. Dep-wiring liveness — the search-suggestions autocomplete. The
+    //     JSON route mounts only when server.js hands searchSuggestions to
+    //     the storefront deps; it returns product matches off the catalog,
+    //     so a query for the seeded title surfaces "Boot Widget". And the
+    //     shared header carries the island hook (`data-suggest`) so the
+    //     autocomplete upgrades the plain search form on every chrome page.
+    var suggest = await helpers.httpRequest({
+      port: state.port, path: "/search/suggestions?q=boot", jar: jar, headers: browserHeaders,
+    });
+    check("bridged boot: GET /search/suggestions is 2xx (searchSuggestions wired)",
+      suggest.status >= 200 && suggest.status < 400);
+    var suggestJson = null;
+    try { suggestJson = JSON.parse(suggest.body); } catch (_e) { suggestJson = null; }
+    check("bridged boot: /search/suggestions body is JSON with a products array",
+      !!suggestJson && Array.isArray(suggestJson.products));
+    check("bridged boot: suggestions products contain the seeded Boot Widget",
+      !!suggestJson && suggestJson.products.some(function (p) {
+        return p && (p.title === "Boot Widget" || p.name === "Boot Widget");
+      }));
+    check("bridged boot: cart page carries the search-suggest island hook (data-suggest)",
+      cart.body.indexOf("data-suggest=\"/search/suggestions\"") !== -1);
+
     // 7. Internal-endpoint liveness, WORKER-SHAPED. The worker's
     //    service-binding POSTs carry no browser fingerprint (no
     //    User-Agent, no Accept-Language) — bot-guard's default heuristics

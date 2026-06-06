@@ -195,6 +195,18 @@ node -e "
   Redemption decrements with an atomic `balance >= amount` SQL guard
   keyed on the order id, so concurrent or replayed checkouts can never
   overdraw a card or apply more than the remaining balance.
+- **The search-query log is privacy-bounded, and curated suggestions
+  can't stage an XSS.** Every storefront search a shopper runs is logged
+  to power the admin popular-searches report, but the visitor's session
+  identifier is hashed (`b.crypto.namespaceHash`) before storage — the
+  log holds no recoverable customer-side identifier — and rows older than
+  90 days are pruned automatically by a self-gated daily sweep. Operator-
+  curated featured suggestions refuse a `javascript:` / `data:` /
+  `vbscript:` link scheme at write time, and both the autocomplete
+  dropdown (built entirely with `textContent`, never `innerHTML`) and the
+  admin report (every echoed query / display field escaped) treat the
+  logged query text as untrusted — a shopper can't smuggle markup into an
+  operator dashboard through the search box.
 - **Abandoned checkouts don't strand stock forever.** Checkout reserves
   stock with an atomic conditional hold before charging; an order whose
   buyer abandons the payment sheet (or whose PaymentIntent expires) would

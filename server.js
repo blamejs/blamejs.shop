@@ -1866,6 +1866,16 @@ async function main() {
         ? function (perRequestCatalog) { return bShop.searchFacets.create({ catalog: perRequestCatalog }); }
         : null;
 
+      // Search suggestions — the header autocomplete dropdown data + the
+      // query log behind the admin "Popular searches" view. One shared
+      // instance: product matches delegate to the catalog primitive's
+      // products.search, popular/featured rows read this primitive's own
+      // tables (default externalDb query handle). Backs the storefront
+      // GET /search/suggestions JSON route + the admin curation screen.
+      var searchSuggestions = (catalog && cart)
+        ? bShop.searchSuggestions.create({ catalog: catalog })
+        : null;
+
       // Stripe payment handle — shared by the admin refund + subscription
       // routes and the storefront subscription-cancel route, so there's
       // one Stripe client per boot. Wired only when both the API key and
@@ -2134,6 +2144,7 @@ async function main() {
           clickAndCollect: clickAndCollect,
           giftOptions:   giftOptions,
           searchRanking: searchRanking,
+          searchSuggestions: searchSuggestions,
           trustBadges:   trustBadges,
           preorder:      preorder,
           customers:     customers,
@@ -2417,6 +2428,11 @@ async function main() {
         // rewrite instance; facets is the per-request factory.
         if (searchSynonyms) sfDeps.searchSynonyms = searchSynonyms;
         if (searchFacets) sfDeps.searchFacets = searchFacets;
+        // Search suggestions — opt the layout search box into the
+        // autocomplete island (GET /search/suggestions JSON) and log each
+        // /search query for the admin "Popular searches" view. Same shared
+        // instance the admin curation screen manages.
+        if (searchSuggestions) sfDeps.searchSuggestions = searchSuggestions;
         // Search ranking — the /search container handler reranks its candidate
         // universe through applyToResults using the active weight set + query
         // pins (never reranks the edge — container-only enhancement). Drop-
