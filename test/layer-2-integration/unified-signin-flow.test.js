@@ -283,10 +283,107 @@ async function _magicLinkNonBlocking() {
   }
 }
 
+// ---- device-binding soft sign-out --------------------------------------
+
+async function _deviceBindingDrift() {
+  // The sealed auth cookie is tamper-proof but device-PORTABLE: a cookie
+  // lifted to another device replays for its full life. The store-free
+  // device fingerprint (SHAKE256 over UA + sorted Accept-*) stashed inside
+  // the sealed envelope at mint time, recomputed + constant-time-compared
+  // on read, catches a moved cookie. On drift the visitor is SOFT signed
+  // out — the stale cookie is cleared and a neutral notice renders — never
+  // a hard 401 mid-page. A network change must NOT trip it (IP excluded),
+  // and a pre-binding cookie (no fp) passes through unchanged.
+  var query     = _makeQuery();
+  var catalog   = bShop.catalog.create({ query: query });
+  var cart      = bShop.cart.create({ query: query, catalog: catalog });
+  var customers = bShop.customers.create({ query: query });
+  var customerPortal = bShop.customerPortal.create({ query: query });
+  var stub      = _stubEmailHandle();
+
+  var nowTs = Date.now();
+  await query(
+    "INSERT INTO customers (id, email_hash, display_name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+    [b.uuid.v7(), customers.hashEmail("dev@example.com"), "Device", nowTs],
+  );
+
+  var sf = await _bootStorefront({
+    catalog: catalog, cart: cart, customers: customers,
+    customerPortal: customerPortal, customerPortalEmail: stub.email,
+    shop_name: "Device Shop",
+  });
+
+  // Two distinct device shapes: same machine, different User-Agent.
+  var UA_A = { "user-agent": "Mozilla/5.0 (Macintosh) DeviceA/1.0" };
+  var UA_B = { "user-agent": "Mozilla/5.0 (Windows NT 10.0) DeviceB/9.9" };
+
+  try {
+    // Mint the auth cookie via the magic-link redeem FROM device A, so the
+    // sealed env carries device A's fingerprint.
+    var sentBefore = stub.sent.length;
+    await helpers.httpRequest({
+      port: sf.port, path: "/account/login/link", method: "POST",
+      jar: helpers.cookieJar(), headers: UA_A, form: { email: "dev@example.com" },
+    });
+    await helpers.waitUntil(function () { return stub.sent.length === sentBefore + 1; }, {
+      timeoutMs: 5000, label: "device-binding: magic-link dispatched",
+    });
+    var tokenMatch = stub.sent[stub.sent.length - 1].html.match(/\/account\/portal\/([A-Za-z0-9_-]+)/);
+    check("device-binding: redeem token minted", !!tokenMatch);
+    var token = tokenMatch ? tokenMatch[1] : "";
+
+    var jar = helpers.cookieJar();
+    var redeem = await helpers.httpRequest({
+      port: sf.port, path: "/account/portal/" + encodeURIComponent(token), jar: jar, headers: UA_A,
+    });
+    check("device-binding: redeem 303 → /account (device A)",
+      redeem.status === 303 && (redeem.headers["location"] || "") === "/account");
+
+    // SAME device (UA A) reaches the account page — no drift, stays signed in.
+    var sameDevice = await helpers.httpRequest({ port: sf.port, path: "/account", jar: jar, headers: UA_A });
+    check("device-binding: same device stays signed in (2xx /account)",
+      sameDevice.status >= 200 && sameDevice.status < 300);
+
+    // DIFFERENT device shape (UA B) carrying the SAME cookie (same jar,
+    // only the UA header changes) → soft sign-out: a 303 to the neutral
+    // device-notice sign-in, NOT a hard 401, NOT a signed-in page render.
+    var moved = await helpers.httpRequest({ port: sf.port, path: "/account", jar: jar, headers: UA_B });
+    check("device-binding: moved cookie → 303 soft sign-out (not 401)",
+      moved.status === 303 &&
+      (moved.headers["location"] || "").indexOf("/account/login?signed_out=device") === 0);
+    check("device-binding: moved cookie response clears the auth cookie",
+      (moved.headers["set-cookie"] || []).join(";").indexOf("shop_auth=") !== -1);
+
+    // The neutral notice renders on the sign-in screen — reassuring copy,
+    // never an alarming error, and it discloses no reason.
+    var notice = await helpers.httpRequest({
+      port: sf.port, path: "/account/login?signed_out=device", jar: helpers.cookieJar(), headers: UA_B,
+    });
+    check("device-binding: sign-in screen carries the neutral signed-out notice",
+      notice.status === 200 && notice.body.indexOf("signed out for your security") !== -1);
+
+    // A pre-binding cookie (no fp, forged directly) must pass through
+    // unchanged — a deploy never mass-signs-out live sessions.
+    var legacyJar = helpers.cookieJar();
+    var legacyId = b.uuid.v7();
+    await query(
+      "INSERT INTO customers (id, email_hash, display_name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+      [legacyId, customers.hashEmail("legacy@example.com"), "Legacy", Date.now()],
+    );
+    legacyJar.capture({ "set-cookie": [helpers.authCookie(b, legacyId)] });
+    var legacy = await helpers.httpRequest({ port: sf.port, path: "/account", jar: legacyJar, headers: UA_B });
+    check("device-binding: pre-binding cookie (no fp) stays signed in across UAs",
+      legacy.status >= 200 && legacy.status < 300);
+  } finally {
+    await _teardown(sf);
+  }
+}
+
 async function _run() {
   await _unifiedFlow();
   await _passkeyOnlyFlow();
   await _magicLinkNonBlocking();
+  await _deviceBindingDrift();
 }
 
 module.exports = { run: _run };

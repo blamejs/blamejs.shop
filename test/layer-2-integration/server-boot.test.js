@@ -649,6 +649,36 @@ async function _runBridged() {
       "SELECT COUNT(*) AS n FROM email_campaign_events WHERE campaign_slug = 'boot-launch' AND recipient_hash = ? AND event_type = 'bounced'"
     ).get(bounceHash);
     check("bridged boot: a bounced campaign event was backfilled", bouncedEvent && Number(bouncedEvent.n) === 1);
+
+    // 16. Operator audit-chain integrity surface — the chained-hash log is
+    //     also ANCHORED with PQC checkpoint signatures (b.auditSign, booted
+    //     by createApp from the documented VAULT_PASSPHRASE). Block 14's
+    //     operator-management writes recorded real audit rows; this verifies
+    //     the chain through the live composition. First, drive the
+    //     stale-order-reap tick (worker-shaped, secret-gated) which folds in
+    //     the periodic operator-audit checkpoint — proving the checkpoint
+    //     anchors over the bridge. Then read the verify surface and assert
+    //     both the hash linkage AND the signed checkpoints verify clean.
+    var reapTick = await _rawPost(state.port, "/_/stale-order-reap",
+      { "content-type": "application/json; charset=utf-8", "x-d1-bridge-secret": BRIDGE_SECRET }, "{}");
+    check("bridged boot: stale-order-reap tick reaches its handler (2xx)",
+      reapTick.status === 200 && /"ok":true/.test(reapTick.body) && /"enabled":true/.test(reapTick.body));
+    var ckRow = mem.db.prepare("SELECT COUNT(*) AS n FROM operator_audit_checkpoints").get();
+    check("bridged boot: the reap tick anchored an operator-audit checkpoint (signed)",
+      ckRow && Number(ckRow.n) >= 1);
+
+    var auditVerify = await _rawGet(state.port, "/admin/operators/audit/verify",
+      { "authorization": "Bearer " + ADMIN_KEY, "user-agent": "curl/8.5.0", "accept": "*/*" });
+    check("bridged boot: GET /admin/operators/audit/verify reaches the console (2xx)",
+      auditVerify.status >= 200 && auditVerify.status < 300);
+    var auditVerifyJson = null;
+    try { auditVerifyJson = JSON.parse(auditVerify.body); } catch (_e) { auditVerifyJson = null; }
+    check("bridged boot: the operator hash-chain verifies clean over the live composition",
+      !!auditVerifyJson && auditVerifyJson.chain && auditVerifyJson.chain.ok === true);
+    check("bridged boot: the operator-audit checkpoints verify clean (PQC-anchored)",
+      !!auditVerifyJson && auditVerifyJson.signing_available === true &&
+      auditVerifyJson.checkpoints && auditVerifyJson.checkpoints.ok === true &&
+      auditVerifyJson.checkpoints.checkpoints_verified >= 1);
   } finally {
     if (state) _cleanup(state);
     await bridge.close();
