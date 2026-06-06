@@ -209,6 +209,63 @@ async function _expireCapsAtBalance() {
   await assert.rejects(loy.expire({ customer_id: cid, points: -1, reason: "x-y" }),     /points/);
 }
 
+// earn / adjust are relative-atomic — two concurrent writers can't lose
+// an update (the absolute "read, add, write" pattern dropped one of two
+// concurrent earns) and a negative adjust can't push the balance below
+// zero past a racing adjust.
+async function _concurrentEarnAndAdjustAtomic() {
+  var loy = bShop.loyalty.create({ query: _makeQuery() });
+
+  // Two concurrent earns of 100 each must BOTH land — 200, not 100.
+  var c1 = _uuid();
+  await loy.ensureAccount(c1);
+  await Promise.all([
+    loy.earn({ customer_id: c1, points: 100, source: "order-paid" }),
+    loy.earn({ customer_id: c1, points: 100, source: "order-paid" }),
+  ]);
+  var b1 = await loy.balance(c1);
+  check("concurrent earn keeps both credits (balance)",  b1.balance === 200);
+  check("concurrent earn keeps both credits (lifetime)", b1.lifetime === 200);
+
+  // Tier is recomputed in-SQL off the live lifetime, so a single earn
+  // that crosses a threshold still reports the promotion.
+  var c2 = _uuid();
+  await loy.ensureAccount(c2);
+  var cross = await loy.earn({ customer_id: c2, points: 500, source: "big-order" });
+  check("earn crossing threshold promotes tier",   cross.tier === "silver");
+  check("earn crossing threshold flags tier_changed", cross.tier_changed === true);
+
+  // Two concurrent positive adjusts each credit lifetime atomically.
+  var c3 = _uuid();
+  await loy.ensureAccount(c3);
+  await Promise.all([
+    loy.adjust({ customer_id: c3, points: 30, source: "goodwill-a" }),
+    loy.adjust({ customer_id: c3, points: 30, source: "goodwill-b" }),
+  ]);
+  var b3 = await loy.balance(c3);
+  check("concurrent positive adjust keeps both (balance)",  b3.balance === 60);
+  check("concurrent positive adjust keeps both (lifetime)", b3.lifetime === 60);
+
+  // Two concurrent negative adjusts that would together underflow:
+  // exactly ONE succeeds (balance can't go below zero), the other is
+  // refused with the structured insufficient-balance code.
+  var c4 = _uuid();
+  await loy.ensureAccount(c4);
+  await loy.earn({ customer_id: c4, points: 100, source: "seed-order" });
+  var settled = await Promise.allSettled([
+    loy.adjust({ customer_id: c4, points: -80, source: "clawback-a" }),
+    loy.adjust({ customer_id: c4, points: -80, source: "clawback-b" }),
+  ]);
+  var fulfilled = settled.filter(function (s) { return s.status === "fulfilled"; });
+  var rejected  = settled.filter(function (s) { return s.status === "rejected"; });
+  check("concurrent over-draw adjust: exactly one succeeds", fulfilled.length === 1);
+  check("concurrent over-draw adjust: one refused", rejected.length === 1);
+  check("concurrent over-draw adjust: refusal coded",
+    rejected[0] && rejected[0].reason && rejected[0].reason.code === "LOYALTY_INSUFFICIENT_BALANCE");
+  var b4 = await loy.balance(c4);
+  check("concurrent over-draw adjust: balance never negative", b4.balance === 20);
+}
+
 async function _balance() {
   var loy = bShop.loyalty.create({ query: _makeQuery() });
   var cid = _uuid();
@@ -360,6 +417,7 @@ async function run() {
   await _earnAndTierPromotion();
   await _redeemAndInsufficientRefusal();
   await _adjustPositiveAndNegative();
+  await _concurrentEarnAndAdjustAtomic();
   await _expireCapsAtBalance();
   await _balance();
   await _historyPagination();

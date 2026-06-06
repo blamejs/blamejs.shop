@@ -151,6 +151,41 @@ function _setup() {
   return { query: q, ctl: ctl };
 }
 
+// A controls instance wired WITH a fake Stripe payment handle so the
+// quantity / frequency change paths exercise the processor push. The
+// handle records every `update` call so a test can assert the local row
+// and the Stripe call agree; `failUpdate` flips it into a rejecting
+// adapter so the no-divergence-on-failure invariant is testable.
+function _setupWithPayment(opts) {
+  opts = opts || {};
+  var q = _makeQuery();
+  var calls = { retrieve: [], update: [] };
+  var payment = {
+    subscriptions: {
+      retrieve: async function (id) {
+        calls.retrieve.push(id);
+        if (opts.noItem) return { id: id, items: { data: [] } };
+        return { id: id, items: { data: [{ id: "si_" + id }] } };
+      },
+      update: async function (id, body, key) {
+        calls.update.push({ id: id, body: body, key: key });
+        if (opts.failUpdate) {
+          var e = new Error("card_declined");
+          e.code = "STRIPE_HTTP_402";
+          throw e;
+        }
+        return { id: id, status: "active" };
+      },
+    },
+  };
+  var ctl = subscriptionControls.create({
+    query:         q,
+    subscriptions: _subscriptionsHandle(q),
+    payment:       payment,
+  });
+  return { query: q, ctl: ctl, calls: calls };
+}
+
 function _operatorActor() {
   return { actor_type: "operator", actor_id: _validUUID() };
 }
@@ -456,6 +491,85 @@ async function _changeFrequency() {
     check("changeFrequency accepts " + freq,
       rF.frequency === freq && rF.next_billing_at === ANCHOR + PERIOD_MS[freq]);
   }
+}
+
+// ---- Stripe-backed quantity push + frequency refusal -------------------
+
+async function _stripeBackedChanges() {
+  // Quantity change on a Stripe-backed subscription pushes to Stripe
+  // (item-targeted update) BEFORE the local row is touched, so the
+  // billed quantity and the shop's row never diverge.
+  var ok = _setupWithPayment();
+  var seed = await _seedRow(ok.query, { stripe_subscription_id: "sub_live_1" });
+  var r = await ok.ctl.changeQuantity({
+    subscription_id: seed.subscription_id,
+    new_quantity:    4,
+    reason:          "customer bumped the box",
+    actor:           _customerActor(),
+  });
+  check("Stripe-backed changeQuantity writes local quantity", r.quantity === 4);
+  check("Stripe-backed changeQuantity retrieved the subscription", ok.calls.retrieve.length === 1);
+  check("Stripe-backed changeQuantity pushed one update",         ok.calls.update.length === 1);
+  check("Stripe update targets the item id + new quantity",
+    ok.calls.update[0].body && ok.calls.update[0].body.items &&
+    ok.calls.update[0].body.items[0].id === "si_sub_live_1" &&
+    ok.calls.update[0].body.items[0].quantity === 4);
+
+  // Processor failure leaves the LOCAL row untouched — no divergence,
+  // surfaced error.
+  var fail = _setupWithPayment({ failUpdate: true });
+  var seedF = await _seedRow(fail.query, { stripe_subscription_id: "sub_live_2", quantity: 1 });
+  await assert.rejects(fail.ctl.changeQuantity({
+    subscription_id: seedF.subscription_id,
+    new_quantity:    9,
+    reason:          "bump that fails at Stripe",
+    actor:           _customerActor(),
+  }), /Stripe/);
+  var afterFail = (await _subscriptionsHandle(fail.query).get(seedF.subscription_id));
+  check("Stripe failure leaves local quantity unchanged", afterFail.quantity === 1);
+  var histFail = await fail.ctl.historyForSubscription(seedF.subscription_id);
+  check("Stripe failure writes NO quantity_change ledger row",
+    histFail.filter(function (h) { return h.event === "quantity_change"; }).length === 0);
+
+  // A subscription with no billable item at Stripe surfaces a structured
+  // error rather than writing a divergent local change.
+  var noItem = _setupWithPayment({ noItem: true });
+  var seedN = await _seedRow(noItem.query, { stripe_subscription_id: "sub_live_3", quantity: 2 });
+  await assert.rejects(noItem.ctl.changeQuantity({
+    subscription_id: seedN.subscription_id,
+    new_quantity:    5,
+    reason:          "no item",
+    actor:           _customerActor(),
+  }), /no billable item/);
+  check("no-item failure leaves local quantity unchanged",
+    (await _subscriptionsHandle(noItem.query).get(seedN.subscription_id)).quantity === 2);
+
+  // Frequency change on a Stripe-backed subscription is REFUSED — a
+  // Stripe Price's interval is immutable and the shop has no per-
+  // frequency price catalog, so the cadence isn't expressible. The
+  // local row must stay unchanged.
+  var seedFreq = await _seedRow(ok.query, { stripe_subscription_id: "sub_live_4", frequency: null });
+  await assert.rejects(ok.ctl.changeFrequency({
+    subscription_id: seedFreq.subscription_id,
+    new_frequency:   "quarterly",
+    reason:          "cadence swap",
+    actor:           _customerActor(),
+  }), /frequency can't be changed/);
+  var freqRow = await _subscriptionsHandle(ok.query).get(seedFreq.subscription_id);
+  check("Stripe-backed changeFrequency leaves frequency unchanged", freqRow.frequency == null);
+
+  // With NO payment handle wired at all, a Stripe-shaped row is treated
+  // as local-only (the controls aren't Stripe-aware), so frequency change
+  // succeeds locally and quantity change touches no processor.
+  var localCtx = _setup();
+  var seedNoPay = await _seedRow(localCtx.query, { stripe_subscription_id: "sub_live_5", frequency: null });
+  var rNoPay = await localCtx.ctl.changeFrequency({
+    subscription_id: seedNoPay.subscription_id,
+    new_frequency:   "biweekly",
+    reason:          "no payment wired",
+    actor:           _customerActor(),
+  });
+  check("no-payment changeFrequency stays local", rNoPay.frequency === "biweekly");
 }
 
 // ---- cancel default + immediate ----------------------------------------
@@ -821,6 +935,7 @@ async function run() {
   await _skipNextArithmetic();
   await _changeQuantity();
   await _changeFrequency();
+  await _stripeBackedChanges();
   await _cancelModes();
   await _reactivateGrace();
   await _scanAutoResume();

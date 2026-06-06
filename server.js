@@ -2199,8 +2199,12 @@ async function main() {
       // Self-management routes mount on /account/subscriptions; a missing /
       // unmigrated control table only surfaces when a route runs (degrades
       // to a notice), never at boot.
+      // The payment handle is passed so a quantity change on a Stripe-
+      // backed subscription is pushed to Stripe before the local row is
+      // touched (no local/Stripe divergence). When payment is unwired the
+      // controls degrade to local-only writes for non-Stripe rows.
       var subscriptionControls = subscriptions
-        ? bShop.subscriptionControls.create({ subscriptions: subscriptions.subscriptions })
+        ? bShop.subscriptionControls.create({ subscriptions: subscriptions.subscriptions, payment: payment })
         : null;
 
       // Tax + shipping default tables — kick in when the operator
