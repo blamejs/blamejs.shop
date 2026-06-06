@@ -213,6 +213,81 @@ async function _recordRefusals() {
   }), /not JSON-serializable/);
 }
 
+// ---- concurrent append: no chain fork ---------------------------------
+//
+// record() reads the chain head, derives prev_hash + row_hash, then
+// INSERTs — three awaits with no atomicity across them. Two record()
+// calls launched together must NOT both read the same head and stamp the
+// same prev_hash (a fork that verifyChain would report as tampering). The
+// append serializer must hold each call to a single writer. To force the
+// interleave deterministically, the query handle yields the event loop on
+// every SQL round-trip so the two in-flight bodies are guaranteed to
+// suspend at the head-read and resume against shared state.
+
+function _makeYieldingQuery() {
+  var db = new DatabaseSync(":memory:");
+  db.prepare("PRAGMA foreign_keys = ON").run();
+  _splitSchema(nodeFs.readFileSync(MIG, "utf8")).forEach(function (s) { db.prepare(s).run(); });
+  var q = async function (sql, params) {
+    // Yield between the caller's await and the synchronous SQLite call so
+    // a second concurrent record() interleaves at the head-read.
+    await new Promise(function (r) { setImmediate(r); });
+    var stmt = db.prepare(sql);
+    var verb = sql.replace(/^\s+|\s*--[^\n]*\n/g, "").trim().split(/\s+/)[0].toUpperCase();
+    if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
+      var info = stmt.run.apply(stmt, params || []);
+      return { rows: [], rowCount: Number(info.changes), lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
+    }
+    var rows = stmt.all.apply(stmt, params || []);
+    return { rows: rows, rowCount: rows.length };
+  };
+  q._db = db;
+  return q;
+}
+
+async function _concurrentAppend() {
+  var query = _makeYieldingQuery();
+  var log   = operatorAuditLog.create({ query: query });
+
+  // Seed one row so there's a non-ZERO head both racers would read.
+  await log.record({
+    actor_type: "operator", actor_id: "op-seed", action: "x.seed",
+    resource_kind: "k", resource_id: "seed",
+  });
+
+  // Launch two record() calls without awaiting between them — they run
+  // interleaved on the same chain.
+  var both = await Promise.all([
+    log.record({ actor_type: "operator", actor_id: "op-a", action: "x.do", resource_kind: "k", resource_id: "a" }),
+    log.record({ actor_type: "operator", actor_id: "op-b", action: "x.do", resource_kind: "k", resource_id: "b" }),
+  ]);
+
+  check("concurrent record: distinct prev_hashes (no fork)",
+    both[0].prev_hash !== both[1].prev_hash);
+  check("concurrent record: one racer chained onto the other's row_hash",
+    both[0].prev_hash === both[1].row_hash || both[1].prev_hash === both[0].row_hash);
+
+  // The chain is internally consistent — no self-inflicted tamper report.
+  var v = await log.verifyChain();
+  check("concurrent record: verifyChain ok after interleaved appends",
+    v.ok === true);
+  check("concurrent record: all three rows verified",
+    v.rows_verified === 3);
+
+  // Stress: fire a burst together; every row stays linked.
+  var burst = [];
+  for (var i = 0; i < 8; i += 1) {
+    burst.push(log.record({
+      actor_type: "system", actor_id: "cron-burst", action: "y.run",
+      resource_kind: "k", resource_id: "burst-" + i,
+    }));
+  }
+  await Promise.all(burst);
+  var v2 = await log.verifyChain();
+  check("burst append: verifyChain ok", v2.ok === true);
+  check("burst append: 11 rows total verified", v2.rows_verified === 11);
+}
+
 // ---- chain linkage + chainHead ----------------------------------------
 
 async function _chainLinkage() {
@@ -657,6 +732,7 @@ async function _checkpointAnchoring() {
 async function run() {
   await _recordHappy();
   await _recordRefusals();
+  await _concurrentAppend();
   await _chainLinkage();
   await _verifyHappy();
   await _verifyDetectsRowTamper();

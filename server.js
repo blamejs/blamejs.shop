@@ -1530,13 +1530,18 @@ async function main() {
       // composition wires that newsletter list as the reachability +
       // consent source. Without SMTP configured (no campaignMailer) the
       // console still mounts (draft / preview) but Send refuses cleanly.
-      var newsletter = (catalog && cart) ? bShop.newsletter.create({}) : null;
       var campaignSuppressions = (catalog && cart)
         ? bShop.emailSuppressions.create({
             cursorSecret: process.env.D1_BRIDGE_SECRET
               ? b.crypto.namespaceHash("email-suppressions-cursor", process.env.D1_BRIDGE_SECRET)
               : "email-suppressions-cursor-dev-only",
           })
+        : null;
+      // The newsletter handle feeds the suppression list on unsubscribe so
+      // a one-click opt-out reaches every marketing flow, not just the
+      // broadcast path that reads `unsubscribed_at`.
+      var newsletter = (catalog && cart)
+        ? bShop.newsletter.create({ emailSuppressions: campaignSuppressions })
         : null;
       var mailingAudiencesCursorSecret = process.env.D1_BRIDGE_SECRET
         ? b.crypto.namespaceHash("mailing-audiences-cursor", process.env.D1_BRIDGE_SECRET)
@@ -1990,11 +1995,12 @@ async function main() {
       // store.
       var wishlistAlerts = (wishlist && catalog && recoveryEmail)
         ? bShop.wishlistAlerts.create({
-            wishlist:         wishlist,
-            catalog:          catalog,
-            email:            recoveryEmail,
-            stockAlerts:      stockAlerts || null,
-            emailForCustomer: recoveryResolveEmail,
+            wishlist:          wishlist,
+            catalog:           catalog,
+            email:             recoveryEmail,
+            stockAlerts:       stockAlerts || null,
+            emailSuppressions: recoveryEmailSuppressions,
+            emailForCustomer:  recoveryResolveEmail,
             cursorSecret:     process.env.D1_BRIDGE_SECRET
               ? b.crypto.namespaceHash("wishlist-alerts-cursor", process.env.D1_BRIDGE_SECRET)
               : "wishlist-alerts-cursor-secret-dev-only",
@@ -2188,6 +2194,66 @@ async function main() {
         ? bShop.splitShipments.create({ order: order, orderTracking: orderTracking })
         : null;
 
+      // Order timeline — the read-only event aggregator that flattens the
+      // post-checkout surface (FSM transitions, shipment events, customer-
+      // service notes, returns, shipping labels) into one chronological feed
+      // for the admin order-detail screen. Composes the SAME peers already
+      // built above; each source is optional, so an unwired peer simply drops
+      // out of the feed. notifications / fraudScreen are not wired here (no
+      // in-app notification or fraud-screen surface exists yet), so those
+      // sources stay dormant — the remaining sources still surface.
+      var orderTimeline = (catalog && cart)
+        ? bShop.orderTimeline.create({
+            order:          order,
+            orderTracking:  orderTracking,
+            orderNotes:     orderNotes,
+            returns:        returns,
+            shippingLabels: shippingLabels,
+          })
+        : null;
+
+      // Operator inbox — the in-console notification feed + navbar unread
+      // badge. The new-order ping (below) enqueues a role broadcast here, and
+      // the admin /admin/inbox screen + badge read it. operatorRoles is not
+      // wired (single-credential console is the common deploy), so reads/
+      // writes are role-scoped via the inbox's role surface. The cursor HMAC
+      // key is derived like the other primitives.
+      var operatorInbox = (catalog && cart)
+        ? bShop.operatorInbox.create({
+            cursorSecret: process.env.D1_BRIDGE_SECRET
+              ? b.crypto.namespaceHash("operator-inbox-cursor", process.env.D1_BRIDGE_SECRET)
+              : undefined,
+          })
+        : null;
+
+      // New-order operator ping — point the order FSM's paid-edge observer at
+      // an adapter that drops an inbox entry the moment a sale settles. The
+      // observer is late-bound (the order primitive is built before this) and
+      // detached/fire-and-forget inside the FSM, so a slow / failing inbox
+      // write never touches the order transition. The ping is a role broadcast
+      // (matching the admin console's INBOX_ROLE = "fulfillment") so it reaches
+      // the team without modelling one owning operator. Enqueue failures are
+      // swallowed here too — the ping is a convenience signal, never a gate on
+      // the sale. The subject/body are operator-facing (order id + total).
+      if (order && operatorInbox && typeof order.setNewOrderObserver === "function") {
+        order.setNewOrderObserver(async function (paidOrder) {
+          try {
+            var totalFmt = bShop.pricing.format(
+              Number(paidOrder.grand_total_minor) || 0, paidOrder.currency);
+            await operatorInbox.enqueueMessage({
+              role:            "fulfillment",
+              kind:            "order_paid",
+              severity:        "info",
+              subject:         "New order — " + totalFmt,
+              body:            "Order " + String(paidOrder.id).slice(0, 8) +
+                               " was paid (" + totalFmt + "). Open it to start fulfilment.",
+              payload:         { order_id: paidOrder.id, grand_total_minor: paidOrder.grand_total_minor, currency: paidOrder.currency },
+              source_event_id: "order:" + paidOrder.id + ":paid",
+            });
+          } catch (_e) { /* drop-silent — the ping is a convenience, never a gate */ }
+        });
+      }
+
       // Reporting + printable order documents — operator surfaces over the
       // existing order data. salesReports aggregates pure read-only SQL over
       // orders/order_lines for the /admin/reports screen; printReceipts +
@@ -2252,6 +2318,31 @@ async function main() {
       // unexposed until that adapter is wired — exactly like the announcement
       // bar.
       var promoBanners = (catalog && cart) ? bShop.promoBanners.create({}) : null;
+
+      // Suggestion box — the customer-driven "tell us what to build" loop.
+      // The storefront serves the public /suggestions page (submit + browse +
+      // vote); the admin console triages the backlog (respond / archive /
+      // flag-spam). Browse pagination is HMAC-cursored, so the secret is
+      // derived like the other paginated lists — production never falls back
+      // to the dev-only placeholder.
+      var suggestionCursorSecret = process.env.D1_BRIDGE_SECRET
+        ? b.crypto.namespaceHash("suggestion-box-cursor", process.env.D1_BRIDGE_SECRET)
+        : "suggestion-box-cursor-secret-dev-only";
+      var suggestionBox = (catalog && cart)
+        ? bShop.suggestionBox.create({ cursorSecret: suggestionCursorSecret })
+        : null;
+
+      // Sidebar widgets — operator-curated content blocks rendered in the
+      // storefront's right rail across the home / collection / cart / search /
+      // product pages. The storefront resolves the active widgets per page +
+      // viewer per request and counts impressions/clicks; the admin console
+      // defines the widgets + sets each page's ordered placement. Like the
+      // announcement bar + promo banners, the console exposes the
+      // all / guest / logged_in audiences; the primitive's segment audience
+      // needs an isMember(customer_id, segment_slug) handle (the segments
+      // primitive exposes segmentsForCustomer, not isMember), so segment rows
+      // stay unexposed until that adapter is wired.
+      var sidebarWidgets = (catalog && cart) ? bShop.sidebarWidgets.create({}) : null;
 
       // Customer surveys — token-gated NPS/CSAT/CES/custom feedback. The
       // storefront serves the token survey page (/survey/:token) + records
@@ -2780,6 +2871,11 @@ async function main() {
           customerActivity: customerActivity,
           // Threaded customer-service notes panel on the order-detail screen.
           orderNotes:       orderNotes,
+          // Chronological order-story timeline on the order-detail screen,
+          // and the in-console notification inbox (/admin/inbox + navbar
+          // unread badge) the new-order ping feeds.
+          orderTimeline:    orderTimeline,
+          operatorInbox:    operatorInbox,
           subscriptions: subscriptions,
           giftcards:     giftcards,
           giftCardLedger: giftCardLedger,
@@ -2811,6 +2907,14 @@ async function main() {
           notifyQuoteResponded: notifyQuoteResponded,
           announcementBar: announcementBar,
           promoBanners:    promoBanners,
+          // Suggestion-box backlog console (/admin/suggestions) — the triage
+          // queue + per-suggestion respond / archive / flag-spam. Same
+          // instance the public /suggestions intake writes through.
+          suggestionBox:   suggestionBox,
+          // Sidebar-widget console (/admin/sidebar-widgets) — define widgets +
+          // set each page's ordered placement. Same instance the storefront
+          // right-rail render reads.
+          sidebarWidgets:  sidebarWidgets,
           customerSurveys: customerSurveys,
           blog:            blog,
           knowledgeBase:   knowledgeBase,
@@ -2881,6 +2985,15 @@ async function main() {
         // browsable but checkout-routes don't mount.
         var sfDeps = { catalog: catalog, cart: cart, config: { shop_name: bootShopName } };
         if (sfTheme) sfDeps.theme = sfTheme;
+        // Apple Pay domain-association bytes (Stripe-provided) served at
+        // /.well-known/apple-developer-merchantid-domain-association so Apple
+        // can verify the domain and render the Apple Pay button in the
+        // pay-page Express Checkout Element. Wired unconditionally — the
+        // crawl is independent of the rest of the Stripe setup, and an empty
+        // value makes the route 404 (the button just doesn't appear). The
+        // edge Worker serves the same bytes from its own binding; this is
+        // the container twin for parity + the e2e harness.
+        sfDeps.apple_pay_domain_association = process.env.APPLE_PAY_DOMAIN_ASSOCIATION || "";
         // Customer accounts — opts the /account/* routes in. Reuses the
         // single `customers` instance built above (also wired into the
         // admin roster), so both surfaces share one handle.
@@ -2937,10 +3050,20 @@ async function main() {
             });
           } catch (_e) { /* misconfigured .p8 / IDs — leave Apple sign-in disabled */ }
         }
-        // Newsletter signups — opts the /newsletter route in. The
-        // primitive only needs the externalDb query handle (which
-        // ships with this deploy via D1_BRIDGE_URL).
-        sfDeps.newsletter = bShop.newsletter.create({});
+        // Newsletter signups — opts the /newsletter + /unsubscribe routes
+        // in. The primitive needs the externalDb query handle (which ships
+        // with this deploy via D1_BRIDGE_URL); it also takes an
+        // emailSuppressions handle so a one-click unsubscribe feeds the
+        // marketing-scope suppression list — that's the single source of
+        // truth every OTHER marketing flow (wishlist alerts, abandoned-cart,
+        // review requests) consults, not just the broadcast path that reads
+        // `unsubscribed_at`.
+        var sfNewsletterSuppressions = bShop.emailSuppressions.create({
+          cursorSecret: process.env.D1_BRIDGE_SECRET
+            ? b.crypto.namespaceHash("email-suppressions-cursor", process.env.D1_BRIDGE_SECRET)
+            : "email-suppressions-cursor-dev-only",
+        });
+        sfDeps.newsletter = bShop.newsletter.create({ emailSuppressions: sfNewsletterSuppressions });
 
         // Operator-readable error log — the storefront's server-side
         // catches (checkout confirm 500, etc.) capture their scrubbed
@@ -3041,6 +3164,15 @@ async function main() {
         // splices it into the matching render (top_strip/footer through the
         // LAYOUT, the rest into home/product/cart/search).
         if (promoBanners) sfDeps.promoBanners = promoBanners;
+        // Suggestion box — the public /suggestions intake + browse + vote. The
+        // page is container-only (it carries a per-session CSRF token and is
+        // never edge-cached), reached from a storefront footer link.
+        if (suggestionBox) sfDeps.suggestionBox = suggestionBox;
+        // Sidebar widgets — operator-curated right-rail chrome resolved per
+        // request from a short-TTL in-memory cache + a sync resolver, spliced
+        // into the LAYOUT byte-identical with the edge twin. Impression/click
+        // counters fire container-side, drop-silent.
+        if (sidebarWidgets) sfDeps.sidebarWidgets = sidebarWidgets;
         // Customer surveys — the token survey page + response submit.
         if (customerSurveys) sfDeps.customerSurveys = customerSurveys;
         // Quotes — the customer RFQ surface: request from cart, the tokened
@@ -3158,6 +3290,13 @@ async function main() {
         // the gate. (The placing-browser sealed cookie + signed-in owner paths
         // work without it; this only enables the cross-device emailed link.)
         sfDeps.order_access_secret = _orderAccessSecret;
+        // Printable receipt — the customer order page's "Download receipt"
+        // link streams an HTML receipt for a paid order through
+        // GET /orders/:id/receipt. Reuses the SAME printReceipts instance the
+        // admin console renders operator copies with (built above over the
+        // shared order primitive); absent it the download link never renders
+        // and the route is inert.
+        if (printReceipts) sfDeps.printReceipts = printReceipts;
         // Order tracking — the customer order page reads it for the shipment
         // status timeline + carrier tracking link. Optional: absent it (or
         // its table unmigrated), the order page renders without the panel.

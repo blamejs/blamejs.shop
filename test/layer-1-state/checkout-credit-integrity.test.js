@@ -32,7 +32,7 @@ var b       = bShop.framework;
 
 var MIGS = [
   "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql",
-  "0013_giftcards.sql", "0081_gift_card_ledger.sql", "0216_giftcard_redemption_reversal.sql",
+  "0013_giftcards.sql", "0081_gift_card_ledger.sql", "0220_gift_card_ledger_chain.sql", "0216_giftcard_redemption_reversal.sql", "0221_giftcard_redemption_reversal.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) {
@@ -208,11 +208,47 @@ async function _fullyCoveredRedeemFailureNeverStrands() {
     (await s.query("SELECT id FROM orders", [])).rows.length === 1);
 }
 
+// A partial refund re-mints gift-card spend in PROPORTION to the amount
+// refunded — not nothing (the pre-fix balance-leaving partial) and not the
+// full spend (the pre-fix terminal-edge over-restore). Cumulative partials
+// converge, and the terminal refund credits only the remaining delta.
+async function _giftCardProRataOnPartialRefund() {
+  var s = await _setup({ price_minor: 5000 });
+  var card = await s.giftcards.issue({ amount_minor: 5000, currency: "USD" });
+  await s.ledger.credit({ gift_card_id: card.id, amount_minor: 5000, source: "manual", source_ref: "seed" });
+  var c = await _freshCart(s);
+  var result = await s.checkout.confirm({
+    cart_id: c.id, ship_to: { country: "US" }, selected_shipping_id: "std",
+    customer: { email: "buyer@example.com" }, gift_card_code: card.code,
+    idempotency_key: "checkout:" + c.id + ":seed",
+  });
+  check("pro-rata: fully covered → paid",          result.order.status === "paid");
+  check("pro-rata: card drained at checkout",      (await s.giftcards.balance(card.code)).balance_minor === 0);
+
+  // 1500 / 5000 = 30% refunded → 30% of the spend re-minted (1500), not 0, not 5000.
+  await s.order.recordPartialRefund(result.order.id, { amount_minor: 1500 });
+  check("pro-rata: partial refund re-mints the proportional share",
+    (await s.giftcards.balance(card.code)).balance_minor === 1500);
+
+  // A second partial (1000 → cumulative 2500 / 5000 = 50%) advances to exactly
+  // 2500 — cumulative convergence, no double-credit.
+  await s.order.recordPartialRefund(result.order.id, { amount_minor: 1000 });
+  check("pro-rata: cumulative partials converge",
+    (await s.giftcards.balance(card.code)).balance_minor === 2500);
+
+  // The terminal refund clears the balance: cumulative reaches the full spend,
+  // crediting only the remaining 2500 delta — never over-crediting past 5000.
+  await s.order.transition(result.order.id, "refund", { reason: "refund-webhook" });
+  check("pro-rata: terminal refund re-mints the remainder to full, no more",
+    (await s.giftcards.balance(card.code)).balance_minor === 5000);
+}
+
 async function run() {
   await _concurrentConfirmSingleCharge();
   await _giftCardReversedOnCancel();
   await _postCreateRedeemFailureNeverStrands();
   await _fullyCoveredRedeemFailureNeverStrands();
+  await _giftCardProRataOnPartialRefund();
 }
 
 module.exports = { run: run };

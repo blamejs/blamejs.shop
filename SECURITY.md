@@ -165,6 +165,19 @@ node -e "
   `hmac-sha256-stripe`) inside `lib/payment.js` before any FSM
   transition runs. An unsigned or out-of-window delivery never
   touches origin resources.
+- **Apple Pay domain-association file.** Apple verifies the domain
+  before it will render the Apple Pay wallet button, and it verifies by
+  fetching `/.well-known/apple-developer-merchantid-domain-association`.
+  The shop serves that path verbatim from `APPLE_PAY_DOMAIN_ASSOCIATION`
+  (the file's contents, supplied by Stripe) — a static, unauthenticated,
+  state-free public file with no transform applied. Apple's verification
+  crawler may omit `Accept-Language`, so the path is on the bot guard's
+  skip list (the same machine-caller exemption the `/_/` ticks use)
+  rather than being 403'd as automated traffic; this exposes nothing
+  beyond the public association bytes. When the value is unset the route
+  returns 404 and the button stays hidden — no other payment method is
+  affected. Set the value identically on the Worker and the container;
+  apex, `www`, and each subdomain serve their own file.
 - **Worker → Container trust boundary.** The Worker treats the
   container as untrusted-for-D1: it never proxies arbitrary headers
   into D1, only the explicit `sql` + `params` from the bridge body.

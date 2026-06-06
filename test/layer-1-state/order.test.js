@@ -510,6 +510,74 @@ async function _claimGuardLostRace() {
     paid.status === "paid" && decremented.length === 1 && decremented[0].qty === 1);
 }
 
+// ---- new-order observer (paid-edge ping) -------------------------------
+//
+// The order FSM calls a late-bound `newOrderObserver(order)`, fire-and-
+// forget, the moment an order reaches `paid`. It's how the operator
+// console learns of a sale without polling. Fires exactly once on the
+// pending → paid edge, never on other edges, and a throwing observer
+// never breaks (or delays) the transition.
+async function _newOrderObserver() {
+  var q       = _makeQuery();
+  var catalog = bShop.catalog.create({ query: q });
+  var cart    = bShop.cart.create({ query: q, catalog: catalog });
+  var order   = bShop.order.create({ query: q });
+
+  // setNewOrderObserver refuses a non-function (config-time throw).
+  assert.throws(function () { order.setNewOrderObserver(123); }, /must be a function/);
+
+  // Each seed needs a unique product slug + SKU (the shared `_seed` reuses
+  // one slug, which would collide across the four orders this test creates).
+  var seedN = 0;
+  async function _uniqueSeed() {
+    seedN += 1;
+    var p = await catalog.products.create({ slug: "ord-obs-" + seedN, title: "ObsTest", status: "active" });
+    var v = await catalog.variants.create(p.id, { sku: "ORD-OBS-" + seedN });
+    await catalog.prices.set(v.id, { currency: "USD", amount_minor: 2999 });
+    var sessionId = _validUUID();
+    var c = await cart.create(sessionId, { currency: "USD" });
+    await cart.addLine(c.id, { variant_id: v.id, qty: 2 });
+    return { variant: v, cart: c, sessionId: sessionId };
+  }
+
+  var fired = [];
+  // Late-bind AFTER construction — the production wiring assigns the slot
+  // once the inbox adapter exists.
+  order.setNewOrderObserver(function (o) { fired.push(o.id); });
+
+  var seed = await _uniqueSeed();
+  var o = await order.createFromCart(_orderInput(seed));
+  // No fire on create (still pending).
+  check("observer silent on pending create", fired.length === 0);
+
+  await order.transition(o.id, "mark_paid", { reason: "stripe_succeeded" });
+  // The observer is detached (fire-and-forget), so poll rather than sleep.
+  await helpers.waitUntil(function () { return fired.length >= 1; },
+    { timeoutMs: 5000, label: "new-order observer fired on paid" });
+  check("observer fired once on paid",       fired.length === 1 && fired[0] === o.id);
+
+  // Advancing further does NOT re-fire (only the paid edge owns the ping).
+  await order.transition(o.id, "start_fulfillment");
+  await order.transition(o.id, "mark_shipped");
+  check("observer does not re-fire on later edges", fired.length === 1);
+
+  // A throwing observer is swallowed — the transition still lands.
+  var seed2 = await _uniqueSeed();
+  order.setNewOrderObserver(function () { throw new Error("observer boom"); });
+  var o2 = await order.createFromCart(_orderInput(seed2));
+  var paid2 = await order.transition(o2.id, "mark_paid");
+  check("throwing observer never breaks the transition", paid2.status === "paid");
+
+  // Detaching (null) is honoured — no fire on a subsequent paid edge.
+  var detachedFires = 0;
+  order.setNewOrderObserver(function () { detachedFires += 1; });
+  order.setNewOrderObserver(null);
+  var seed3 = await _uniqueSeed();
+  var o3 = await order.createFromCart(_orderInput(seed3));
+  await order.transition(o3.id, "mark_paid");
+  check("detached observer never fires", detachedFires === 0);
+}
+
 async function run() {
   await _create();
   await _happyPath();
@@ -521,6 +589,7 @@ async function run() {
   await _validation();
   await _settlementFailureIsCrashSafe();
   await _claimGuardLostRace();
+  await _newOrderObserver();
 }
 
 module.exports = { run: run };

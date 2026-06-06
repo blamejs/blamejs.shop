@@ -656,8 +656,61 @@ async function _archiveSource() {
   );
 }
 
+// ---- idempotency-key validation ---------------------------------------
+//
+// The idempotency_key is a third-party-supplied opaque string used as the
+// dedupe identity in `UNIQUE(source_slug, idempotency_key)`. It must
+// refuse path-traversal shapes — `/`, `\`, `..` — which a loose
+// printable-ASCII alphabet admitted. Strict validation permits a literal
+// space (security-neutral) and leaves the bytes un-normalized.
+
+async function _idempotencyKeyValidation() {
+  var s = _setup();
+  var src = await s.wr.defineSource({ slug: "idem-src", active: true });
+  var secret = src.secret_plaintext;
+
+  function _deliver(key) {
+    var body = '{"event":"' + Date.now() + Math.random() + '"}';
+    var ts = Math.floor(Date.now() / 1000);
+    var sig = _signThirdParty(secret, ts, body);
+    return s.wr.verifyAndPersist({
+      source_slug:      "idem-src",
+      secret_plaintext: secret,
+      body:             body,
+      signature_header: sig,
+      timestamp_header: String(ts),
+      idempotency_key:  key,
+    });
+  }
+
+  // Path-traversal shapes are refused.
+  await assert.rejects(_deliver("evt/../../etc/passwd"), /idempotency_key/);
+  await assert.rejects(_deliver("a/b"),                  /idempotency_key/);
+  await assert.rejects(_deliver("a\\b"),                 /idempotency_key/);
+  await assert.rejects(_deliver(".."),                   /idempotency_key/);
+
+  // Control bytes are refused.
+  await assert.rejects(_deliver("evt\x00null"),          /idempotency_key/);
+
+  // Over-length (>256 bytes) is refused.
+  await assert.rejects(_deliver("x".repeat(257)),        /idempotency_key/);
+
+  // A literal space is permitted (security-neutral for a stored key).
+  var withSpace = await _deliver("evt with space");
+  check("idempotency_key with a literal space is accepted", withSpace.ok === true);
+
+  // A plain printable key still works.
+  var plain = await _deliver("evt_clean_001");
+  check("clean idempotency_key accepted", plain.ok === true);
+
+  // null is still a valid passthrough (no dedupe key supplied).
+  var none = await _deliver(null);
+  check("null idempotency_key passes through", none.ok === true);
+}
+
 async function run() {
   await _defineSourceHappyPath();
+  await _idempotencyKeyValidation();
   await _verifyAndPersistGoodSignature();
   await _verifyAndPersistBadSignature();
   await _verifyAndPersistExpiredTimestamp();
