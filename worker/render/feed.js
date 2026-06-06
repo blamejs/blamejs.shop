@@ -4,7 +4,7 @@
 // substitution through `b.template.escapeHtml`). XML 1.0 §4.6 accepts
 // the numeric `&#x27;` reference `b.template.escapeHtml` emits, so
 // the HTML primitive covers XML output too.
-import { renderTemplate } from "./_lib.js";
+import { renderTemplate, spliceRaw } from "./_lib.js";
 
 var CHANNEL_TPL =
   "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
@@ -34,7 +34,7 @@ function _rfc822(epochMs) {
   return new Date(epochMs).toUTCString();
 }
 
-function _renderItem(article, origin) {
+function _renderItem(article, origin, shopName) {
   var url = origin + "/blog/" + article.slug;
   var description = article.meta_description != null && article.meta_description.length > 0
     ? article.meta_description
@@ -45,7 +45,12 @@ function _renderItem(article, origin) {
     url_guid:    url,
     pub_date:    _rfc822(article.published_at),
     description: description,
-    author:      article.author_id,
+    // The byline is the shop name, never the internal `author_id` (an
+    // operator/user id that the blog page renderers deliberately suppress).
+    // The blog model carries no author display-name column, so the shop
+    // name is the cleanest non-leaking source — matching what the on-page
+    // byline and the Article JSON-LD already emit.
+    author:      shopName,
   });
 }
 
@@ -57,12 +62,20 @@ export function renderFeed(opts) {
   var lastBuild = articles.length
     ? _rfc822(articles[0].published_at || articles[0].updated_at)
     : new Date().toUTCString();
-  var items = articles.map(function (a) { return _renderItem(a, origin); }).join("");
-  return renderTemplate(CHANNEL_TPL, {
+  var items = articles.map(function (a) { return _renderItem(a, origin, shopName); }).join("");
+  // Splice the rendered items LITERALLY. `String.replace(token, string)`
+  // gives the replacement string's `$` sequences special meaning (`$&`,
+  // `` $` ``, `$'`, `$1`), so a post title / body carrying a `$`-sequence
+  // would corrupt — and `` $` `` would splice the channel head into the
+  // item. The item XML is already escaped at its own render site; this is
+  // purely about the replace mechanics. `spliceRaw` uses a replacer
+  // function so the fragment is inserted verbatim with no `$`
+  // interpretation. Mirrors how the page/blog renderers splice raw bodies.
+  return spliceRaw(renderTemplate(CHANNEL_TPL, {
     title:       shopName + " — Blog",
     origin:      origin,
     self_url:    origin + "/feed.xml",
     description: "Editorial blog from " + shopName + ".",
     last_build:  lastBuild,
-  }).replace("RAW_ITEMS_PLACEHOLDER", items);
+  }), "RAW_ITEMS_PLACEHOLDER", items);
 }

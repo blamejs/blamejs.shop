@@ -35,6 +35,7 @@ var MIGS = [
   "0004_shop_config.sql",
   "0005_webhooks.sql",
   "0017_webhook_dlq.sql",
+  "0215_webhook_dlq_unique_delivery.sql",
 ].map(function (f) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f); });
 
 function _splitSchema(text) {
@@ -602,6 +603,103 @@ async function _defaultTransportHoldsPqcDefault() {
     captured[0].ecdhCurve === undefined);
 }
 
+// P2-D regression: the rate-limit gate must NOT count its own refusal
+// rows, and must not grow the table by one refusal row per suppressed
+// attempt. A refusal row counted by the gate is self-perpetuating — once
+// the window fills with refusals, every later send is refused forever even
+// after the real deliveries age out.
+async function _rateLimitExcludesOwnRefusalsAndBoundsGrowth() {
+  var q = _makeQuery();
+  var clock = _mockClock(1700000000000);
+  var transport = _captureTransport([{ statusCode: 200 }]);
+  var webhooks = bShop.webhooks.create({ query: q, transport: transport, now: clock.now });
+  var ep = await webhooks.endpoints.create({
+    url: "https://example.com/", events: "*", rate_limit_per_minute: 5,
+  });
+
+  // Fill the limit with 5 real deliveries, then flood 25 suppressed
+  // attempts in the same window.
+  for (var i = 0; i < 5; i += 1) await webhooks.send("order.mark_paid", { i: i });
+  for (var j = 0; j < 25; j += 1) await webhooks.send("order.mark_paid", { flood: j });
+
+  var rows = (await q("SELECT * FROM webhook_deliveries WHERE endpoint_id = ?1", [ep.id])).rows;
+  var refused   = rows.filter(function (r) { return r.last_error === "rate-limited"; });
+  var delivered = rows.filter(function (r) { return r.delivered_at != null; });
+  check("rate-limit: 5 real deliveries landed", delivered.length === 5);
+  check("rate-limit: refusal rows collapsed to ONE per window (bounded growth)",
+    refused.length === 1);
+  check("rate-limit: total rows bounded (5 delivered + 1 refusal), not 30",
+    rows.length === 6);
+
+  // Slide the window 61s past the real deliveries. Only the (single)
+  // refusal row's timestamp lies within ~31s, but refusals are excluded
+  // from the count — so a fresh send must SUCCEED, proving the throttle is
+  // not self-perpetuating.
+  clock.advance(61 * 1000);
+  var probe = await webhooks.send("order.mark_paid", { probe: 1 });
+  check("rate-limit: send resumes once real deliveries age out (no self-perpetuation)",
+    probe[0].delivered_at != null && probe[0].last_error == null);
+}
+
+// P3-E regression: manually retrying an already-exhausted delivery must be
+// a no-op — no duplicate DLQ row, no attempts climbing past the max. Before
+// the fix every retry click re-ran the failure path and dropped a fresh
+// DLQ row.
+async function _retryOfExhaustedDeliveryIsIdempotent() {
+  var q = _makeQuery();
+  var clock = _mockClock(1700000000000);
+  var transport = _captureTransport([{ statusCode: 500 }]);
+  var webhooks = bShop.webhooks.create({
+    query:     q,
+    transport: transport,
+    now:       clock.now,
+    retry:     { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 2 },
+  });
+  var ep = await webhooks.endpoints.create({ url: "https://example.com/", events: "*" });
+
+  // Walk the delivery to exhaustion → DLQ.
+  var d0 = await webhooks.send("order.mark_paid", { x: 1 });
+  var deliveryId = d0[0].id;
+  var schedule = [60, 300, 1800, 14400];
+  for (var i = 0; i < schedule.length; i += 1) {
+    clock.advance(schedule[i] * 1000);
+    await webhooks.processRetries({ now: clock.now() });
+  }
+  var dlqBefore = await webhooks.dlq.list(ep.id);
+  check("exhausted delivery produced exactly one DLQ row", dlqBefore.length === 1);
+  var exhausted = await q("SELECT * FROM webhook_deliveries WHERE id = ?1", [deliveryId]);
+  check("exhausted delivery at MAX_ATTEMPTS", Number(exhausted.rows[0].attempts) === 5);
+
+  // Operator clicks Retry several times on the exhausted delivery.
+  var transportCallsBefore = transport.received.length;
+  for (var c = 0; c < 4; c += 1) {
+    var r = await webhooks.deliveries.retry(deliveryId);
+    check("retry of exhausted delivery returns the row (no-op, not null)",
+      r != null && r.id === deliveryId);
+  }
+  // No new transport attempts, no attempts growth, no duplicate DLQ rows.
+  check("retry of exhausted delivery makes no new transport attempt",
+    transport.received.length === transportCallsBefore);
+  var after = await q("SELECT * FROM webhook_deliveries WHERE id = ?1", [deliveryId]);
+  check("retry of exhausted delivery does not grow attempts past max",
+    Number(after.rows[0].attempts) === 5);
+  var dlqAfter = await webhooks.dlq.list(ep.id);
+  check("retry of exhausted delivery inserts no duplicate DLQ row",
+    dlqAfter.length === 1);
+
+  // A retry of a still-retryable (non-exhausted) delivery DOES re-attempt.
+  var transport2 = _captureTransport([{ statusCode: 500 }, { statusCode: 200 }]);
+  var webhooks2 = bShop.webhooks.create({ query: q, transport: transport2 });
+  var ep2 = await webhooks2.endpoints.create({ url: "https://example.com/two", events: "*" });
+  var d2 = await webhooks2.send("order.mark_paid", { y: 1 });
+  check("fresh failure is below max", Number(d2[0].attempts) === 1 && Number(d2[0].attempts) < 5);
+  var retried = await webhooks2.deliveries.retry(d2[0].id);
+  check("retry of a non-exhausted delivery re-attempts and delivers",
+    retried.delivered_at != null && retried.last_status === 200);
+  // ep2 unused beyond creation guard; touch it so lint sees the binding.
+  check("second endpoint created", typeof ep2.id === "string");
+}
+
 async function run() {
   await _crud();
   await _urlValidation();
@@ -617,6 +715,8 @@ async function run() {
   await _dlqAfterFiveAttempts();
   await _replayFromDlq();
   await _rateLimitRefuses();
+  await _rateLimitExcludesOwnRefusalsAndBoundsGrowth();
+  await _retryOfExhaustedDeliveryIsIdempotent();
   await _signatureRoundTrip();
 }
 

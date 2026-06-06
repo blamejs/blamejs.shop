@@ -711,10 +711,61 @@ async function _enrollmentsAndRecordSentAndRefusals() {
   }, /isSuppressed/);
 }
 
+// P2-B regression: a STALE enrollment (next_dispatch_at many periods in
+// the past — cron down, or enrolled long ago) must send AT MOST ONE
+// digest when the dispatcher finally runs, then snap its next_dispatch_at
+// into the future. Before the fix, dispatchTick advanced one period per
+// tick, so a subscriber got one digest per cron-minute until the schedule
+// caught up — dozens of emails in an hour.
+async function _staleEnrollmentCatchesUpWithOneDigest() {
+  var customerId = _customerId();
+  var emailStub = _emailStub();
+  var emailMap = {}; emailMap[customerId] = "stale@example.com";
+  var w = await _wire({
+    email:            emailStub,
+    emailForCustomer: function (cid) { return emailMap[cid] || null; },
+  });
+  await w.svc.defineSchedule({
+    slug:        "weekly-monday-9am",
+    frequency:   "weekly",
+    day_of_week: 1,
+    time_local:  "09:00",
+    timezone:    "UTC",
+  });
+  // Enroll with an anchor ~7 weeks in the past — next_dispatch_at lands
+  // long before the eventual dispatch.
+  var staleAnchor = Date.UTC(2025, 0, 1, 0, 0);   // Jan 1 2025 (Wed)
+  var en = await w.svc.enrollCustomer({ customer_id: customerId, schedule_slug: "weekly-monday-9am", now: staleAnchor });
+  check("stale enroll next_dispatch_at is in the past vs run time",
+    en.next_dispatch_at < Date.UTC(2025, 1, 24, 9, 0));
+
+  // The cron now runs every minute at a far-future NOW. Simulate 12
+  // minute-ticks at the SAME wall-clock instant (the cron fires once a
+  // minute; nothing else changes between ticks).
+  var runNow = Date.UTC(2025, 1, 24, 12, 0);   // Feb 24 2025, ~7.5 weeks later
+  var totalSent = 0;
+  for (var i = 0; i < 12; i += 1) {
+    var rv = await w.svc.dispatchTick({ now: runNow });
+    totalSent += rv.sent;
+  }
+  check("stale enrollment sends exactly one digest on catch-up", totalSent === 1);
+  check("stale enrollment emailed exactly once", emailStub.calls.length === 1);
+  var ledger = await w.q("SELECT COUNT(*) AS n FROM wishlist_digest_sent", []);
+  check("stale enrollment ledgered exactly one sent row", Number(ledger.rows[0].n) === 1);
+  // next_dispatch_at is now strictly in the FUTURE relative to the run.
+  var enr = await w.q("SELECT next_dispatch_at FROM wishlist_digest_enrollments WHERE customer_id = ?1", [customerId]);
+  check("stale enrollment next_dispatch_at snapped into the future",
+    Number(enr.rows[0].next_dispatch_at) > runNow);
+  // It's the next Monday 09:00 UTC strictly after the run (Mar 3 2025).
+  check("stale enrollment next_dispatch_at is the next Monday 09:00",
+    Number(enr.rows[0].next_dispatch_at) === Date.UTC(2025, 2, 3, 9, 0));
+}
+
 async function run() {
   await _defineSchedule();
   await _enrollCustomerNextDispatchAtMath();
   await _dispatchTickFanOut();
+  await _staleEnrollmentCatchesUpWithOneDigest();
   await _composeDigestShape();
   await _listSchedulesReturnsLiveOnly();
   await _pauseResumeFsm();

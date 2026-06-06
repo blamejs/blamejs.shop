@@ -1,0 +1,34 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.19",
+  "date": "2026-06-06",
+  "headline": "Wishlist alerts fire once per event instead of repeating daily, stale digests catch up with a single email, and webhook delivery stops throttling itself",
+  "summary": "A set of notification and delivery fixes. Back-in-stock and price-drop wishlist alerts now fire only when something actually changes — a steadily in-stock item no longer re-alerts every day. A wishlist digest whose schedule fell behind sends one catch-up email instead of one per minute until current. Outbound webhook delivery no longer counts its own rate-limit refusals against the limit (which kept the throttle tripped once hit), retrying an exhausted delivery no longer duplicates its dead-letter record, and the blog RSS feed renders correctly when a post title or body contains dollar-sign sequences.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Back-in-stock and price-drop alerts fire on the change, not the state",
+          "body": "The wishlist alert sweep evaluated the current state of each item, so anything in stock re-alerted every wishlister on every sweep — the daily dedupe window just made the flood daily. Alerts now track the last-observed state per customer and item: back-in-stock fires only on an out-of-stock-to-in-stock transition, price-drop only when the price falls below the level already alerted, and a recovered price re-arms the alert. A steadily in-stock item never re-fires. The weekly cap and dedupe are also enforced atomically, so two overlapping sweeps can't double-send past the cap."
+        },
+        {
+          "title": "A stale digest enrollment catches up with one email",
+          "body": "A wishlist digest whose next-send time had fallen far behind advanced one period per scheduler tick and sent an email each time — a subscriber could receive dozens of digests in an hour while the schedule caught up. Catching up now snaps the schedule to the present and sends at most one digest."
+        },
+        {
+          "title": "Webhook delivery rate limiting no longer feeds on its own refusals",
+          "body": "The outbound webhook rate-limit gate counted its own refusal records toward the limit, so once an endpoint tripped the throttle it could stay tripped indefinitely, and every suppressed attempt persisted another row. Refusals are no longer counted by the gate and collapse to a single record per endpoint per window."
+        },
+        {
+          "title": "Retrying an exhausted webhook delivery is idempotent",
+          "body": "Manually retrying a delivery that had already exhausted its attempts inserted a fresh dead-letter record on every click. Retry of an exhausted or already-delivered delivery now answers as a clean no-op, and the dead-letter table enforces one record per delivery."
+        },
+        {
+          "title": "The RSS feed renders posts containing dollar-sign sequences",
+          "body": "The feed assembled items with a plain string replacement, which gives `$` sequences special meaning — a post title or body containing a dollar sign followed by a backtick or ampersand could corrupt the entire feed XML. The feed now uses the same literal splice the page renderers use. The feed's author field also no longer exposes an internal identifier; it carries the shop name, matching the blog pages."
+        }
+      ]
+    }
+  ]
+}
