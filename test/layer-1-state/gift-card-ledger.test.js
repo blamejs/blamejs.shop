@@ -163,6 +163,46 @@ async function _debitOverdraftRefused() {
   );
 }
 
+// The overdraft check and the row write are ONE atomic guarded INSERT,
+// so two concurrent debits that would together overdraw can't both pass
+// the check and both write (the read-then-write race that corrupted
+// balance_after_minor). Exactly one of two racing debits for more than
+// half the balance lands.
+async function _concurrentDebitAtomic() {
+  var f = _factory();
+  var cardId = _uuid();
+  await f.ledger.credit({ gift_card_id: cardId, amount_minor: 1000, source: "manual" });
+
+  // Two concurrent debits of 600 against a 1000 balance: only ONE can
+  // succeed (1200 > 1000).
+  var settled = await Promise.allSettled([
+    f.ledger.debit({ gift_card_id: cardId, amount_minor: 600, order_id: _uuid() }),
+    f.ledger.debit({ gift_card_id: cardId, amount_minor: 600, order_id: _uuid() }),
+  ]);
+  var fulfilled = settled.filter(function (s) { return s.status === "fulfilled"; });
+  var rejected  = settled.filter(function (s) { return s.status === "rejected"; });
+  check("concurrent debit: exactly one succeeds", fulfilled.length === 1);
+  check("concurrent debit: one refused",          rejected.length === 1);
+  check("concurrent debit: refusal coded",
+    rejected[0] && rejected[0].reason && rejected[0].reason.code === "GIFT_CARD_LEDGER_INSUFFICIENT_BALANCE");
+
+  // Balance is the single successful debit's result — never an
+  // overdrawn / double-applied figure.
+  var bal = await f.ledger.balance(cardId);
+  check("concurrent debit: balance reflects one debit", bal.balance_minor === 400);
+
+  // Exactly two ledger rows: the credit + the one winning debit.
+  var rowCount = f.db.prepare("SELECT COUNT(*) AS c FROM gift_card_ledger WHERE gift_card_id = ?").all(cardId)[0].c;
+  check("concurrent debit: only the winning row landed", rowCount === 2);
+
+  // The winning debit's balance_after_minor is correct (1000 - 600).
+  var debitRow = f.db.prepare(
+    "SELECT balance_after_minor FROM gift_card_ledger WHERE gift_card_id = ? AND kind = 'debit'"
+  ).all(cardId);
+  check("concurrent debit: balance_after_minor not corrupted",
+    debitRow.length === 1 && debitRow[0].balance_after_minor === 400);
+}
+
 async function _historyPagination() {
   var f = _factory();
   var cardId = _uuid();
@@ -395,6 +435,7 @@ async function _exportedConstants() {
 async function run() {
   await _creditDebitBalanceDerivation();
   await _debitOverdraftRefused();
+  await _concurrentDebitAtomic();
   await _historyPagination();
   await _bulkBalance();
   await _expiringBalanceWindow();
