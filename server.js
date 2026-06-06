@@ -201,7 +201,7 @@ var _dsrReader = {
   // (a hard delete would orphan orders / tickets). The raw email is never
   // stored (email_hash only), so the row carries no plaintext PII to scrub
   // beyond the display name.
-  customers: function (handle) {
+  customers: function (handle, customerPortal) {
     return {
       forCustomerExport: async function (id) {
         try {
@@ -217,12 +217,30 @@ var _dsrReader = {
           };
         } catch (_e) { return null; }
       },
+      // Erasure: anonymize the profile row in place (display-name
+      // tombstone keeps FK children — orders / tickets — from orphaning),
+      // AND revoke every sign-in path so the deleted customer cannot sign
+      // back in. Leaving the profile anonymized but the credentials live
+      // is not erasure: passkey, OAuth, and magic-link all resolve to this
+      // row independently of the display name. `eraseAuthForCustomer`
+      // deletes the passkeys + OAuth links + severs the email-hash lookup
+      // key; `customerPortal.revokeAllForCustomer` kills the live portal
+      // sessions. Both are best-effort (drop-silent) so one failing step
+      // never aborts the erasure — the anonymized profile + whatever
+      // credentials were revoked still land. dry_run reports 1 (the
+      // customer row) without mutating, matching the other adapters.
       forCustomerDeletion: async function (id, opts) {
         var dryRun = !!(opts && opts.dry_run);
         try {
           var existing = await handle.get(id);
           if (!existing) return { table: "customers", deleted: 0 };
           if (dryRun) return { table: "customers", deleted: 1 };
+          if (typeof handle.eraseAuthForCustomer === "function") {
+            try { await handle.eraseAuthForCustomer(id); } catch (_eAuth) { /* drop-silent — erasure proceeds */ }
+          }
+          if (customerPortal && typeof customerPortal.revokeAllForCustomer === "function") {
+            try { await customerPortal.revokeAllForCustomer(id, "account-erasure"); } catch (_eSess) { /* drop-silent */ }
+          }
           await handle.update(id, { display_name: "[erased customer " + String(id).slice(0, 8) + "]" });
           return { table: "customers", deleted: 1 };
         } catch (_e) { return { table: "customers", deleted: 0 }; }
@@ -371,6 +389,117 @@ var _dsrReader = {
       },
     };
   },
+
+  // reviews: keyed by `customer_id_hash` (a one-way namespaceHash of the
+  // customer id), so export re-derives the hash via `hashCustomerId(id)`
+  // and lists the customer's own reviews. deletion RETAINS — a published
+  // review is operator content shown to other shoppers (a legitimate-
+  // interest basis to keep it); the author identity is already a one-way
+  // hash, so the row carries no plaintext PII to scrub.
+  reviews: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        try {
+          var hash = handle.hashCustomerId(id);
+          // byCustomer caps limit at MAX_LIST_LIMIT (100); a higher value
+          // throws and would silently empty the section.
+          return (await handle.byCustomer(hash, { limit: 100 })).rows;
+        } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (_id, _opts) {
+        return { table: "reviews", deleted: 0, note: "retained-published-content" };
+      },
+    };
+  },
+
+  // consentLedger: export carries the full consent history (the proof the
+  // controller held the subject's consent state over time). deletion
+  // RETAINS — the ledger IS the legal evidence that the controller
+  // honored (or recorded the withdrawal of) consent; erasing it would
+  // destroy the very record a supervisory authority asks for.
+  consentLedger: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        try { return await handle.historyForCustomer(id); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (_id, _opts) {
+        return { table: "consent_ledger", deleted: 0, note: "retained-consent-evidence" };
+      },
+    };
+  },
+
+  // wishlist: export lists the customer's saved products. deletion ERASES
+  // — a wishlist is pure personalization with no retention basis. The
+  // wishlist module exposes no per-customer bulk delete (only a single-
+  // entry `remove`), so the adapter issues the delete over the composition-
+  // root D1 handle directly; dry-run counts the rows it WOULD remove.
+  wishlist: function (handle, query) {
+    return {
+      forCustomerExport: async function (id) {
+        try { return (await handle.listForCustomer(id, { limit: 100 })).rows; }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var rows = (await query(
+              "SELECT COUNT(*) AS n FROM wishlist_entries WHERE customer_id = ?1", [id],
+            )).rows[0];
+            return { table: "wishlist_entries", deleted: rows ? Number(rows.n) : 0 };
+          }
+          var res = await query("DELETE FROM wishlist_entries WHERE customer_id = ?1", [id]);
+          return { table: "wishlist_entries", deleted: Number((res && res.rowCount) || 0) };
+        } catch (_e) { return { table: "wishlist_entries", deleted: 0 }; }
+      },
+    };
+  },
+
+  // surveys: export lists the customer's survey invitations (the feedback
+  // they were asked for + their state). deletion RETAINS — survey
+  // responses are aggregate operator service-quality records and the
+  // invitation row carries no plaintext PII beyond the customer_id link
+  // (which the anonymized customers row covers). The slot exists for a
+  // later opt-in hard delete.
+  surveys: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        try { return await handle.invitationsForCustomer(id, { limit: 100 }); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (_id, _opts) {
+        return { table: "survey_invitations", deleted: 0, note: "retained" };
+      },
+    };
+  },
+
+  // recentlyViewed: export lists the customer's recently-viewed products.
+  // deletion ERASES via the module's own `purgeCustomer` — a browse trail
+  // is pure personalization with no retention basis; dry-run counts the
+  // rows it WOULD remove over the composition-root D1 handle without
+  // mutating.
+  recentlyViewed: function (handle, query) {
+    return {
+      forCustomerExport: async function (id) {
+        try { return await handle.forCustomer(id, { limit: 100 }); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var rows = (await query(
+              "SELECT COUNT(*) AS n FROM recently_viewed WHERE customer_id = ?1", [id],
+            )).rows[0];
+            return { table: "recently_viewed", deleted: rows ? Number(rows.n) : 0 };
+          }
+          var out = await handle.purgeCustomer(id);
+          return { table: "recently_viewed", deleted: Number((out && out.removed) || 0) };
+        } catch (_e) { return { table: "recently_viewed", deleted: 0 }; }
+      },
+    };
+  },
 };
 
 // orderNotes is intentionally NOT a per-customer reader: lib/order-notes.js
@@ -384,6 +513,23 @@ var _dsrReader = {
 // reader-map slot lights up only when that handle exists, so the primitive
 // reports it absent until an operator wires Stripe.
 
+// Decide whether a streamed section holds real data ("exported") or is
+// the reader-wired-but-empty case ("empty"). Mirrors the primitive's
+// _isEmptySection so the streamed bundle's manifest classifies sections
+// the same way fulfillRequest's does.
+function _dsrSectionFilled(section) {
+  if (section == null) return false;
+  if (Array.isArray(section)) return section.length > 0;
+  if (typeof section === "object") {
+    var keys = Object.keys(section);
+    for (var i = 0; i < keys.length; i += 1) {
+      if (_dsrSectionFilled(section[keys[i]])) return true;
+    }
+    return false;
+  }
+  return true;
+}
+
 // Assemble the per-domain export bundle for a fulfilled DSR row, writing it
 // to the response header-first / section-by-section so the process holds the
 // bundle plus one section's serialization at a time — never a second giant
@@ -393,6 +539,13 @@ var _dsrReader = {
 // re-reads the SAME reader set directly and streams. Status + ownership are
 // validated by the caller BEFORE the first write (can't change status
 // mid-stream). `sections` is the scope's section list (SCOPE_SECTIONS[scope]).
+//
+// The bundle carries an explicit completeness manifest — one entry per
+// scope section with status exported / empty / absent — so the downloaded
+// file is self-describing: a section that wasn't exported (no reader wired
+// at fulfillment time) is visible as `absent`, never silently dropped. The
+// manifest is a small array of {section,status} pairs accumulated while the
+// per-section data streams, so it doesn't reintroduce whole-bundle buffering.
 async function _streamDsrBundle(res, readers, sections, row) {
   res.status(200);
   if (res.setHeader) {
@@ -411,19 +564,170 @@ async function _streamDsrBundle(res, readers, sections, row) {
        ",\"jurisdiction\":" + JSON.stringify(row.jurisdiction) +
        ",\"scope\":" + JSON.stringify(row.scope) +
        ",\"data\":{");
+  var manifest = [];
   var first = true;
   for (var i = 0; i < sections.length; i += 1) {
     var name   = sections[i];
     var reader = readers[name];
-    if (!reader || typeof reader.forCustomerExport !== "function") continue;
+    if (!reader || typeof reader.forCustomerExport !== "function") {
+      manifest.push({ section: name, status: "absent" });
+      continue;
+    }
     var section;
     try { section = await reader.forCustomerExport(row.customer_id); }
     catch (_e) { section = null; }
     emit((first ? "" : ",") + JSON.stringify(name) + ":" + JSON.stringify(section == null ? null : section));
     first = false;
+    manifest.push({ section: name, status: _dsrSectionFilled(section) ? "exported" : "empty" });
   }
-  emit("}}");
+  emit("},\"manifest\":" + JSON.stringify(manifest) + "}");
   if (canWrite) res.end(); else (res.end ? res.end(buf) : res.send(buf));
+}
+
+// Build the ESP bounce / complaint intake handler (finding: b.mailBounce
+// was unwired — bounces never reached the suppression list, so a campaign
+// kept mailing a dead or complaining address indefinitely).
+//
+// Configuration (operator points their ESP's bounce/complaint webhook at
+// POST /api/webhooks/mail-bounce):
+//
+//   MAIL_BOUNCE_SECRET   required to ARM the endpoint. The per-endpoint
+//                        signing secret the ESP must present in the
+//                        `x-mail-bounce-secret` header (timing-safe
+//                        compared). This endpoint is EXTERNAL-facing (the
+//                        ESP fires it directly, not the Worker), so it gets
+//                        its OWN secret rather than the worker→container
+//                        D1_BRIDGE_SECRET. Absent the secret the endpoint
+//                        answers 503 "not configured" — it never accepts an
+//                        unauthenticated bounce.
+//   MAIL_BOUNCE_VENDOR   the payload shape: "postmark" | "ses" | "resend"
+//                        (default "postmark"). A per-request `?vendor=`
+//                        query overrides it, so one operator can point two
+//                        ESPs at the same URL.
+//
+// Side effects map the normalized event onto durable state:
+//   * complaint / hard bounce -> emailSuppressions.add scoped 'marketing'
+//     (a complaint or a permanently-dead address must stop receiving
+//     marketing; transactional mail — receipts, password resets — still
+//     flows, the conservative posture). A soft bounce is transient
+//     (mailbox full / greylist) and is NOT suppressed.
+//   * for every campaign that mailed this recipient (email_campaign_sends),
+//     append a `bounced` row to email_campaign_events so the campaign
+//     rollup reflects the bounce it was built to read.
+//
+// The route composes b.mailBounce.parse (the pure normalizer) against the
+// already-bodyParser'd JSON — the app's bodyParser runs before any route,
+// so the stream-buffering b.mailBounce.handler can't see the raw bytes; the
+// parse path reads req.body directly. The endpoint is mounted under
+// /api/webhooks/ so the vendored bot-guard's /api/* skip applies and the
+// path joins WEBHOOK_PATHS (CSRF / fetch-metadata / rate-limit exempt) — the
+// per-endpoint MAIL_BOUNCE_SECRET is the deciding gate, same posture as the
+// Stripe / PayPal webhook routes.
+function _mailBounceIntake(deps) {
+  var emailSuppressions = deps.emailSuppressions;
+  var newsletter        = deps.newsletter;
+  var query             = deps.query;
+  var secret            = deps.secret;
+  var defaultVendor     = deps.vendor || "postmark";
+  var VENDORS = { postmark: true, ses: true, resend: true };
+
+  function _verify(req) {
+    var got = req && req.headers && req.headers["x-mail-bounce-secret"];
+    if (!secret || typeof got !== "string" || got.length !== secret.length) return false;
+    return b.crypto.timingSafeEqual(got, secret);
+  }
+
+  // Suppress (marketing) + backfill bounced events. Best-effort per side
+  // effect — a suppression-write failure must not stop the events backfill
+  // and vice versa; the route still 200s so the ESP doesn't redeliver in a
+  // tight loop.
+  async function _applyEvent(event) {
+    if (!event || typeof event.recipient !== "string" || !event.recipient) return;
+    var isComplaint = event.type === "complaint";
+    var isHardBounce = event.type === "bounce" && event.subType === "hard";
+    if (!isComplaint && !isHardBounce) return;   // soft bounce / delivery: nothing durable
+
+    try {
+      await emailSuppressions.add({
+        email:            event.recipient,
+        suppression_type: isComplaint ? "complaint" : "hard-bounce",
+        scope:            "marketing",
+        source:           "esp-bounce-webhook",
+        reason:           (event.reason && String(event.reason).slice(0, 1024)) ||
+                          (event.vendor + " " + event.type + (event.subType ? "/" + event.subType : "")),
+      });
+    } catch (_eSup) { /* drop-silent — events backfill still runs */ }
+
+    // Backfill a `bounced` campaign event for every campaign this recipient
+    // was mailed. The campaign-send ledger + the events stream both key off
+    // the newsletter email hash, so derive it once and fan out.
+    if (newsletter && query) {
+      try {
+        var hash = b.crypto.namespaceHash(newsletter.EMAIL_NAMESPACE, String(event.recipient).trim().toLowerCase());
+        var sent = (await query(
+          "SELECT campaign_slug FROM email_campaign_sends WHERE email_hash = ?1",
+          [hash],
+        )).rows;
+        var occurredAt = Date.now();
+        for (var i = 0; i < sent.length; i += 1) {
+          // Idempotent: skip if a bounced event already exists for this
+          // (campaign, recipient) so a re-delivered webhook doesn't double-count.
+          var exists = (await query(
+            "SELECT 1 FROM email_campaign_events " +
+            "WHERE campaign_slug = ?1 AND recipient_hash = ?2 AND event_type = 'bounced' LIMIT 1",
+            [sent[i].campaign_slug, hash],
+          )).rows;
+          if (exists.length) continue;
+          await query(
+            "INSERT INTO email_campaign_events " +
+            "(id, campaign_slug, recipient_hash, event_type, occurred_at) " +
+            "VALUES (?1, ?2, ?3, 'bounced', ?4)",
+            [b.uuid.v7(), sent[i].campaign_slug, hash, occurredAt],
+          );
+        }
+      } catch (_eEvt) { /* drop-silent — suppression already landed */ }
+    }
+  }
+
+  return async function mailBounceRoute(req, res) {
+    if (!secret) {
+      res.status(503).json({ ok: false, error: "NOT_CONFIGURED" });
+      return;
+    }
+    if (!_verify(req)) {
+      res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+      return;
+    }
+    var vendor = defaultVendor;
+    try {
+      var u = req.url ? new URL(req.url, "http://localhost") : null;
+      var q = u ? u.searchParams.get("vendor") : null;
+      if (q && VENDORS[q]) vendor = q;
+    } catch (_eU) { /* default vendor */ }
+
+    var event;
+    try {
+      event = b.mailBounce.parse(req.body || {}, { vendor: vendor });
+    } catch (e) {
+      // A malformed / unrecognized payload is the ESP's problem, not a 5xx.
+      res.status(400).json({ ok: false, error: (e && e.code) || "parse-failed" });
+      return;
+    }
+    // Audit the bounce the same way b.mailBounce.handler would, then apply
+    // the durable side effects. Audit is drop-silent (hot-path sink).
+    try {
+      b.audit.safeEmit({
+        action:   "system.mail.bounce",
+        outcome:  event.type === "delivery" ? "success" : "denied",
+        metadata: {
+          vendor: event.vendor, type: event.type, subType: event.subType,
+          recipient: event.recipient, messageId: event.messageId,
+        },
+      });
+    } catch (_eA) { /* drop-silent */ }
+    await _applyEvent(event);
+    res.json({ ok: true, type: event.type, subType: event.subType });
+  };
 }
 
 async function main() {
@@ -1263,6 +1567,24 @@ async function main() {
               : undefined,
           })
         : null;
+
+      // ESP bounce / complaint intake. The operator points their mailbox
+      // provider's bounce + complaint webhook at POST /api/webhooks/mail-bounce;
+      // each event feeds the suppression list (so a campaign stops mailing a
+      // dead / complaining address) and backfills the campaign rollup. Armed
+      // only when MAIL_BOUNCE_SECRET is set AND the suppression list is wired;
+      // absent the secret the route still mounts but answers 503 so a
+      // misconfigured webhook fails loud rather than silently dropping bounces.
+      if (campaignSuppressions) {
+        var mailBounceRoute = _mailBounceIntake({
+          emailSuppressions: campaignSuppressions,
+          newsletter:        newsletter,
+          query:             b.externalDb.query,
+          secret:            process.env.MAIL_BOUNCE_SECRET || "",
+          vendor:            process.env.MAIL_BOUNCE_VENDOR || "postmark",
+        });
+        r.post("/api/webhooks/mail-bounce", mailBounceRoute);
+      }
       // Customer activity — the read-only chronological per-customer timeline
       // surfaced on the customer-detail screen. It WRITES no event rows of its
       // own: it composes the source primitives that already own each event
@@ -2279,15 +2601,28 @@ async function main() {
       // row + walks the injected per-domain readers to assemble the export
       // bundle (or execute the erasure). The readers are the adapter shims
       // (`_dsrReader`, defined at module scope) over the existing customers /
-      // addresses / order / subscriptions / support-tickets / loyalty
+      // addresses / order / subscriptions / support-tickets / loyalty /
+      // reviews / consent-ledger / wishlist / surveys / recently-viewed
       // handles, so the per-domain modules stay unchanged. The same reader
       // map streams the download (the routes re-read the readers rather than
       // re-running fulfillRequest, which would flip status on every download).
+      //
+      // The reader set covers every table that keys a row by the customer,
+      // so a subject-access export holds the whole record — not just the
+      // order / identity core — and the deletion path erases (or
+      // explicitly retains, with a stated basis) each of them. The consent
+      // ledger gets its own top-level instance here (the only other
+      // consent-ledger construction is the one nested inside
+      // cartRecoveryPass, which isn't reachable at this scope).
+      var dsrConsentLedger = bShop.consentLedger.create({});
       var complianceExportReaders = null;
       var complianceExport = null;
       if (catalog && cart && customers) {
         complianceExportReaders = {
-          customers:      _dsrReader.customers(customers),
+          // The customers reader composes customerPortal so erasure revokes
+          // the customer's live portal sessions alongside deleting their
+          // passkeys / OAuth links / magic-link lookup key.
+          customers:      _dsrReader.customers(customers, customerPortal),
           addresses:      addresses ? _dsrReader.addresses(addresses) : null,
           order:          order ? _dsrReader.order(order) : null,
           orderNotes:     _dsrReader.orderNotes(),
@@ -2299,6 +2634,11 @@ async function main() {
           paymentMethods: _dsrReader.paymentMethods(paymentMethods),
           supportTickets: supportTickets ? _dsrReader.supportTickets(supportTickets) : null,
           loyalty:        loyalty ? _dsrReader.loyalty(loyalty) : null,
+          reviews:        reviews ? _dsrReader.reviews(reviews) : null,
+          consentLedger:  _dsrReader.consentLedger(dsrConsentLedger),
+          wishlist:       wishlist ? _dsrReader.wishlist(wishlist, b.externalDb.query) : null,
+          surveys:        customerSurveys ? _dsrReader.surveys(customerSurveys) : null,
+          recentlyViewed: recentlyViewed ? _dsrReader.recentlyViewed(recentlyViewed, b.externalDb.query) : null,
         };
         complianceExport = bShop.complianceExport.create({
           customers:      complianceExportReaders.customers,
@@ -2309,6 +2649,11 @@ async function main() {
           paymentMethods: complianceExportReaders.paymentMethods,
           supportTickets: complianceExportReaders.supportTickets,
           loyalty:        complianceExportReaders.loyalty,
+          reviews:        complianceExportReaders.reviews,
+          consentLedger:  complianceExportReaders.consentLedger,
+          wishlist:       complianceExportReaders.wishlist,
+          surveys:        complianceExportReaders.surveys,
+          recentlyViewed: complianceExportReaders.recentlyViewed,
         });
       }
 

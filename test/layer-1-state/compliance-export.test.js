@@ -181,6 +181,13 @@ async function _fulfillFullScope() {
   var paymentMethodsReader = _mockReader("paymentMethods", "payment_methods", [{ brand: "visa", last4: "1234" }], 1);
   var supportTicketsReader = _mockReader("supportTickets", "support_tickets", [{ ticket: "t-1" }], 1);
   var loyaltyReader        = _mockReader("loyalty",        "loyalty",         { points: 100 }, 1);
+  // The customer-keyed personalization / feedback / consent domains: every
+  // table that holds a row keyed by the customer belongs in a full export.
+  var reviewsReader        = _mockReader("reviews",        "reviews",         [{ review_id: "rv-1" }], 1);
+  var consentLedgerReader  = _mockReader("consentLedger",  "consent_ledger",  [{ consent_kind: "marketing", state: "granted" }], 1);
+  var wishlistReader       = _mockReader("wishlist",       "wishlist",        [], 0);   // wired, but empty for this customer
+  var surveysReader        = _mockReader("surveys",        "survey_invitations", [{ survey_slug: "nps" }], 1);
+  var recentlyViewedReader = _mockReader("recentlyViewed", "recently_viewed", [{ product_id: "p-1" }], 1);
 
   var ce = complianceExport.create({
     query:          q,
@@ -192,6 +199,11 @@ async function _fulfillFullScope() {
     paymentMethods: paymentMethodsReader,
     supportTickets: supportTicketsReader,
     loyalty:        loyaltyReader,
+    reviews:        reviewsReader,
+    consentLedger:  consentLedgerReader,
+    wishlist:       wishlistReader,
+    surveys:        surveysReader,
+    recentlyViewed: recentlyViewedReader,
   });
 
   var customerId = _uuid();
@@ -200,12 +212,13 @@ async function _fulfillFullScope() {
     jurisdiction: "gdpr", scope: "full",
   });
 
+  var fullScopeLen = complianceExport.SCOPE_SECTIONS.full.length;
   var bundle = await ce.fulfillRequest({ request_id: req.id });
   check("fulfill returns bundle",                  bundle && typeof bundle === "object");
   check("fulfill carries request_id",              bundle.request_id === req.id);
   check("fulfill carries customer_id",             bundle.customer_id === customerId);
   check("fulfill scope=full",                      bundle.scope === "full");
-  check("fulfill sections_present has all 8",      bundle.sections_present.length === 8);
+  check("fulfill sections_present has every wired domain", bundle.sections_present.length === fullScopeLen);
   check("fulfill sections_absent empty",           bundle.sections_absent.length === 0);
   check("fulfill data.customers present",          bundle.data.customers && bundle.data.customers.email === "redacted-hash");
   check("fulfill data.order has 2 orders",         Array.isArray(bundle.data.order) && bundle.data.order.length === 2);
@@ -215,6 +228,24 @@ async function _fulfillFullScope() {
   check("fulfill data.paymentMethods present",     Array.isArray(bundle.data.paymentMethods));
   check("fulfill data.supportTickets present",     Array.isArray(bundle.data.supportTickets));
   check("fulfill data.loyalty present",            bundle.data.loyalty && bundle.data.loyalty.points === 100);
+  // The newly-covered customer-keyed domains.
+  check("fulfill data.reviews present",            Array.isArray(bundle.data.reviews) && bundle.data.reviews.length === 1);
+  check("fulfill data.consentLedger present",      Array.isArray(bundle.data.consentLedger) && bundle.data.consentLedger.length === 1);
+  check("fulfill data.wishlist present (empty)",   Array.isArray(bundle.data.wishlist) && bundle.data.wishlist.length === 0);
+  check("fulfill data.surveys present",            Array.isArray(bundle.data.surveys) && bundle.data.surveys.length === 1);
+  check("fulfill data.recentlyViewed present",     Array.isArray(bundle.data.recentlyViewed) && bundle.data.recentlyViewed.length === 1);
+
+  // Completeness manifest — one entry per scope section, classified
+  // exported / empty / absent so an unexported table is never silent.
+  check("fulfill carries a manifest",              Array.isArray(bundle.manifest));
+  check("manifest covers every scope section",     bundle.manifest.length === fullScopeLen);
+  function _manifestStatus(name) {
+    var e = bundle.manifest.filter(function (m) { return m.section === name; })[0];
+    return e ? e.status : null;
+  }
+  check("manifest marks reviews exported",         _manifestStatus("reviews") === "exported");
+  check("manifest marks wishlist empty",           _manifestStatus("wishlist") === "empty");
+  check("manifest marks customers exported",       _manifestStatus("customers") === "exported");
 
   // Lifecycle row flipped to fulfilled
   var afterRow = await ce.getRequest(req.id);
@@ -223,6 +254,19 @@ async function _fulfillFullScope() {
 
   // Re-fulfilling a fulfilled request refuses
   await assert.rejects(ce.fulfillRequest({ request_id: req.id }), /fulfilled/);
+
+  // A wired-but-absent domain surfaces in the manifest as `absent`, never
+  // silently dropped — the completeness guarantee the bundle is built for.
+  var qAbsent = _makeQuery();
+  var ceAbsent = complianceExport.create({ query: qAbsent, customers: customersReader });
+  var cAbsent = _uuid();
+  var rAbsent = await ceAbsent.requestExport({
+    customer_id: cAbsent, requested_by: "p", jurisdiction: "gdpr", scope: "full",
+  });
+  var bAbsent = await ceAbsent.fulfillRequest({ request_id: rAbsent.id });
+  var absentManifest = bAbsent.manifest.filter(function (m) { return m.section === "reviews"; })[0];
+  check("unwired reviews domain is manifest-absent", absentManifest && absentManifest.status === "absent");
+  check("unwired reviews in sections_absent",        bAbsent.sections_absent.indexOf("reviews") !== -1);
 }
 
 // ---- fulfillRequest scope filters --------------------------------------
@@ -290,7 +334,7 @@ async function _fulfillScopeFilters() {
   });
   var bPart = await cePartial.fulfillRequest({ request_id: rPart.id });
   check("partial wiring: 1 section present",       bPart.sections_present.length === 1);
-  check("partial wiring: 7 sections absent",       bPart.sections_absent.length === 7);
+  check("partial wiring: rest absent",             bPart.sections_absent.length === complianceExport.SCOPE_SECTIONS.full.length - 1);
   check("partial wiring: order absent",            bPart.sections_absent.indexOf("order") !== -1);
 }
 
@@ -393,9 +437,12 @@ async function _deletionFlow() {
   var afterDryRow = await ce.getRequest(del.id);
   check("dry-run leaves status=received",       afterDryRow.status === "received");
 
-  // Domains absent surface (subscriptions / paymentMethods / supportTickets not injected)
-  check("dry-run reports 3 absent domains",     preview.domains_absent.length === 3);
+  // Domains absent surface — every domain in the deletion order that
+  // wasn't injected (subscriptions / paymentMethods / supportTickets /
+  // reviews / consentLedger / wishlist / surveys / recentlyViewed).
+  check("dry-run reports absent domains",       preview.domains_absent.length === 8);
   check("dry-run absent includes paymentMethods", preview.domains_absent.indexOf("paymentMethods") !== -1);
+  check("dry-run absent includes wishlist",     preview.domains_absent.indexOf("wishlist") !== -1);
 
   // Wet run — counts + flips status
   var wet = await ce.processDeletion({ request_id: del.id });

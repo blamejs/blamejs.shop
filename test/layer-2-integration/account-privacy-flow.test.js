@@ -39,6 +39,10 @@ var MIGS = [
   "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql",
   "0006_customers.sql", "0026_customer_addresses.sql", "0009_subscriptions.sql",
   "0047_support_tickets.sql", "0022_loyalty.sql", "0109_compliance_export.sql",
+  // The customer-keyed personalization / feedback / consent domains the
+  // full export now covers.
+  "0011_reviews.sql", "0185_consent_ledger.sql", "0012_wishlist.sql",
+  "0128_customer_surveys.sql", "0050_recently_viewed.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 // The SAME reader shims + streaming helper server.js builds (mirrors
@@ -107,7 +111,55 @@ function _buildReaders(h, query) {
       },
       forCustomerDeletion: async function () { return { table: "loyalty", deleted: 0, note: "retained-ledger" }; },
     },
+    reviews: {
+      forCustomerExport: async function (id) { try { return (await h.reviews.byCustomer(h.reviews.hashCustomerId(id), { limit: 100 })).rows; } catch (_e) { return []; } },
+      forCustomerDeletion: async function () { return { table: "reviews", deleted: 0, note: "retained-published-content" }; },
+    },
+    consentLedger: {
+      forCustomerExport: async function (id) { try { return await h.consentLedger.historyForCustomer(id); } catch (_e) { return []; } },
+      forCustomerDeletion: async function () { return { table: "consent_ledger", deleted: 0, note: "retained-consent-evidence" }; },
+    },
+    wishlist: {
+      forCustomerExport: async function (id) { try { return (await h.wishlist.listForCustomer(id, { limit: 100 })).rows; } catch (_e) { return []; } },
+      forCustomerDeletion: async function (id, opts) {
+        var dry = !!(opts && opts.dry_run);
+        try {
+          if (dry) { var c = (await query("SELECT COUNT(*) AS n FROM wishlist_entries WHERE customer_id = ?1", [id])).rows[0]; return { table: "wishlist_entries", deleted: c ? Number(c.n) : 0 }; }
+          var res = await query("DELETE FROM wishlist_entries WHERE customer_id = ?1", [id]);
+          return { table: "wishlist_entries", deleted: Number((res && res.rowCount) || 0) };
+        } catch (_e) { return { table: "wishlist_entries", deleted: 0 }; }
+      },
+    },
+    surveys: {
+      forCustomerExport: async function (id) { try { return await h.customerSurveys.invitationsForCustomer(id, { limit: 100 }); } catch (_e) { return []; } },
+      forCustomerDeletion: async function () { return { table: "survey_invitations", deleted: 0, note: "retained" }; },
+    },
+    recentlyViewed: {
+      forCustomerExport: async function (id) { try { return await h.recentlyViewed.forCustomer(id, { limit: 100 }); } catch (_e) { return []; } },
+      forCustomerDeletion: async function (id, opts) {
+        var dry = !!(opts && opts.dry_run);
+        try {
+          if (dry) { var c = (await query("SELECT COUNT(*) AS n FROM recently_viewed WHERE customer_id = ?1", [id])).rows[0]; return { table: "recently_viewed", deleted: c ? Number(c.n) : 0 }; }
+          var out = await h.recentlyViewed.purgeCustomer(id);
+          return { table: "recently_viewed", deleted: Number((out && out.removed) || 0) };
+        } catch (_e) { return { table: "recently_viewed", deleted: 0 }; }
+      },
+    },
   };
+}
+
+// Mirrors server.js _streamDsrBundle, including the completeness manifest:
+// every scope section lands in `manifest` with status exported / empty /
+// absent so an unexported table is never silently dropped from the bundle.
+function _dsrSectionFilled(section) {
+  if (section == null) return false;
+  if (Array.isArray(section)) return section.length > 0;
+  if (typeof section === "object") {
+    var keys = Object.keys(section);
+    for (var i = 0; i < keys.length; i += 1) { if (_dsrSectionFilled(section[keys[i]])) return true; }
+    return false;
+  }
+  return true;
 }
 
 async function _streamDsrBundle(res, readers, sections, row) {
@@ -122,15 +174,17 @@ async function _streamDsrBundle(res, readers, sections, row) {
   function emit(s) { if (canWrite) res.write(s); else buf += s; }
   emit("{\"request_id\":" + JSON.stringify(row.id) + ",\"customer_id\":" + JSON.stringify(row.customer_id) +
        ",\"jurisdiction\":" + JSON.stringify(row.jurisdiction) + ",\"scope\":" + JSON.stringify(row.scope) + ",\"data\":{");
+  var manifest = [];
   var first = true;
   for (var i = 0; i < sections.length; i += 1) {
     var name = sections[i]; var reader = readers[name];
-    if (!reader || typeof reader.forCustomerExport !== "function") continue;
+    if (!reader || typeof reader.forCustomerExport !== "function") { manifest.push({ section: name, status: "absent" }); continue; }
     var section; try { section = await reader.forCustomerExport(row.customer_id); } catch (_e) { section = null; }
     emit((first ? "" : ",") + JSON.stringify(name) + ":" + JSON.stringify(section == null ? null : section));
     first = false;
+    manifest.push({ section: name, status: _dsrSectionFilled(section) ? "exported" : "empty" });
   }
-  emit("}}");
+  emit("},\"manifest\":" + JSON.stringify(manifest) + "}");
   if (canWrite) res.end(); else (res.end ? res.end(buf) : res.send(buf));
 }
 
@@ -154,15 +208,24 @@ async function _run() {
   var subscriptions = bShop.subscriptions.create({ query: query, payment: null });
   var supportTickets = bShop.supportTickets.create({ query: query, cursorSecret: "priv-support" });
   var loyalty       = bShop.loyalty.create({ query: query });
+  var reviews        = bShop.reviews.create({ cursorSecret: "priv-reviews" });
+  var consentLedger  = bShop.consentLedger.create({});
+  var wishlist       = bShop.wishlist.create({ cursorSecret: "priv-wishlist" });
+  var customerSurveys = bShop.customerSurveys.create({});
+  var recentlyViewed = bShop.recentlyViewed.create({ catalog: catalog });
 
   var readers = _buildReaders({
     customers: customers, addresses: addresses, order: order,
     subscriptions: subscriptions, supportTickets: supportTickets, loyalty: loyalty,
+    reviews: reviews, consentLedger: consentLedger, wishlist: wishlist,
+    customerSurveys: customerSurveys, recentlyViewed: recentlyViewed,
   }, query);
   var dsr = bShop.complianceExport.create({
     query: query, customers: readers.customers, addresses: readers.addresses, order: readers.order,
     orderNotes: readers.orderNotes, subscriptions: readers.subscriptions, paymentMethods: readers.paymentMethods,
     supportTickets: readers.supportTickets, loyalty: readers.loyalty,
+    reviews: readers.reviews, consentLedger: readers.consentLedger, wishlist: readers.wishlist,
+    surveys: readers.surveys, recentlyViewed: readers.recentlyViewed,
   });
   var SECTIONS = bShop.complianceExport.SCOPE_SECTIONS;
 
@@ -250,11 +313,19 @@ async function _run() {
     var parsed = JSON.parse(dl.body);   // streaming-completeness proxy: parses cleanly
     check("download body parses + carries customers", parsed && parsed.data && parsed.data.customers && parsed.data.customers.customer && parsed.data.customers.customer.id === buyer);
     // Every scoped section key present (full scope) — a truncated/buffered-wrong
-    // stream would drop a key or fail JSON.parse above.
+    // stream would drop a key or fail JSON.parse above. All readers are wired,
+    // so every section streams into `data` (empty ones as []).
     SECTIONS.full.forEach(function (name) {
       check("download carries section " + name, Object.prototype.hasOwnProperty.call(parsed.data, name));
     });
     check("download addresses section non-empty", Array.isArray(parsed.data.addresses) && parsed.data.addresses.length === 1);
+    // The completeness manifest covers every scope section so an absent
+    // table is visible, never silently dropped.
+    check("download carries a manifest", Array.isArray(parsed.manifest) && parsed.manifest.length === SECTIONS.full.length);
+    var manifestSections = parsed.manifest.map(function (m) { return m.section; });
+    SECTIONS.full.forEach(function (name) {
+      check("manifest covers section " + name, manifestSections.indexOf(name) !== -1);
+    });
 
     // ---- stranger cannot download the buyer's bundle ----
     var sjar = helpers.cookieJar();

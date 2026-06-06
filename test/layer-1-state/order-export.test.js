@@ -9,8 +9,9 @@
  * Coverage:
  *   - csvForRange yields header + rows (header on first chunk)
  *   - RFC-4180 quoting on cells containing comma + double-quote
- *   - CSV-injection refusal: `=cmd|...` gets prefixed with `'`,
- *     signed numerics (`+15.00`) pass through unchanged
+ *   - CSV-injection refusal: any formula-trigger leading char (= + - @
+ *     tab CR LF pipe) is neutralized via the shared b.guardCsv.escapeCell
+ *     (prefix-tab posture); signed numerics are prefixed too (safe OWASP)
  *   - columns filter restricts the header + rows
  *   - ndjsonForRange yields JSON-shape lines
  *   - summaryForRange aggregates by status + currency
@@ -154,21 +155,30 @@ async function _rfc4180Quoting() {
 async function _csvInjectionRefusal() {
   var q  = _makeQuery();
   var ex = orderExport.create({ query: q });
-  // Classic OWASP CSV-injection vector — must be neutralized.
+  // Classic OWASP CSV-injection vectors — neutralized via the shared
+  // b.guardCsv.escapeCell (prefix-tab posture). A leading TAB makes a
+  // spreadsheet treat the cell as text; it renders as invisible whitespace.
   var attack = ex._neutralizeInjection("=cmd|' /C calc'!A0");
-  check("_neutralizeInjection prefixes `=` cell with `'`",
-    attack.charAt(0) === "'" && attack.charAt(1) === "=");
+  check("_neutralizeInjection prefixes `=` cell with a tab",
+    attack.charAt(0) === "\t" && attack.charAt(1) === "=");
   check("_neutralizeInjection prefixes `+SUM(...)`",
-    ex._neutralizeInjection("+SUM(A1:A9)").charAt(0) === "'");
+    ex._neutralizeInjection("+SUM(A1:A9)").charAt(0) === "\t");
   check("_neutralizeInjection prefixes `-2+3+cmd`",
-    ex._neutralizeInjection("-2+3+cmd|' /C calc'").charAt(0) === "'");
+    ex._neutralizeInjection("-2+3+cmd|' /C calc'").charAt(0) === "\t");
   check("_neutralizeInjection prefixes `@SUM`",
-    ex._neutralizeInjection("@SUM(A1)").charAt(0) === "'");
-  // Signed-numeric exemption — `+15.00` is a legitimate amount.
-  check("_neutralizeInjection lets `+15.00` through",
-    ex._neutralizeInjection("+15.00") === "+15.00");
-  check("_neutralizeInjection lets `-3.5` through",
-    ex._neutralizeInjection("-3.5") === "-3.5");
+    ex._neutralizeInjection("@SUM(A1)").charAt(0) === "\t");
+  // The vectors the prior `= + - @`-only check missed — leading tab / CR /
+  // LF / pipe — are now neutralized by the shared primitive.
+  check("_neutralizeInjection prefixes leading pipe",
+    ex._neutralizeInjection("|calc").charAt(0) === "\t");
+  check("_neutralizeInjection prefixes leading CR",
+    ex._neutralizeInjection("\r=evil").charAt(0) === "\t");
+  // Signed numerics are now prefixed too (the safe OWASP posture; the prior
+  // numeric-sign exemption was the weakening this consolidation removes).
+  check("_neutralizeInjection prefixes `+15.00`",
+    ex._neutralizeInjection("+15.00") === "\t+15.00");
+  check("_neutralizeInjection prefixes `-3.5`",
+    ex._neutralizeInjection("-3.5") === "\t-3.5");
   // Anything benign passes unmodified.
   check("_neutralizeInjection lets benign text through",
     ex._neutralizeInjection("Alice Smith") === "Alice Smith");

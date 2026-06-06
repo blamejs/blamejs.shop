@@ -209,6 +209,37 @@ async function _run() {
     check("re-issued token unsubscribes again", reUnsub.status === 200 &&
                                                 reUnsub.body.indexOf("You're unsubscribed.") !== -1);
     check("re-unsubscribed stamp set again", _unsubStamp(db, emailHash) != null);
+
+    // ---- RFC 8058 native one-click POST (token in the URL, not the body) ----
+    // A mail client fires List-Unsubscribe-Post at the EXACT List-Unsubscribe
+    // URL with a `List-Unsubscribe=One-Click` body and NO token of its own.
+    // The handler must read the token from the `?token=` query string — the
+    // earlier shape read body.token, so a native one-click carried no token
+    // and never unsubscribed. No cookie / CSRF token (the path is in
+    // EDGE_POST_PATHS) — the URL token IS the bearer.
+    await newsletter.resubscribe({ email: "reader@example.com" });
+    check("one-click setup: re-subscribed", _unsubStamp(db, emailHash) == null);
+    var oneClickIssued = await newsletter.issueUnsubscribeToken(signup.id);
+    var oneClick = await helpers.httpRequest({
+      port:   handle.port,
+      path:   "/unsubscribe?token=" + encodeURIComponent(oneClickIssued.token),
+      method: "POST",
+      form:   { "List-Unsubscribe": "One-Click" },   // the RFC 8058 body — no `token` field
+    });
+    check("one-click POST is 200",            oneClick.status === 200);
+    check("one-click POST unsubscribes",      oneClick.body.indexOf("You're unsubscribed.") !== -1);
+    check("one-click POST stamped the row",   _unsubStamp(db, emailHash) != null);
+
+    // Idempotent: the mail client may re-fire; a second one-click POST of the
+    // consumed token is the friendly already-page, never a 500.
+    var oneClickAgain = await helpers.httpRequest({
+      port:   handle.port,
+      path:   "/unsubscribe?token=" + encodeURIComponent(oneClickIssued.token),
+      method: "POST",
+      form:   { "List-Unsubscribe": "One-Click" },
+    });
+    check("repeat one-click is 200 (not 500)", oneClickAgain.status === 200);
+    check("repeat one-click already-page",     oneClickAgain.body.indexOf("Already unsubscribed.") !== -1);
   } finally {
     await _teardown(handle);
   }
