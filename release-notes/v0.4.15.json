@@ -1,0 +1,30 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.15",
+  "date": "2026-06-06",
+  "headline": "Multi-location inventory: stock locations, receiving, transfers, and write-offs in the admin console",
+  "summary": "The admin console gains a location-aware inventory back office. Define warehouse, retail, and virtual stock locations and see per-location levels; record reason-coded inbound stock against a location; move stock between locations through a dispatch-and-receive flow; and record reason-coded write-offs with a full audit trail. Single-location stores are untouched — no configuration is needed and existing stock behavior is unchanged.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Stock locations with per-location levels",
+          "body": "`/admin/inventory/locations` defines stock locations (warehouse, retail, or virtual, with a priority order) and shows each SKU's quantity at each location. A store that never defines a location keeps working exactly as before — the default location stays implicit and nothing about existing stock semantics changes."
+        },
+        {
+          "title": "Receive stock against a location",
+          "body": "`/admin/inventory/receive` records inbound stock — SKU, quantity, location, reason — crediting both the location's level and the sellable aggregate in one step, with a batched receipt history on the same screen. If the receipt record cannot be written the stock credit is reversed, so the ledger and the levels never diverge."
+        },
+        {
+          "title": "Location-to-location transfers with a dispatch/receive lifecycle",
+          "body": "`/admin/inventory/transfers` moves stock between locations through a real state machine: a draft transfer dispatches (debiting the source) and is later received (crediting the destination) or cancelled (restoring the source). Stock movements use the same atomic guards as checkout holds — a transfer dispatch racing a checkout for the last unit has exactly one winner, and a level can never go negative."
+        },
+        {
+          "title": "Reason-coded write-offs with an audit trail",
+          "body": "`/admin/inventory/writeoffs` records stock losses — damage, shrinkage, expiry — against a location, with every write-off in the tamper-evident audit chain. A write-off that would eat into stock already promised to paid orders is refused with a clear message rather than silently unbalancing the ledgers, and low-stock alerts fire when a write-off takes a SKU under its threshold."
+        }
+      ]
+    }
+  ]
+}
