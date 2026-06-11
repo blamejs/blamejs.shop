@@ -39,7 +39,7 @@ var check   = helpers.check;
 var b = bShop.framework;
 
 var MIGS = [
-  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0004_shop_config.sql",
+  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0950_orders_payment_provider.sql", "0951_orders_paypal_capture_id.sql", "0004_shop_config.sql",
   "0206_orders_email_hash.sql",
   "0019_analytics_events.sql", "0103_cookie_consent.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });

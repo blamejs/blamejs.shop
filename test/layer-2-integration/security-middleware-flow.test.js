@@ -103,6 +103,10 @@ async function _run() {
       r.post("/account/login/link", function (_req, res) { res.json({ ok: true }); });
       // The exempt payment webhook.
       r.post("/api/webhooks/stripe", function (_req, res) { res.json({ ok: true }); });
+      // The PayPal webhook — exempt from the global/tight limiters like the
+      // Stripe path, but carrying its OWN per-IP budget (verification costs
+      // an outbound dial per delivery; see PAYPAL_WEBHOOK_BUDGET_PER_MINUTE).
+      r.post("/api/webhooks/paypal", function (_req, res) { res.json({ ok: true }); });
       // Order-mutation POST (cancel/rate/reorder) — tight-budget via the
       // /orders/ prefix, POST-only carve-out.
       r.post("/orders/abc/cancel", function (_req, res) { res.json({ ok: true }); });
@@ -313,6 +317,35 @@ async function _run() {
       if (gR.status === 429) getThrottled += 1;
     }
     check("(f) order confirmation GET is NOT throttled (POST-only carve-out)", getThrottled === 0);
+
+    // ---- (g) PayPal webhook: bounded per-IP budget --------------------
+    //
+    // Unlike Stripe (local HMAC, no dial), every PayPal delivery costs an
+    // outbound verify-webhook-signature dial, so the path carries its own
+    // per-IP budget. Spam past the ceiling from ONE IP is 429'd (PayPal
+    // treats a non-2xx as retry-later, so a clipped legitimate delivery is
+    // redelivered, never lost); a different source IP is untouched; and
+    // deliveries under the budget all pass.
+    var ppBudget = bShop.securityMiddleware.PAYPAL_WEBHOOK_BUDGET_PER_MINUTE;
+    var ppHookIp = "198.51.100.210";
+    var ppOk = 0, pp429 = 0;
+    for (var pw = 0; pw < ppBudget + 5; pw += 1) {
+      var pk = await httpRequest({
+        port: port, method: "POST", path: "/api/webhooks/paypal",
+        headers: _hdr(ppHookIp, { "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors", "content-type": "application/json" }),
+        body: JSON.stringify({ id: "WH-" + pw }),
+      });
+      if (pk.status === 429) pp429 += 1;
+      else if (pk.status >= 200 && pk.status < 300) ppOk += 1;
+    }
+    check("(g) paypal webhook: deliveries under the budget all pass", ppOk >= ppBudget - 5 && ppOk <= ppBudget + 5);
+    check("(g) paypal webhook: spam past the budget is 429'd", pp429 >= 1);
+    var ppOther = await httpRequest({
+      port: port, method: "POST", path: "/api/webhooks/paypal",
+      headers: _hdr("198.51.100.211", { "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors", "content-type": "application/json" }),
+      body: JSON.stringify({ id: "WH-other" }),
+    });
+    check("(g) a different source IP is NOT throttled (per-IP keying)", ppOther.status >= 200 && ppOther.status < 300);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }

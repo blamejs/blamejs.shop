@@ -2607,6 +2607,33 @@ async function main() {
           })
         : null;
 
+      // PayPal (Orders v2) handle — one client per boot, shared by the admin
+      // refund routes (PayPal-paid orders refund against their capture
+      // through this) and the storefront checkout composition below.
+      // PAYPAL_ENV=live uses the production API; anything else is sandbox.
+      // Misconfigured credentials leave PayPal disabled rather than failing
+      // the boot.
+      var paypalPayment = null;
+      if (process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_SECRET) {
+        try {
+          paypalPayment = bShop.payment.create({
+            adapter:   "paypal",
+            clientId:  process.env.PAYPAL_CLIENT_ID,
+            secret:    process.env.PAYPAL_SECRET,
+            sandbox:   process.env.PAYPAL_ENV !== "live",
+            webhookId: process.env.PAYPAL_WEBHOOK_ID || undefined,
+          });
+        } catch (_ppErr) { paypalPayment = null; }
+      }
+      // Boot-time signal for an incomplete PayPal env (credentials without
+      // PAYPAL_WEBHOOK_ID): webhook verification fails CLOSED without the
+      // id — correctly, and that stays mandatory — but silently, so the
+      // operator would otherwise discover the dead backstop only when an
+      // out-of-band capture or refund never reached the ledger.
+      bShop.payment.paypalConfigWarnings(process.env).forEach(function (w) {
+        process.stderr.write("[server] WARNING: " + w + "\n");
+      });
+
       // Stale-pending-order reaper — cancels pending orders older than the
       // TTL so their reserved stock holds release. A pending order whose
       // buyer abandoned the payment sheet (or whose PaymentIntent expired)
@@ -2959,6 +2986,10 @@ async function main() {
           printReceipts: printReceipts,
           packingSlips:  packingSlips,
           payment:       payment,
+          // PayPal handle — PayPal-paid orders refund against their capture
+          // through this; without it the console refuses (422) rather than
+          // dialing Stripe with a PayPal order id.
+          paypal:        paypalPayment,
           // Transactional mailer (lib/email.js) — enables the order
           // detail's "Resend confirmation" action. Null without SMTP
           // configured, in which case the panel renders a disabled note.
@@ -3472,22 +3503,11 @@ async function main() {
               return await adapter.rates(ctx);
             },
           };
-          // PayPal (Orders v2) adapter — wired when the operator supplies a
-          // PayPal app's credentials. Distinct from Stripe; checkout exposes
+          // PayPal (Orders v2) adapter — the boot-level handle built next to
+          // the Stripe one (one client per boot; the admin refund routes
+          // share it). Distinct from Stripe; checkout exposes
           // create/capture/webhook PayPal methods only when this is present.
-          // PAYPAL_ENV=live uses the production API; anything else is sandbox.
-          var sfPaypal = null;
-          if (process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_SECRET) {
-            try {
-              sfPaypal = bShop.payment.create({
-                adapter:   "paypal",
-                clientId:  process.env.PAYPAL_CLIENT_ID,
-                secret:    process.env.PAYPAL_SECRET,
-                sandbox:   process.env.PAYPAL_ENV !== "live",
-                webhookId: process.env.PAYPAL_WEBHOOK_ID || undefined,
-              });
-            } catch (_e) { sfPaypal = null; } // misconfigured — leave PayPal disabled
-          }
+          var sfPaypal = paypalPayment;
           var sfCheckout = bShop.checkout.create({
             catalog: catalog, cart: cart, pricing: bShop.pricing,
             tax: sfTax, shipping: sfShipping, payment: sfPayment, order: sfOrder,

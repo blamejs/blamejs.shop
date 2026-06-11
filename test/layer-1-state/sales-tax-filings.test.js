@@ -42,6 +42,8 @@ var assert           = helpers.assert;
 
 var MIG_FILINGS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0184_sales_tax_filings.sql");
 var MIG_ORDERS  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0003_order.sql");
+var MIG_ORDERS_PROVIDER = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0950_orders_payment_provider.sql");
+var MIG_ORDERS_CAPTURE  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0951_orders_paypal_capture_id.sql");
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -56,6 +58,8 @@ function _makeQuery() {
   // whole cart migration.
   db.prepare("CREATE TABLE carts (id TEXT NOT NULL PRIMARY KEY)").run();
   _splitSchema(nodeFs.readFileSync(MIG_ORDERS,  "utf8")).forEach(function (s) { db.prepare(s).run(); });
+  _splitSchema(nodeFs.readFileSync(MIG_ORDERS_PROVIDER, "utf8")).forEach(function (s) { db.prepare(s).run(); });
+  _splitSchema(nodeFs.readFileSync(MIG_ORDERS_CAPTURE,  "utf8")).forEach(function (s) { db.prepare(s).run(); });
   _splitSchema(nodeFs.readFileSync(MIG_FILINGS, "utf8")).forEach(function (s) { db.prepare(s).run(); });
   // Stub tax_rates so the rate-resolution path in computeFiling can
   // be exercised without dragging in another migration file.

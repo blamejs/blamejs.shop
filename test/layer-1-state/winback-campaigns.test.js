@@ -52,6 +52,12 @@ var MIG_WINBACK   = nodePath.resolve(
 var MIG_ORDERS    = nodePath.resolve(
   __dirname, "..", "..", "migrations-d1", "0003_order.sql"
 );
+var MIG_ORDERS_PROVIDER = nodePath.resolve(
+  __dirname, "..", "..", "migrations-d1", "0950_orders_payment_provider.sql"
+);
+var MIG_ORDERS_CAPTURE = nodePath.resolve(
+  __dirname, "..", "..", "migrations-d1", "0951_orders_paypal_capture_id.sql"
+);
 var MIG_CUSTOMERS = nodePath.resolve(
   __dirname, "..", "..", "migrations-d1", "0006_customers.sql"
 );
@@ -69,7 +75,7 @@ function _makeQuery() {
   // is exercised by the CASCADE delete path; we don't drop
   // enrollments mid-test.
   db.prepare("PRAGMA foreign_keys = OFF").run();
-  var schemas = [MIG_CUSTOMERS, MIG_ORDERS, MIG_WINBACK];
+  var schemas = [MIG_CUSTOMERS, MIG_ORDERS, MIG_ORDERS_PROVIDER, MIG_ORDERS_CAPTURE, MIG_WINBACK];
   for (var i = 0; i < schemas.length; i += 1) {
     var statements = _splitSchema(nodeFs.readFileSync(schemas[i], "utf8"));
     for (var s = 0; s < statements.length; s += 1) {
