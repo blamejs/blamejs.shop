@@ -2704,6 +2704,54 @@ async function main() {
         }
       });
 
+      // Quote-expiry sweep — transitions responded quotes whose valid_until
+      // has elapsed to `expired`, so the operator's expired filter shows the
+      // real lifecycle instead of stale "responded" rows that only the
+      // accept-time guard knows are dead. Driven once a minute by the
+      // Worker's scheduled() POST to this internal endpoint; same
+      // D1_BRIDGE_SECRET timing-safe gate + never-5xx JSON-summary shape as
+      // the other ticks. Each pass is bounded and idempotent: the
+      // primitive's per-row conditional UPDATE re-checks status AND expiry,
+      // so overlapping ticks / a concurrent accept / a mid-flight reprice
+      // never double-transition a row.
+      //
+      // Batch size is operator-tunable via QUOTE_EXPIRY_BATCH (default
+      // 200). Config-time validation: a present value MUST parse to an
+      // integer 1..500, else throw at boot so a typo surfaces immediately.
+      var QUOTE_EXPIRY_BATCH = 200;
+      if (process.env.QUOTE_EXPIRY_BATCH != null && process.env.QUOTE_EXPIRY_BATCH !== "") {
+        var _qebParsed = Number(process.env.QUOTE_EXPIRY_BATCH);
+        if (!Number.isInteger(_qebParsed) || _qebParsed < 1 || _qebParsed > 500) {
+          throw new Error("QUOTE_EXPIRY_BATCH must be an integer 1..500; got " +
+            JSON.stringify(process.env.QUOTE_EXPIRY_BATCH));
+        }
+        QUOTE_EXPIRY_BATCH = _qebParsed;
+      }
+      r.post("/_/quote-expiry-tick", async function (req, res) {
+        var gotQ = req.headers && req.headers["x-d1-bridge-secret"];
+        var wantQ = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !wantQ ||
+          typeof gotQ !== "string" ||
+          gotQ.length !== wantQ.length ||
+          !b.crypto.timingSafeEqual(gotQ, wantQ)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!quotes) {
+          res.json({ ok: true, enabled: false, reason: "quotes not composed (no catalog/cart/order)" });
+          return;
+        }
+        try {
+          var expirySweep = await quotes.expireDue({ as_of: Date.now(), limit: QUOTE_EXPIRY_BATCH });
+          res.json(Object.assign({ ok: true, enabled: true }, expirySweep));
+        } catch (e) {
+          // Never 5xx — a thrown sweep would mark the cron run failed.
+          res.json({ ok: false, enabled: true, error: (e && e.message) || String(e) });
+        }
+      });
+
       // Subscriptions — the recurring-offer catalog (/admin/subscription-
       // plans) plus the customer self-management surface
       // (/account/subscriptions). One instance shared by both: plan CRUD
@@ -2976,10 +3024,14 @@ async function main() {
           mailingAudiences: mailingAudiences,
           collections:   collections,
           // Quotes console — the RFQ response queue + detail (respond /
-          // withdraw). The notifier sends the quote-responded email when the
-          // operator prices a quote (drop-silent without SMTP / a shop origin).
+          // reprice / withdraw / convert-to-order). The notifier sends the
+          // quote-responded email when the operator prices a quote
+          // (drop-silent without SMTP / a shop origin); the converter lets
+          // the console land a verbally-approved quote as a pending order
+          // through the same hold-first conversion the customer accept uses.
           quotes:          quotes,
           notifyQuoteResponded: notifyQuoteResponded,
+          convertQuoteToOrder:  convertQuoteToOrder,
           announcementBar: announcementBar,
           promoBanners:    promoBanners,
           // Suggestion-box backlog console (/admin/suggestions) — the triage

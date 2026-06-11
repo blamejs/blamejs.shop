@@ -4,7 +4,8 @@
  *
  * The worker→container internal endpoints (cart-recovery-tick,
  * stock-alert-sweep, wishlist-alerts-sweep, wishlist-digest-sweep,
- * stale-order-reap, customer-portal-expire, campaign-send-tick) are fired
+ * stale-order-reap, quote-expiry-tick, customer-portal-expire,
+ * campaign-send-tick) are fired
  * machine-to-machine from the worker's own scheduled() handler, each carrying
  * the shared `x-d1-bridge-secret` header. The container validates that secret
  * first thing in every handler; the worker now ALSO validates it at the edge
@@ -49,6 +50,7 @@ var GATED_PATHS = [
   "/_/wishlist-alerts-sweep",
   "/_/wishlist-digest-sweep",
   "/_/stale-order-reap",
+  "/_/quote-expiry-tick",
   "/_/customer-portal-expire",
   "/_/campaign-send-tick",
 ];
