@@ -30,6 +30,16 @@
  *     receives the expected createFromCart payload.
  *   - getQuote / quotesForCustomer status filter + limit /
  *     pendingResponse / listExpired / markExpired.
+ *   - repriceQuote: responded -> responded revision (new prices /
+ *     totals / validity, response_version bump, view token NOT
+ *     rotated); refusals on every other state + the same payload
+ *     validation respond enforces.
+ *   - listByStatus: per-state list (the admin expired filter's
+ *     read), status validation, limit caps.
+ *   - expireDue: the cron sweep — flips due responded rows to
+ *     expired, idempotent on a second pass, leaves freshly
+ *     repriced (future valid_until) rows alone, skips rows a
+ *     concurrent settle won.
  *   - FSM terminal states refuse every onward transition.
  *   - requestQuote derives lines from an injected cart handle and
  *     aggregates duplicate variant rows onto a single sku line.
@@ -48,6 +58,7 @@ var assert  = helpers.assert;
 var MIG_PATHS = [
   "0102_quotes.sql",
   "0211_quote_view_token.sql",
+  "0227_quote_response_version.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
@@ -741,6 +752,226 @@ async function _listsAndExpiry() {
   await assert.rejects(ctx.quotes.listExpired({ as_of: "x" }),  /as_of/);
 }
 
+async function _repriceFlow() {
+  var ctx = _setup();
+  var cid = _validUuid();
+  var q = await ctx.quotes.requestQuote({ customer_id: cid, lines: _validLines() });
+  var tokenAtRequest = q.view_token;
+
+  // Reprice on a still-requested quote refused — there's no offer to revise.
+  await assert.rejects(ctx.quotes.repriceQuote({
+    quote_id: q.id,
+    line_prices: [
+      { sku: "WDG-PRO-BLK-L", unit_price_minor: 900 },
+      { sku: "WDG-PRO-RED-L", unit_price_minor: 1100 },
+    ],
+    valid_until: Date.now() + 86400000,
+    currency: "USD",
+  }), /refused — quote is requested/);
+
+  var firstValidUntil = Date.now() + 86400000;
+  var responded = await ctx.quotes.respondToQuote({
+    quote_id: q.id,
+    line_prices: [
+      { sku: "WDG-PRO-BLK-L", unit_price_minor: 1000 },
+      { sku: "WDG-PRO-RED-L", unit_price_minor: 1200 },
+    ],
+    shipping_minor: 500, tax_minor: 200,
+    valid_until: firstValidUntil,
+    currency: "USD",
+    operator_notes: "First offer.",
+  });
+  check("respond stamps response_version 1", responded.response_version === 1);
+
+  // Reprice: improved prices, fresh window, updated note.
+  var secondValidUntil = Date.now() + 2 * 86400000;
+  var repriced = await ctx.quotes.repriceQuote({
+    quote_id: q.id,
+    line_prices: [
+      { sku: "WDG-PRO-BLK-L", unit_price_minor: 800 },
+      { sku: "WDG-PRO-RED-L", unit_price_minor: 1000 },
+    ],
+    shipping_minor: 0, tax_minor: 0,
+    valid_until: secondValidUntil,
+    currency: "USD",
+    operator_notes: "Better volume pricing applied.",
+  });
+  check("reprice keeps status responded",          repriced.status === "responded");
+  check("reprice bumps response_version to 2",     repriced.response_version === 2);
+  // 10*800 + 5*1000 = 13000, no shipping/tax.
+  check("reprice recomputes total_minor",          repriced.total_minor === 13000);
+  check("reprice replaces shipping_minor",         repriced.shipping_minor === 0);
+  check("reprice stamps the new valid_until",      repriced.valid_until === secondValidUntil);
+  check("reprice updates operator_notes",          repriced.operator_notes === "Better volume pricing applied.");
+  var blk = repriced.lines.filter(function (l) { return l.sku === "WDG-PRO-BLK-L"; })[0];
+  check("reprice re-stamps per-line unit price",   blk.unit_price_minor === 800);
+
+  // The customer's existing view token still resolves and carries the NEW
+  // pricing — a reprice never rotates the link.
+  var viaToken = await ctx.quotes.getByViewToken(tokenAtRequest);
+  check("view token survives the reprice",         viaToken != null && viaToken.id === q.id);
+  check("view token resolves the NEW pricing",     viaToken != null && viaToken.total_minor === 13000 &&
+                                                   viaToken.response_version === 2);
+
+  // A second reprice keeps counting.
+  var repriced2 = await ctx.quotes.repriceQuote({
+    quote_id: q.id,
+    line_prices: [
+      { sku: "WDG-PRO-BLK-L", unit_price_minor: 790 },
+      { sku: "WDG-PRO-RED-L", unit_price_minor: 990 },
+    ],
+    valid_until: Date.now() + 86400000,
+    currency: "USD",
+  });
+  check("second reprice bumps response_version to 3", repriced2.response_version === 3);
+
+  // Payload validation — same contract as respond.
+  await assert.rejects(ctx.quotes.repriceQuote({
+    quote_id: q.id,
+    line_prices: [{ sku: "WDG-PRO-BLK-L", unit_price_minor: 800 }],
+    valid_until: Date.now() + 86400000,
+    currency: "USD",
+  }), /line_prices length/);
+  await assert.rejects(ctx.quotes.repriceQuote({
+    quote_id: q.id,
+    line_prices: [
+      { sku: "WDG-PRO-BLK-L", unit_price_minor: 800 },
+      { sku: "WDG-PRO-RED-L", unit_price_minor: 1000 },
+    ],
+    valid_until: Date.now() - 1000,
+    currency: "USD",
+  }), /valid_until must be in the future/);
+  await assert.rejects(ctx.quotes.repriceQuote({
+    quote_id: _validUuid(),
+    line_prices: [{ sku: "X", unit_price_minor: 1 }],
+    valid_until: Date.now() + 86400000,
+    currency: "USD",
+  }), /not found/);
+
+  // Reprice refused once the customer settles it.
+  await ctx.quotes.customerAccept({ quote_id: q.id, accepted_by_customer: "buyer@example.com" });
+  await assert.rejects(ctx.quotes.repriceQuote({
+    quote_id: q.id,
+    line_prices: [
+      { sku: "WDG-PRO-BLK-L", unit_price_minor: 1 },
+      { sku: "WDG-PRO-RED-L", unit_price_minor: 1 },
+    ],
+    valid_until: Date.now() + 86400000,
+    currency: "USD",
+  }), /refused — quote is accepted/);
+
+  // ...and on a withdrawn quote.
+  var qGone = await ctx.quotes.requestQuote({ customer_id: cid, lines: _validLines() });
+  await ctx.quotes.cancelQuote({ quote_id: qGone.id, cancel_reason: "pulled" });
+  await assert.rejects(ctx.quotes.repriceQuote({
+    quote_id: qGone.id,
+    line_prices: [
+      { sku: "WDG-PRO-BLK-L", unit_price_minor: 1 },
+      { sku: "WDG-PRO-RED-L", unit_price_minor: 1 },
+    ],
+    valid_until: Date.now() + 86400000,
+    currency: "USD",
+  }), /refused — quote is cancelled/);
+}
+
+async function _listByStatusAndExpireDue() {
+  var ctx = _setup();
+  var cid = _validUuid();
+
+  async function _respondedQuote(validUntil) {
+    var q = await ctx.quotes.requestQuote({ customer_id: cid, lines: [{ sku: "SWEEP-ITEM", quantity: 2 }] });
+    await ctx.quotes.respondToQuote({
+      quote_id: q.id,
+      line_prices: [{ sku: "SWEEP-ITEM", unit_price_minor: 500 }],
+      valid_until: Date.now() + 86400000,
+      currency: "USD",
+    });
+    // Walk valid_until to the scenario's timestamp via the query handle —
+    // respondToQuote (correctly) refuses authoring a past expiry.
+    await ctx.query("UPDATE quotes SET valid_until = ?1 WHERE id = ?2", [validUntil, q.id]);
+    return q.id;
+  }
+
+  var nowMs = Date.now();
+  var dueA   = await _respondedQuote(nowMs - 5000);   // due — should expire
+  var dueB   = await _respondedQuote(nowMs - 1000);   // due — should expire
+  var fresh  = await _respondedQuote(nowMs + 86400000); // future — must stay responded
+  // Due by valid_until, but the customer accepts before the sweep — the
+  // sweep's status re-check must leave the accepted row alone.
+  var dueAccepted = await _respondedQuote(nowMs - 2000);
+  // Accept BEFORE walking the clock back would refuse; accept against the
+  // raw row instead (the table walk above already happened, so flip the
+  // status directly to simulate the accept landing between scan and flip).
+  await ctx.query("UPDATE quotes SET status = 'accepted', accepted_at = ?1 WHERE id = ?2", [nowMs, dueAccepted]);
+
+  // expireDue input validation throws (the cron entry surfaces config bugs).
+  await assert.rejects(ctx.quotes.expireDue(),                 /input object required/);
+  await assert.rejects(ctx.quotes.expireDue({ as_of: "x" }),   /as_of/);
+  await assert.rejects(ctx.quotes.expireDue({ as_of: nowMs, limit: 0 }), /limit/);
+
+  var pass1 = await ctx.quotes.expireDue({ as_of: nowMs });
+  check("expireDue flips the two due rows",      pass1.expired === 2);
+  check("expireDue scans only due rows",         pass1.scanned === 2);
+  check("expireDue pass 1 skips nothing",        pass1.skipped === 0);
+
+  var afterA = await ctx.quotes.getQuote(dueA);
+  var afterB = await ctx.quotes.getQuote(dueB);
+  var afterFresh = await ctx.quotes.getQuote(fresh);
+  var afterAccepted = await ctx.quotes.getQuote(dueAccepted);
+  check("due row A is expired",                  afterA.status === "expired");
+  check("due row B is expired",                  afterB.status === "expired");
+  check("future row stays responded",            afterFresh.status === "responded");
+  check("accepted row untouched by the sweep",   afterAccepted.status === "accepted");
+
+  // Second pass — idempotent: the rows already settled, nothing flips.
+  var pass2 = await ctx.quotes.expireDue({ as_of: Date.now() });
+  check("expireDue second pass expires nothing", pass2.expired === 0 && pass2.scanned === 0);
+
+  // A reprice pushes valid_until back into the future — a sweep computed
+  // against the OLD due moment (`as_of` frozen before the reprice, the
+  // scan-vs-flip window) must leave the revised quote alive: both the scan
+  // and the per-row claim re-check `valid_until <= as_of`.
+  var asOf = Date.now();
+  var revived = await _respondedQuote(asOf - 1000);
+  await ctx.quotes.repriceQuote({
+    quote_id: revived,
+    line_prices: [{ sku: "SWEEP-ITEM", unit_price_minor: 400 }],
+    valid_until: asOf + 86400000,
+    currency: "USD",
+  });
+  var pass3 = await ctx.quotes.expireDue({ as_of: asOf });
+  var afterRevived = await ctx.quotes.getQuote(revived);
+  check("repriced row survives the sweep",       afterRevived.status === "responded");
+  check("sweep expires nothing after the reprice", pass3.expired === 0);
+
+  // Accept-time guard + the sweep never double-transition: the accept-time
+  // guard REFUSES (no transition) on an elapsed window; only the sweep
+  // transitions, exactly once.
+  var raceRow = await _respondedQuote(Date.now() - 1000);
+  await assert.rejects(ctx.quotes.customerAccept({
+    quote_id: raceRow, accepted_by_customer: "late@buyer.example",
+  }), /expired/);
+  var stillResponded = await ctx.quotes.getQuote(raceRow);
+  check("accept-time guard refuses without transitioning", stillResponded.status === "responded");
+  var pass4 = await ctx.quotes.expireDue({ as_of: Date.now() });
+  check("sweep transitions the guarded row once", pass4.expired === 1);
+  check("guarded row landed expired", (await ctx.quotes.getQuote(raceRow)).status === "expired");
+
+  // listByStatus — the admin expired filter's read.
+  var expiredList = await ctx.quotes.listByStatus({ status: "expired" });
+  check("listByStatus(expired) lists the swept rows",
+    expiredList.length === 3 &&
+    expiredList.every(function (r) { return r.status === "expired"; }));
+  var respondedList = await ctx.quotes.listByStatus({ status: "responded" });
+  check("listByStatus(responded) lists the open rows",
+    respondedList.length === 2 &&
+    respondedList.every(function (r) { return r.status === "responded"; }));
+  check("listByStatus hydrates lines", expiredList[0].lines.length === 1);
+  await assert.rejects(ctx.quotes.listByStatus({ status: "bogus" }), /status must be one of/);
+  await assert.rejects(ctx.quotes.listByStatus({ status: "expired", limit: 0 }), /limit/);
+  await assert.rejects(ctx.quotes.listByStatus(), /input object required/);
+}
+
 async function _factoryGuards() {
   // Bad cart handle (missing methods) refuses at create-time.
   assert.throws(function () { quotes.create({ query: function () {}, cart: {} }); },
@@ -774,6 +1005,8 @@ async function run() {
   await _convertToOrderNoHandle();
   await _convertToOrderWithHandle();
   await _listsAndExpiry();
+  await _repriceFlow();
+  await _listByStatusAndExpireDue();
   await _factoryGuards();
   await _bShopHandleAvailable();
 }

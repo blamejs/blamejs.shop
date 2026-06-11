@@ -27,6 +27,18 @@
  *   - a stored-XSS payload in the customer's RFQ message renders escaped on the
  *     admin detail screen (the message is operator-rendered free text)
  *   - the FSM refuses an illegal transition (re-accepting a converted quote)
+ *   - the operator REPRICES a responded quote through the console route: the
+ *     totals + validity update, the revision counter bumps, and the SAME
+ *     customer token link renders the new pricing (no rotation); repricing a
+ *     settled quote 409s
+ *   - the customer quote page renders the per-line notes (escaped — a
+ *     payload in a line note never lands raw) and the validity window date
+ *   - the operator CONVERTS a responded quote to an order with a recorded
+ *     reason (the verbal-approval path): the pending order lands at the
+ *     quoted prices with the stock reserved; a missing reason 400s; an
+ *     elapsed validity window 409s (stale prices are never honoured)
+ *   - the admin list's expired-status filter surfaces what the expiry sweep
+ *     transitioned; an unknown status value falls back to the queue
  *
  * Network: zero (loopback createApp).
  */
@@ -107,6 +119,7 @@ async function _inner() {
       bShop.admin.mount(r, {
         token: ADMIN_TOKEN, shop_name: "Test Shop", catalog: catalog, order: order,
         cart: cart, customers: customers, quotes: quotes,
+        convertQuoteToOrder: convertQuoteToOrder,
       });
       bShop.storefront.mount(r, {
         catalog: catalog, cart: cart, config: { shop_name: "Test Shop" },
@@ -207,6 +220,8 @@ async function _inner() {
       headers: { "sec-fetch-site": "same-origin", "sec-fetch-dest": "document" } });
     check("account quote list renders (200)", acctList.status === 200);
     check("account list shows the quote", acctList.body.indexOf(String(quoteId).slice(0, 8)) !== -1);
+    check("account list makes the validity window visible on the open quote",
+      acctList.body.indexOf("Valid until") !== -1);
 
     // Snapshot stock before accept: 50 on hand, 0 held.
     var stockBefore = await catalog.inventory.get("BULK-1");
@@ -263,6 +278,169 @@ async function _inner() {
     check("admin detail escapes the RFQ message (no raw <script>)",
       xssDetail.body.indexOf("<script>alert(1)</script>") === -1 &&
       xssDetail.body.indexOf("&lt;script&gt;") !== -1);
+
+    // ---- reprice: the operator revises a responded quote ----------------
+    // A fresh quote with a per-line note carrying an XSS payload — the note
+    // must render on the customer page, escaped.
+    var lineNotePayload = "<script>alert(2)</script> matte finish please";
+    var repriceQuote = await quotes.requestQuote({
+      customer_id: buyer.id,
+      lines: [{ sku: "BULK-1", quantity: 4, notes: lineNotePayload }],
+    });
+    var repriceRespond = await helpers.httpRequest({
+      port: port, path: "/admin/quotes/" + encodeURIComponent(repriceQuote.id) + "/respond",
+      method: "POST", headers: { authorization: "Bearer " + ADMIN_TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({
+        line_prices: [{ sku: "BULK-1", unit_price_minor: 1800 }],
+        shipping_minor: 0, tax_minor: 0,
+        valid_until: Date.now() + 7 * 24 * 60 * 60 * 1000, currency: "USD",
+      }),
+    });
+    check("reprice scenario: initial respond accepted (200)", repriceRespond.status === 200);
+
+    // The customer's token page renders the priced quote WITH the per-line
+    // note (escaped) and the validity window date.
+    var repriceToken = await quotes.issueViewToken(repriceQuote.id);
+    var notePage = await helpers.httpRequest({
+      port: port, path: "/quote/" + encodeURIComponent(repriceToken.plaintext_token), jar: helpers.cookieJar(),
+      headers: { "sec-fetch-site": "same-origin", "sec-fetch-dest": "document" },
+    });
+    check("customer quote page renders the per-line note", notePage.body.indexOf("matte finish please") !== -1);
+    check("customer quote page ESCAPES the per-line note payload",
+      notePage.body.indexOf("<script>alert(2)</script>") === -1 &&
+      notePage.body.indexOf("&lt;script&gt;alert(2)&lt;/script&gt;") !== -1);
+    check("customer quote page shows the validity window date",
+      notePage.body.indexOf("This quote is valid until") !== -1);
+    check("customer quote page shows the first-pass total $72.00", notePage.body.indexOf("$72.00") !== -1);
+
+    // The admin detail screen offers the reprice + convert actions on a
+    // responded quote.
+    var respondedDetail = await helpers.httpRequest({ port: port, path: "/admin/quotes/" + encodeURIComponent(repriceQuote.id), jar: adminJar });
+    check("admin detail renders the reprice form on a responded quote",
+      respondedDetail.body.indexOf("/reprice") !== -1 &&
+      respondedDetail.body.indexOf("name=\"price_BULK-1\"") !== -1);
+    check("admin detail renders the convert-to-order form on a responded quote",
+      respondedDetail.body.indexOf("/convert-to-order") !== -1 &&
+      respondedDetail.body.indexOf("name=\"reason\"") !== -1);
+
+    // Reprice via the bearer JSON contract — better unit price, fresh window.
+    var repriced = await helpers.httpRequest({
+      port: port, path: "/admin/quotes/" + encodeURIComponent(repriceQuote.id) + "/reprice",
+      method: "POST", headers: { authorization: "Bearer " + ADMIN_TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({
+        line_prices: [{ sku: "BULK-1", unit_price_minor: 1500 }],
+        shipping_minor: 0, tax_minor: 0,
+        valid_until: Date.now() + 14 * 24 * 60 * 60 * 1000, currency: "USD",
+      }),
+    });
+    check("operator reprice accepted (200)", repriced.status === 200);
+    var repricedJson = JSON.parse(repriced.body);
+    check("reprice recomputes the total (4 × $15.00)", repricedJson.total_minor === 6000);
+    check("reprice bumps the revision counter to 2", repricedJson.response_version === 2);
+
+    // The SAME token link the customer already holds renders the NEW pricing.
+    var notePage2 = await helpers.httpRequest({
+      port: port, path: "/quote/" + encodeURIComponent(repriceToken.plaintext_token), jar: helpers.cookieJar(),
+      headers: { "sec-fetch-site": "same-origin", "sec-fetch-dest": "document" },
+    });
+    check("the existing customer link shows the repriced total $60.00",
+      notePage2.status === 200 && notePage2.body.indexOf("$60.00") !== -1);
+
+    // Repricing a settled (converted) quote 409s — wrong-state errors keep
+    // the same status the other quote admin routes use.
+    var repriceSettled = await helpers.httpRequest({
+      port: port, path: "/admin/quotes/" + encodeURIComponent(quoteId) + "/reprice",
+      method: "POST", headers: { authorization: "Bearer " + ADMIN_TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({
+        line_prices: [{ sku: "BULK-1", unit_price_minor: 1 }],
+        valid_until: Date.now() + 86400000, currency: "USD",
+      }),
+    });
+    check("repricing a converted quote is refused (409)", repriceSettled.status === 409);
+
+    // ---- convert-to-order: the verbal-approval path ----------------------
+    // The repriced quote's customer phones in a yes; the operator records it
+    // and converts. A missing reason 400s first.
+    var heldBefore = (await catalog.inventory.get("BULK-1")).stock_held || 0;
+    var convertNoReason = await helpers.httpRequest({
+      port: port, path: "/admin/quotes/" + encodeURIComponent(repriceQuote.id) + "/convert-to-order",
+      method: "POST", headers: { authorization: "Bearer " + ADMIN_TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    check("convert without a reason is refused (400)", convertNoReason.status === 400);
+    check("the refused convert left the quote responded",
+      (await quotes.getQuote(repriceQuote.id)).status === "responded");
+
+    var convertOk = await helpers.httpRequest({
+      port: port, path: "/admin/quotes/" + encodeURIComponent(repriceQuote.id) + "/convert-to-order",
+      method: "POST", headers: { authorization: "Bearer " + ADMIN_TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ reason: "verbal approval, Bulk Buyer, phone 2026-06-10" }),
+    });
+    check("operator convert-to-order succeeds (200)", convertOk.status === 200);
+    var convertedJson = JSON.parse(convertOk.body);
+    check("operator conversion lands converted + an order id",
+      convertedJson.status === "converted" && !!convertedJson.converted_order_id);
+    check("the acceptance attribution records the operator + reason",
+      String(convertedJson.accepted_by_customer || "").indexOf("operator-recorded: verbal approval") === 0);
+    var verbalOrder = await order.get(convertedJson.converted_order_id);
+    check("verbal-approval order is pending at the REPRICED unit price",
+      verbalOrder && verbalOrder.status === "pending" &&
+      Number(verbalOrder.lines[0].unit_amount_minor) === 1500 && Number(verbalOrder.lines[0].qty) === 4);
+    var heldAfter = (await catalog.inventory.get("BULK-1")).stock_held || 0;
+    check("operator conversion reserved the 4 units", heldAfter === heldBefore + 4);
+
+    // Converting it again is refused (terminal).
+    var convertAgain = await helpers.httpRequest({
+      port: port, path: "/admin/quotes/" + encodeURIComponent(repriceQuote.id) + "/convert-to-order",
+      method: "POST", headers: { authorization: "Bearer " + ADMIN_TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ reason: "double-submit" }),
+    });
+    check("re-converting a converted quote is refused (409)", convertAgain.status === 409);
+
+    // An elapsed validity window refuses the verbal-approval convert — the
+    // accept-time guard holds for operators too; stale prices are never
+    // honoured.
+    var staleQuote = await quotes.requestQuote({ customer_id: buyer.id, lines: [{ sku: "BULK-1", quantity: 1 }] });
+    await quotes.respondToQuote({
+      quote_id: staleQuote.id,
+      line_prices: [{ sku: "BULK-1", unit_price_minor: 1200 }],
+      valid_until: Date.now() + 86400000, currency: "USD",
+    });
+    await query("UPDATE quotes SET valid_until = ?1 WHERE id = ?2", [Date.now() - 1000, staleQuote.id]);
+    var convertStale = await helpers.httpRequest({
+      port: port, path: "/admin/quotes/" + encodeURIComponent(staleQuote.id) + "/convert-to-order",
+      method: "POST", headers: { authorization: "Bearer " + ADMIN_TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ reason: "verbal approval after expiry" }),
+    });
+    check("converting an expired quote is refused (409)", convertStale.status === 409);
+    check("the expired quote was not transitioned by the refusal",
+      (await quotes.getQuote(staleQuote.id)).status === "responded");
+
+    // ---- expired filter: the list shows what the sweep transitioned ------
+    var sweep = await quotes.expireDue({ as_of: Date.now() });
+    check("expiry sweep transitions the stale quote", sweep.expired >= 1);
+    check("the stale quote is now expired", (await quotes.getQuote(staleQuote.id)).status === "expired");
+
+    var expiredJson = JSON.parse((await helpers.httpRequest({
+      port: port, path: "/admin/quotes?status=expired", headers: bearer,
+    })).body);
+    check("admin list ?status=expired surfaces the swept quote",
+      Array.isArray(expiredJson.rows) &&
+      expiredJson.rows.some(function (q) { return q.id === staleQuote.id; }) &&
+      expiredJson.rows.every(function (q) { return q.status === "expired"; }));
+
+    var expiredPage = await helpers.httpRequest({ port: port, path: "/admin/quotes?status=expired", jar: adminJar });
+    check("admin expired filter page renders the chip + heading",
+      expiredPage.status === 200 &&
+      expiredPage.body.indexOf("status=expired") !== -1 &&
+      expiredPage.body.indexOf("Expired quotes") !== -1);
+    check("admin expired filter page lists the swept quote",
+      expiredPage.body.indexOf(String(staleQuote.id).slice(0, 8)) !== -1);
+
+    // An unknown status value falls back to the response queue (defensive
+    // reader — no 4xx for a stale bookmark).
+    var bogusFilter = await helpers.httpRequest({ port: port, path: "/admin/quotes?status=bogus", headers: bearer });
+    check("unknown status filter falls back to the queue (200)", bogusFilter.status === 200);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
