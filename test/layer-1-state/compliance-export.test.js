@@ -192,6 +192,17 @@ async function _fulfillFullScope() {
   var suggestionBoxReader  = _mockReader("suggestionBox",  "suggestions",     [{ id: "sg-1", title: "Stock more sizes" }], 1);
   var saveForLaterReader   = _mockReader("saveForLater",   "save_for_later",  [{ sku: "SKU-1", quantity: 2 }], 1);
   var storeCreditReader    = _mockReader("storeCredit",    "store_credit_ledger", { balance_minor: 500, history: [{ kind: "credit", amount_minor: 500 }] }, 1);
+  // The remaining customer-keyed domains: the guest-order claim audit
+  // trail, stock alerts, quotes, ratings, Q&A, CRM notes, gift cards,
+  // and referral activity.
+  var guestReconReader     = _mockReader("guestOrderReconciliations", "guest_order_reconciliations", [{ order_id: "ord-1", linked_via: "magic-link" }], 1);
+  var stockAlertsReader    = _mockReader("stockAlerts",    "stock_alerts",    [{ sku: "SKU-1", email_normalised: "subject@example.com" }], 1);
+  var quotesReader         = _mockReader("quotes",         "quotes",          [{ id: "q-1", message: "bulk pricing?" }], 1);
+  var orderRatingsReader   = _mockReader("orderRatings",   "order_ratings",   [{ order_id: "ord-1", comment: "quick" }], 1);
+  var productQaReader      = _mockReader("productQa",      "product_qa_questions", [{ body: "Does it ship to BE?" }], 1);
+  var customerNotesReader  = _mockReader("customerNotes",  "customer_notes",  [{ body: "VIP" }], 1);
+  var giftcardsReader      = _mockReader("giftcards",      "giftcards",       [{ code_hint: "WXYZ", balance_minor: 2500 }], 1);
+  var referralsReader      = _mockReader("referrals",      "referral_invitations", { as_referrer: null, invitations_sent: [], as_referee: [{ reward_status: "pending" }] }, 1);
 
   var ce = complianceExport.create({
     query:          q,
@@ -211,6 +222,14 @@ async function _fulfillFullScope() {
     suggestionBox:  suggestionBoxReader,
     saveForLater:   saveForLaterReader,
     storeCredit:    storeCreditReader,
+    guestOrderReconciliations: guestReconReader,
+    stockAlerts:    stockAlertsReader,
+    quotes:         quotesReader,
+    orderRatings:   orderRatingsReader,
+    productQa:      productQaReader,
+    customerNotes:  customerNotesReader,
+    giftcards:      giftcardsReader,
+    referrals:      referralsReader,
   });
 
   var customerId = _uuid();
@@ -244,6 +263,15 @@ async function _fulfillFullScope() {
   check("fulfill data.suggestionBox present",      Array.isArray(bundle.data.suggestionBox) && bundle.data.suggestionBox.length === 1);
   check("fulfill data.saveForLater present",       Array.isArray(bundle.data.saveForLater) && bundle.data.saveForLater.length === 1);
   check("fulfill data.storeCredit present",        bundle.data.storeCredit && bundle.data.storeCredit.balance_minor === 500);
+  check("fulfill data.guestOrderReconciliations present",
+    Array.isArray(bundle.data.guestOrderReconciliations) && bundle.data.guestOrderReconciliations.length === 1);
+  check("fulfill data.stockAlerts present",        Array.isArray(bundle.data.stockAlerts) && bundle.data.stockAlerts.length === 1);
+  check("fulfill data.quotes present",             Array.isArray(bundle.data.quotes) && bundle.data.quotes.length === 1);
+  check("fulfill data.orderRatings present",       Array.isArray(bundle.data.orderRatings) && bundle.data.orderRatings.length === 1);
+  check("fulfill data.productQa present",          Array.isArray(bundle.data.productQa) && bundle.data.productQa.length === 1);
+  check("fulfill data.customerNotes present",      Array.isArray(bundle.data.customerNotes) && bundle.data.customerNotes.length === 1);
+  check("fulfill data.giftcards present",          Array.isArray(bundle.data.giftcards) && bundle.data.giftcards.length === 1);
+  check("fulfill data.referrals present",          bundle.data.referrals && Array.isArray(bundle.data.referrals.as_referee) && bundle.data.referrals.as_referee.length === 1);
 
   // Completeness manifest — one entry per scope section, classified
   // exported / empty / absent so an unexported table is never silent.
@@ -450,12 +478,20 @@ async function _deletionFlow() {
   // Domains absent surface — every domain in the deletion order that
   // wasn't injected (subscriptions / paymentMethods / supportTickets /
   // reviews / consentLedger / wishlist / surveys / recentlyViewed /
-  // suggestionBox / saveForLater / storeCredit).
-  check("dry-run reports absent domains",       preview.domains_absent.length === 11);
+  // suggestionBox / saveForLater / storeCredit /
+  // guestOrderReconciliations / stockAlerts / quotes / orderRatings /
+  // productQa / customerNotes / giftcards / referrals). 5 of the 24
+  // deletion domains are wired here, so 19 surface as absent.
+  check("dry-run reports absent domains",       preview.domains_absent.length === 19);
   check("dry-run absent includes paymentMethods", preview.domains_absent.indexOf("paymentMethods") !== -1);
   check("dry-run absent includes wishlist",     preview.domains_absent.indexOf("wishlist") !== -1);
   check("dry-run absent includes saveForLater", preview.domains_absent.indexOf("saveForLater") !== -1);
   check("dry-run absent includes storeCredit",  preview.domains_absent.indexOf("storeCredit") !== -1);
+  check("dry-run absent includes guestOrderReconciliations",
+    preview.domains_absent.indexOf("guestOrderReconciliations") !== -1);
+  check("dry-run absent includes stockAlerts",  preview.domains_absent.indexOf("stockAlerts") !== -1);
+  check("dry-run absent includes giftcards",    preview.domains_absent.indexOf("giftcards") !== -1);
+  check("dry-run absent includes referrals",    preview.domains_absent.indexOf("referrals") !== -1);
 
   // Wet run — counts + flips status
   var wet = await ce.processDeletion({ request_id: del.id });

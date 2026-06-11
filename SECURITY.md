@@ -325,20 +325,29 @@ node -e "
   by the customer — identity, orders, subscriptions, addresses, saved
   payment-method metadata, support tickets, loyalty, reviews, the
   consent ledger, wishlist, surveys, recently-viewed, suggestion-box
-  submissions, the save-for-later list, and the store-credit ledger —
+  submissions, the save-for-later list, the store-credit ledger, the
+  guest-order claim audit trail, back-in-stock alerts, quotes, order
+  ratings, product Q&A questions, operator notes about the customer,
+  gift cards issued to them, and referral activity in both directions —
   so the bundle is the full record, not just the order/identity core.
   The bundle carries a completeness manifest: every in-scope domain is
   marked exported, empty, or absent, so a domain whose reader isn't
   wired is visible rather than silently dropped. Erasure deletes the
   pure-personalization domains (wishlist, recently-viewed, save-for-
-  later), anonymizes the suggestion-box rows in place (both identity
-  keys cleared, the de-identified text left as roadmap signal), revokes
+  later, stock alerts — including the alert's plaintext address — order
+  ratings, and operator customer notes), anonymizes in place the rows
+  whose de-identified content stays useful (suggestion-box submissions
+  and product Q&A questions: identity keys cleared, text retained),
+  clears the customer-authored message on retained quotes, revokes
   every sign-in path and anonymizes the customer profile, and RETAINS
   the records a controller keeps under a legal-obligation / accounting
-  basis (orders, loyalty ledger, store-credit ledger, consent
-  evidence, published reviews) — each with a stated basis in the
-  per-domain result. Preview a deletion with the dry-run flag to see
-  the blast radius before the irreversible call.
+  basis (orders, loyalty ledger, store-credit ledger, consent evidence,
+  published reviews, gift cards and referral reward accounting with
+  their identity keys severed, and the guest-order claim audit rows
+  with the recorded email hash replaced by a non-reversible tombstone)
+  — each with a stated basis in the per-domain result. Preview a
+  deletion with the dry-run flag to see the blast radius before the
+  irreversible call.
 - **HSTS on every TLS response, edge and container.** Both substrates
   send `Strict-Transport-Security: max-age=63072000; includeSubDomains;
   preload` (two years, above the preload-list minimum). The container

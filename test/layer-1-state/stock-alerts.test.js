@@ -457,6 +457,62 @@ async function _resubscribeAfterNotificationMintsFreshToken() {
   check("re-subscribe mints fresh token",          typeof second.confirmation_token === "string" && second.confirmation_token !== first.confirmation_token);
 }
 
+async function _dsrExportAndErase() {
+  // Subject-access export + erasure. Three rows: one linked to the
+  // subject's account, one anonymous under the subject's email, one
+  // belonging to a stranger. The dual-key selector must cover the
+  // subject's rows by either key and never touch the stranger's.
+  var w = _wire();
+  await w.catalog.inventory.create("SKU-DSR", { stock_on_hand: 0 });
+  var subjectId = bShop.framework.uuid.v7();
+  var linked = await w.alerts.subscribe({ email: "dana@example.com", sku: "SKU-DSR", customer_id: subjectId });
+  var variantId = bShop.framework.uuid.v4();
+  var anon = await w.alerts.subscribe({ email: "dana@example.com", sku: "SKU-DSR", variant_id: variantId });
+  await w.alerts.subscribe({ email: "stranger@example.com", sku: "SKU-DSR", variant_id: bShop.framework.uuid.v4() });
+  var danaHash = w.alerts.hashEmail("dana@example.com");
+
+  // customer_id alone reaches the account-linked row.
+  var byId = await w.alerts.exportForCustomer({ customer_id: subjectId });
+  check("export by customer_id finds the linked row", byId.length === 1 && byId[0].id === linked.id);
+  check("export carries the plaintext address",       byId[0].email_normalised === "dana@example.com");
+  check("export excludes the token hashes",
+    byId[0].confirmation_token_hash === undefined && byId[0].unsubscribe_token_hash === undefined);
+
+  // customer_id + email_hash reaches BOTH the linked and the anonymous row.
+  var byBoth = await w.alerts.exportForCustomer({ customer_id: subjectId, email_hash: danaHash });
+  check("export by both keys finds both rows",
+    byBoth.length === 2 &&
+    byBoth.map(function (r) { return r.id; }).sort().join(",") === [linked.id, anon.id].sort().join(","));
+
+  // Dry-run erase counts without deleting.
+  var dry = await w.alerts.eraseForCustomer({ customer_id: subjectId, email_hash: danaHash, dry_run: true });
+  check("erase dry-run counts both rows", dry.table === "stock_alerts" && dry.deleted === 2);
+  check("erase dry-run deleted nothing",
+    (await w.alerts.exportForCustomer({ customer_id: subjectId, email_hash: danaHash })).length === 2);
+
+  // Wet erase hard-deletes the subject's rows; the stranger's survives.
+  var wet = await w.alerts.eraseForCustomer({ customer_id: subjectId, email_hash: danaHash });
+  check("erase deletes both subject rows", wet.deleted === 2);
+  check("no subject row survives erasure",
+    (await w.alerts.exportForCustomer({ customer_id: subjectId, email_hash: danaHash })).length === 0);
+  var strangerLeft = (await w.query("SELECT email_normalised FROM stock_alerts", [])).rows;
+  check("the stranger's row is untouched",
+    strangerLeft.length === 1 && strangerLeft[0].email_normalised === "stranger@example.com");
+  check("no plaintext copy of the erased address survives",
+    strangerLeft.every(function (r) { return r.email_normalised !== "dana@example.com"; }));
+
+  // Erasure freed the unique-index slot — the person can re-subscribe.
+  var again = await w.alerts.subscribe({ email: "dana@example.com", sku: "SKU-DSR" });
+  check("re-subscribe after erasure mints a fresh row", again.status === "subscribed");
+
+  // Refusals: no selector key, bad customer_id shape, bad email_hash shape.
+  await assert.rejects(w.alerts.exportForCustomer({}), /at least one of customer_id \/ email_hash/);
+  await assert.rejects(w.alerts.eraseForCustomer({}), /at least one of customer_id \/ email_hash/);
+  await assert.rejects(w.alerts.exportForCustomer({ customer_id: "not-a-uuid" }), /customer_id/);
+  await assert.rejects(w.alerts.eraseForCustomer({ email_hash: "" }), /email_hash/);
+  await assert.rejects(w.alerts.eraseForCustomer({ email_hash: "bad\u0000hash" }), /email_hash/);
+}
+
 async function run() {
   await _subscribeMintsToken();
   await _subscribeDedupesAndDoesNotRevealToken();
@@ -472,6 +528,7 @@ async function run() {
   await _cleanupExpiredAndListSurfaces();
   await _refusalsAndFactoryShape();
   await _resubscribeAfterNotificationMintsFreshToken();
+  await _dsrExportAndErase();
 }
 
 module.exports = { run: run };
