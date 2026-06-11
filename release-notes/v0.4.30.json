@@ -1,0 +1,31 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.30",
+  "date": "2026-06-11",
+  "headline": "Privacy exports and erasures now cover every customer-keyed table — including the guest-order claim audit, stock alerts' plaintext email, quotes, ratings, Q&A, operator notes, gift cards, and referrals",
+  "summary": "A privacy-completeness release. A subject-access export now walks eight more customer-keyed domains, and erasure handles each with a stated basis: the guest-order claim audit's email hash — a verbatim copy of the lookup key the account erasure deliberately severs, which previously survived in full — is tombstoned under its own derivation while the order linkage stays under the audit basis; a stock-alert subscription's plaintext email is deleted outright; quotes, ratings, and Q&A keep their de-identified business records with the customer's free text and identity keys cleared; operator notes are deleted; gift cards and referral records stay under their accounting basis with the identity links severed. A stock-alert subscription made while signed in now links to the account, so it follows the customer through export and erasure rather than floating free. Every new domain reports in the export's completeness manifest and in the erasure's per-domain results — an unwired reader shows as absent, never silently dropped. No migration to apply.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Guest-order claim records join the export and erasure",
+          "body": "When a guest order attaches to an account on verified sign-in, the attachment is recorded with the buyer's email hash as the linking key. Those records are now part of the subject-access export, and an erasure tombstones the email hash under a derivation distinct from the account-level tombstone — so the two can never be cross-correlated — while the order linkage itself is retained under the same audit basis orders use. Previously the records were absent from the export, untouched by erasure, and invisible in the completeness manifest, and the surviving hash defeated the account erasure's deliberate severing of that key."
+        },
+        {
+          "title": "Stock-alert subscriptions stop outliving an erasure",
+          "body": "A back-in-stock subscription stores the subscriber's email in plaintext — it has to send mail to it — but those rows survived an account erasure and never appeared in the export. The export now includes the customer's subscriptions (minus the bearer token hashes), erasure deletes the rows outright — freeing the address to subscribe again — and a subscription made while signed in is linked to the account so it follows the customer. Anonymous subscriptions keep their existing bounded lifetime and stay reachable by their unsubscribe token."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Six more domains in the export, each with stated erasure semantics",
+          "body": "Quote requests and their negotiation messages, fulfillment ratings, product Q&A, operator customer notes, gift-card issue records, and referral activity (in both directions — as referrer and as referred) now stream into the subject-access export. Erasure treats each by its nature: the customer's quote message and Q&A identity are cleared in place with the de-identified business record retained, ratings and operator notes are deleted, and gift cards and referral accounting stay under their legal-obligation basis with the identity links severed and referred-email hashes tombstoned. Each domain reports its effect in the deletion result, and a deletion preview (dry run) touches nothing — verified per domain."
+        }
+      ]
+    }
+  ]
+}
