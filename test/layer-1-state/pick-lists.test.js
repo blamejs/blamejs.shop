@@ -50,7 +50,7 @@ var check   = helpers.check;
 var assert  = helpers.assert;
 
 var MIGS = [
-  "0003_order.sql", "0206_orders_email_hash.sql",
+  "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql",
   "0118_pick_lists.sql",
 ].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);

@@ -44,6 +44,8 @@ var assert         = helpers.assert;
 var MIG_CATALOG = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0001_catalog.sql");
 var MIG_CART    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0002_cart.sql");
 var MIG_ORDER   = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0003_order.sql");
+var MIG_ORDER_PROVIDER = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0228_orders_payment_provider.sql");
+var MIG_ORDER_CAPTURE  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0229_orders_paypal_capture_id.sql");
 var MIG_RV      = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0050_recently_viewed.sql");
 
 function _splitSchema(text) {
@@ -54,7 +56,7 @@ function _splitSchema(text) {
 function _makeQuery() {
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
-  [MIG_CATALOG, MIG_CART, MIG_ORDER, MIG_RV].forEach(function (p) {
+  [MIG_CATALOG, MIG_CART, MIG_ORDER, MIG_ORDER_PROVIDER, MIG_ORDER_CAPTURE, MIG_RV].forEach(function (p) {
     var stmts = _splitSchema(nodeFs.readFileSync(p, "utf8"));
     for (var i = 0; i < stmts.length; i += 1) db.prepare(stmts[i]).run();
   });

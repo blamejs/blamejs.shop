@@ -34,7 +34,7 @@ var b = bShop.framework;
 var TOKEN = "admin-token-0123456789abcdef-test"; // >= 16 chars
 
 var MIGS = [
-  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql",
+  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql",
   "0006_customers.sql", "0026_customer_addresses.sql", "0009_subscriptions.sql",
   "0047_support_tickets.sql", "0022_loyalty.sql", "0109_compliance_export.sql",
   "0074_operator_audit_log.sql", "0213_operator_accounts.sql",

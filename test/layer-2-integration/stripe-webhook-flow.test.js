@@ -29,7 +29,7 @@ var b = bShop.framework;
 
 var WEBHOOK_SECRET = "whsec_test_webhook_flow_0123456789";
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql"]
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) { return t.replace(/--[^\n]*\n/g, "\n").split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean); }
@@ -140,6 +140,50 @@ async function _run() {
       headers: _stripeHeaders(orphanBody), body: orphanBody });
     check("unknown-PI webhook then 200",       orphan.status === 200);
     check("unknown-PI reports not handled",     JSON.parse(orphan.body).handled === false);
+
+    // ---- charge.refunded is AMOUNT-AWARE --------------------------------
+    //
+    // Stripe fires charge.refunded on EVERY refund, partial included;
+    // `amount_refunded` is the cumulative total and `refunded` is true only
+    // when the charge is fully refunded. A $5.00 partial dashboard refund
+    // must append a partial ledger row and leave the order paid — never
+    // drive the terminal refund edge (which re-credits every gift/loyalty
+    // credit on the order).
+    var partialBody = JSON.stringify({ id: "evt_refund_p1", type: "charge.refunded",
+      data: { object: { id: "ch_1", payment_intent: paidPi, refunded: false, amount_refunded: 500 } } });
+    var partial = await helpers.httpRequest({ port: port, path: "/api/webhooks/stripe", method: "POST",
+      headers: _stripeHeaders(partialBody), body: partialBody });
+    check("partial charge.refunded then 200",  partial.status === 200 && JSON.parse(partial.body).handled === true);
+    check("partial refund leaves the order paid", (await order.get(paidOrderId)).status === "paid");
+    check("partial refund ledger records 500", (await order.refundedTotalMinor(paidOrderId)) === 500);
+
+    // A re-delivered / console-mirrored event whose cumulative figure the
+    // ledger already reflects appends nothing (delta 0).
+    var sameBody = JSON.stringify({ id: "evt_refund_p2", type: "charge.refunded",
+      data: { object: { id: "ch_1", payment_intent: paidPi, refunded: false, amount_refunded: 500 } } });
+    var same = await helpers.httpRequest({ port: port, path: "/api/webhooks/stripe", method: "POST",
+      headers: _stripeHeaders(sameBody), body: sameBody });
+    check("same-cumulative event then 200",    same.status === 200);
+    check("same-cumulative event appends nothing", (await order.refundedTotalMinor(paidOrderId)) === 500);
+
+    // A charge.refunded with NO integer amount_refunded is a 500 — Stripe
+    // retries; the handler never guesses a full refund.
+    var garbledBody = JSON.stringify({ id: "evt_refund_g1", type: "charge.refunded",
+      data: { object: { id: "ch_1", payment_intent: paidPi } } });
+    var garbled = await helpers.httpRequest({ port: port, path: "/api/webhooks/stripe", method: "POST",
+      headers: _stripeHeaders(garbledBody), body: garbledBody });
+    check("amount-less charge.refunded then 500 (retryable)", garbled.status === 500);
+    check("amount-less event changed nothing", (await order.refundedTotalMinor(paidOrderId)) === 500);
+
+    // `refunded: true` (charge fully refunded) drives the terminal edge,
+    // with the ledger converging on the grand total.
+    var fullBody = JSON.stringify({ id: "evt_refund_f1", type: "charge.refunded",
+      data: { object: { id: "ch_1", payment_intent: paidPi, refunded: true, amount_refunded: 2999 } } });
+    var full = await helpers.httpRequest({ port: port, path: "/api/webhooks/stripe", method: "POST",
+      headers: _stripeHeaders(fullBody), body: fullBody });
+    check("full charge.refunded then 200",     full.status === 200);
+    check("full refund drove terminal refunded", (await order.get(paidOrderId)).status === "refunded");
+    check("ledger converged on the grand total", (await order.refundedTotalMinor(paidOrderId)) === 2999);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }

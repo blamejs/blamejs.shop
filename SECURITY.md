@@ -170,6 +170,19 @@ node -e "
   `hmac-sha256-stripe`) inside `lib/payment.js` before any FSM
   transition runs. An unsigned or out-of-window delivery never
   touches origin resources.
+- **PayPal webhook signature + replay refusal.** Inbound `POST` to
+  `/api/webhooks/paypal` is verified server-to-server against PayPal's
+  verify-webhook-signature API using `PAYPAL_WEBHOOK_ID` — set it
+  whenever the PayPal client credentials are set, or every delivery is
+  refused (verification fails closed; the boot log warns when the id is
+  missing). Each verified event id is claimed in a replay store before
+  any state transition, so a re-delivered or replayed event is absorbed
+  exactly once, and refund events apply their stated amount — a partial
+  refund issued from the PayPal dashboard reverses gift-card and
+  loyalty credit proportionally, never in full. The verify call runs on
+  its own circuit breaker and the path carries a per-IP budget, so a
+  forged-delivery flood can neither open the checkout breaker nor
+  drown legitimate redeliveries.
 - **Apple Pay domain-association file.** Apple verifies the domain
   before it will render the Apple Pay wallet button, and it verifies by
   fetching `/.well-known/apple-developer-merchantid-domain-association`.

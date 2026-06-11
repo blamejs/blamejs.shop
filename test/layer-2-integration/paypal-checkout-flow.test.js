@@ -24,8 +24,12 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var b = bShop.framework;
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql"]
-  .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
+var MIGS = [
+  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql",
+  "0013_giftcards.sql", "0081_gift_card_ledger.sql", "0220_gift_card_ledger_chain.sql",
+  "0216_giftcard_redemption_reversal.sql", "0221_giftcard_redemption_reversal.sql",
+  "0218_stripe_webhook_events.sql",
+].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) { return t.replace(/--[^\n]*\n/g, "\n").split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean); }
 function _makeQuery() {
@@ -52,7 +56,12 @@ function _stubPaypal() {
     captureOrder: async function (id) { return { id: id, status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: "PP-C-" + id, status: "COMPLETED" }] } }] }; },
     getOrder: async function (id) { return { id: id, status: "APPROVED" }; },
     refund: async function () { return { id: "PP-R", status: "COMPLETED" }; },
-    verifyWebhook: async function (_h, rawBody) { try { return { ok: true, event: JSON.parse(rawBody) }; } catch (_e) { return { ok: false, reason: "bad" }; } },
+    // An `x-fail-verify` header simulates a delivery PayPal's
+    // verify-webhook-signature API refuses — the route must answer 400.
+    verifyWebhook: async function (h, rawBody) {
+      if (h && h["x-fail-verify"]) return { ok: false, reason: "verification-status-FAILURE" };
+      try { return { ok: true, event: JSON.parse(rawBody) }; } catch (_e) { return { ok: false, reason: "bad" }; }
+    },
   };
 }
 
@@ -63,10 +72,14 @@ async function _run() {
   var order    = bShop.order.create({ query: query, cursorSecret: "pp-sf" });
   var tax      = bShop.tax.create({ rules: [{ country: "US", rate_bps: 0 }] });
   var shipping = bShop.shipping.create({ services: [{ id: "std", label: "Std", zones: [{ country: "US", flat_amount_minor: 500 }] }] });
-  var payment  = bShop.payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_test_xxxxxxxx" });
-  var paypal   = _stubPaypal();
-  var checkout = bShop.checkout.create({
+  var payment   = bShop.payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_test_xxxxxxxx" });
+  var giftcards = bShop.giftcards.create({ query: query });
+  var ledger    = bShop.giftCardLedger.create({ query: query });
+  var paypal    = _stubPaypal();
+  var checkout  = bShop.checkout.create({
     catalog: catalog, cart: cart, pricing: bShop.pricing, tax: tax, shipping: shipping, payment: payment, order: order, paypal: paypal,
+    giftcards: giftcards, giftCardLedger: ledger,
+    webhookReplayQuery: query,
   });
 
   var p = await catalog.products.create({ slug: "ppsf", title: "PP SF", status: "active" });
@@ -151,6 +164,76 @@ async function _run() {
       body: evt, headers: { "content-type": "application/json", "paypal-transmission-id": "t" } });
     check("paypal webhook then 200",           wh.status === 200 && JSON.parse(wh.body).handled === true);
     check("webhook paid the order",            (await order.get(created2.order_id)).status === "paid");
+
+    // ---- route-level 400 on verification failure -----------------------
+    // A delivery PayPal's verify-webhook-signature API refuses must be a
+    // 400 (PayPal marks it failed — it was never authentic), with no order
+    // touched.
+    var badSig = await helpers.httpRequest({ port: port, path: "/api/webhooks/paypal", method: "POST",
+      body: evt, headers: { "content-type": "application/json", "x-fail-verify": "1" } });
+    check("verification failure then 400",     badSig.status === 400);
+
+    // ---- amount-aware refund mirror at the route level ------------------
+    // A $5.00 partial refund event: 200, the order STAYS paid, and the
+    // ledger records exactly 500 minor.
+    var partialEvt = JSON.stringify({ id: "WH-R1", event_type: "PAYMENT.CAPTURE.REFUNDED",
+      resource: { id: "REF-R1", amount: { currency_code: "USD", value: "5.00" },
+                  supplementary_data: { related_ids: { order_id: created2.id } } } });
+    var whP = await helpers.httpRequest({ port: port, path: "/api/webhooks/paypal", method: "POST",
+      body: partialEvt, headers: { "content-type": "application/json" } });
+    check("partial refund event then 200",     whP.status === 200 && JSON.parse(whP.body).handled === true);
+    check("partial refund left the order paid", (await order.get(created2.order_id)).status === "paid");
+    check("partial refund ledger records 500", (await order.refundedTotalMinor(created2.order_id)) === 500);
+
+    // A REFUNDED event with no parseable amount is a 500 — PayPal retries
+    // the delivery; the handler never guesses a full refund.
+    var garbledEvt = JSON.stringify({ id: "WH-R2", event_type: "PAYMENT.CAPTURE.REFUNDED",
+      resource: { id: "REF-R2", supplementary_data: { related_ids: { order_id: created2.id } } } });
+    var whG = await helpers.httpRequest({ port: port, path: "/api/webhooks/paypal", method: "POST",
+      body: garbledEvt, headers: { "content-type": "application/json" } });
+    check("amount-less refund event then 500 (retryable)", whG.status === 500);
+    check("amount-less event changed nothing",  (await order.refundedTotalMinor(created2.order_id)) === 500);
+
+    // A replayed delivery of the partial event is acknowledged (200) but
+    // appends nothing — the claim store ate it.
+    var whReplay = await helpers.httpRequest({ port: port, path: "/api/webhooks/paypal", method: "POST",
+      body: partialEvt, headers: { "content-type": "application/json" } });
+    check("replayed refund event then 200",    whReplay.status === 200);
+    check("replayed refund appended nothing",  (await order.refundedTotalMinor(created2.order_id)) === 500);
+
+    // ---- PAID_BY_GIFT_CARD route contract --------------------------------
+    // A gift card covering the whole cart: the create route answers
+    // { paid_by_gift_card, order_id, redirect } with NO `id` — and the
+    // island must consume that shape BEFORE its no-id failure throw.
+    var card = await giftcards.issue({ amount_minor: 100000, currency: "USD" });
+    var code = card.code_plain || card.code || (card.card && card.card.code_plain);
+    var c3 = await cart.create(b.uuid.v7(), { currency: "USD" });
+    await cart.addLine(c3.id, { variant_id: v.id, qty: 1 });
+    var jar3 = helpers.cookieJar();
+    jar3.capture({ "set-cookie": ["shop_sid=" + (await cart.get(c3.id)).session_id + "; Path=/"] });
+    await helpers.httpRequest({ port: port, path: "/checkout", jar: jar3 });
+    var gcRes = await helpers.httpRequest({ port: port, path: "/checkout/paypal/create", method: "POST", jar: jar3,
+      body: JSON.stringify({ email: "gc@example.com", country: "US", gift_card_code: code }),
+      headers: { "content-type": "application/json" } });
+    check("full-coverage create then 200",     gcRes.status === 200);
+    var gcBody = JSON.parse(gcRes.body);
+    check("full-coverage response flags paid_by_gift_card", gcBody.paid_by_gift_card === true);
+    check("full-coverage response has no PayPal id",        gcBody.id === undefined);
+    check("full-coverage response carries the redirect",
+      typeof gcBody.order_id === "string" && gcBody.redirect === "/orders/" + gcBody.order_id);
+    check("full-coverage order is paid",       (await order.get(gcBody.order_id)).status === "paid");
+
+    // Island contract: the checkout island consumes the full-coverage
+    // redirect BEFORE the no-id "create failed" throw, and forwards the
+    // gift-card + loyalty inputs alongside the address fields.
+    var islandSrc = nodeFs.readFileSync(
+      nodePath.resolve(__dirname, "..", "..", "themes", "default", "assets", "js", "paypal-checkout.js"), "utf8");
+    var idxPaid  = islandSrc.indexOf("paid_by_gift_card");
+    var idxThrow = islandSrc.indexOf("create failed");
+    check("island handles paid_by_gift_card before the no-id throw",
+      idxPaid !== -1 && idxThrow !== -1 && idxPaid < idxThrow);
+    check("island forwards the gift-card input",  islandSrc.indexOf('"gift_card_code"') !== -1);
+    check("island forwards the loyalty input",    islandSrc.indexOf('"loyalty_redeem_points"') !== -1);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }

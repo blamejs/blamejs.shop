@@ -25,7 +25,7 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql"].map(function (f) {
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql"].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
 
@@ -36,7 +36,7 @@ var REVIEW_MIGS = ["0001_catalog.sql", "0011_reviews.sql"].map(function (f) {
 var RETURN_MIGS = [
   "0001_catalog.sql",
   "0002_cart.sql",
-  "0003_order.sql", "0206_orders_email_hash.sql",
+  "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql",
   "0023_returns.sql",
 ].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
@@ -45,7 +45,7 @@ var RETURN_MIGS = [
 // Orders + shop_config — the print-document masthead reads shop.name /
 // shop.contact_email from shop_config.
 var DOC_CONFIG_MIGS = [
-  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql",
+  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql",
   "0004_shop_config.sql",
 ].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
@@ -54,7 +54,7 @@ var DOC_CONFIG_MIGS = [
 // Orders + shipments + the three fulfillment-ops tables: pick lists,
 // shipping labels, split-shipment plans.
 var FULFILLMENT_MIGS = [
-  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql",
+  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql",
   "0021_shipments.sql",
   "0051_shipping_labels.sql",
   "0096_split_shipments.sql",

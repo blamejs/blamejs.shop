@@ -34,6 +34,8 @@ var assert  = helpers.assert;
 
 var MIG_AI    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0160_assembly_instructions.sql");
 var MIG_ORDER = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0003_order.sql");
+var MIG_ORDER_PROVIDER = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0228_orders_payment_provider.sql");
+var MIG_ORDER_CAPTURE  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0229_orders_paypal_capture_id.sql");
 var MIG_CART  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0002_cart.sql");
 
 var DAY_MS = 24 * 60 * 60 * 1000;
@@ -50,7 +52,7 @@ function _makeQuery() {
   // them on; the primitive's contract doesn't depend on the FK
   // being enforced - the operator's D1 enforces it.
   db.prepare("PRAGMA foreign_keys = OFF").run();
-  [MIG_CART, MIG_ORDER, MIG_AI].forEach(function (path) {
+  [MIG_CART, MIG_ORDER, MIG_ORDER_PROVIDER, MIG_ORDER_CAPTURE, MIG_AI].forEach(function (path) {
     _splitSchema(nodeFs.readFileSync(path, "utf8")).forEach(function (s) {
       db.prepare(s).run();
     });

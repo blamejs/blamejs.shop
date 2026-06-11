@@ -1,5 +1,5 @@
 {
-  "version": "0.4.27",
+  "version": "0.4.28",
   "assets": {
     "css/admin.css": {
       "integrity": "sha384-imfe0otYErcB8rr2h6KLSGTtStirysptpXETSPY4zLv3bZoIT75Lo1dOvkOav+xL",
@@ -46,8 +46,8 @@
       "fingerprinted": "js/pay.683a905563e54a47.js"
     },
     "js/paypal-checkout.js": {
-      "integrity": "sha384-LI6y/1z0Y9F8Kx8RhW4EwY2WqJPXLwJozCXqnhDT+dTckLHyvhly0SsRpH0bsdui",
-      "fingerprinted": "js/paypal-checkout.b05ab5572cc3728f.js"
+      "integrity": "sha384-Fxi5GnmvGA/ZoOC7Vomdo2ng37kkp+G9OgjnRiMSQWtl+fmzdUd5p4Yc+fmPQBrt",
+      "fingerprinted": "js/paypal-checkout.7ee687882cc1b588.js"
     },
     "js/saved-card.js": {
       "integrity": "sha384-Kaj6n+Any4rwCH2lyREHoq30MrAZtEd/fTa+tDnIrMJ4zO01YWRhW5TTujcYyuVn",

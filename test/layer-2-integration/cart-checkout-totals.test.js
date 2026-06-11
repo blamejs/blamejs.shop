@@ -36,7 +36,7 @@ var check   = helpers.check;
 var b = bShop.framework;
 
 var MIGS = [
-  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0004_shop_config.sql",
+  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0004_shop_config.sql",
   "0206_orders_email_hash.sql", "0107_auto_discount.sql",
   "0209_auto_discount_unlock_code.sql", "0210_cart_discount_codes.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });

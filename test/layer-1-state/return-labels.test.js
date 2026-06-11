@@ -34,7 +34,7 @@ var assert       = helpers.assert;
 var MIGS = [
   "0001_catalog.sql",
   "0002_cart.sql",
-  "0003_order.sql", "0206_orders_email_hash.sql",
+  "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql",
   "0023_returns.sql",
   "0052_return_labels.sql",
 ].map(function (f) {
