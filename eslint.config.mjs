@@ -172,6 +172,7 @@ export default [
       "**/.git/**",
       ".test-output/**",
       ".scratch/**",
+      ".scratch-*/**",
       ".extract-staging/**",
       ".template/**",
       ".wrangler/**",

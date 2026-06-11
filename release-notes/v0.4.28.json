@@ -1,0 +1,39 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.28",
+  "date": "2026-06-11",
+  "headline": "Console refunds reach PayPal, refund webhooks apply their stated amount instead of reversing everything, and gift cards and loyalty points now ride the PayPal button",
+  "summary": "A payment-lifecycle release for stores taking PayPal. Refunding a PayPal-paid order from the console — full, partial, or through the returns flow — now dials PayPal; previously every console refund dialed the card processor with a PayPal id and failed, leaving the PayPal dashboard as the only way to refund. Refund webhooks from both processors now apply the amount they state: a partial refund issued from the processor's dashboard reverses gift-card and loyalty credit proportionally, where before it triggered the full terminal reversal and could hand a customer the entire credited value back for a five-dollar refund. PayPal webhook deliveries are now claimed in a replay store after signature verification, the verification call runs on its own circuit breaker behind a per-IP budget so a forged-delivery flood can't fast-fail live checkouts, and a buyer paying with the PayPal button can now apply a gift card or spend loyalty points like any other checkout. A deployment with PayPal credentials but no webhook id gets a boot warning naming the missing variable. Upgrade applies two D1 migrations.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Console refunds route by the order's payment provider",
+          "body": "Orders persist which processor took the payment, and every refund surface — the order console's full and partial refund, the returns console's provider refund, and the refund-automation library — routes to that processor. PayPal refunds dial the capture (recovered from the order record, the payment transition's metadata, or the PayPal API, in that order), and the operator's idempotency key flows through as the PayPal request id so a retried partial refund deduplicates while distinct partial refunds execute distinctly. Orders that predate the provider column fall back to the payment-id shape. The refund button now reflects provider reality: it offers a refund only when the processor that took the payment is configured, and refuses with a specific reason — provider not configured, no capture on record — instead of a generic failure."
+        },
+        {
+          "title": "Refund webhooks apply their stated amount",
+          "body": "A refund event arriving from the processor now reads the refunded amount instead of unconditionally driving the order to the terminal refunded state. A partial refund reverses gift-card and loyalty credit proportionally through the same accounting the console's partial refund uses; only a balance-clearing refund transitions the order to refunded. Both processors are covered: PayPal events carry a per-refund amount and deduplicate on the refund id, card-processor events carry a cumulative total and apply the delta against the local ledger. An event with a missing or unparseable amount is refused so the processor redelivers it — the handler never guesses a full refund."
+        },
+        {
+          "title": "Gift cards and loyalty points apply to PayPal button payments",
+          "body": "The PayPal button now sends the gift-card code and loyalty-points fields from the pay form, matching card checkout. When a gift card covers the whole total, the page completes the order and redirects without opening the PayPal popup — the previous behavior surfaced a payment error to the buyer after the order had already been created, paid, and the card debited."
+        }
+      ]
+    },
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "PayPal webhook deliveries are claimed once and verified in isolation",
+          "body": "Each verified PayPal event id is claimed in a replay store before any state transition — matching the card-processor webhook discipline — so a replayed or re-delivered event is absorbed exactly once across the redelivery window. The signature-verification call to PayPal runs on its own circuit breaker, and the webhook path carries a per-IP request budget, so a flood of forged deliveries can neither trip the breaker that live checkout dials ride nor crowd out legitimate redeliveries."
+        },
+        {
+          "title": "Boot warning when the PayPal webhook id is missing",
+          "body": "A deployment with PayPal client credentials but no PAYPAL_WEBHOOK_ID logs a warning at boot naming the variable. Verification itself remains mandatory and fails closed — without the id every webhook delivery is refused, which keeps forged events out but also means dashboard-issued refunds never mirror locally and PayPal will eventually disable the webhook endpoint; the warning makes that state visible instead of silent."
+        }
+      ]
+    }
+  ]
+}
