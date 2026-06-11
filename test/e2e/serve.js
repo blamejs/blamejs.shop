@@ -28,7 +28,7 @@ var PORT = parseInt(process.env.E2E_PORT || "8099", 10);
 // The storefront-core migrations only — helpers.memD1Query stays in its
 // strict default here, so a schema break in any of these five fails the
 // harness boot loudly instead of degrading.
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0950_orders_payment_provider.sql", "0951_orders_paypal_capture_id.sql", "0004_shop_config.sql",
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0004_shop_config.sql",
   "0206_orders_email_hash.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 

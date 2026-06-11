@@ -53,10 +53,10 @@ var MIG_ORDERS    = nodePath.resolve(
   __dirname, "..", "..", "migrations-d1", "0003_order.sql"
 );
 var MIG_ORDERS_PROVIDER = nodePath.resolve(
-  __dirname, "..", "..", "migrations-d1", "0950_orders_payment_provider.sql"
+  __dirname, "..", "..", "migrations-d1", "0228_orders_payment_provider.sql"
 );
 var MIG_ORDERS_CAPTURE = nodePath.resolve(
-  __dirname, "..", "..", "migrations-d1", "0951_orders_paypal_capture_id.sql"
+  __dirname, "..", "..", "migrations-d1", "0229_orders_paypal_capture_id.sql"
 );
 var MIG_CUSTOMERS = nodePath.resolve(
   __dirname, "..", "..", "migrations-d1", "0006_customers.sql"

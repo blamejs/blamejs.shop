@@ -41,7 +41,7 @@ var b = bShop.framework;
 
 var TOKEN = "admin-token-0123456789abcdef-test";
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0950_orders_payment_provider.sql", "0951_orders_paypal_capture_id.sql",
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql",
             "0206_orders_email_hash.sql", "0006_customers.sql",
             "0004_shop_config.sql", "0126_click_and_collect.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });

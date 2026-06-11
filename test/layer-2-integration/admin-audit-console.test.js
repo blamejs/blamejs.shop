@@ -35,7 +35,7 @@ var TOKEN = "admin-token-0123456789abcdef-test"; // ≥ 16 chars
 // catalog + config + order are the admin.mount minimums; the audit_log table
 // is baked into createApp's db.init schema runner, so no extra migration is
 // needed for the audit rows.
-var MIGS = ["0001_catalog.sql", "0003_order.sql", "0950_orders_payment_provider.sql", "0951_orders_paypal_capture_id.sql", "0004_shop_config.sql"]
+var MIGS = ["0001_catalog.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0004_shop_config.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {

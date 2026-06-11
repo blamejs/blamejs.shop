@@ -36,7 +36,7 @@ var check   = helpers.check;
 var b = bShop.framework;
 
 var MIGS = [
-  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0950_orders_payment_provider.sql", "0951_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql",
+  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql",
   "0006_customers.sql", "0022_loyalty.sql", "0085_loyalty_redemptions.sql",
   "0163_loyalty_earn_rules.sql", "0217_loyalty_earn_reversal.sql",
   "0223_loyalty_txn_restored_points.sql", "0224_loyalty_earn_clawed_points.sql",

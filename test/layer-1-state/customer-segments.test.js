@@ -42,8 +42,8 @@ var assert           = helpers.assert;
 
 var MIG_CART      = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0002_cart.sql");
 var MIG_ORDER     = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0003_order.sql");
-var MIG_ORDER_PROVIDER = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0950_orders_payment_provider.sql");
-var MIG_ORDER_CAPTURE  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0951_orders_paypal_capture_id.sql");
+var MIG_ORDER_PROVIDER = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0228_orders_payment_provider.sql");
+var MIG_ORDER_CAPTURE  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0229_orders_paypal_capture_id.sql");
 var MIG_CUSTOMERS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0006_customers.sql");
 var MIG_SEGMENTS  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0049_customer_segments.sql");
 
