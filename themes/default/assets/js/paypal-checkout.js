@@ -21,7 +21,12 @@
 
   function vals() {
     var d = {};
-    ["email", "name", "line1", "line2", "city", "country", "state", "postal"].forEach(function (k) {
+    // Same field set the card form posts — the gift-card code and loyalty
+    // points the shopper typed ride the PayPal path too, so the PayPal
+    // order opens for the credit-reduced amount (the server resolves and
+    // burns the credits; this only forwards the raw inputs).
+    ["email", "name", "line1", "line2", "city", "country", "state", "postal",
+     "gift_card_code", "loyalty_redeem_points"].forEach(function (k) {
       var el = form && form.elements[k];
       if (el) { d[k] = el.value; }
     });
@@ -42,6 +47,17 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify(Object.assign({}, vals(), { captcha_token: window.__captchaToken ? window.__captchaToken() : "" })),
       }).then(function (r) { return r.json(); }).then(function (d) {
+        // Credits fully covered the order: the server has ALREADY created
+        // and paid it (and burned the gift card), and there is no PayPal
+        // order to approve — go straight to the confirmation. This MUST run
+        // before the no-id throw below, or the island would report "create
+        // failed" on an order that succeeded.
+        if (d && d.paid_by_gift_card && d.redirect) {
+          window.location.href = d.redirect;
+          // Never-settling promise: the page is navigating away; resolving
+          // without an order id would make the SDK open an empty popup.
+          return new Promise(function () {});
+        }
         if (!d.id) { throw new Error(d.error || "create failed"); }
         return d.id;
       });

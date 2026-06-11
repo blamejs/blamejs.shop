@@ -41,7 +41,7 @@ var TOKEN = "admin-token-0123456789abcdef-test"; // ≥ 16 chars
 // needed because orders carries a FK to carts(id); analytics_events is the
 // event-stream source the funnel/viewed/search aggregates read.
 var MIGS = [
-  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql",
+  "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0950_orders_payment_provider.sql", "0951_orders_paypal_capture_id.sql",
   "0004_shop_config.sql", "0019_analytics_events.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 

@@ -171,6 +171,70 @@ async function _errorPath() {
   await assert.rejects(pp.createOrder({ amount_minor: 100, currency: "USD" }), /paypal: POST .* HTTP 422/);
 }
 
+// The webhook-verification dial rides its OWN circuit breaker. A spammer can
+// drive the verify API into a 4xx stream at will (any header-complete POST
+// to the unauthenticated webhook route forces a verify dial), so verify
+// failures must never open the circuit live checkout's createOrder rides —
+// that would let webhook spam fast-fail real payments for the cooldown
+// window.
+async function _verifyBreakerIsolated() {
+  var calls = [];
+  var pp = _adapter({
+    "/v1/notifications/verify-webhook-signature": function () { return _res(400, { name: "INVALID_REQUEST" }); },
+    "/v2/checkout/orders": function () { return _res(201, { id: "ORDER-OK", status: "CREATED" }); },
+  }, calls);
+  check("adapter exposes a distinct verify breaker", !!pp.verifyBreaker && pp.verifyBreaker !== pp.breaker);
+  var headers = {
+    "paypal-auth-algo": "SHA256withRSA", "paypal-cert-url": "https://api.paypal.com/cert",
+    "paypal-transmission-id": "tx-1", "paypal-transmission-sig": "sig-1", "paypal-transmission-time": "2026-05-25T00:00:00Z",
+  };
+  var rawBody = JSON.stringify({ id: "WH-SPAM", event_type: "PAYMENT.CAPTURE.COMPLETED" });
+  // Past the failure threshold (5 consecutive) — enough to open a breaker.
+  for (var i = 0; i < 7; i += 1) {
+    var r = await pp.verifyWebhook(headers, rawBody);
+    check("spam verify " + i + " refused (never ok)", r.ok === false);
+  }
+  // The verify circuit is now open (fast-fail), but the PAYMENT circuit is
+  // untouched: a real checkout dial still goes through and succeeds.
+  var order = await pp.createOrder({ amount_minor: 2999, currency: "USD" });
+  check("checkout dial unaffected by verify-failure stream", order.id === "ORDER-OK");
+}
+
+// _decimalToMinor — the strict inverse of the outbound minor→decimal
+// conversion, used by the webhook refund mirror. Exact, zero-decimal-aware,
+// and throwing (never guessing) on garbage.
+function _decimalToMinorUnit() {
+  var d2m = payment._decimalToMinor;
+  check("USD 5.00 → 500",        d2m("5.00", "USD") === 500);
+  check("USD 5.5 → 550",         d2m("5.5", "USD") === 550);
+  check("USD 0.01 → 1",          d2m("0.01", "USD") === 1);
+  check("USD 29 → 2900",         d2m("29", "USD") === 2900);
+  check("JPY 2999 → 2999",       d2m("2999", "JPY") === 2999);
+  check("round-trips the outbound conversion",
+    d2m(payment._minorToDecimalString(123456, "USD"), "USD") === 123456);
+  assert.throws(function () { d2m("5.001", "USD"); }, /decimal string/);
+  assert.throws(function () { d2m("12.5", "JPY"); }, /fractional digits/);
+  assert.throws(function () { d2m("-5.00", "USD"); }, /decimal string/);
+  assert.throws(function () { d2m("5,00", "USD"); }, /decimal string/);
+  assert.throws(function () { d2m(500, "USD"); }, /decimal string/);
+  assert.throws(function () { d2m(undefined, "USD"); }, /decimal string/);
+  assert.throws(function () { d2m("5.00", "usd"); }, /ISO 4217/);
+}
+
+// Boot-time configuration lint: credentials without PAYPAL_WEBHOOK_ID warn
+// (verification would refuse every delivery, silently); a complete or empty
+// env stays quiet. Pure — never throws, never changes behavior.
+function _configWarnings() {
+  var warn = payment.paypalConfigWarnings;
+  check("no creds → no warning",          warn({}).length === 0);
+  check("complete env → no warning",      warn({ PAYPAL_CLIENT_ID: "A", PAYPAL_SECRET: "S", PAYPAL_WEBHOOK_ID: "WH" }).length === 0);
+  var w = warn({ PAYPAL_CLIENT_ID: "A", PAYPAL_SECRET: "S" });
+  check("creds without webhook id → one warning naming the variable",
+    w.length === 1 && w[0].indexOf("PAYPAL_WEBHOOK_ID") !== -1);
+  check("partial creds → no warning",     warn({ PAYPAL_CLIENT_ID: "A" }).length === 0);
+  check("garbage input → no warning, no throw", warn(null).length === 0);
+}
+
 async function _validation() {
   assert.throws(function () { payment.create({ adapter: "paypal" }); }, /clientId/);
   assert.throws(function () { payment.create({ adapter: "paypal", clientId: "AY-client-xxxxxxxx" }); }, /secret/);
@@ -191,6 +255,9 @@ async function run() {
   await _zeroDecimal();
   await _verifyWebhook();
   await _errorPath();
+  await _verifyBreakerIsolated();
+  _decimalToMinorUnit();
+  _configWarnings();
   await _validation();
 }
 

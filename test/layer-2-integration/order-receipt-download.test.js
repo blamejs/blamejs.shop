@@ -46,7 +46,7 @@ var ORDER_ACCESS_SECRET = b.crypto.namespaceHash("order-access-token", "receipt-
 var MIGS = [
   "0001_catalog.sql",
   "0002_cart.sql",
-  "0003_order.sql",
+  "0003_order.sql", "0950_orders_payment_provider.sql", "0951_orders_paypal_capture_id.sql",
   "0206_orders_email_hash.sql",
   "0006_customers.sql",
   "0004_shop_config.sql",

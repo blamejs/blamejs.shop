@@ -103,17 +103,34 @@ function _stubRiskProfile(byCustomer) {
   };
 }
 
+// Stub PayPal handle — records every refund call (PayPal-shaped:
+// `{ capture_id, amount_minor, currency }` + an idempotency key).
+function _stubPaypal() {
+  var calls = [];
+  return {
+    calls: calls,
+    handle: {
+      refund: async function (input, idem) {
+        calls.push({ method: "refund", input: input, idem: idem });
+        return { id: "PPREF-" + calls.length, status: "COMPLETED" };
+      },
+    },
+  };
+}
+
 function _setup(stubOpts) {
   stubOpts = stubOpts || {};
   var q   = _makeQuery();
   var pay = _stubPayment(stubOpts.payment || {});
+  var pp  = _stubPaypal();
   var risk = _stubRiskProfile(stubOpts.riskBands || {});
   var ra = refundAutomation.create({
     query:               q,
     payment:             pay.handle,
+    paypal:              stubOpts.omitPaypal ? null : pp.handle,
     customerRiskProfile: stubOpts.omitRisk ? null : risk.handle,
   });
-  return { query: q, ra: ra, payment: pay, risk: risk };
+  return { query: q, ra: ra, payment: pay, paypal: pp, risk: risk };
 }
 
 // ---- defineAutoRule: happy path + refusals -----------------------------
@@ -393,6 +410,69 @@ async function _executeAutoRefundComposesPayment() {
   }), /amount_minor/);
 }
 
+// ---- executeAutoRefund routes PayPal-captured orders to the PayPal handle
+
+async function _executeAutoRefundPaypalRouting() {
+  var ctx = _setup();
+  await ctx.ra.defineAutoRule({
+    slug:                          "default",
+    max_amount_minor:              10000,
+    max_refunds_per_customer_year: 5,
+    requires_low_risk:             false,
+    eligible_reasons:              [],
+    currency_in_set:               [],
+  });
+  var res = await ctx.ra.executeAutoRefund({
+    order_id:          "order-pp-1",
+    customer_id:       "customer-pp-1",
+    amount_minor:      2500,
+    reason:            "requested_by_customer",
+    provider:          "paypal",
+    paypal_capture_id: "CAP-AUTO-1",
+    currency:          "USD",
+  });
+  check("paypal execute auto_approved",          res.decision === "auto_approved");
+  check("paypal handle called once",             ctx.paypal.calls.length === 1);
+  check("stripe handle NOT called",              ctx.payment.calls.length === 0);
+  check("paypal refund maps the capture id",     ctx.paypal.calls[0].input.capture_id === "CAP-AUTO-1");
+  check("paypal refund maps amount + currency",
+    ctx.paypal.calls[0].input.amount_minor === 2500 && ctx.paypal.calls[0].input.currency === "USD");
+  check("paypal refund carries a per-decision idempotency key",
+    typeof ctx.paypal.calls[0].idem === "string" && ctx.paypal.calls[0].idem.indexOf("auto-refund:") === 0);
+
+  // Validation: a PayPal request must name the capture + currency.
+  await assert.rejects(ctx.ra.executeAutoRefund({
+    order_id: "order-pp-2", customer_id: "customer-pp-2",
+    amount_minor: 100, reason: "requested_by_customer", provider: "paypal", currency: "USD",
+  }), /paypal_capture_id/);
+  await assert.rejects(ctx.ra.executeAutoRefund({
+    order_id: "order-pp-3", customer_id: "customer-pp-3",
+    amount_minor: 100, reason: "requested_by_customer", provider: "paypal", paypal_capture_id: "CAP-X",
+  }), /currency/);
+  await assert.rejects(ctx.ra.executeAutoRefund({
+    order_id: "order-pp-4", customer_id: "customer-pp-4",
+    amount_minor: 100, reason: "requested_by_customer", provider: "venmo",
+  }), /provider/);
+
+  // No PayPal handle wired: a PayPal request is REFUSED — never routed
+  // through the Stripe handle with PayPal identifiers.
+  var bare = _setup({ omitPaypal: true });
+  await bare.ra.defineAutoRule({
+    slug:                          "default",
+    max_amount_minor:              10000,
+    max_refunds_per_customer_year: 5,
+    requires_low_risk:             false,
+    eligible_reasons:              [],
+    currency_in_set:               [],
+  });
+  await assert.rejects(bare.ra.executeAutoRefund({
+    order_id: "order-pp-5", customer_id: "customer-pp-5",
+    amount_minor: 100, reason: "requested_by_customer",
+    provider: "paypal", paypal_capture_id: "CAP-Y", currency: "USD",
+  }), /no paypal handle is wired/);
+  check("refusal never dialed the stripe handle", bare.payment.calls.length === 0);
+}
+
 // ---- markManualOverride -------------------------------------------------
 
 async function _markManualOverride() {
@@ -562,6 +642,7 @@ async function run() {
   await _evaluateRequiresLowRisk();
   await _evaluateCustomerYearCap();
   await _executeAutoRefundComposesPayment();
+  await _executeAutoRefundPaypalRouting();
   await _markManualOverride();
   await _listUpdateArchive();
 }
