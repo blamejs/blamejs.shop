@@ -58,7 +58,7 @@ var assert  = helpers.assert;
 var MIG_PATHS = [
   "0102_quotes.sql",
   "0211_quote_view_token.sql",
-  "0940_quote_response_version.sql",
+  "0227_quote_response_version.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
