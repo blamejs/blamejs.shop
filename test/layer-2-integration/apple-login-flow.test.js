@@ -27,7 +27,8 @@ var check   = helpers.check;
 var b = bShop.framework;
 
 var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0006_customers.sql",
-            "0205_customer_oauth_identities.sql", "0206_orders_email_hash.sql"]
+            "0205_customer_oauth_identities.sql", "0206_orders_email_hash.sql",
+            "0226_guest_order_reconciliations.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) { return t.replace(/--[^\n]*\n/g, "\n").split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean); }
@@ -130,6 +131,10 @@ async function _run() {
     check("guest cart adopted on sign-in",       (await handle.cart.bySession(sid)).customer_id === linked.id);
     // Guest order claimed — proves email_verified:"true" (string) is honored.
     check("guest order claimed (string verified)", (await handle.order.get(guestOrderId)).customer_id === linked.id);
+    // The attach is traceable: one audit row, attributed to verified email.
+    var appleRecons = await handle.order.reconciliationsForCustomer(linked.id);
+    check("apple sign-in wrote a reconciliation row", appleRecons.length === 1 &&
+      appleRecons[0].order_id === guestOrderId && appleRecons[0].linked_via === "verified-email");
 
     // A forged state (no match to the sealed cookie) is dropped.
     var jar2 = helpers.cookieJar();

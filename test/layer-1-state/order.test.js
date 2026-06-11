@@ -26,7 +26,8 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql"].map(function (f) {
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0206_orders_email_hash.sql",
+            "0226_guest_order_reconciliations.sql"].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
 
@@ -578,6 +579,116 @@ async function _newOrderObserver() {
   check("detached observer never fires", detachedFires === 0);
 }
 
+// ---- guest-order reconciliation by verified email ----------------------
+//
+// A guest checkout records the buyer-email hash on the order (no owner).
+// When the shopper later proves control of that email (an OIDC sign-in the
+// provider verified, or a magic-link click), linkGuestOrdersByEmailHash
+// attaches the matching NULL-owner orders to the account so they surface in
+// /account/orders. The CALLER is responsible for the verification; this
+// primitive does the matched attach + an append-only audit row, and must:
+//   - attach on a matching email hash (the verified-ownership case);
+//   - NOT attach an order whose hash does NOT match;
+//   - be a no-op on an already-attached order (idempotent re-run);
+//   - skip a guest order that recorded no email hash (NULL — unmatchable).
+async function _guestOrderReconciliation() {
+  var q       = _makeQuery();
+  var catalog = bShop.catalog.create({ query: q });
+  var cart    = bShop.cart.create({ query: q, catalog: catalog });
+  var order   = bShop.order.create({ query: q });
+
+  // Distinct slug/SKU per order so the seed carts don't collide.
+  var seedN = 0;
+  async function _guestOrder(emailHash) {
+    seedN += 1;
+    var p = await catalog.products.create({ slug: "recon-" + seedN, title: "Recon", status: "active" });
+    var v = await catalog.variants.create(p.id, { sku: "RECON-" + seedN });
+    await catalog.prices.set(v.id, { currency: "USD", amount_minor: 1999 });
+    var sid = _validUUID();
+    var c = await cart.create(sid, { currency: "USD" });
+    await cart.addLine(c.id, { variant_id: v.id, qty: 1 });
+    var oi = {
+      cart_id: c.id, session_id: sid, currency: "USD",
+      subtotal_minor: 1999, discount_minor: 0, tax_minor: 0, shipping_minor: 0, grand_total_minor: 1999,
+      ship_to: { country: "US", state: "CA", postal: "94103" },
+      customer_email_hash: emailHash,   // NULL → a guest order with no recorded email
+      lines: [{ variant_id: v.id, sku: v.sku, qty: 1, unit_amount_minor: 1999, unit_currency: "USD" }],
+    };
+    return await order.createFromCart(oi);   // customer_id omitted → guest order (NULL owner)
+  }
+
+  var customerId   = _validUUID();
+  var buyerHash     = "hash-buyer-verified-aaaa";
+  var strangerHash  = "hash-someone-else-bbbb";
+
+  // Two guest orders under the buyer's email, one under a different email,
+  // and one guest order that recorded NO email hash at all.
+  var mine1   = await _guestOrder(buyerHash);
+  var mine2   = await _guestOrder(buyerHash);
+  var theirs  = await _guestOrder(strangerHash);
+  var noHash  = await _guestOrder(null);
+
+  check("seed: guest orders start unowned",
+    !mine1.customer_id && !mine2.customer_id && !theirs.customer_id && !noHash.customer_id);
+
+  // (1) A verified-email match attaches every matching NULL-owner order.
+  var linked = await order.linkGuestOrdersByEmailHash(customerId, buyerHash, { linked_via: "verified-email" });
+  check("verified-match attaches both matching orders", linked === 2);
+  check("matching order 1 now owned",  (await order.get(mine1.id)).customer_id === customerId);
+  check("matching order 2 now owned",  (await order.get(mine2.id)).customer_id === customerId);
+
+  // (2) A non-matching email is NOT attached — never another buyer's order.
+  check("non-matching order untouched", (await order.get(theirs.id)).customer_id === null);
+
+  // (4) A guest order with no recorded email hash is skipped (unmatchable).
+  check("no-email-hash order untouched", (await order.get(noHash.id)).customer_id === null);
+
+  // The attach left one audit row per newly-attached order, attributed to
+  // the proof route — the disputed-link trail.
+  var recons = await order.reconciliationsForCustomer(customerId);
+  check("reconciliation wrote one audit row per attach", recons.length === 2);
+  check("audit rows name the attached orders",
+    recons.map(function (r) { return r.order_id; }).sort().join(",") ===
+    [mine1.id, mine2.id].sort().join(","));
+  check("audit rows attribute the proof route",
+    recons.every(function (r) { return r.linked_via === "verified-email"; }));
+  check("audit rows record the matched email hash",
+    recons.every(function (r) { return r.email_hash === buyerHash; }));
+
+  // (3) Re-running attaches nothing new (idempotent) and writes no new audit
+  // rows — the orders are already owned, so the claim-guard skips them.
+  var again = await order.linkGuestOrdersByEmailHash(customerId, buyerHash, { linked_via: "verified-email" });
+  check("re-run attaches nothing (idempotent)", again === 0);
+  check("re-run wrote no new audit rows",
+    (await order.reconciliationsForCustomer(customerId)).length === 2);
+
+  // An unknown linked_via falls back to the safe default rather than writing
+  // an arbitrary string into the audit trail.
+  var fresh = _validUUID();
+  await order.linkGuestOrdersByEmailHash(fresh, strangerHash, { linked_via: "totally-made-up" });
+  var freshRecons = await order.reconciliationsForCustomer(fresh);
+  check("unknown linked_via falls back to verified-email",
+    freshRecons.length === 1 && freshRecons[0].linked_via === "verified-email");
+
+  // magic-link is an accepted proof route, recorded verbatim.
+  var mlCust = _validUUID();
+  var mlHash = "hash-magic-link-cccc";
+  await _guestOrder(mlHash);
+  await order.linkGuestOrdersByEmailHash(mlCust, mlHash, { linked_via: "magic-link" });
+  var mlRecons = await order.reconciliationsForCustomer(mlCust);
+  check("magic-link proof route recorded verbatim",
+    mlRecons.length === 1 && mlRecons[0].linked_via === "magic-link");
+
+  // Validation: a bad customer id and an empty hash both throw.
+  await assert.rejects(order.linkGuestOrdersByEmailHash("not-a-uuid", buyerHash), /customer id/);
+  await assert.rejects(order.linkGuestOrdersByEmailHash(customerId, ""),          /emailHash/);
+  await assert.rejects(order.reconciliationsForCustomer("not-a-uuid"),            /customer id/);
+
+  // A customer who never claimed a guest order has an empty trail.
+  check("clean account has empty reconciliation trail",
+    (await order.reconciliationsForCustomer(_validUUID())).length === 0);
+}
+
 async function run() {
   await _create();
   await _happyPath();
@@ -590,6 +701,7 @@ async function run() {
   await _settlementFailureIsCrashSafe();
   await _claimGuardLostRace();
   await _newOrderObserver();
+  await _guestOrderReconciliation();
 }
 
 module.exports = { run: run };

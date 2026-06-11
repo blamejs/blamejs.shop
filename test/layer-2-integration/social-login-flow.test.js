@@ -26,7 +26,8 @@ var check   = helpers.check;
 var b = bShop.framework;
 
 var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0006_customers.sql",
-            "0205_customer_oauth_identities.sql", "0206_orders_email_hash.sql"]
+            "0205_customer_oauth_identities.sql", "0206_orders_email_hash.sql",
+            "0226_guest_order_reconciliations.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) { return t.replace(/--[^\n]*\n/g, "\n").split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean); }
@@ -134,6 +135,11 @@ async function _run() {
     // The prior guest order placed under this (now verified) email is
     // claimed into the account.
     check("guest order claimed on verified sign-in", (await handle.order.get(guestOrderId)).customer_id === linked.id);
+    // The attach left an audit row naming the order, the account, and the
+    // proof route — so a disputed link is traceable.
+    var recons = await handle.order.reconciliationsForCustomer(linked.id);
+    check("reconciliation wrote one audit row",  recons.length === 1 && recons[0].order_id === guestOrderId);
+    check("audit row attributes the proof route", recons[0].linked_via === "verified-email");
 
     // A forged callback whose state doesn't match the cookie is dropped.
     var jar2 = helpers.cookieJar();

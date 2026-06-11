@@ -188,6 +188,10 @@ async function _fulfillFullScope() {
   var wishlistReader       = _mockReader("wishlist",       "wishlist",        [], 0);   // wired, but empty for this customer
   var surveysReader        = _mockReader("surveys",        "survey_invitations", [{ survey_slug: "nps" }], 1);
   var recentlyViewedReader = _mockReader("recentlyViewed", "recently_viewed", [{ product_id: "p-1" }], 1);
+  // The feedback / holdover / wallet domains: each keys a row by the customer.
+  var suggestionBoxReader  = _mockReader("suggestionBox",  "suggestions",     [{ id: "sg-1", title: "Stock more sizes" }], 1);
+  var saveForLaterReader   = _mockReader("saveForLater",   "save_for_later",  [{ sku: "SKU-1", quantity: 2 }], 1);
+  var storeCreditReader    = _mockReader("storeCredit",    "store_credit_ledger", { balance_minor: 500, history: [{ kind: "credit", amount_minor: 500 }] }, 1);
 
   var ce = complianceExport.create({
     query:          q,
@@ -204,6 +208,9 @@ async function _fulfillFullScope() {
     wishlist:       wishlistReader,
     surveys:        surveysReader,
     recentlyViewed: recentlyViewedReader,
+    suggestionBox:  suggestionBoxReader,
+    saveForLater:   saveForLaterReader,
+    storeCredit:    storeCreditReader,
   });
 
   var customerId = _uuid();
@@ -234,6 +241,9 @@ async function _fulfillFullScope() {
   check("fulfill data.wishlist present (empty)",   Array.isArray(bundle.data.wishlist) && bundle.data.wishlist.length === 0);
   check("fulfill data.surveys present",            Array.isArray(bundle.data.surveys) && bundle.data.surveys.length === 1);
   check("fulfill data.recentlyViewed present",     Array.isArray(bundle.data.recentlyViewed) && bundle.data.recentlyViewed.length === 1);
+  check("fulfill data.suggestionBox present",      Array.isArray(bundle.data.suggestionBox) && bundle.data.suggestionBox.length === 1);
+  check("fulfill data.saveForLater present",       Array.isArray(bundle.data.saveForLater) && bundle.data.saveForLater.length === 1);
+  check("fulfill data.storeCredit present",        bundle.data.storeCredit && bundle.data.storeCredit.balance_minor === 500);
 
   // Completeness manifest — one entry per scope section, classified
   // exported / empty / absent so an unexported table is never silent.
@@ -439,10 +449,13 @@ async function _deletionFlow() {
 
   // Domains absent surface — every domain in the deletion order that
   // wasn't injected (subscriptions / paymentMethods / supportTickets /
-  // reviews / consentLedger / wishlist / surveys / recentlyViewed).
-  check("dry-run reports absent domains",       preview.domains_absent.length === 8);
+  // reviews / consentLedger / wishlist / surveys / recentlyViewed /
+  // suggestionBox / saveForLater / storeCredit).
+  check("dry-run reports absent domains",       preview.domains_absent.length === 11);
   check("dry-run absent includes paymentMethods", preview.domains_absent.indexOf("paymentMethods") !== -1);
   check("dry-run absent includes wishlist",     preview.domains_absent.indexOf("wishlist") !== -1);
+  check("dry-run absent includes saveForLater", preview.domains_absent.indexOf("saveForLater") !== -1);
+  check("dry-run absent includes storeCredit",  preview.domains_absent.indexOf("storeCredit") !== -1);
 
   // Wet run — counts + flips status
   var wet = await ce.processDeletion({ request_id: del.id });

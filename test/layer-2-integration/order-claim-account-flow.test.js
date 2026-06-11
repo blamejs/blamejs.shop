@@ -49,6 +49,7 @@ var MIGS = [
   "0002_cart.sql",
   "0003_order.sql",
   "0206_orders_email_hash.sql",
+  "0226_guest_order_reconciliations.sql",
   "0006_customers.sql",
   "0004_shop_config.sql",
   "0013_giftcards.sql",
@@ -337,6 +338,11 @@ async function _run() {
     // The now-authenticated session sees the order on its account.
     var orderList = await order.listForCustomer(createdCust.id, {});
     check("account now owns the linked order",     orderList.rows.some(function (o) { return o.id === orderId; }));
+    // The magic-link attach wrote a "magic-link" audit row for the order.
+    var claimRecons = await order.reconciliationsForCustomer(createdCust.id);
+    check("magic-link attach wrote an audit row",  claimRecons.some(function (r) {
+      return r.order_id === orderId && r.linked_via === "magic-link";
+    }));
 
     // Single-use: re-clicking the same token is bounced to login.
     var reuse = await helpers.httpRequest({

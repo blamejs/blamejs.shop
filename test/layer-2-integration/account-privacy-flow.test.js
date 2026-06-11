@@ -43,6 +43,8 @@ var MIGS = [
   // full export now covers.
   "0011_reviews.sql", "0185_consent_ledger.sql", "0012_wishlist.sql",
   "0128_customer_surveys.sql", "0050_recently_viewed.sql",
+  // The feedback / holdover / wallet domains added to the full export.
+  "0181_suggestion_box.sql", "0041_save_for_later.sql", "0094_store_credit.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 // The SAME reader shims + streaming helper server.js builds (mirrors
@@ -145,6 +147,30 @@ function _buildReaders(h, query) {
         } catch (_e) { return { table: "recently_viewed", deleted: 0 }; }
       },
     },
+    suggestionBox: {
+      forCustomerExport: async function (id) { try { return await h.suggestionBox.exportForCustomer({ customer_id: id }); } catch (_e) { return []; } },
+      forCustomerDeletion: async function (id, opts) {
+        var dry = !!(opts && opts.dry_run);
+        try { return await h.suggestionBox.eraseForCustomer({ customer_id: id, dry_run: dry }); }
+        catch (_e) { return { table: "suggestions", deleted: 0 }; }
+      },
+    },
+    saveForLater: {
+      forCustomerExport: async function (id) { try { return await h.saveForLater.exportForCustomer(id); } catch (_e) { return []; } },
+      forCustomerDeletion: async function (id, opts) {
+        var dry = !!(opts && opts.dry_run);
+        try { return await h.saveForLater.eraseForCustomer(id, { dry_run: dry }); }
+        catch (_e) { return { table: "save_for_later", deleted: 0 }; }
+      },
+    },
+    storeCredit: {
+      forCustomerExport: async function (id) { try { return await h.storeCredit.exportForCustomer(id); } catch (_e) { return null; } },
+      forCustomerDeletion: async function (id, opts) {
+        var dry = !!(opts && opts.dry_run);
+        try { return await h.storeCredit.eraseForCustomer(id, { dry_run: dry }); }
+        catch (_e) { return { table: "store_credit_ledger", deleted: 0, note: "retained-financial-ledger" }; }
+      },
+    },
   };
 }
 
@@ -213,12 +239,16 @@ async function _run() {
   var wishlist       = bShop.wishlist.create({ cursorSecret: "priv-wishlist" });
   var customerSurveys = bShop.customerSurveys.create({});
   var recentlyViewed = bShop.recentlyViewed.create({ catalog: catalog });
+  var suggestionBox  = bShop.suggestionBox.create({ query: query, cursorSecret: "priv-sugg" });
+  var saveForLater   = bShop.saveForLater.create({ query: query, catalog: catalog, cursorSecret: "priv-sfl" });
+  var storeCredit    = bShop.storeCredit.create({ query: query });
 
   var readers = _buildReaders({
     customers: customers, addresses: addresses, order: order,
     subscriptions: subscriptions, supportTickets: supportTickets, loyalty: loyalty,
     reviews: reviews, consentLedger: consentLedger, wishlist: wishlist,
     customerSurveys: customerSurveys, recentlyViewed: recentlyViewed,
+    suggestionBox: suggestionBox, saveForLater: saveForLater, storeCredit: storeCredit,
   }, query);
   var dsr = bShop.complianceExport.create({
     query: query, customers: readers.customers, addresses: readers.addresses, order: readers.order,
@@ -226,6 +256,7 @@ async function _run() {
     supportTickets: readers.supportTickets, loyalty: readers.loyalty,
     reviews: readers.reviews, consentLedger: readers.consentLedger, wishlist: readers.wishlist,
     surveys: readers.surveys, recentlyViewed: readers.recentlyViewed,
+    suggestionBox: readers.suggestionBox, saveForLater: readers.saveForLater, storeCredit: readers.storeCredit,
   });
   var SECTIONS = bShop.complianceExport.SCOPE_SECTIONS;
 
@@ -238,6 +269,10 @@ async function _run() {
     customer_id: buyer, recipient_name: "Bea Buyer", street_line1: "1 Privacy Way",
     city: "Brussels", postal_code: "1000", country: "BE", is_default_shipping: true, is_default_billing: false,
   });
+  // Feedback / holdover / wallet rows so those export sections are non-empty.
+  await suggestionBox.submitSuggestion({ customer_id: buyer, title: "Add a dark theme", body: "My eyes thank you.", category: "feature_request" });
+  await saveForLater.add({ customer_id: buyer, sku: "PRIV-SKU", quantity: 1, snapshot_price_minor: 1299 });
+  await storeCredit.credit({ customer_id: buyer, amount_minor: 500, source: "goodwill" });
 
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-privacy-"));
   var app = await b.createApp({
