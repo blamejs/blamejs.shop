@@ -408,6 +408,7 @@ var _INTERNAL_CRON_PATHS = {
   "/_/wishlist-alerts-sweep": true,
   "/_/wishlist-digest-sweep": true,
   "/_/stale-order-reap":      true,
+  "/_/quote-expiry-tick":     true,
   "/_/customer-portal-expire": true,
   "/_/campaign-send-tick":    true,
 };
@@ -967,6 +968,30 @@ export default {
           await _shopContainer(env).fetch(reapReq);
         } catch (e) {
           console.error("stale-order-reap failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        }
+      })());
+
+      // Quote-expiry sweep — transitions responded B2B quotes whose
+      // valid_until has elapsed to `expired`, so the operator console's
+      // expired filter reflects the real lifecycle. One bounded, idempotent
+      // pass per fire (per-row conditional UPDATE in the container — an
+      // overlapping tick or a concurrent accept/reprice can't double-
+      // transition). SEPARATE ctx.waitUntil so a slow sweep never blocks
+      // the other ticks; a quiet table is a cheap read.
+      ctx.waitUntil((async function () {
+        try {
+          var qeUrl = new URL("/_/quote-expiry-tick", "http://shop.container");
+          var qeReq = new Request(qeUrl.toString(), {
+            method:  "POST",
+            headers: {
+              "content-type":       "application/json; charset=utf-8",
+              "x-d1-bridge-secret": env.D1_BRIDGE_SECRET || "",
+            },
+            body: "{}",
+          });
+          await _shopContainer(env).fetch(qeReq);
+        } catch (e) {
+          console.error("quote-expiry-tick failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
         }
       })());
 

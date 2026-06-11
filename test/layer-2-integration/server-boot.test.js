@@ -751,6 +751,56 @@ async function _runBridged() {
       !!auditVerifyJson && auditVerifyJson.signing_available === true &&
       auditVerifyJson.checkpoints && auditVerifyJson.checkpoints.ok === true &&
       auditVerifyJson.checkpoints.checkpoints_verified >= 1);
+
+    // 17. Quote-expiry tick — the worker-shaped, secret-gated sweep that
+    //     transitions responded quotes whose valid_until has elapsed to
+    //     `expired`. Self-contained: seeds its own responded quote through
+    //     the SAME bridge-backed query the running server reads, walks its
+    //     valid_until into the past directly in the store (respond rightly
+    //     refuses authoring a past expiry), then proves the whole chain over
+    //     the wire: no secret → 401; the worker-shaped POST (no browser
+    //     fingerprint — the exact shape bot-guard used to 403) reaches its
+    //     handler, flips the row in D1, and a second tick is idempotent
+    //     (expires nothing).
+    var qeQuotes = bShop.quotes.create({ query: mem.query });
+    var qeCustomer = bShop.framework.uuid.v7();
+    var qeQuote = await qeQuotes.requestQuote({
+      customer_id: qeCustomer,
+      lines:       [{ sku: "BOOT-1", quantity: 2 }],
+    });
+    await qeQuotes.respondToQuote({
+      quote_id:    qeQuote.id,
+      line_prices: [{ sku: "BOOT-1", unit_price_minor: 900 }],
+      valid_until: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      currency:    "USD",
+    });
+    mem.db.prepare("UPDATE quotes SET valid_until = ? WHERE id = ?").run(Date.now() - 1000, qeQuote.id);
+
+    var qeUnauth = await _rawPost(state.port, "/_/quote-expiry-tick",
+      { "content-type": "application/json; charset=utf-8" }, "{}");
+    check("bridged boot: /_/quote-expiry-tick without secret is 401", qeUnauth.status === 401);
+    var qeRowUnauth = mem.db.prepare("SELECT status FROM quotes WHERE id = ?").get(qeQuote.id);
+    check("bridged boot: the refused tick transitioned nothing",
+      qeRowUnauth && qeRowUnauth.status === "responded");
+
+    var qeTick = await _rawPost(state.port, "/_/quote-expiry-tick",
+      { "content-type": "application/json; charset=utf-8", "x-d1-bridge-secret": BRIDGE_SECRET }, "{}");
+    check("bridged boot: worker-shaped /_/quote-expiry-tick reaches its handler (2xx ok:true enabled:true)",
+      qeTick.status === 200 && /"ok":true/.test(qeTick.body) && /"enabled":true/.test(qeTick.body));
+    var qeTickJson = null;
+    try { qeTickJson = JSON.parse(qeTick.body); } catch (_e) { qeTickJson = null; }
+    check("bridged boot: the tick reports the expired row in its summary",
+      !!qeTickJson && Number(qeTickJson.expired) >= 1);
+    var qeRow = mem.db.prepare("SELECT status FROM quotes WHERE id = ?").get(qeQuote.id);
+    check("bridged boot: the responded quote landed expired through the bridge",
+      qeRow && qeRow.status === "expired");
+
+    var qeTick2 = await _rawPost(state.port, "/_/quote-expiry-tick",
+      { "content-type": "application/json; charset=utf-8", "x-d1-bridge-secret": BRIDGE_SECRET }, "{}");
+    var qeTick2Json = null;
+    try { qeTick2Json = JSON.parse(qeTick2.body); } catch (_e) { qeTick2Json = null; }
+    check("bridged boot: a second tick is idempotent (expires nothing)",
+      qeTick2.status === 200 && !!qeTick2Json && Number(qeTick2Json.expired) === 0);
   } finally {
     if (state) _cleanup(state);
     await bridge.close();
