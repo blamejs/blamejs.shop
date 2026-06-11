@@ -142,7 +142,12 @@ node -e "
   ticks): those paths skip the bot guard's browser-fingerprint
   heuristics — the Worker's machine-to-machine calls carry no browser
   headers — so the constant-time secret check is the deciding gate,
-  and an unauthenticated caller gets a 401. Generate ≥ 32 bytes of OS
+  and an unauthenticated caller gets a 401. The Worker also verifies
+  the same secret on these cron/event POSTs before forwarding them, so
+  a forged public request is refused at the edge before it reaches the
+  container (the edge check is skipped when the secret is unset, so a
+  deployment that hasn't wired it still forwards rather than dropping
+  every scheduled task). Generate ≥ 32 bytes of OS
   randomness and set the value identically on the Worker (`wrangler
   secret put D1_BRIDGE_SECRET`) and the container env. Rotate
   quarterly or after any Worker-credential compromise.
@@ -293,6 +298,33 @@ node -e "
   (success / failure / denied) and paginated. Opening the log is itself
   recorded (an `audit.read` row), so reviewing the audit trail leaves
   its own forensic mark.
+- **Privacy exports hold the whole record; erasure states a basis per
+  domain.** A subject-access export walks every table that keys a row
+  by the customer — identity, orders, subscriptions, addresses, saved
+  payment-method metadata, support tickets, loyalty, reviews, the
+  consent ledger, wishlist, surveys, recently-viewed, suggestion-box
+  submissions, the save-for-later list, and the store-credit ledger —
+  so the bundle is the full record, not just the order/identity core.
+  The bundle carries a completeness manifest: every in-scope domain is
+  marked exported, empty, or absent, so a domain whose reader isn't
+  wired is visible rather than silently dropped. Erasure deletes the
+  pure-personalization domains (wishlist, recently-viewed, save-for-
+  later), anonymizes the suggestion-box rows in place (both identity
+  keys cleared, the de-identified text left as roadmap signal), revokes
+  every sign-in path and anonymizes the customer profile, and RETAINS
+  the records a controller keeps under a legal-obligation / accounting
+  basis (orders, loyalty ledger, store-credit ledger, consent
+  evidence, published reviews) — each with a stated basis in the
+  per-domain result. Preview a deletion with the dry-run flag to see
+  the blast radius before the irreversible call.
+- **HSTS on every TLS response, edge and container.** Both substrates
+  send `Strict-Transport-Security: max-age=63072000; includeSubDomains;
+  preload` (two years, above the preload-list minimum). The container
+  emits it behind the Cloudflare proxy by trusting the Worker-set
+  `X-Forwarded-Proto`, so a direct-to-container or edge-render-off
+  response carries the same header the edge sends; a plain-HTTP request
+  (local dev, direct non-TLS) omits it, which user agents ignore over
+  HTTP anyway.
 - **Email deliverability — SPF / DKIM / DMARC + one-click unsubscribe.**
   Transactional and broadcast mail is composed on `b.mail`, which signs
   each message with DKIM, but the receiving server still rejects or

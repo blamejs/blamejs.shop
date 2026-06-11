@@ -500,6 +500,72 @@ var _dsrReader = {
       },
     };
   },
+
+  // suggestionBox: customer-authored product ideas + complaints. A row
+  // is keyed to the person by EITHER customer_id (authenticated
+  // submission) OR a one-way email hash under the module's OWN
+  // `suggestion-box-email` namespace (an email-only visitor). The system
+  // stores no raw email anywhere, and that namespace differs from the
+  // customers table's `customer-email` namespace, so an email-only row
+  // can be matched to a customer_id ONLY when the raw email is in hand to
+  // re-hash. The DSR composition root resolves a subject by customer_id
+  // alone, so it queries by customer_id — covering every authenticated
+  // submission. The module's exportForCustomer / eraseForCustomer accept
+  // an optional `email_hash` to also cover email-only rows when a future
+  // caller can supply the suggestion-box-namespace hash. eraseForCustomer
+  // anonymizes (both identity keys -> NULL), keeping the de-identified
+  // roadmap signal — GDPR Art. 17 erasure without orphaning votes.
+  suggestionBox: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        try { return await handle.exportForCustomer({ customer_id: id }); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try { return await handle.eraseForCustomer({ customer_id: id, dry_run: dryRun }); }
+        catch (_e) { return { table: "suggestions", deleted: 0 }; }
+      },
+    };
+  },
+
+  // saveForLater: per-customer holdover list, keyed on customer_id.
+  // export lists the saved rows; erasure DELETES them (pure
+  // personalization, no retention basis). dry-run counts without
+  // mutating.
+  saveForLater: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        try { return await handle.exportForCustomer(id); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try { return await handle.eraseForCustomer(id, { dry_run: dryRun }); }
+        catch (_e) { return { table: "save_for_later", deleted: 0 }; }
+      },
+    };
+  },
+
+  // storeCredit: per-customer account-bound wallet ledger. export
+  // carries the balance + the full ledger history. deletion RETAINS —
+  // a store-credit ledger is a financial / accounting record (the same
+  // legal-obligation basis as the loyalty ledger + gift cards), so the
+  // rows stay and the customer-identity scrub rides the anonymized
+  // customers row.
+  storeCredit: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        try { return await handle.exportForCustomer(id); }
+        catch (_e) { return null; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try { return await handle.eraseForCustomer(id, { dry_run: dryRun }); }
+        catch (_e) { return { table: "store_credit_ledger", deleted: 0, note: "retained-financial-ledger" }; }
+      },
+    };
+  },
 };
 
 // orderNotes is intentionally NOT a per-customer reader: lib/order-notes.js
@@ -2761,6 +2827,12 @@ async function main() {
           wishlist:       wishlist ? _dsrReader.wishlist(wishlist, b.externalDb.query) : null,
           surveys:        customerSurveys ? _dsrReader.surveys(customerSurveys) : null,
           recentlyViewed: recentlyViewed ? _dsrReader.recentlyViewed(recentlyViewed, b.externalDb.query) : null,
+          // Customer-authored feedback, the save-for-later holdover, and the
+          // store-credit wallet ledger — each keys rows by the customer, so
+          // the full subject-access export + erasure cover them too.
+          suggestionBox:  suggestionBox ? _dsrReader.suggestionBox(suggestionBox) : null,
+          saveForLater:   saveForLater  ? _dsrReader.saveForLater(saveForLater)   : null,
+          storeCredit:    storeCredit   ? _dsrReader.storeCredit(storeCredit)     : null,
         };
         complianceExport = bShop.complianceExport.create({
           customers:      complianceExportReaders.customers,
@@ -2776,6 +2848,9 @@ async function main() {
           wishlist:       complianceExportReaders.wishlist,
           surveys:        complianceExportReaders.surveys,
           recentlyViewed: complianceExportReaders.recentlyViewed,
+          suggestionBox:  complianceExportReaders.suggestionBox,
+          saveForLater:   complianceExportReaders.saveForLater,
+          storeCredit:    complianceExportReaders.storeCredit,
         });
       }
 

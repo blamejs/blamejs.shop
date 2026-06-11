@@ -46,6 +46,9 @@ var MIGS = [
   "0011_reviews.sql", "0185_consent_ledger.sql", "0012_wishlist.sql",
   "0128_customer_surveys.sql", "0050_recently_viewed.sql",
   "0205_customer_oauth_identities.sql", "0072_customer_portal_sessions.sql",
+  // The feedback / holdover / wallet domains added to the full export +
+  // erasure scope.
+  "0181_suggestion_box.sql", "0041_save_for_later.sql", "0094_store_credit.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 // The SAME adapter shims server.js builds (kept in sync with _dsrReader).
@@ -199,6 +202,39 @@ function _buildReaders(handles, query) {
         } catch (_e) { return { table: "recently_viewed", deleted: 0 }; }
       },
     },
+    // The feedback / holdover / wallet domains — these shims call the
+    // modules' OWN exportForCustomer / eraseForCustomer methods (kept in
+    // sync with server.js _dsrReader).
+    suggestionBox: {
+      forCustomerExport: async function (id) {
+        try { return await handles.suggestionBox.exportForCustomer({ customer_id: id }); } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try { return await handles.suggestionBox.eraseForCustomer({ customer_id: id, dry_run: dryRun }); }
+        catch (_e) { return { table: "suggestions", deleted: 0 }; }
+      },
+    },
+    saveForLater: {
+      forCustomerExport: async function (id) {
+        try { return await handles.saveForLater.exportForCustomer(id); } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try { return await handles.saveForLater.eraseForCustomer(id, { dry_run: dryRun }); }
+        catch (_e) { return { table: "save_for_later", deleted: 0 }; }
+      },
+    },
+    storeCredit: {
+      forCustomerExport: async function (id) {
+        try { return await handles.storeCredit.exportForCustomer(id); } catch (_e) { return null; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try { return await handles.storeCredit.eraseForCustomer(id, { dry_run: dryRun }); }
+        catch (_e) { return { table: "store_credit_ledger", deleted: 0, note: "retained-financial-ledger" }; }
+      },
+    },
   };
 }
 
@@ -269,6 +305,9 @@ async function _run() {
   var customerSurveys = bShop.customerSurveys.create({ query: query });
   var recentlyViewed = bShop.recentlyViewed.create({ query: query, catalog: catalog });
   var customerPortal = bShop.customerPortal.create({ query: query });
+  var suggestionBox  = bShop.suggestionBox.create({ query: query, cursorSecret: "dsr-readers-sugg" });
+  var saveForLater   = bShop.saveForLater.create({ query: query, catalog: catalog, cursorSecret: "dsr-readers-sfl" });
+  var storeCredit    = bShop.storeCredit.create({ query: query });
 
   var handles = {
     customers: customers, addresses: addresses, order: order,
@@ -276,6 +315,7 @@ async function _run() {
     reviews: reviews, consentLedger: consentLedger, wishlist: wishlist,
     customerSurveys: customerSurveys, recentlyViewed: recentlyViewed,
     customerPortal: customerPortal,
+    suggestionBox: suggestionBox, saveForLater: saveForLater, storeCredit: storeCredit,
   };
   var readers = _buildReaders(handles, query);
 
@@ -294,6 +334,9 @@ async function _run() {
     wishlist:       readers.wishlist,
     surveys:        readers.surveys,
     recentlyViewed: readers.recentlyViewed,
+    suggestionBox:  readers.suggestionBox,
+    saveForLater:   readers.saveForLater,
+    storeCredit:    readers.storeCredit,
   });
 
   // ---- populate a customer across every domain ----
@@ -331,13 +374,21 @@ async function _run() {
     [b.uuid.v7(), cid, Date.now()],
   );
   await customerPortal.createSession({ customer_id: cid, scope: "full" });
+  // Feedback / holdover / wallet rows. The suggestion is keyed by
+  // customer_id (the authenticated-submission path the DSR reader covers).
+  await suggestionBox.submitSuggestion({
+    customer_id: cid, title: "Stock more sizes", body: "Please carry XXL.", category: "product_idea",
+  });
+  await saveForLater.add({ customer_id: cid, sku: "DSR-SKU", quantity: 2, snapshot_price_minor: 1999 });
+  await storeCredit.credit({ customer_id: cid, amount_minor: 750, source: "goodwill" });
 
   // ---- 1. full export: every section present, sections_absent EMPTY ----
   var exReq = await dsr.requestExport({ customer_id: cid, requested_by: "operator-1", jurisdiction: "gdpr", scope: "full" });
   var bundle = await dsr.fulfillRequest({ request_id: exReq.id });
   check("full export sections_absent is empty", Array.isArray(bundle.sections_absent) && bundle.sections_absent.length === 0);
   ["customers", "addresses", "order", "subscriptions", "supportTickets", "loyalty",
-   "reviews", "consentLedger", "wishlist", "surveys", "recentlyViewed"].forEach(function (name) {
+   "reviews", "consentLedger", "wishlist", "surveys", "recentlyViewed",
+   "suggestionBox", "saveForLater", "storeCredit"].forEach(function (name) {
     check("full export has section " + name, bundle.sections_present.indexOf(name) !== -1);
   });
   check("customers section carries the row",  bundle.data.customers && bundle.data.customers.customer && bundle.data.customers.customer.id === cid);
@@ -350,6 +401,10 @@ async function _run() {
   check("consentLedger section is non-empty", Array.isArray(bundle.data.consentLedger) && bundle.data.consentLedger.length >= 1);
   check("wishlist section is non-empty",      Array.isArray(bundle.data.wishlist) && bundle.data.wishlist.length === 1);
   check("recentlyViewed section is non-empty", Array.isArray(bundle.data.recentlyViewed) && bundle.data.recentlyViewed.length === 1);
+  check("suggestionBox section is non-empty", Array.isArray(bundle.data.suggestionBox) && bundle.data.suggestionBox.length === 1);
+  check("suggestionBox row carries the customer_id", bundle.data.suggestionBox[0] && bundle.data.suggestionBox[0].customer_id === cid);
+  check("saveForLater section is non-empty",  Array.isArray(bundle.data.saveForLater) && bundle.data.saveForLater.length === 1);
+  check("storeCredit section carries balance", bundle.data.storeCredit && bundle.data.storeCredit.balance_minor === 750 && Array.isArray(bundle.data.storeCredit.history) && bundle.data.storeCredit.history.length === 1);
   // The completeness manifest covers every scope section.
   check("export carries a manifest",          Array.isArray(bundle.manifest) && bundle.manifest.length === bShop.complianceExport.SCOPE_SECTIONS.full.length);
 
@@ -411,6 +466,29 @@ async function _run() {
   check("tickets retained (deleted: 0)",       ticketsRetained && ticketsRetained.deleted === 0);
   var ordersStill = (await order.listForCustomer(cid, { limit: 10 })).rows;
   check("the order row is still present",       ordersStill.length === 1);
+
+  // ---- feedback anonymized; holdover erased; wallet retained ----
+  var sgErased = result.domains.filter(function (d) { return d.domain === "suggestionBox"; })[0];
+  check("suggestionBox erasure anonymized 1 row", sgErased && sgErased.deleted === 1);
+  // The suggestion row survives (de-identified roadmap signal) but both
+  // identity keys are now NULL — it can no longer be traced to the subject.
+  var sgRowsLeftForCustomer = await suggestionBox.exportForCustomer({ customer_id: cid });
+  check("suggestionBox no longer linkable to the subject", sgRowsLeftForCustomer.length === 0);
+  var sgAnonRow = (await query("SELECT customer_id, customer_email_hash, title FROM suggestions WHERE title = ?1", ["Stock more sizes"])).rows[0];
+  check("the anonymized suggestion row survives", sgAnonRow && sgAnonRow.customer_id === null && sgAnonRow.customer_email_hash === null);
+  // Re-running erase is idempotent (no identity-bearing row left to scrub).
+  var sgReErase = await suggestionBox.eraseForCustomer({ customer_id: cid });
+  check("suggestionBox erase is idempotent",    sgReErase.deleted === 0);
+
+  var sflErased = result.domains.filter(function (d) { return d.domain === "saveForLater"; })[0];
+  check("saveForLater erasure deleted 1 row",   sflErased && sflErased.deleted === 1);
+  var sflLeft = await saveForLater.exportForCustomer(cid);
+  check("saveForLater rows gone after erasure", sflLeft.length === 0);
+
+  var scRetained = result.domains.filter(function (d) { return d.domain === "storeCredit"; })[0];
+  check("storeCredit retained (deleted: 0)",    scRetained && scRetained.deleted === 0);
+  var scAfter = await storeCredit.exportForCustomer(cid);
+  check("storeCredit ledger retained after erasure", scAfter.balance_minor === 750 && scAfter.history.length === 1);
 
   // ---- 5. a failing adapter (unmigrated table) → null/[], bundle assembles ----
   // Build a reader set where one adapter reads a non-existent table: the

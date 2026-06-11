@@ -59,6 +59,25 @@
       // actually constrains where Stripe may pull code from). Any FUTURE app
       // sink that needs HTML/script typing must register its own NAMED policy
       // rather than relying on this passthrough.
+      //
+      // WHY NOT TIGHTEN createScript / createHTML TO AN ALLOWLIST. The
+      // "allow only Stripe" tightening is fully expressed by createScriptURL
+      // (a URL has an origin to vet); createScript / createHTML receive a
+      // CONTENT STRING (inline script text / markup), which has no origin —
+      // there is nothing to match against the Stripe host set. Stripe.js v3
+      // does inject its own TrustedScript / TrustedHTML for the 3-D Secure
+      // challenge and the dynamic per-origin sub-resource loaders, and that
+      // content is opaque + version-dependent. Any value filter here (a
+      // prefix/shape check, a length cap, an inline-handler scrub) risks
+      // refusing a 3DS payload Stripe legitimately needs — the exact
+      // regression the route's prior fix had to undo. The app authors zero
+      // content through these sinks, so the passthrough grants the page
+      // nothing it doesn't already cede to the Stripe SDK that the page
+      // intentionally loads. Re-open the tightening ONLY if the app starts
+      // authoring its own TrustedHTML/TrustedScript on this route (then move
+      // that app content to a NAMED policy and let the default policy reject
+      // all non-Stripe content) OR if Stripe publishes its own Trusted Types
+      // policy (then drop the application default entirely).
       createScript: function (s) { return String(s); },
       createHTML: function (h) { return String(h); },
     });

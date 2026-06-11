@@ -116,6 +116,29 @@ async function _container() {
       resp.headers["content-security-policy"].length > 0);
     check("(a) securityHeaders still ON — X-Frame-Options DENY present",
       resp.headers["x-frame-options"] === "DENY");
+
+    // (a2) HSTS on container responses behind the proxy. The vendored
+    // securityHeaders middleware emits Strict-Transport-Security only when
+    // the request protocol resolves to https; behind the CF Worker the
+    // container socket is plain http and the real scheme rides in
+    // `x-forwarded-proto`. securityHeadersOpts() now passes trustProxy:true
+    // so the middleware reads that header and ships HSTS — without it the
+    // container served NO HSTS on any response. A forwarded-https request
+    // carries the 2-year preload value; a plain-http request (dev / direct,
+    // no forwarded-proto) correctly omits it (RFC 6797 §7.2).
+    var httpsResp = await httpRequest({
+      port: port, path: "/cart",
+      headers: _hdr({ "x-forwarded-proto": "https", "cf-connecting-ip": "203.0.113.21" }),
+    });
+    check("(a2) container emits HSTS on a forwarded-https request",
+      httpsResp.headers["strict-transport-security"] === "max-age=63072000; includeSubDomains; preload");
+
+    var httpResp = await httpRequest({
+      port: port, path: "/cart",
+      headers: _hdr({ "x-forwarded-proto": "http", "cf-connecting-ip": "203.0.113.22" }),
+    });
+    check("(a2) container omits HSTS on a plain-http request (RFC 6797 §7.2)",
+      httpResp.headers["strict-transport-security"] === undefined);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }

@@ -386,6 +386,32 @@ async function _withTopLevelCatch(request, env, ctx, inner) {
   }
 }
 
+// Worker→container internal cron / event endpoints. Every one is fired
+// machine-to-machine from this worker's own `scheduled()` handler (and the
+// InventoryLock DO), each carrying the shared `x-d1-bridge-secret` header.
+// The container ALSO validates that secret first thing in each handler, so a
+// worker-side pre-check is defense-in-depth: it refuses a forged
+// publicly-reachable POST at the edge before any container resource is
+// touched. The check FAILS OPEN when `D1_BRIDGE_SECRET` is unconfigured on
+// the worker (same stance as the existing /_/low-stock-alert gate) so a
+// deploy that hasn't wired the secret yet still forwards rather than 401-ing
+// every cron — the worker's own fires always carry the header, so a
+// configured deploy never self-blocks. `/_/health` + `/_/version` are NOT in
+// this set (handled earlier, no secret — the HEALTHCHECK probe is
+// browser-shaped by contract); `/_/db/query`, `/_/r2/put`, and
+// `/_/low-stock-alert` carry their own gates and return before the
+// fall-through, so listing them here would be dead-but-harmless — they're
+// omitted to keep this the exact set of fall-through cron paths.
+var _INTERNAL_CRON_PATHS = {
+  "/_/cart-recovery-tick":    true,
+  "/_/stock-alert-sweep":     true,
+  "/_/wishlist-alerts-sweep": true,
+  "/_/wishlist-digest-sweep": true,
+  "/_/stale-order-reap":      true,
+  "/_/customer-portal-expire": true,
+  "/_/campaign-send-tick":    true,
+};
+
 export default {
   async fetch(request, env, ctx) {
     return _withTopLevelCatch(request, env, ctx, async function (request, env, ctx) {
@@ -785,6 +811,27 @@ export default {
       const lowStockSecret = request.headers.get("x-d1-bridge-secret");
       if (!env.D1_BRIDGE_SECRET || !_timingSafeEqual(lowStockSecret || "", env.D1_BRIDGE_SECRET)) {
         return _json({ ok: false, error: "UNAUTHORIZED" }, 401);
+      }
+      return _forwardToContainer(request, env);
+    }
+
+    // 7b. Worker→container cron / event POSTs — shared-secret pre-check
+    //     before the fall-through forward (defense-in-depth; the container
+    //     re-validates the secret in each handler). When D1_BRIDGE_SECRET is
+    //     configured, a missing / wrong header is refused HERE at the edge so
+    //     a forged public POST never reaches the container; when it's
+    //     unconfigured the check fails open and forwards, matching the
+    //     /_/low-stock-alert gate above. The worker's own scheduled() fires
+    //     always carry the header, so a configured deploy never blocks its
+    //     own cron — the bot-guard-403'd-cron failure mode does not recur
+    //     (this gate runs at the edge, never the container bot-guard).
+    if (request.method === "POST" &&
+        Object.prototype.hasOwnProperty.call(_INTERNAL_CRON_PATHS, pathname)) {
+      if (env.D1_BRIDGE_SECRET) {
+        const cronSecret = request.headers.get("x-d1-bridge-secret");
+        if (!_timingSafeEqual(cronSecret || "", env.D1_BRIDGE_SECRET)) {
+          return _json({ ok: false, error: "UNAUTHORIZED" }, 401);
+        }
       }
       return _forwardToContainer(request, env);
     }
