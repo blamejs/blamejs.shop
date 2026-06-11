@@ -195,6 +195,15 @@ function _fakeQuery() {
       return { rows: hit ? [hit] : [] };
     }
     if (/^INSERT INTO payment_idempotency/.test(sql)) {
+      // Enforce the PRIMARY KEY like real SQLite/D1: a duplicate key is a
+      // constraint violation unless the statement carries the conflict
+      // clause, in which case it lands zero changes and the caller branches.
+      if (_selectByKey(params[0])) {
+        if (/ON CONFLICT\(idempotency_key\) DO NOTHING/.test(sql)) {
+          return { rows: [], meta: { changes: 0 } };
+        }
+        throw new Error("UNIQUE constraint failed: payment_idempotency.idempotency_key");
+      }
       rows.push({
         idempotency_key: params[0],
         operation:       params[1],
@@ -285,6 +294,39 @@ async function _idempotencyCollisionThrows() {
     /idempotency_key collision \(different inputs\)/,
   );
   check("collision did NOT issue a second Stripe call", fake.calls.length === 1);
+}
+
+// Two genuinely concurrent same-key calls both miss the replay lookup and
+// both dial out — the cache claim must let exactly one row land while the
+// loser defers to it (replaying the winner's response), never dying on the
+// PRIMARY KEY violation the old lookup-then-INSERT shape produced.
+async function _idempotencyConcurrentSameKey() {
+  var fake  = _fakeHttp([
+    { status: 200, body: { id: "pi_race", amount: 500, currency: "usd" } },
+    { status: 200, body: { id: "pi_race", amount: 500, currency: "usd" } },
+  ]);
+  var store = _fakeQuery();
+  var s = payment.create({
+    apiKey:        "sk_test_x",
+    webhookSecret: "whsec_xxxxxxxx",
+    httpClient:    fake.httpClient,
+    query:         store.query,
+  });
+  var key   = "race_key_concurrent_v1";
+  var input = { amount_minor: 500, currency: "usd" };
+  var res = await Promise.all([
+    s.createPaymentIntent(input, key),
+    s.createPaymentIntent(input, key),
+  ]);
+  check("concurrent same-key: neither call throws",     res.length === 2);
+  check("concurrent same-key: both resolve the intent", res[0].id === "pi_race" && res[1].id === "pi_race");
+  check("concurrent same-key: exactly one cache row",   store.rows().length === 1);
+  // A same-key racer with a DIFFERENT body must still refuse, even when it
+  // loses the insert race rather than the lookup.
+  await assert.rejects(
+    s.createPaymentIntent({ amount_minor: 99999, currency: "usd" }, key),
+    /idempotency_key collision \(different inputs\)/,
+  );
 }
 
 async function _idempotencyBypassWhenNoQuery() {
@@ -687,6 +729,7 @@ async function run() {
   await _inputValidation();
   await _idempotencyReplayPaymentIntent();
   await _idempotencyCollisionThrows();
+  await _idempotencyConcurrentSameKey();
   await _idempotencyBypassWhenNoQuery();
   await _idempotencyRefundAndSubscription();
   await _idempotencyKeyValidation();

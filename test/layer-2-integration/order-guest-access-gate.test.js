@@ -54,7 +54,7 @@ var MIGS = [
   "0006_customers.sql",
   "0004_shop_config.sql",
   "0013_giftcards.sql",
-  "0081_gift_card_ledger.sql", "0220_gift_card_ledger_chain.sql",
+  "0081_gift_card_ledger.sql", "0220_gift_card_ledger_chain.sql", "0230_gift_card_ledger_chain_fence.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {

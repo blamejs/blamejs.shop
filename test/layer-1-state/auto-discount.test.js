@@ -49,7 +49,7 @@ var helpers      = require("../helpers");
 var check        = helpers.check;
 var assert       = helpers.assert;
 
-var MIGS = ["0107_auto_discount.sql", "0209_auto_discount_unlock_code.sql"]
+var MIGS = ["0107_auto_discount.sql", "0231_auto_discount_application_unique.sql", "0209_auto_discount_unlock_code.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
@@ -824,9 +824,87 @@ async function _evaluateInputRefusals() {
   }), /customer_id/);
 }
 
+// Pre-charge claims: a capped rule is reserved ATOMICALLY before any money
+// moves, so two concurrent checkouts racing the last redemption can't both
+// receive the discount — the loser is refused closed, a release returns
+// the reservation, the link re-keys to the real order, and a re-delivered
+// recordApplication can't double-count a cap.
+async function _claimsRaceReleaseAndIdempotency() {
+  var q  = _makeQuery();
+  var ad = autoDiscount.create({ query: q });
+
+  // Total cap of 1 — two concurrent claims: exactly one wins.
+  await ad.defineRule({
+    slug: "one-shot", title: "One shot",
+    trigger: { kind: "cart_total_min", min_minor: 100 },
+    value:   { kind: "amount_off_total", minor: 500 },
+    max_redemptions_total: 1,
+  });
+  var res = await Promise.all([
+    ad.claimRedemption({ rule_slug: "one-shot", claim_ref: "claim:cart-a", savings_minor: 500 }),
+    ad.claimRedemption({ rule_slug: "one-shot", claim_ref: "claim:cart-b", savings_minor: 500 }),
+  ]);
+  var winners = res.filter(function (r) { return r.claimed; });
+  var losers  = res.filter(function (r) { return !r.claimed; });
+  check("claim race: exactly one claim wins",         winners.length === 1);
+  check("claim race: loser refused on the total cap", losers.length === 1 && losers[0].reason === "total-cap");
+
+  // Release returns the reservation; a fresh claim succeeds again.
+  var winRef = res[0].claimed ? "claim:cart-a" : "claim:cart-b";
+  check("claim release returns the reservation",
+        (await ad.releaseClaim({ rule_slug: "one-shot", claim_ref: winRef })) === true);
+  check("released cap is claimable again",
+        (await ad.claimRedemption({ rule_slug: "one-shot", claim_ref: "claim:cart-c", savings_minor: 500 })).claimed === true);
+  check("double release is a no-op",
+        (await ad.releaseClaim({ rule_slug: "one-shot", claim_ref: winRef })) === false);
+
+  // Per-customer cap of 1, no total cap — two concurrent claims by the
+  // SAME customer: one wins; a different customer still claims fine.
+  await ad.defineRule({
+    slug: "once-each", title: "Once each",
+    trigger: { kind: "cart_total_min", min_minor: 100 },
+    value:   { kind: "amount_off_total", minor: 300 },
+    max_redemptions_per_customer: 1,
+  });
+  var custA = "cust-aaaa";
+  var perCust = await Promise.all([
+    ad.claimRedemption({ rule_slug: "once-each", claim_ref: "claim:pc-1", savings_minor: 300, customer_id: custA }),
+    ad.claimRedemption({ rule_slug: "once-each", claim_ref: "claim:pc-2", savings_minor: 300, customer_id: custA }),
+  ]);
+  check("per-customer race: exactly one claim wins",
+        perCust.filter(function (r) { return r.claimed; }).length === 1);
+  check("per-customer race: loser refused on the customer cap",
+        perCust.filter(function (r) { return !r.claimed && r.reason === "customer-cap"; }).length === 1);
+  check("a different customer still claims",
+        (await ad.claimRedemption({ rule_slug: "once-each", claim_ref: "claim:pc-3", savings_minor: 300, customer_id: "cust-bbbb" })).claimed === true);
+
+  // Link re-keys the winning claim to the real order id.
+  var pcWinRef = perCust[0].claimed ? "claim:pc-1" : "claim:pc-2";
+  check("link re-keys the claim to the order",
+        (await ad.linkClaimToOrder({ rule_slug: "once-each", claim_ref: pcWinRef, order_id: "ord-real-1" })) === true);
+
+  // Re-claiming with the SAME ref (a retry whose rollback didn't finish)
+  // reuses the claim instead of double-reserving.
+  var reuse = await ad.claimRedemption({ rule_slug: "once-each", claim_ref: "claim:pc-3", savings_minor: 300, customer_id: "cust-bbbb" });
+  check("same-ref re-claim reuses the held claim", reuse.claimed === true && reuse.reused === true);
+
+  // recordApplication is idempotent per (rule, order): a re-delivery
+  // advances the counter once.
+  await ad.defineRule({
+    slug: "rec-idem", title: "Record idem",
+    trigger: { kind: "cart_total_min", min_minor: 100 },
+    value:   { kind: "amount_off_total", minor: 100 },
+  });
+  await ad.recordApplication({ rule_slug: "rec-idem", order_id: "ord-x", savings_minor: 100 });
+  await ad.recordApplication({ rule_slug: "rec-idem", order_id: "ord-x", savings_minor: 100 });
+  var recRule = await ad.getRule("rec-idem");
+  check("recordApplication re-delivery counts once", recRule.redemptions_used === 1);
+}
+
 async function run() {
   await _defineRuleHappy();
   await _defineRuleRefusals();
+  await _claimsRaceReleaseAndIdempotency();
   await _evalCartTotalMin();
   await _evalItemCountMin();
   await _evalSkuPurchase();
