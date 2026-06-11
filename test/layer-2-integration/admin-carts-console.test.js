@@ -45,7 +45,7 @@ var b = bShop.framework;
 var TOKEN = "admin-token-0123456789abcdef-test";
 var MIGS = [
   "0001_catalog.sql", "0002_cart.sql", "0006_customers.sql",
-  "0107_auto_discount.sql", "0209_auto_discount_unlock_code.sql",
+  "0107_auto_discount.sql", "0231_auto_discount_application_unique.sql", "0209_auto_discount_unlock_code.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) { return t.replace(/--[^\n]*\n/g, "\n").split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean); }

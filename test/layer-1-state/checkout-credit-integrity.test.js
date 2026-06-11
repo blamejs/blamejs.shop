@@ -32,7 +32,7 @@ var b       = bShop.framework;
 
 var MIGS = [
   "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql",
-  "0013_giftcards.sql", "0081_gift_card_ledger.sql", "0220_gift_card_ledger_chain.sql", "0216_giftcard_redemption_reversal.sql", "0221_giftcard_redemption_reversal.sql",
+  "0013_giftcards.sql", "0081_gift_card_ledger.sql", "0220_gift_card_ledger_chain.sql", "0230_gift_card_ledger_chain_fence.sql", "0216_giftcard_redemption_reversal.sql", "0221_giftcard_redemption_reversal.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) {
@@ -243,12 +243,83 @@ async function _giftCardProRataOnPartialRefund() {
     (await s.giftcards.balance(card.code)).balance_minor === 5000);
 }
 
+// The CROSS-CART double-spend gate: two different carts presenting the SAME
+// gift card concurrently must yield exactly one paid order — the card debit
+// runs pre-charge, so the SQL balance predicate decides the race and the
+// loser rolls back cleanly (cart re-usable, nothing charged or created).
+async function _crossCartDoubleSpendRefused() {
+  var s = await _setup({ price_minor: 5000 });
+  var card = await s.giftcards.issue({ amount_minor: 5000, currency: "USD" });
+  var c1 = await _freshCart(s);
+  var c2 = await _freshCart(s);
+  function doConfirm(c) {
+    return s.checkout.confirm({
+      cart_id: c.id, ship_to: { country: "US" }, selected_shipping_id: "std",
+      customer: { email: "buyer@example.com" }, gift_card_code: card.code,
+      idempotency_key: "checkout:" + c.id + ":race",
+    });
+  }
+  var res = await Promise.allSettled([doConfirm(c1), doConfirm(c2)]);
+  var won  = res.filter(function (x) { return x.status === "fulfilled"; });
+  var lost = res.filter(function (x) { return x.status === "rejected"; });
+  check("cross-cart: exactly one checkout wins",     won.length === 1);
+  check("cross-cart: the other is refused",          lost.length === 1);
+  var code = lost[0].reason && lost[0].reason.code;
+  check("cross-cart: loser gets a coded credit error (got " + code + ")",
+        code === "GIFTCARD_INSUFFICIENT_BALANCE" || code === "GIFTCARD_NOT_ACTIVE" || code === "GIFTCARD_NOT_FOUND");
+  check("cross-cart: exactly one order row",
+        (await s.query("SELECT id FROM orders", [])).rows.length === 1);
+  check("cross-cart: no PaymentIntent (winner fully covered)",
+        s.payment._keys().length === 0);
+  var reds = (await s.query(
+    "SELECT amount_minor, reversed_at FROM giftcard_redemptions", [])).rows;
+  var liveDebits = reds.filter(function (r) { return r.reversed_at == null; });
+  check("cross-cart: exactly one unreversed redemption",
+        liveDebits.length === 1 && Number(liveDebits[0].amount_minor) === 5000);
+  // The losing cart must be re-usable — claim released, never converted.
+  var c1Status = (await s.cart.get(c1.id)).status;
+  var c2Status = (await s.cart.get(c2.id)).status;
+  check("cross-cart: one cart converted, the loser stays active",
+        [c1Status, c2Status].sort().join(",") === "active,converted");
+}
+
+// A checkout that dies AFTER the pre-charge debit but BEFORE the order
+// exists (PaymentIntent refused) must reverse the debit — the card was
+// taken for an order that will never be created.
+async function _preOrderFailureReversesDebit() {
+  var s = await _setup({ price_minor: 5000 });
+  var card = await s.giftcards.issue({ amount_minor: 2000, currency: "USD" });
+  var c = await _freshCart(s);
+  s.payment.createPaymentIntent = async function () {
+    var down = new Error("stripe is down");
+    down.code = "PSP_UNAVAILABLE";
+    throw down;
+  };
+  var threw = null;
+  try {
+    await s.checkout.confirm({
+      cart_id: c.id, ship_to: { country: "US" }, selected_shipping_id: "std",
+      customer: { email: "buyer@example.com" }, gift_card_code: card.code,
+      idempotency_key: "checkout:" + c.id + ":pspdown",
+    });
+  } catch (e) { threw = e; }
+  check("psp-down: confirm propagates the failure",  threw && threw.code === "PSP_UNAVAILABLE");
+  check("psp-down: card balance restored",           (await s.giftcards.balance(card.code)).balance_minor === 2000);
+  var reds = (await s.query("SELECT reversed_at FROM giftcard_redemptions", [])).rows;
+  check("psp-down: the debit row is claimed reversed",
+        reds.length === 1 && reds[0].reversed_at != null);
+  check("psp-down: no order row",                    (await s.query("SELECT id FROM orders", [])).rows.length === 0);
+  check("psp-down: cart released for retry",         (await s.cart.get(c.id)).status === "active");
+}
+
 async function run() {
   await _concurrentConfirmSingleCharge();
   await _giftCardReversedOnCancel();
   await _postCreateRedeemFailureNeverStrands();
   await _fullyCoveredRedeemFailureNeverStrands();
   await _giftCardProRataOnPartialRefund();
+  await _crossCartDoubleSpendRefused();
+  await _preOrderFailureReversesDebit();
 }
 
 module.exports = { run: run };

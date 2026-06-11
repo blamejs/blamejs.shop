@@ -35,6 +35,7 @@ var assert         = helpers.assert;
 var MIG_GIFTCARDS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0013_giftcards.sql");
 var MIG_LEDGER    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0081_gift_card_ledger.sql");
 var MIG_CHAIN     = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0220_gift_card_ledger_chain.sql");
+var MIG_FENCE     = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0230_gift_card_ledger_chain_fence.sql");
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -53,6 +54,9 @@ function _makeQuery() {
     db.prepare(s).run();
   });
   _splitSchema(nodeFs.readFileSync(MIG_CHAIN, "utf8")).forEach(function (s) {
+    db.prepare(s).run();
+  });
+  _splitSchema(nodeFs.readFileSync(MIG_FENCE, "utf8")).forEach(function (s) {
     db.prepare(s).run();
   });
   return {
@@ -440,6 +444,7 @@ async function run() {
   await _creditDebitBalanceDerivation();
   await _debitOverdraftRefused();
   await _concurrentDebitAtomic();
+  await _concurrentWritesKeepChainUnforked();
   await _historyPagination();
   await _bulkBalance();
   await _expiringBalanceWindow();
@@ -447,6 +452,50 @@ async function run() {
   await _transactionsForOrder();
   await _validation();
   await _exportedConstants();
+}
+
+// Every kind participates in the chain, and concurrent mixed writes can't
+// fork it: the chain-parent fence (UNIQUE(gift_card_id, prev_hash)) makes
+// a stale-tip write collide and retry, so after a burst of racing writes
+// the chain re-verifies end to end — no two rows share a parent, debit
+// rows carry hashes, and every balance_after chains off the row it links.
+async function _concurrentWritesKeepChainUnforked() {
+  var h = _makeQuery();
+  var ledger = giftCardLedger.create({ query: h.query });
+  var cardId = bShop.framework.uuid.v7();
+
+  await ledger.credit({ gift_card_id: cardId, amount_minor: 10000, source: "manual", source_ref: "seed" });
+  // A racing burst of every kind, same wall-clock millisecond bucket.
+  var orderA = bShop.framework.uuid.v7();
+  var orderB = bShop.framework.uuid.v7();
+  var res = await Promise.allSettled([
+    ledger.debit({ gift_card_id: cardId, amount_minor: 3000, order_id: orderA }),
+    ledger.credit({ gift_card_id: cardId, amount_minor: 500, source: "manual", source_ref: "race" }),
+    ledger.debit({ gift_card_id: cardId, amount_minor: 3000, order_id: orderB }),
+    ledger.expire({ gift_card_id: cardId, amount_minor: 200, reason: "race-expire" }),
+  ]);
+  var failed = res.filter(function (x) { return x.status === "rejected"; });
+  check("chain burst: every racing write lands (retries absorb contention)", failed.length === 0);
+
+  var v = await ledger.verifyChain(cardId);
+  check("chain burst: chain verifies end to end", v.ok === true);
+  check("chain burst: all five rows verified",    v.rows_verified === 5);
+
+  // Structural invariants: debit rows are hashed, and no two rows share a
+  // parent (the fork the fence exists to refuse).
+  var rows = h.db.prepare(
+    "SELECT kind, prev_hash, row_hash FROM gift_card_ledger WHERE gift_card_id = ? ORDER BY occurred_at, id"
+  ).all(cardId);
+  var debitRows = rows.filter(function (r) { return r.kind === "debit"; });
+  check("chain burst: debit rows carry chain hashes",
+        debitRows.length === 2 && debitRows.every(function (r) { return r.prev_hash && r.row_hash; }));
+  var parents = rows.map(function (r) { return r.prev_hash; });
+  check("chain burst: no two rows share a parent", new Set(parents).size === parents.length);
+
+  // Tampering still surfaces: flip one amount and the chain breaks there.
+  h.db.prepare("UPDATE gift_card_ledger SET amount_minor = amount_minor + 1 WHERE gift_card_id = ? AND kind = 'expire'").run(cardId);
+  var tampered = await ledger.verifyChain(cardId);
+  check("chain burst: a tampered row breaks verification", tampered.ok === false && tampered.reason === "row_hash mismatch");
 }
 
 module.exports = { run: run };

@@ -476,9 +476,51 @@ async function _exportedConstants() {
   check("instance exposes SOURCES",        inst.SOURCES.length === 5);
 }
 
+// Concurrency: every wallet write computes the live balance and a
+// strictly-monotonic occurred_at INSIDE the guarded insert, so concurrent
+// writes can never base off the same stale snapshot — two racing debits
+// can't co-fulfill against one balance, and two same-millisecond credits
+// both land instead of one silently vanishing under a timestamp tie.
+async function _concurrentWritesNeverDrift() {
+  var f = _factory();
+
+  // Two concurrent 800 debits against a 1000 wallet — exactly one wins.
+  var cust1 = _uuid();
+  await f.credit.credit({ customer_id: cust1, amount_minor: 1000, source: "manual" });
+  var res = await Promise.allSettled([
+    f.credit.debit({ customer_id: cust1, amount_minor: 800, order_id: _uuid() }),
+    f.credit.debit({ customer_id: cust1, amount_minor: 800, order_id: _uuid() }),
+  ]);
+  var fulfilled = res.filter(function (x) { return x.status === "fulfilled"; });
+  var rejected  = res.filter(function (x) { return x.status === "rejected"; });
+  check("concurrent debit: exactly one fulfilled", fulfilled.length === 1);
+  check("concurrent debit: loser refused with the insufficient code",
+        rejected.length === 1 && rejected[0].reason.code === "STORE_CREDIT_INSUFFICIENT_BALANCE");
+  check("concurrent debit: balance is 200, not negative",
+        (await f.credit.balance(cust1)).balance_minor === 200);
+
+  // Two concurrent same-timestamp credits — both land, balance sums.
+  var cust2 = _uuid();
+  var ts = Date.now();
+  await Promise.all([
+    f.credit.credit({ customer_id: cust2, amount_minor: 1000, source: "goodwill", occurred_at: ts }),
+    f.credit.credit({ customer_id: cust2, amount_minor: 1000, source: "goodwill", occurred_at: ts }),
+  ]);
+  check("concurrent credit: balance sums both grants",
+        (await f.credit.balance(cust2)).balance_minor === 2000);
+  var rows = f.db.prepare(
+    "SELECT occurred_at, balance_after_minor FROM store_credit_ledger WHERE customer_id = ? ORDER BY occurred_at"
+  ).all(cust2);
+  check("concurrent credit: two rows with distinct occurred_at",
+        rows.length === 2 && rows[0].occurred_at !== rows[1].occurred_at);
+  check("concurrent credit: snapshots chain (1000 then 2000)",
+        rows[0].balance_after_minor === 1000 && rows[1].balance_after_minor === 2000);
+}
+
 async function run() {
   await _creditDebitBalanceDerivation();
   await _debitOverdraftRefused();
+  await _concurrentWritesNeverDrift();
   await _historyPagination();
   await _bulkBalance();
   await _expiringWithinWindow();
