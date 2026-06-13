@@ -12,7 +12,7 @@ Homepage: **https://blamejs.shop**
 
 ## Requirements
 
-- Node.js LTS (>= 24.16.0)
+- Node.js LTS (>= 24.14.1)
 - For a deployable shop: a Cloudflare account (Workers, Containers, D1, R2, KV, Durable Objects). Local development works without it via `node:sqlite`.
 
 ## Install
