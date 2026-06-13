@@ -513,38 +513,43 @@ async function _dsrExportAndErase() {
   await assert.rejects(w.alerts.eraseForCustomer({ email_hash: "bad\u0000hash" }), /email_hash/);
 }
 
-// A signed-in resubmit of an alert first created anonymously ADOPTS the
-// live row — without the backfill, the row's plaintext address would
-// outlive an account erasure on the anonymous-then-signed-in path (the
-// DSR adapter is customer-id-keyed). Write-once: a row already linked to
-// an account is never re-keyed by a later submission.
-async function _signedInDedupeAdoptsAnonymousRow() {
+// A signed-in resubmit of an alert first created anonymously must NOT
+// adopt the existing row onto the requester's account. The email on the
+// resubmit is caller-supplied and unproven, so re-keying a row created by
+// someone else would let a signed-in caller pull a stranger's
+// subscription into their own privacy scope (export it, erase it).
+// Anonymous rows stay reachable only by the email_hash key + the bearer
+// unsubscribe token, exactly as eraseForCustomer's residual-scope note
+// documents. A row's customer link is set once, at INSERT, and never
+// re-keyed by a later submission.
+async function _signedInResubmitDoesNotAdoptAnonymousRow() {
   var w = _wire();
-  await w.catalog.inventory.create("SKU-ADOPT", { stock_on_hand: 0 });
+  await w.catalog.inventory.create("SKU-NOADOPT", { stock_on_hand: 0 });
   var custId = bShop.framework.uuid.v7();
 
-  var anon = await w.alerts.subscribe({ email: "erin@example.com", sku: "SKU-ADOPT" });
-  check("adopt: first subscribe is anonymous", anon.status === "subscribed");
+  var anon = await w.alerts.subscribe({ email: "erin@example.com", sku: "SKU-NOADOPT" });
+  check("no-adopt: first subscribe is anonymous", anon.status === "subscribed");
 
-  var dedupe = await w.alerts.subscribe({ email: "erin@example.com", sku: "SKU-ADOPT", customer_id: custId });
-  check("adopt: signed-in resubmit dedupes onto the same row",
+  var dedupe = await w.alerts.subscribe({ email: "erin@example.com", sku: "SKU-NOADOPT", customer_id: custId });
+  check("no-adopt: signed-in resubmit still dedupes onto the same row",
         dedupe.id === anon.id && (dedupe.status === "already-pending" || dedupe.status === "already-confirmed"));
 
-  // The adopted row is now reachable from a customer-keyed DSR request.
-  var exported = await w.alerts.exportForCustomer({ customer_id: custId });
-  check("adopt: export by customer_id reaches the adopted row",
-        exported.length === 1 && exported[0].id === anon.id);
+  // The existing anonymous row was NOT re-keyed to the resubmitter, so a
+  // customer-id export/erase by that customer cannot reach it.
+  check("no-adopt: resubmitter's customer_id cannot reach the anonymous row",
+        (await w.alerts.exportForCustomer({ customer_id: custId })).length === 0);
   var erased = await w.alerts.eraseForCustomer({ customer_id: custId });
-  check("adopt: erasure by customer_id deletes the adopted row", erased.deleted === 1);
-  check("adopt: the plaintext address is gone",
-        (await w.alerts.exportForCustomer({ email_hash: w.alerts.hashEmail("erin@example.com") })).length === 0);
+  check("no-adopt: resubmitter's erasure does not delete the anonymous row", erased.deleted === 0);
+  check("no-adopt: the anonymous row survives, reachable by its own email_hash",
+        (await w.alerts.exportForCustomer({ email_hash: w.alerts.hashEmail("erin@example.com") })).length === 1);
 
-  // Write-once: a row linked to one account is never re-keyed by another.
+  // A row the INSERT linked to a customer is likewise never re-keyed by a
+  // later resubmit carrying a different customer_id.
   var otherId = bShop.framework.uuid.v7();
-  var first = await w.alerts.subscribe({ email: "fay@example.com", sku: "SKU-ADOPT", customer_id: custId });
-  await w.alerts.subscribe({ email: "fay@example.com", sku: "SKU-ADOPT", customer_id: otherId });
+  var first = await w.alerts.subscribe({ email: "fay@example.com", sku: "SKU-NOADOPT", customer_id: custId });
+  await w.alerts.subscribe({ email: "fay@example.com", sku: "SKU-NOADOPT", customer_id: otherId });
   var stillFirst = await w.alerts.exportForCustomer({ customer_id: custId });
-  check("adopt: an existing link is never re-keyed",
+  check("no-adopt: an existing customer link is never re-keyed",
         stillFirst.length === 1 && stillFirst[0].id === first.id &&
         (await w.alerts.exportForCustomer({ customer_id: otherId })).length === 0);
 }
@@ -552,7 +557,7 @@ async function _signedInDedupeAdoptsAnonymousRow() {
 async function run() {
   await _subscribeMintsToken();
   await _subscribeDedupesAndDoesNotRevealToken();
-  await _signedInDedupeAdoptsAnonymousRow();
+  await _signedInResubmitDoesNotAdoptAnonymousRow();
   await _confirmTransitionsPendingToConfirmed();
   await _scanAndNotifyFiresWhenInventoryAvailable();
   await _sweepRaceClaimLoserSkipsRow();
