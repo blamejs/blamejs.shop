@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.31",
+  "date": "2026-06-13",
+  "headline": "A partial refund on a split-tender order no longer re-credits the gift card on top of the cash refund",
+  "summary": "A refund-accounting fix. When an order was paid partly by gift card or redeemed loyalty and partly by cash, a partial refund of the cash slice returned the cash through the payment provider AND ALSO re-credited a proportional share to the gift card and loyalty balance — handing back more value than the refund. On a $50 order paid with a $20 gift card and $30 cash, a $30 refund returned $30 in cash plus $12 to the card: $42 for a $30 refund, and the over-credit landed on spendable balance. Refund accounting is now cash-first: a partial refund draws against the cash captured at checkout, and the gift-card and loyalty tenders are re-credited only for the portion of the cumulative refund that exceeds that cash. A full refund still returns every tender in full, exactly once. The gift-card and loyalty share each order was paid with is recorded at checkout so the refund path apportions correctly; orders placed before this release carry no recorded split and are treated as cash-only on partial refunds, with the full-refund path unchanged. No migration to apply.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Partial refunds are cash-first on split-tender orders",
+          "body": "A partial refund returns value to the tender the customer was actually charged: the cash captured by the payment provider. The gift-card and loyalty balances are re-credited only once a refund exceeds the cash captured — so refunding the cash portion of a split-tender order returns just the cash, and the card is restored only by a refund that reaches into the credit-paid share or by a full refund. Previously a partial refund re-minted a proportional slice of the gift card and loyalty on every refund, returning more than the amount refunded; because that credit landed on spendable balance, the excess was real and re-usable."
+        },
+        {
+          "title": "Reconcile gift-card balances touched by earlier split-tender partial refunds",
+          "body": "Operators who issued partial refunds on orders paid partly by gift card or loyalty before this release should review the affected gift-card balances and loyalty ledgers: those refunds may have credited value above the amount refunded. Full refunds were unaffected — they return each tender once. New refunds apportion correctly."
+        }
+      ]
+    }
+  ]
+}

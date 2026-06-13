@@ -243,6 +243,47 @@ async function _giftCardProRataOnPartialRefund() {
     (await s.giftcards.balance(card.code)).balance_minor === 5000);
 }
 
+// SPLIT-TENDER refund accounting is CASH-FIRST. On an order paid partly by
+// gift card and partly by cash, a partial refund of the CASH slice returns
+// only cash (the provider refund) and must NOT also re-credit the gift card.
+// The pre-fix proportional model re-minted floor(gift * refunded / grand) onto
+// the card, so a $30 cash refund on a $50 order ($20 gift + $30 cash) handed
+// back $30 cash + $12 card = $42 for a $30 refund — durable, re-spendable loss.
+// The gift card is only re-credited once the cumulative refund exceeds the
+// cash captured; the terminal full-refund edge returns the full spend, once.
+async function _splitTenderCashRefundDoesNotRecreditGiftCard() {
+  var s = await _setup({ price_minor: 5000 });
+  var card = await s.giftcards.issue({ amount_minor: 2000, currency: "USD" });
+  await s.ledger.credit({ gift_card_id: card.id, amount_minor: 2000, source: "manual", source_ref: "seed" });
+  var c = await _freshCart(s);
+  var result = await s.checkout.confirm({
+    cart_id: c.id, ship_to: { country: "US" }, selected_shipping_id: "std",
+    customer: { email: "buyer@example.com" }, gift_card_code: card.code,
+    idempotency_key: "checkout:" + c.id + ":split",
+  });
+  check("split-tender: a cash slice remains, so a PaymentIntent is created", !!result.payment_intent);
+  check("split-tender: gift card drained by its $20 share at checkout",
+    (await s.giftcards.balance(card.code)).balance_minor === 0);
+  await s.order.transition(result.order.id, "mark_paid", { reason: "webhook" });
+
+  // grand 5000 = gift 2000 + cash 3000. Refund the CASH slice (3000): the
+  // provider returns the cash; the gift card must stay at 0 (pre-fix: 1200).
+  await s.order.recordPartialRefund(result.order.id, { amount_minor: 3000 });
+  check("split-tender: cash-only partial refund does NOT re-credit the gift card",
+    (await s.giftcards.balance(card.code)).balance_minor === 0);
+
+  // A further $10 refund now exceeds the cash captured, so it lands on the
+  // gift tender cash-first: +1000 over the $30 cash → +1000 to the card.
+  await s.order.recordPartialRefund(result.order.id, { amount_minor: 1000 });
+  check("split-tender: refunding past the cash share credits the gift card cash-first",
+    (await s.giftcards.balance(card.code)).balance_minor === 1000);
+
+  // The terminal full-refund edge restores the full gift spend, never more.
+  await s.order.transition(result.order.id, "refund", { reason: "refund-webhook" });
+  check("split-tender: terminal refund restores the full $20 gift spend, no over-credit",
+    (await s.giftcards.balance(card.code)).balance_minor === 2000);
+}
+
 // The CROSS-CART double-spend gate: two different carts presenting the SAME
 // gift card concurrently must yield exactly one paid order — the card debit
 // runs pre-charge, so the SQL balance predicate decides the race and the
@@ -318,6 +359,7 @@ async function run() {
   await _postCreateRedeemFailureNeverStrands();
   await _fullyCoveredRedeemFailureNeverStrands();
   await _giftCardProRataOnPartialRefund();
+  await _splitTenderCashRefundDoesNotRecreditGiftCard();
   await _crossCartDoubleSpendRefused();
   await _preOrderFailureReversesDebit();
 }
