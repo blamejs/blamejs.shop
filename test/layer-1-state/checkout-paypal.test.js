@@ -7,8 +7,9 @@
  *   - capture persists the CAPTURE id + provider on the order row (refunds
  *     dial the capture, never the PayPal order id);
  *   - PAYMENT.CAPTURE.REFUNDED is AMOUNT-AWARE: a partial refund appends a
- *     partial ledger row (gift-card re-credit stays proportional — never the
- *     full re-credit a terminal refund runs); only a balance-clearing amount
+ *     partial ledger row (gift-card re-credit is cash-first — a refund within
+ *     the captured cash never touches the card; the terminal edge restores the
+ *     full spend); only a balance-clearing amount
  *     drives the terminal refund edge; a missing/garbled/mismatched amount
  *     THROWS (the route 5xxes so PayPal redelivers) instead of guessing;
  *   - replay defense: a re-delivered event id is claimed in the shared
@@ -236,15 +237,18 @@ async function _partialRefundMirror() {
   var ppId    = created.paypal_order_id;
 
   // A $5.00 partial refund event → a $5 partial ledger row, order stays
-  // paid, gift re-credit is PROPORTIONAL (500/5000 of the 2000 spend).
+  // paid. Refund accounting is CASH-FIRST: $5 is well within the $30 cash
+  // captured, so the gift card is NOT re-credited (the pre-fix proportional
+  // model re-minted floor(2000*500/5000)=200 here — returning $5 cash PLUS
+  // $2 card for a $5 refund). The gift spend is restored by the terminal edge.
   var r1 = await s.checkout.handlePaypalEvent({
     headers: {}, rawBody: _refundEvt("WH-P1", "REF-P1", ppId, { currency_code: "USD", value: "5.00" }),
   });
   check("partial refund handled as partial",         r1.handled === true && r1.partial === true && r1.amount_minor === 500);
   check("partial refund leaves the order paid",      (await s.order.get(orderId)).status === "paid");
   check("partial refund ledger records 500",         (await s.order.refundedTotalMinor(orderId)) === 500);
-  check("gift re-credit proportional (200), not the full 2000",
-    (await s.giftcards.balance(code)).balance_minor === 200);
+  check("cash-first: a $5 refund within the $30 cash captured leaves the gift card untouched",
+    (await s.giftcards.balance(code)).balance_minor === 0);
 
   // Re-delivery of the SAME event id: claimed, nothing double-appended.
   var r2 = await s.checkout.handlePaypalEvent({
@@ -252,7 +256,7 @@ async function _partialRefundMirror() {
   });
   check("replayed partial event skipped",            r2.handled === true && r2.skipped === "replay");
   check("replay did not double-append the ledger",   (await s.order.refundedTotalMinor(orderId)) === 500);
-  check("replay did not re-credit the card again",   (await s.giftcards.balance(code)).balance_minor === 200);
+  check("replay did not re-credit the card again",   (await s.giftcards.balance(code)).balance_minor === 0);
 
   // The SAME refund id under a FRESH event id (e.g. redelivered after the
   // claim TTL, or mirrored after a console-issued refund): deduped off the
