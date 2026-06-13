@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.34",
+  "date": "2026-06-13",
+  "headline": "Pin the vendored blamejs back to 0.15.6 to restore the production container; the Node 24.16.0 floor stays",
+  "summary": "A deploy-recovery release. The vendored blamejs 0.15.7 adopted in the previous release introduced a regression on the production container's startup path: the application process completed early and exited cleanly instead of staying up and listening, so the platform health check failed and the container was restarted in a loop. Edge-served pages (home, search, product pages) stayed up throughout because they render at the edge, but container-backed routes — account, cart writes, checkout, and the admin console — stopped responding. This release pins the vendored framework back to 0.15.6, the last version the container booted and served on, restoring those routes. The Node 24.16.0 minimum from the previous release is retained — the in-image build smoke runs on Node 24.16.0 and passes, so the runtime bump is not implicated. Re-adopting blamejs 0.15.7 is deferred until its startup-path change is understood and confirmed against a live container. No migration to apply.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Container-backed routes serve again",
+          "body": "The production container boots and stays up on vendored blamejs 0.15.6, so account, cart, checkout, and admin respond again. The previous release's 0.15.7 left the container exiting during startup — passing the in-image build smoke but failing to stay listening once deployed, which only the live boot path (cluster startup + the D1 bridge) exercises. The vendored tree is pinned back through the vendor pipeline with integrity hashes re-stamped; the Node 24.16.0 floor is unchanged."
+        }
+      ]
+    }
+  ]
+}
