@@ -1,0 +1,27 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.35",
+  "date": "2026-06-13",
+  "headline": "Restore the production container — revert the Node floor to 24.14.1 (24.16.0 crash-loops the container) and advance vendored blamejs to 0.15.8",
+  "summary": "A deploy-recovery release that also moves the vendored framework forward. Raising the Node floor to 24.16.0 (in the prior releases) put the production container into a startup crash-loop: the application process exits cleanly during the live cluster boot instead of staying up and listening, so the platform health check fails and the container restarts in a loop. The in-image build smoke runs on Node 24.16.0 and passes — it does not exercise the live cluster + database-bridge startup the deployed container runs, so the incompatibility only surfaces on deploy. Container-backed routes (account, cart writes, checkout, admin) went down while edge-served pages stayed up. This release reverts the Node minimum to 24.14.1 — the runtime the container booted and served on — restoring those routes, and advances the vendored blamejs to 0.15.8 (whose Node floor is 24.14.1), so the framework still moves to the latest release on a runtime that works. Operators who deployed a 24.16.0-floor build on a container platform should move to this release. The Node 24.16.0 move is held pending a fix for the container-runtime incompatibility. No migration to apply.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Production container boots and serves again on Node 24.14.1",
+          "body": "The Node minimum is back to 24.14.1 across the container image, CI, and the package engines floor. The previous 24.16.0 floor left the deployed container exiting during the live cluster + database-bridge startup — a path the in-image build smoke (which runs the test suite, not the production server boot) cannot reach — so it passed every build gate yet failed to stay up once deployed. Account, cart, checkout, and admin respond again."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Vendored blamejs advanced to 0.15.8",
+          "body": "The vendored framework moves to 0.15.8 (engines floor 24.14.1), refreshed through the vendor pipeline with integrity hashes re-stamped. It carries the 0.15.7/0.15.8 security and correctness work — federated-sign-in authorized-party enforcement, URL/host canonicalizer hardening, OTLP log-sink attribute redaction, and EU DSA / China PIPL compliance record-builders — none of which was implicated in the container startup issue (that was the Node runtime, confirmed by the container failing on 0.15.6 under the 24.16.0 floor too)."
+        }
+      ]
+    }
+  ]
+}
