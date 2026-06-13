@@ -22,6 +22,13 @@
  *     lookup severed, live portal session revoked) so a deleted customer
  *     can't sign back in, while orders / loyalty / tickets / reviews /
  *     consent ledger are retained (deleted: 0),
+ *   - the remaining customer-keyed domains round-trip: the guest-order
+ *     claim audit exports + tombstones its email hash (linkage retained,
+ *     tombstone namespace distinct from the customers-row one), stock
+ *     alerts export the plaintext address + hard-delete on erasure,
+ *     quotes retain but clear the customer message, order ratings +
+ *     operator notes delete, product Q&A anonymizes in place, gift cards
+ *     + referral accounting retain with identity keys severed,
  *   - a failing adapter (unmigrated table) returns null/[] and the bundle
  *     still assembles.
  *
@@ -49,6 +56,14 @@ var MIGS = [
   // The feedback / holdover / wallet domains added to the full export +
   // erasure scope.
   "0181_suggestion_box.sql", "0041_save_for_later.sql", "0094_store_credit.sql",
+  // The remaining customer-keyed domains: guest-order claim audit, stock
+  // alerts (plaintext email), quotes, ratings, Q&A, CRM notes, gift
+  // cards, referrals.
+  "0226_guest_order_reconciliations.sql",
+  "0048_stock_alerts.sql", "0207_stock_alert_unsubscribe_token.sql",
+  "0102_quotes.sql", "0211_quote_view_token.sql", "0227_quote_response_version.sql",
+  "0151_order_ratings.sql", "0133_product_qa.sql",
+  "0134_customer_notes.sql", "0013_giftcards.sql", "0025_referrals.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 // The SAME adapter shims server.js builds (kept in sync with _dsrReader).
@@ -235,6 +250,184 @@ function _buildReaders(handles, query) {
         catch (_e) { return { table: "store_credit_ledger", deleted: 0, note: "retained-financial-ledger" }; }
       },
     },
+    // The remaining customer-keyed domains (kept in sync with server.js
+    // _dsrReader): guest-order claim audit (export + email-hash
+    // tombstone), stock alerts (export + hard delete), quotes (retain,
+    // clear the customer message), order ratings (delete), product Q&A
+    // (anonymize in place), customer notes (delete), gift cards (retain,
+    // sever issue identity), referrals (retain accounting, sever the
+    // referee link).
+    guestOrderReconciliations: {
+      forCustomerExport: async function (id) {
+        try { return await handles.order.reconciliationsForCustomer(id); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try { return await handles.order.scrubReconciliationEmailHashForCustomer(id, { dry_run: dryRun }); }
+        catch (_e) { return { table: "guest_order_reconciliations", deleted: 0 }; }
+      },
+    },
+    stockAlerts: {
+      forCustomerExport: async function (id) {
+        try { return await handles.stockAlerts.exportForCustomer({ customer_id: id }); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try { return await handles.stockAlerts.eraseForCustomer({ customer_id: id, dry_run: dryRun }); }
+        catch (_e) { return { table: "stock_alerts", deleted: 0 }; }
+      },
+    },
+    quotes: {
+      forCustomerExport: async function (id) {
+        try { return await handles.quotes.quotesForCustomer(id, { limit: 100 }); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var c = (await query("SELECT COUNT(*) AS n FROM quotes WHERE customer_id = ?1 AND message IS NOT NULL", [id])).rows[0];
+            return { table: "quotes", deleted: c ? Number(c.n) : 0, note: "quotes retained; customer message cleared" };
+          }
+          var r = await query(
+            "UPDATE quotes SET message = NULL, updated_at = ?1 WHERE customer_id = ?2 AND message IS NOT NULL",
+            [Date.now(), id],
+          );
+          return { table: "quotes", deleted: Number((r && r.rowCount) || 0), note: "quotes retained; customer message cleared" };
+        } catch (_e) { return { table: "quotes", deleted: 0 }; }
+      },
+    },
+    orderRatings: {
+      forCustomerExport: async function (id) {
+        try { return await handles.orderRatings.ratingsForCustomer({ customer_id: id, limit: 100 }); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var c = (await query("SELECT COUNT(*) AS n FROM order_ratings WHERE customer_id = ?1", [id])).rows[0];
+            return { table: "order_ratings", deleted: c ? Number(c.n) : 0 };
+          }
+          var r = await query("DELETE FROM order_ratings WHERE customer_id = ?1", [id]);
+          return { table: "order_ratings", deleted: Number((r && r.rowCount) || 0) };
+        } catch (_e) { return { table: "order_ratings", deleted: 0 }; }
+      },
+    },
+    productQa: {
+      forCustomerExport: async function (id) {
+        try {
+          return (await query(
+            "SELECT id, product_id, customer_id, body, status, pinned, vote_count, occurred_at " +
+            "FROM product_qa_questions WHERE customer_id = ?1 " +
+            "ORDER BY occurred_at DESC, id DESC LIMIT 100",
+            [id],
+          )).rows;
+        } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var c = (await query("SELECT COUNT(*) AS n FROM product_qa_questions WHERE customer_id = ?1", [id])).rows[0];
+            return { table: "product_qa_questions", deleted: c ? Number(c.n) : 0 };
+          }
+          var r = await query(
+            "UPDATE product_qa_questions SET customer_id = NULL, customer_email_hash = NULL WHERE customer_id = ?1",
+            [id],
+          );
+          return { table: "product_qa_questions", deleted: Number((r && r.rowCount) || 0) };
+        } catch (_e) { return { table: "product_qa_questions", deleted: 0 }; }
+      },
+    },
+    customerNotes: {
+      forCustomerExport: async function (id) {
+        try { return (await handles.customerNotes.notesForCustomer({ customer_id: id, include_archived: true, limit: 100 })).rows; }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var c = (await query("SELECT COUNT(*) AS n FROM customer_notes WHERE customer_id = ?1", [id])).rows[0];
+            return { table: "customer_notes", deleted: c ? Number(c.n) : 0 };
+          }
+          var r = await query("DELETE FROM customer_notes WHERE customer_id = ?1", [id]);
+          return { table: "customer_notes", deleted: Number((r && r.rowCount) || 0) };
+        } catch (_e) { return { table: "customer_notes", deleted: 0 }; }
+      },
+    },
+    giftcards: {
+      forCustomerExport: async function (id) {
+        try {
+          var rows = await handles.giftcards.listForCustomer(id);
+          return (rows || []).map(function (g) {
+            return {
+              id: g.id, code_hint: g.code_hint, currency: g.currency,
+              issued_minor: g.issued_minor, balance_minor: g.balance_minor,
+              issued_to_customer_id: g.issued_to_customer_id, status: g.status,
+              expires_at: g.expires_at, created_at: g.created_at, updated_at: g.updated_at,
+            };
+          });
+        } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) return { table: "giftcards", deleted: 0, note: "retained-for-accounting; issue-identity severed" };
+          await query(
+            "UPDATE giftcards SET issued_to_customer_id = NULL, issued_to_email_hash = NULL, updated_at = ?1 " +
+            "WHERE issued_to_customer_id = ?2",
+            [Date.now(), id],
+          );
+          return { table: "giftcards", deleted: 0, note: "retained-for-accounting; issue-identity severed" };
+        } catch (_e) { return { table: "giftcards", deleted: 0, note: "retained-for-accounting" }; }
+      },
+    },
+    referrals: {
+      forCustomerExport: async function (id) {
+        try {
+          var stats = null;
+          var invitationsSent = [];
+          var asReferee = [];
+          try { stats = await handles.referrals.statsForReferrer(id); } catch (_e2) { stats = null; }
+          try { invitationsSent = await handles.referrals.invitationsForReferrer(id); } catch (_e2) { invitationsSent = []; }
+          try {
+            asReferee = (await query(
+              "SELECT id, referral_code_id, invited_at, visited_at, signed_up_at, " +
+              "first_purchase_at, reward_status FROM referral_invitations " +
+              "WHERE signed_up_customer_id = ?1 ORDER BY invited_at DESC, id DESC",
+              [id],
+            )).rows;
+          } catch (_e2) { asReferee = []; }
+          var hasReferrerActivity = !!(stats && stats.codes && stats.codes.length);
+          if (!hasReferrerActivity && !invitationsSent.length && !asReferee.length) return [];
+          return {
+            as_referrer:      hasReferrerActivity ? stats : null,
+            invitations_sent: invitationsSent,
+            as_referee:       asReferee,
+          };
+        } catch (_e) { return null; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var c = (await query("SELECT COUNT(*) AS n FROM referral_invitations WHERE signed_up_customer_id = ?1", [id])).rows[0];
+            return { table: "referral_invitations", deleted: c ? Number(c.n) : 0, note: "codes + reward accounting retained; referee link severed" };
+          }
+          var tomb = "erased:" + b.crypto.namespaceHash("referral-erased-email", id);
+          var r = await query(
+            "UPDATE referral_invitations SET signed_up_customer_id = NULL, referred_email_hash = ?1 " +
+            "WHERE signed_up_customer_id = ?2",
+            [tomb, id],
+          );
+          return { table: "referral_invitations", deleted: Number((r && r.rowCount) || 0), note: "codes + reward accounting retained; referee link severed" };
+        } catch (_e) { return { table: "referral_invitations", deleted: 0 }; }
+      },
+    },
   };
 }
 
@@ -263,6 +456,28 @@ async function _seedOrder(query, customerId) {
     "payment_intent_id, ship_to_json, created_at, updated_at) " +
     "VALUES (?1, ?2, ?3, ?4, 'paid', 'USD', 1000, 0, 0, 0, 1000, NULL, ?5, ?6, ?6)",
     [id, cartId, customerId, b.uuid.v7(), JSON.stringify({ country: "US", line1: "1 Test St" }), ts],
+  );
+  return id;
+}
+
+// An unowned (guest) order that recorded the buyer-email hash — the
+// candidate linkGuestOrdersByEmailHash later claims into the account,
+// which writes the guest_order_reconciliations audit row under test.
+async function _seedGuestOrder(query, emailHash) {
+  var id = b.uuid.v7();
+  var cartId = b.uuid.v7();
+  var ts = Date.now();
+  await query(
+    "INSERT INTO carts (id, session_id, customer_id, currency, status, created_at, updated_at, expires_at) " +
+    "VALUES (?1, ?2, NULL, 'USD', 'converted', ?3, ?3, ?4)",
+    [cartId, b.uuid.v7(), ts, ts + 86400000],
+  );
+  await query(
+    "INSERT INTO orders (id, cart_id, customer_id, session_id, status, currency, " +
+    "subtotal_minor, discount_minor, tax_minor, shipping_minor, grand_total_minor, " +
+    "payment_intent_id, ship_to_json, customer_email_hash, created_at, updated_at) " +
+    "VALUES (?1, ?2, NULL, ?3, 'paid', 'USD', 1000, 0, 0, 0, 1000, NULL, ?4, ?5, ?6, ?6)",
+    [id, cartId, b.uuid.v7(), JSON.stringify({ country: "US", line1: "2 Guest St" }), emailHash, ts],
   );
   return id;
 }
@@ -308,6 +523,13 @@ async function _run() {
   var suggestionBox  = bShop.suggestionBox.create({ query: query, cursorSecret: "dsr-readers-sugg" });
   var saveForLater   = bShop.saveForLater.create({ query: query, catalog: catalog, cursorSecret: "dsr-readers-sfl" });
   var storeCredit    = bShop.storeCredit.create({ query: query });
+  var stockAlerts    = bShop.stockAlerts.create({ query: query, catalog: catalog });
+  var quotes         = bShop.quotes.create({ query: query });
+  var orderRatings   = bShop.orderRatings.create({ query: query });
+  var productQa      = bShop.productQA.create({ query: query, customers: customers });
+  var customerNotes  = bShop.customerNotes.create({ query: query, cursorSecret: "dsr-readers-notes" });
+  var giftcards      = bShop.giftcards.create({ query: query });
+  var referrals      = bShop.referrals.create({ query: query });
 
   var handles = {
     customers: customers, addresses: addresses, order: order,
@@ -316,6 +538,8 @@ async function _run() {
     customerSurveys: customerSurveys, recentlyViewed: recentlyViewed,
     customerPortal: customerPortal,
     suggestionBox: suggestionBox, saveForLater: saveForLater, storeCredit: storeCredit,
+    stockAlerts: stockAlerts, quotes: quotes, orderRatings: orderRatings,
+    customerNotes: customerNotes, giftcards: giftcards, referrals: referrals,
   };
   var readers = _buildReaders(handles, query);
 
@@ -337,6 +561,14 @@ async function _run() {
     suggestionBox:  readers.suggestionBox,
     saveForLater:   readers.saveForLater,
     storeCredit:    readers.storeCredit,
+    guestOrderReconciliations: readers.guestOrderReconciliations,
+    stockAlerts:    readers.stockAlerts,
+    quotes:         readers.quotes,
+    orderRatings:   readers.orderRatings,
+    productQa:      readers.productQa,
+    customerNotes:  readers.customerNotes,
+    giftcards:      readers.giftcards,
+    referrals:      readers.referrals,
   });
 
   // ---- populate a customer across every domain ----
@@ -346,7 +578,7 @@ async function _run() {
     customer_id: cid, recipient_name: "Dana Subject", street_line1: "1 Privacy Way",
     city: "Brussels", postal_code: "1000", country: "BE", is_default_shipping: true, is_default_billing: false,
   });
-  await _seedOrder(query, cid);
+  var ownOrderId = await _seedOrder(query, cid);
   await _seedSubscription(query, cid);
   await supportTickets.open({
     customer_id: cid, customer_email: "dana@example.com", subject: "Where is my order?",
@@ -381,6 +613,42 @@ async function _run() {
   });
   await saveForLater.add({ customer_id: cid, sku: "DSR-SKU", quantity: 2, snapshot_price_minor: 1999 });
   await storeCredit.credit({ customer_id: cid, amount_minor: 750, source: "goodwill" });
+  // The remaining customer-keyed domains, each seeded through its
+  // production write path.
+  //   guest-order claim: an unowned order under Dana's verified email
+  //   hash, claimed into the account — writes the reconciliation row.
+  var guestHash    = "hash-guest-" + cid;
+  var guestOrderId = await _seedGuestOrder(query, guestHash);
+  var linkedCount  = await order.linkGuestOrdersByEmailHash(cid, guestHash, { linked_via: "magic-link" });
+  check("seed: guest order claimed into the account", linkedCount === 1);
+  //   stock alert (signed-in subscribe carries the customer link).
+  await stockAlerts.subscribe({ email: "dana@example.com", sku: "DSR-SKU", customer_id: cid });
+  //   quote with a customer-authored message.
+  await quotes.requestQuote({
+    customer_id: cid, lines: [{ sku: "DSR-SKU", quantity: 3 }],
+    message: "Can you do a bulk discount on three?",
+  });
+  //   post-fulfillment rating with a free-text comment.
+  await orderRatings.submitRating({
+    order_id: ownOrderId, customer_id: cid,
+    shipping_rating: 5, packaging_rating: 4, recommend_rating: 5, comment: "Fast shipping.",
+  });
+  //   product Q&A question (published content keyed by the asker).
+  await productQa.submitQuestion({ product_id: seedProduct.id, customer_id: cid, body: "Does it ship to Belgium?" });
+  //   operator CRM note about the subject.
+  await customerNotes.addNote({
+    customer_id: cid, author: "operator", body: "Prefers email contact.", kind: "preference",
+  });
+  //   gift card issued to the account.
+  await giftcards.issue({ amount_minor: 2500, currency: "USD", issued_to_customer_id: cid });
+  //   referrals, both directions: Dana refers a friend AND was herself
+  //   referred by another customer (her signup converted an invitation).
+  var ownCode = await referrals.issueCode({ referrer_customer_id: cid });
+  await referrals.invite({ code: ownCode.code, referee_email: "friend@example.com" });
+  var otherReferrer = b.uuid.v7();
+  var theirCode = await referrals.issueCode({ referrer_customer_id: otherReferrer });
+  await referrals.invite({ code: theirCode.code, referee_email: "dana@example.com" });
+  await referrals.trackSignup({ customer_id: cid, code: theirCode.code });
 
   // ---- 1. full export: every section present, sections_absent EMPTY ----
   var exReq = await dsr.requestExport({ customer_id: cid, requested_by: "operator-1", jurisdiction: "gdpr", scope: "full" });
@@ -388,12 +656,15 @@ async function _run() {
   check("full export sections_absent is empty", Array.isArray(bundle.sections_absent) && bundle.sections_absent.length === 0);
   ["customers", "addresses", "order", "subscriptions", "supportTickets", "loyalty",
    "reviews", "consentLedger", "wishlist", "surveys", "recentlyViewed",
-   "suggestionBox", "saveForLater", "storeCredit"].forEach(function (name) {
+   "suggestionBox", "saveForLater", "storeCredit",
+   "guestOrderReconciliations", "stockAlerts", "quotes", "orderRatings",
+   "productQa", "customerNotes", "giftcards", "referrals"].forEach(function (name) {
     check("full export has section " + name, bundle.sections_present.indexOf(name) !== -1);
   });
   check("customers section carries the row",  bundle.data.customers && bundle.data.customers.customer && bundle.data.customers.customer.id === cid);
   check("addresses section is non-empty",     Array.isArray(bundle.data.addresses) && bundle.data.addresses.length === 1);
-  check("order section is non-empty",         Array.isArray(bundle.data.order) && bundle.data.order.length === 1);
+  // Two orders: the one placed signed-in plus the claimed guest order.
+  check("order section is non-empty",         Array.isArray(bundle.data.order) && bundle.data.order.length === 2);
   check("subscriptions section is non-empty", Array.isArray(bundle.data.subscriptions) && bundle.data.subscriptions.length === 1);
   check("supportTickets section is non-empty", Array.isArray(bundle.data.supportTickets) && bundle.data.supportTickets.length === 1);
   check("loyalty section carries balance",    bundle.data.loyalty && bundle.data.loyalty.balance && bundle.data.loyalty.balance.balance === 120);
@@ -405,6 +676,41 @@ async function _run() {
   check("suggestionBox row carries the customer_id", bundle.data.suggestionBox[0] && bundle.data.suggestionBox[0].customer_id === cid);
   check("saveForLater section is non-empty",  Array.isArray(bundle.data.saveForLater) && bundle.data.saveForLater.length === 1);
   check("storeCredit section carries balance", bundle.data.storeCredit && bundle.data.storeCredit.balance_minor === 750 && Array.isArray(bundle.data.storeCredit.history) && bundle.data.storeCredit.history.length === 1);
+  check("guestOrderReconciliations section carries the claim audit row",
+    Array.isArray(bundle.data.guestOrderReconciliations) &&
+    bundle.data.guestOrderReconciliations.length === 1 &&
+    bundle.data.guestOrderReconciliations[0].order_id === guestOrderId &&
+    bundle.data.guestOrderReconciliations[0].email_hash === guestHash &&
+    bundle.data.guestOrderReconciliations[0].linked_via === "magic-link");
+  check("stockAlerts section carries the row + plaintext address",
+    Array.isArray(bundle.data.stockAlerts) && bundle.data.stockAlerts.length === 1 &&
+    bundle.data.stockAlerts[0].email_normalised === "dana@example.com");
+  check("stockAlerts section excludes the token hashes",
+    bundle.data.stockAlerts[0].confirmation_token_hash === undefined &&
+    bundle.data.stockAlerts[0].unsubscribe_token_hash === undefined);
+  check("quotes section carries the customer message",
+    Array.isArray(bundle.data.quotes) && bundle.data.quotes.length === 1 &&
+    bundle.data.quotes[0].message === "Can you do a bulk discount on three?");
+  check("orderRatings section carries the comment",
+    Array.isArray(bundle.data.orderRatings) && bundle.data.orderRatings.length === 1 &&
+    bundle.data.orderRatings[0].comment === "Fast shipping.");
+  check("productQa section carries the question body",
+    Array.isArray(bundle.data.productQa) && bundle.data.productQa.length === 1 &&
+    bundle.data.productQa[0].body === "Does it ship to Belgium?");
+  check("customerNotes section carries the operator note",
+    Array.isArray(bundle.data.customerNotes) && bundle.data.customerNotes.length === 1 &&
+    bundle.data.customerNotes[0].body === "Prefers email contact.");
+  check("giftcards section carries the card metadata",
+    Array.isArray(bundle.data.giftcards) && bundle.data.giftcards.length === 1 &&
+    bundle.data.giftcards[0].balance_minor === 2500 &&
+    typeof bundle.data.giftcards[0].code_hint === "string");
+  check("giftcards section never carries the code hash",
+    bundle.data.giftcards[0].code_hash === undefined);
+  check("referrals section covers both directions",
+    bundle.data.referrals &&
+    bundle.data.referrals.as_referrer && bundle.data.referrals.as_referrer.codes.length === 1 &&
+    Array.isArray(bundle.data.referrals.invitations_sent) && bundle.data.referrals.invitations_sent.length === 1 &&
+    Array.isArray(bundle.data.referrals.as_referee) && bundle.data.referrals.as_referee.length === 1);
   // The completeness manifest covers every scope section.
   check("export carries a manifest",          Array.isArray(bundle.manifest) && bundle.manifest.length === bShop.complianceExport.SCOPE_SECTIONS.full.length);
 
@@ -433,6 +739,28 @@ async function _run() {
   check("dry-run did NOT archive addresses",   addrAfterPreview.length === addrBefore.length && addrAfterPreview.length === 1);
   var delRowAfterPreview = await dsr.getRequest(delReq.id);
   check("dry-run did NOT advance status",      delRowAfterPreview.status === "received");
+  // The new domains preview their counts side-effect-free too.
+  function _domainCount(rv, name) {
+    var d = rv.domains.filter(function (x) { return x.domain === name; })[0];
+    return d ? d.deleted : null;
+  }
+  check("dry-run counts guestOrderReconciliations", _domainCount(preview, "guestOrderReconciliations") === 1);
+  check("dry-run counts stockAlerts",               _domainCount(preview, "stockAlerts") === 1);
+  check("dry-run counts quotes (message-bearing)",  _domainCount(preview, "quotes") === 1);
+  check("dry-run counts orderRatings",              _domainCount(preview, "orderRatings") === 1);
+  check("dry-run counts productQa",                 _domainCount(preview, "productQa") === 1);
+  check("dry-run counts customerNotes",             _domainCount(preview, "customerNotes") === 1);
+  check("dry-run giftcards report retained (0)",    _domainCount(preview, "giftcards") === 0);
+  check("dry-run counts the severed referee link",  _domainCount(preview, "referrals") === 1);
+  // Side-effect-free: the recon hash is still live, the alert row (and
+  // its plaintext address) still present, the gift card still linked.
+  var reconAfterPreview = await order.reconciliationsForCustomer(cid);
+  check("dry-run did NOT tombstone the recon hash",
+    reconAfterPreview.length === 1 && reconAfterPreview[0].email_hash === guestHash);
+  check("dry-run did NOT delete the stock alert",
+    (await stockAlerts.exportForCustomer({ customer_id: cid })).length === 1);
+  check("dry-run did NOT sever the gift-card link",
+    (await giftcards.listForCustomer(cid)).length === 1);
 
   // ---- 4. deletion WET-RUN archives + anonymizes; retains the rest ----
   var result = await dsr.processDeletion({ request_id: delReq.id, dry_run: false });
@@ -465,7 +793,74 @@ async function _run() {
   check("loyalty retained (deleted: 0)",       loyaltyRetained && loyaltyRetained.deleted === 0);
   check("tickets retained (deleted: 0)",       ticketsRetained && ticketsRetained.deleted === 0);
   var ordersStill = (await order.listForCustomer(cid, { limit: 10 })).rows;
-  check("the order row is still present",       ordersStill.length === 1);
+  check("both order rows are still present",    ordersStill.length === 2);
+
+  // ---- guest-order claim audit: linkage retained, email hash tombstoned ----
+  check("guestOrderReconciliations scrubbed 1 row", _domainCount(result, "guestOrderReconciliations") === 1);
+  var reconAfter = await order.reconciliationsForCustomer(cid);
+  check("the claim audit row survives erasure",
+    reconAfter.length === 1 && reconAfter[0].order_id === guestOrderId &&
+    reconAfter[0].linked_via === "magic-link");
+  check("the recon email hash is tombstoned",
+    typeof reconAfter[0].email_hash === "string" &&
+    reconAfter[0].email_hash.indexOf("erased:") === 0 &&
+    reconAfter[0].email_hash !== guestHash);
+  // Distinct tombstone namespaces: the recon tombstone must never equal
+  // the customers-row tombstone for the same id (different labels into
+  // the same namespaceHash → different digests).
+  var custTombstone = "erased:" + b.crypto.namespaceHash("customer-erased-email", cid);
+  check("recon tombstone differs from the customers-row tombstone",
+    reconAfter[0].email_hash !== custTombstone);
+  var custRowAfter = (await query("SELECT email_hash FROM customers WHERE id = ?1", [cid])).rows[0];
+  check("the two tombstones never share a digest",
+    custRowAfter && custRowAfter.email_hash !== reconAfter[0].email_hash);
+
+  // ---- stock alerts: hard-deleted, plaintext address gone ----
+  check("stockAlerts erasure deleted 1 row", _domainCount(result, "stockAlerts") === 1);
+  var alertRowsAfter = (await query("SELECT * FROM stock_alerts WHERE customer_id = ?1 OR email_normalised = ?2", [cid, "dana@example.com"])).rows;
+  check("no stock-alert row (or plaintext address) survives", alertRowsAfter.length === 0);
+
+  // ---- quotes: record retained, customer message cleared ----
+  check("quotes erasure cleared 1 message", _domainCount(result, "quotes") === 1);
+  var quotesAfter = await quotes.quotesForCustomer(cid, {});
+  check("the quote row survives with its lines",
+    quotesAfter.length === 1 && quotesAfter[0].lines.length === 1);
+  check("the customer message is cleared", quotesAfter[0].message === null);
+
+  // ---- order ratings + operator notes: deleted outright ----
+  check("orderRatings erasure deleted 1 row", _domainCount(result, "orderRatings") === 1);
+  check("no rating row survives", (await orderRatings.ratingsForCustomer({ customer_id: cid })).length === 0);
+  check("customerNotes erasure deleted 1 row", _domainCount(result, "customerNotes") === 1);
+  check("no note row survives",
+    (await customerNotes.notesForCustomer({ customer_id: cid, include_archived: true })).rows.length === 0);
+
+  // ---- product Q&A: anonymized in place (suggestion-box shape) ----
+  check("productQa erasure anonymized 1 row", _domainCount(result, "productQa") === 1);
+  var qaRow = (await query("SELECT customer_id, customer_email_hash, body FROM product_qa_questions WHERE body = ?1", ["Does it ship to Belgium?"])).rows[0];
+  check("the question survives de-identified",
+    qaRow && qaRow.customer_id === null && qaRow.customer_email_hash === null);
+
+  // ---- gift cards: retained, issue-identity severed, balance intact ----
+  check("giftcards retained (deleted: 0)", _domainCount(result, "giftcards") === 0);
+  check("no gift card is linkable to the subject", (await giftcards.listForCustomer(cid)).length === 0);
+  var gcRow = (await query("SELECT issued_to_customer_id, issued_to_email_hash, balance_minor, status FROM giftcards", [])).rows[0];
+  check("the card row survives with its balance",
+    gcRow && gcRow.issued_to_customer_id === null && gcRow.issued_to_email_hash === null &&
+    Number(gcRow.balance_minor) === 2500 && gcRow.status === "active");
+
+  // ---- referrals: accounting retained, referee link severed ----
+  check("referrals severed 1 referee link", _domainCount(result, "referrals") === 1);
+  var refereeRows = (await query("SELECT signed_up_customer_id, referred_email_hash FROM referral_invitations WHERE signed_up_customer_id = ?1", [cid])).rows;
+  check("no invitation still points at the subject", refereeRows.length === 0);
+  var severedInv = (await query(
+    "SELECT signed_up_customer_id, referred_email_hash FROM referral_invitations " +
+    "WHERE referred_email_hash LIKE 'erased:%'", [],
+  )).rows[0];
+  check("the converted invitation survives de-identified",
+    severedInv && severedInv.signed_up_customer_id === null);
+  var ownCodeRow = (await query("SELECT status FROM referral_codes WHERE referrer_customer_id = ?1", [cid])).rows[0];
+  check("the subject's own code row is retained (rides the anonymized customer)",
+    ownCodeRow && ownCodeRow.status === "active");
 
   // ---- feedback anonymized; holdover erased; wallet retained ----
   var sgErased = result.domains.filter(function (d) { return d.domain === "suggestionBox"; })[0];

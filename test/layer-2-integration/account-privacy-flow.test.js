@@ -45,6 +45,12 @@ var MIGS = [
   "0128_customer_surveys.sql", "0050_recently_viewed.sql",
   // The feedback / holdover / wallet domains added to the full export.
   "0181_suggestion_box.sql", "0041_save_for_later.sql", "0094_store_credit.sql",
+  // The remaining customer-keyed domains the full export covers.
+  "0226_guest_order_reconciliations.sql",
+  "0048_stock_alerts.sql", "0207_stock_alert_unsubscribe_token.sql",
+  "0102_quotes.sql", "0211_quote_view_token.sql", "0227_quote_response_version.sql",
+  "0151_order_ratings.sql", "0133_product_qa.sql",
+  "0134_customer_notes.sql", "0013_giftcards.sql", "0025_referrals.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 // The SAME reader shims + streaming helper server.js builds (mirrors
@@ -171,6 +177,76 @@ function _buildReaders(h, query) {
         catch (_e) { return { table: "store_credit_ledger", deleted: 0, note: "retained-financial-ledger" }; }
       },
     },
+    // The remaining customer-keyed domains (kept in sync with server.js
+    // _dsrReader; this flow test exercises the export side, so only the
+    // forCustomerExport shims are declared — the deletion side is covered
+    // end to end by dsr-readers.test.js).
+    guestOrderReconciliations: {
+      forCustomerExport: async function (id) { try { return await h.order.reconciliationsForCustomer(id); } catch (_e) { return []; } },
+    },
+    stockAlerts: {
+      forCustomerExport: async function (id) { try { return await h.stockAlerts.exportForCustomer({ customer_id: id }); } catch (_e) { return []; } },
+    },
+    quotes: {
+      forCustomerExport: async function (id) { try { return await h.quotes.quotesForCustomer(id, { limit: 100 }); } catch (_e) { return []; } },
+    },
+    orderRatings: {
+      forCustomerExport: async function (id) { try { return await h.orderRatings.ratingsForCustomer({ customer_id: id, limit: 100 }); } catch (_e) { return []; } },
+    },
+    productQa: {
+      forCustomerExport: async function (id) {
+        try {
+          return (await query(
+            "SELECT id, product_id, customer_id, body, status, pinned, vote_count, occurred_at " +
+            "FROM product_qa_questions WHERE customer_id = ?1 ORDER BY occurred_at DESC, id DESC LIMIT 100",
+            [id],
+          )).rows;
+        } catch (_e) { return []; }
+      },
+    },
+    customerNotes: {
+      forCustomerExport: async function (id) {
+        try { return (await h.customerNotes.notesForCustomer({ customer_id: id, include_archived: true, limit: 100 })).rows; }
+        catch (_e) { return []; }
+      },
+    },
+    giftcards: {
+      forCustomerExport: async function (id) {
+        try {
+          var rows = await h.giftcards.listForCustomer(id);
+          return (rows || []).map(function (g) {
+            return {
+              id: g.id, code_hint: g.code_hint, currency: g.currency,
+              issued_minor: g.issued_minor, balance_minor: g.balance_minor,
+              issued_to_customer_id: g.issued_to_customer_id, status: g.status,
+              expires_at: g.expires_at, created_at: g.created_at, updated_at: g.updated_at,
+            };
+          });
+        } catch (_e) { return []; }
+      },
+    },
+    referrals: {
+      forCustomerExport: async function (id) {
+        try {
+          var stats = null;
+          var invitationsSent = [];
+          var asReferee = [];
+          try { stats = await h.referrals.statsForReferrer(id); } catch (_e2) { stats = null; }
+          try { invitationsSent = await h.referrals.invitationsForReferrer(id); } catch (_e2) { invitationsSent = []; }
+          try {
+            asReferee = (await query(
+              "SELECT id, referral_code_id, invited_at, visited_at, signed_up_at, " +
+              "first_purchase_at, reward_status FROM referral_invitations " +
+              "WHERE signed_up_customer_id = ?1 ORDER BY invited_at DESC, id DESC",
+              [id],
+            )).rows;
+          } catch (_e2) { asReferee = []; }
+          var hasReferrerActivity = !!(stats && stats.codes && stats.codes.length);
+          if (!hasReferrerActivity && !invitationsSent.length && !asReferee.length) return [];
+          return { as_referrer: hasReferrerActivity ? stats : null, invitations_sent: invitationsSent, as_referee: asReferee };
+        } catch (_e) { return null; }
+      },
+    },
   };
 }
 
@@ -242,6 +318,12 @@ async function _run() {
   var suggestionBox  = bShop.suggestionBox.create({ query: query, cursorSecret: "priv-sugg" });
   var saveForLater   = bShop.saveForLater.create({ query: query, catalog: catalog, cursorSecret: "priv-sfl" });
   var storeCredit    = bShop.storeCredit.create({ query: query });
+  var stockAlerts    = bShop.stockAlerts.create({ query: query, catalog: catalog });
+  var quotes         = bShop.quotes.create({ query: query });
+  var orderRatings   = bShop.orderRatings.create({ query: query });
+  var customerNotes  = bShop.customerNotes.create({ query: query, cursorSecret: "priv-notes" });
+  var giftcards      = bShop.giftcards.create({ query: query });
+  var referrals      = bShop.referrals.create({ query: query });
 
   var readers = _buildReaders({
     customers: customers, addresses: addresses, order: order,
@@ -249,6 +331,8 @@ async function _run() {
     reviews: reviews, consentLedger: consentLedger, wishlist: wishlist,
     customerSurveys: customerSurveys, recentlyViewed: recentlyViewed,
     suggestionBox: suggestionBox, saveForLater: saveForLater, storeCredit: storeCredit,
+    stockAlerts: stockAlerts, quotes: quotes, orderRatings: orderRatings,
+    customerNotes: customerNotes, giftcards: giftcards, referrals: referrals,
   }, query);
   var dsr = bShop.complianceExport.create({
     query: query, customers: readers.customers, addresses: readers.addresses, order: readers.order,
@@ -257,6 +341,10 @@ async function _run() {
     reviews: readers.reviews, consentLedger: readers.consentLedger, wishlist: readers.wishlist,
     surveys: readers.surveys, recentlyViewed: readers.recentlyViewed,
     suggestionBox: readers.suggestionBox, saveForLater: readers.saveForLater, storeCredit: readers.storeCredit,
+    guestOrderReconciliations: readers.guestOrderReconciliations,
+    stockAlerts: readers.stockAlerts, quotes: readers.quotes, orderRatings: readers.orderRatings,
+    productQa: readers.productQa, customerNotes: readers.customerNotes,
+    giftcards: readers.giftcards, referrals: readers.referrals,
   });
   var SECTIONS = bShop.complianceExport.SCOPE_SECTIONS;
 
@@ -273,6 +361,9 @@ async function _run() {
   await suggestionBox.submitSuggestion({ customer_id: buyer, title: "Add a dark theme", body: "My eyes thank you.", category: "feature_request" });
   await saveForLater.add({ customer_id: buyer, sku: "PRIV-SKU", quantity: 1, snapshot_price_minor: 1299 });
   await storeCredit.credit({ customer_id: buyer, amount_minor: 500, source: "goodwill" });
+  // A back-in-stock alert linked to the account, so the streamed export's
+  // stockAlerts section carries the row (plaintext address included).
+  await stockAlerts.subscribe({ email: "bea@example.com", sku: "PRIV-SKU", customer_id: buyer });
 
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-privacy-"));
   var app = await b.createApp({
@@ -354,6 +445,9 @@ async function _run() {
       check("download carries section " + name, Object.prototype.hasOwnProperty.call(parsed.data, name));
     });
     check("download addresses section non-empty", Array.isArray(parsed.data.addresses) && parsed.data.addresses.length === 1);
+    check("download stockAlerts section carries the subscription",
+      Array.isArray(parsed.data.stockAlerts) && parsed.data.stockAlerts.length === 1 &&
+      parsed.data.stockAlerts[0].email_normalised === "bea@example.com");
     // The completeness manifest covers every scope section so an absent
     // table is visible, never silently dropped.
     check("download carries a manifest", Array.isArray(parsed.manifest) && parsed.manifest.length === SECTIONS.full.length);

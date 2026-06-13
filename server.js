@@ -175,13 +175,14 @@ function _problemFromError(res, e, ctx) {
 // (lib/compliance-export.js). The primitive expects each injected handle
 // to expose `forCustomerExport(customer_id)` (returns that domain's data)
 // and/or `forCustomerDeletion(customer_id, { dry_run })` (executes/counts
-// the per-domain erasure and returns `{ table, deleted }`). NONE of the
-// per-domain primitives (customers / addresses / order / subscriptions /
-// support-tickets / loyalty) implement that contract, so passing the raw
-// handles ships an empty bundle (every section lands in `sections_absent`)
-// and every deletion is a no-op. These shims map each handle's EXISTING
-// read / soft-delete surface onto the contract, so the per-domain modules
-// stay unchanged.
+// the per-domain erasure and returns `{ table, deleted }`). The per-domain
+// primitives don't implement that contract directly (a few — suggestion
+// box, save-for-later, store credit, stock alerts — expose their own
+// export/erase verbs the shims delegate to), so passing the raw handles
+// would ship an empty bundle (every section lands in `sections_absent`)
+// and every deletion would be a no-op. These shims map each handle's
+// EXISTING read / soft-delete surface onto the contract, so the
+// per-domain modules stay unchanged.
 //
 // Resilience (drop-silent, hot-path): an export adapter that fails (one
 // unmigrated table, a read error) returns null/[]/{} rather than throwing —
@@ -563,6 +564,299 @@ var _dsrReader = {
         var dryRun = !!(opts && opts.dry_run);
         try { return await handle.eraseForCustomer(id, { dry_run: dryRun }); }
         catch (_e) { return { table: "store_credit_ledger", deleted: 0, note: "retained-financial-ledger" }; }
+      },
+    };
+  },
+
+  // guestOrderReconciliations: the append-only audit trail of guest orders
+  // claimed into this account (when, which order, by which proof, against
+  // which email hash). export delegates to the order primitive's own
+  // per-customer read (which collapses a missing table to []). deletion
+  // RETAINS the linkage rows under the same audit basis as orders — a
+  // disputed link must stay traceable — but tombstones the recorded
+  // email_hash via the primitive's scrub, because that hash is a verbatim
+  // copy of the lookup key the customers-row erasure deliberately severs.
+  // The scrub honors dry_run (count only, no side effects).
+  guestOrderReconciliations: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        try { return await handle.reconciliationsForCustomer(id); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try { return await handle.scrubReconciliationEmailHashForCustomer(id, { dry_run: dryRun }); }
+        catch (_e) { return { table: "guest_order_reconciliations", deleted: 0 }; }
+      },
+    };
+  },
+
+  // stockAlerts: back-in-stock subscriptions — the one customer-keyed
+  // table that stores a PLAINTEXT email (by design, for the notification
+  // dispatcher). export lists the subject's rows (address included; token
+  // hashes excluded); deletion hard-DELETEs them — convenience data with
+  // no retention basis. Residual scope, stated explicitly: rows
+  // subscribed anonymously (customer_id NULL) are unreachable from a
+  // customer_id-keyed request because only the module's own email-hash
+  // namespace could match them and no raw address is held to re-derive
+  // it; those rows stay bounded by the 90-day retention TTL + the
+  // per-row bearer unsubscribe token the subscriber holds.
+  stockAlerts: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        try { return await handle.exportForCustomer({ customer_id: id }); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try { return await handle.eraseForCustomer({ customer_id: id, dry_run: dryRun }); }
+        catch (_e) { return { table: "stock_alerts", deleted: 0 }; }
+      },
+    };
+  },
+
+  // quotes: the customer's RFQ requests (lines + the operator's pricing
+  // response). export lists them via the primitive's own per-customer
+  // read. deletion RETAINS the quote/pricing record (a commercial record
+  // whose customer linkage rides the anonymized customers row, like
+  // orders) but clears the subject-authored free-text `message` — the
+  // customer's own words, with no retention need. `deleted` counts the
+  // rows whose message was cleared; a re-run finds none. `query` is the
+  // composition-root D1 handle (the primitive exposes no message-scrub
+  // verb).
+  quotes: function (handle, query) {
+    return {
+      forCustomerExport: async function (id) {
+        // quotesForCustomer caps limit at 500 (lib/quotes.js MAX_LIMIT);
+        // a higher value throws and would silently empty the section.
+        try { return await handle.quotesForCustomer(id, { limit: 100 }); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var c = (await query(
+              "SELECT COUNT(*) AS n FROM quotes WHERE customer_id = ?1 AND message IS NOT NULL", [id],
+            )).rows[0];
+            return { table: "quotes", deleted: c ? Number(c.n) : 0, note: "quotes retained; customer message cleared" };
+          }
+          var r = await query(
+            "UPDATE quotes SET message = NULL, updated_at = ?1 WHERE customer_id = ?2 AND message IS NOT NULL",
+            [Date.now(), id],
+          );
+          return { table: "quotes", deleted: Number((r && r.rowCount) || 0), note: "quotes retained; customer message cleared" };
+        } catch (_e) { return { table: "quotes", deleted: 0 }; }
+      },
+    };
+  },
+
+  // orderRatings: post-fulfillment CSAT scores + the subject's free-text
+  // comment. export lists them via the primitive's per-customer read.
+  // deletion DELETEs the rows outright — subject-authored opinion data
+  // with no accounting basis (unlike published reviews, ratings are an
+  // operator-facing service-quality signal, not site content). `query`
+  // is the composition-root D1 handle (no per-customer delete verb on
+  // the primitive).
+  orderRatings: function (handle, query) {
+    return {
+      forCustomerExport: async function (id) {
+        // ratingsForCustomer caps limit at 500 (order-ratings
+        // MAX_LIST_LIMIT); a higher value throws and would silently
+        // empty the section.
+        try { return await handle.ratingsForCustomer({ customer_id: id, limit: 100 }); }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var c = (await query(
+              "SELECT COUNT(*) AS n FROM order_ratings WHERE customer_id = ?1", [id],
+            )).rows[0];
+            return { table: "order_ratings", deleted: c ? Number(c.n) : 0 };
+          }
+          var r = await query("DELETE FROM order_ratings WHERE customer_id = ?1", [id]);
+          return { table: "order_ratings", deleted: Number((r && r.rowCount) || 0) };
+        } catch (_e) { return { table: "order_ratings", deleted: 0 }; }
+      },
+    };
+  },
+
+  // productQa: questions the subject asked on product pages. A row is
+  // keyed by customer_id (authenticated ask) OR the module's OWN
+  // product-qa email-hash namespace (an email-only asker) — that
+  // namespace differs from the customers table's, so an email-only row
+  // can be matched ONLY with the raw address in hand to re-hash; the DSR
+  // root resolves by customer_id, covering every authenticated question
+  // (same residual posture as the suggestion box). The primitive exposes
+  // no per-customer surface (questionsForProduct only), so the adapter
+  // queries over the composition-root D1 handle. deletion ANONYMIZES in
+  // place — both identity keys -> NULL — keeping the published Q&A body
+  // as de-identified site content, exactly the suggestion-box shape.
+  productQa: function (query) {
+    return {
+      forCustomerExport: async function (id) {
+        try {
+          return (await query(
+            "SELECT id, product_id, customer_id, body, status, pinned, vote_count, occurred_at " +
+            "FROM product_qa_questions WHERE customer_id = ?1 " +
+            "ORDER BY occurred_at DESC, id DESC LIMIT 100",
+            [id],
+          )).rows;
+        } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var c = (await query(
+              "SELECT COUNT(*) AS n FROM product_qa_questions WHERE customer_id = ?1", [id],
+            )).rows[0];
+            return { table: "product_qa_questions", deleted: c ? Number(c.n) : 0 };
+          }
+          var r = await query(
+            "UPDATE product_qa_questions SET customer_id = NULL, customer_email_hash = NULL " +
+            "WHERE customer_id = ?1",
+            [id],
+          );
+          return { table: "product_qa_questions", deleted: Number((r && r.rowCount) || 0) };
+        } catch (_e) { return { table: "product_qa_questions", deleted: 0 }; }
+      },
+    };
+  },
+
+  // customerNotes: operator-authored CRM prose ABOUT the subject —
+  // subject-access covers data about the person regardless of author, so
+  // the notes export (archived included). deletion DELETEs them outright:
+  // free-form operator commentary has no legal-obligation basis once the
+  // subject invokes erasure. `query` is the composition-root D1 handle
+  // (the primitive archives per-note; no per-customer bulk delete).
+  customerNotes: function (handle, query) {
+    return {
+      forCustomerExport: async function (id) {
+        // notesForCustomer caps limit at 200 (customer-notes MAX_LIMIT);
+        // a higher value throws and would silently empty the section.
+        try { return (await handle.notesForCustomer({ customer_id: id, include_archived: true, limit: 100 })).rows; }
+        catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var c = (await query(
+              "SELECT COUNT(*) AS n FROM customer_notes WHERE customer_id = ?1", [id],
+            )).rows[0];
+            return { table: "customer_notes", deleted: c ? Number(c.n) : 0 };
+          }
+          var r = await query("DELETE FROM customer_notes WHERE customer_id = ?1", [id]);
+          return { table: "customer_notes", deleted: Number((r && r.rowCount) || 0) };
+        } catch (_e) { return { table: "customer_notes", deleted: 0 }; }
+      },
+    };
+  },
+
+  // giftcards: cards issued TO the subject. export lists the card
+  // metadata with the code_hash projected OUT — the stored hash derives
+  // from the bearer code (a credential, not subject data); the hint +
+  // balances + lifecycle stamps are what the subject is owed. deletion
+  // RETAINS the card rows (an active balance is the holder's money and
+  // an accounting record — the same legal-obligation basis as the
+  // store-credit and loyalty ledgers) but severs both issue-identity
+  // keys so the retained rows no longer reference the person. Cards
+  // issued to the subject's email without an account link share the
+  // anonymous-row residual scope stated on the stockAlerts adapter.
+  giftcards: function (handle, query) {
+    return {
+      forCustomerExport: async function (id) {
+        try {
+          var rows = await handle.listForCustomer(id);
+          return (rows || []).map(function (g) {
+            return {
+              id:                    g.id,
+              code_hint:             g.code_hint,
+              currency:              g.currency,
+              issued_minor:          g.issued_minor,
+              balance_minor:         g.balance_minor,
+              issued_to_customer_id: g.issued_to_customer_id,
+              status:                g.status,
+              expires_at:            g.expires_at,
+              created_at:            g.created_at,
+              updated_at:            g.updated_at,
+            };
+          });
+        } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) return { table: "giftcards", deleted: 0, note: "retained-for-accounting; issue-identity severed" };
+          await query(
+            "UPDATE giftcards SET issued_to_customer_id = NULL, issued_to_email_hash = NULL, updated_at = ?1 " +
+            "WHERE issued_to_customer_id = ?2",
+            [Date.now(), id],
+          );
+          return { table: "giftcards", deleted: 0, note: "retained-for-accounting; issue-identity severed" };
+        } catch (_e) { return { table: "giftcards", deleted: 0, note: "retained-for-accounting" }; }
+      },
+    };
+  },
+
+  // referrals: both directions. As REFERRER — the subject's codes,
+  // aggregate funnel stats, and per-friend invitation rows (hash-only;
+  // no invited address is recoverable). As REFEREE — invitation rows
+  // whose signup converted to this account (signed_up_customer_id).
+  // deletion RETAINS the codes + reward accounting (the referrer linkage
+  // rides the anonymized customers row, like orders) and severs the
+  // subject-as-referee keys: signed_up_customer_id -> NULL and the
+  // invitation's referred-email hash -> a per-customer tombstone under
+  // its own namespace, so a converted invitation can no longer be traced
+  // to the erased account. Unconverted invitations of the subject's
+  // email share the anonymous-row residual scope stated on the
+  // stockAlerts adapter (their hash namespace can't be re-derived).
+  referrals: function (handle, query) {
+    return {
+      forCustomerExport: async function (id) {
+        try {
+          var stats = null;
+          var invitationsSent = [];
+          var asReferee = [];
+          try { stats = await handle.statsForReferrer(id); } catch (_e2) { stats = null; }
+          try { invitationsSent = await handle.invitationsForReferrer(id); } catch (_e2) { invitationsSent = []; }
+          try {
+            asReferee = (await query(
+              "SELECT id, referral_code_id, invited_at, visited_at, signed_up_at, " +
+              "first_purchase_at, reward_status FROM referral_invitations " +
+              "WHERE signed_up_customer_id = ?1 ORDER BY invited_at DESC, id DESC",
+              [id],
+            )).rows;
+          } catch (_e2) { asReferee = []; }
+          var hasReferrerActivity = !!(stats && stats.codes && stats.codes.length);
+          if (!hasReferrerActivity && !invitationsSent.length && !asReferee.length) return [];
+          return {
+            as_referrer:      hasReferrerActivity ? stats : null,
+            invitations_sent: invitationsSent,
+            as_referee:       asReferee,
+          };
+        } catch (_e) { return null; }
+      },
+      forCustomerDeletion: async function (id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        try {
+          if (dryRun) {
+            var c = (await query(
+              "SELECT COUNT(*) AS n FROM referral_invitations WHERE signed_up_customer_id = ?1", [id],
+            )).rows[0];
+            return { table: "referral_invitations", deleted: c ? Number(c.n) : 0, note: "codes + reward accounting retained; referee link severed" };
+          }
+          var tomb = "erased:" + b.crypto.namespaceHash("referral-erased-email", id);
+          var r = await query(
+            "UPDATE referral_invitations SET signed_up_customer_id = NULL, referred_email_hash = ?1 " +
+            "WHERE signed_up_customer_id = ?2",
+            [tomb, id],
+          );
+          return { table: "referral_invitations", deleted: Number((r && r.rowCount) || 0), note: "codes + reward accounting retained; referee link severed" };
+        } catch (_e) { return { table: "referral_invitations", deleted: 0 }; }
       },
     };
   },
@@ -2908,6 +3202,18 @@ async function main() {
           suggestionBox:  suggestionBox ? _dsrReader.suggestionBox(suggestionBox) : null,
           saveForLater:   saveForLater  ? _dsrReader.saveForLater(saveForLater)   : null,
           storeCredit:    storeCredit   ? _dsrReader.storeCredit(storeCredit)     : null,
+          // The remaining customer-keyed domains: the guest-order claim
+          // audit trail, back-in-stock alerts (plaintext email), quotes,
+          // fulfillment ratings, product Q&A, operator CRM notes, gift
+          // cards, and referral activity.
+          guestOrderReconciliations: order ? _dsrReader.guestOrderReconciliations(order) : null,
+          stockAlerts:    stockAlerts   ? _dsrReader.stockAlerts(stockAlerts)                       : null,
+          quotes:         quotes        ? _dsrReader.quotes(quotes, b.externalDb.query)             : null,
+          orderRatings:   orderRatings  ? _dsrReader.orderRatings(orderRatings, b.externalDb.query) : null,
+          productQa:      productQa     ? _dsrReader.productQa(b.externalDb.query)                  : null,
+          customerNotes:  customerNotes ? _dsrReader.customerNotes(customerNotes, b.externalDb.query) : null,
+          giftcards:      giftcards     ? _dsrReader.giftcards(giftcards, b.externalDb.query)       : null,
+          referrals:      referrals     ? _dsrReader.referrals(referrals, b.externalDb.query)       : null,
         };
         complianceExport = bShop.complianceExport.create({
           customers:      complianceExportReaders.customers,
@@ -2926,6 +3232,14 @@ async function main() {
           suggestionBox:  complianceExportReaders.suggestionBox,
           saveForLater:   complianceExportReaders.saveForLater,
           storeCredit:    complianceExportReaders.storeCredit,
+          guestOrderReconciliations: complianceExportReaders.guestOrderReconciliations,
+          stockAlerts:    complianceExportReaders.stockAlerts,
+          quotes:         complianceExportReaders.quotes,
+          orderRatings:   complianceExportReaders.orderRatings,
+          productQa:      complianceExportReaders.productQa,
+          customerNotes:  complianceExportReaders.customerNotes,
+          giftcards:      complianceExportReaders.giftcards,
+          referrals:      complianceExportReaders.referrals,
         });
       }
 

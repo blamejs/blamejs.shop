@@ -268,6 +268,32 @@ async function _run() {
     check("t9 confirm page 200",                   confirmPage.status === 200);
     check("t9 confirm page carries token field",   confirmPage.body.indexOf("name=\"token\" value=\"" + "A".repeat(32) + "\"") !== -1);
     check("t9 confirm page shows no email/sku",    confirmPage.body.indexOf("another@example.com") === -1);
+
+    // t10 — a SIGNED-IN subscribe links the row to the account (the link
+    // is what puts the alert inside the customer's privacy export /
+    // erasure scope); the anonymous flow above stays customer-less.
+    var signedInId = b.uuid.v7();
+    var authJar = helpers.cookieJar();
+    authJar.capture({ "set-cookie": [helpers.authCookie(b, signedInId)] });
+    // Browse the PDP first (the real flow — the notify form lives there);
+    // the page visit also primes the jar for the cookie-carrying POST.
+    var memberPdp = await helpers.httpRequest({ port: port, path: "/products/back-in-stock-tee", jar: authJar });
+    check("t10 signed-in PDP 200",                 memberPdp.status === 200);
+    var signedSub = await helpers.httpRequest({
+      port: port, path: "/stock-alert/subscribe", method: "POST", jar: authJar,
+      form: { email: "member@example.com", sku: "BIS-TEE-1" },
+    });
+    check("t10 signed-in subscribe 200",           signedSub.status === 200);
+    var memberRow = (await query(
+      "SELECT customer_id FROM stock_alerts WHERE email_hash = ?1",
+      [stockAlerts.hashEmail("member@example.com")],
+    )).rows[0];
+    check("t10 row carries the session customer",  memberRow && memberRow.customer_id === signedInId);
+    var anonRow = (await query(
+      "SELECT customer_id FROM stock_alerts WHERE email_hash = ?1",
+      [stockAlerts.hashEmail("shopper@example.com")],
+    )).rows[0];
+    check("t10 anonymous row stays customer-less", anonRow && anonRow.customer_id === null);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* best-effort */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* best-effort */ }

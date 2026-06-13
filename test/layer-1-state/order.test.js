@@ -687,6 +687,81 @@ async function _guestOrderReconciliation() {
   // A customer who never claimed a guest order has an empty trail.
   check("clean account has empty reconciliation trail",
     (await order.reconciliationsForCustomer(_validUUID())).length === 0);
+
+  // ---- erasure scrub: the linkage stays, the email hash tombstones ----
+
+  // Dry run is side-effect-free: it counts the live-hash rows without
+  // rewriting anything (the deletion pipeline's preview contract).
+  var scrubPreview = await order.scrubReconciliationEmailHashForCustomer(customerId, { dry_run: true });
+  check("scrub dry-run counts the live-hash rows",
+    scrubPreview.table === "guest_order_reconciliations" && scrubPreview.deleted === 2);
+  check("scrub dry-run rewrote nothing",
+    (await order.reconciliationsForCustomer(customerId))
+      .every(function (r) { return r.email_hash === buyerHash; }));
+
+  // Wet run tombstones every live hash but RETAINS the audit rows —
+  // order ids, proof route, and timestamps all survive.
+  var scrubbed = await order.scrubReconciliationEmailHashForCustomer(customerId);
+  check("scrub rewrites both rows", scrubbed.deleted === 2);
+  var postScrub = await order.reconciliationsForCustomer(customerId);
+  check("scrub retains the audit rows", postScrub.length === 2);
+  check("scrub keeps the order linkage",
+    postScrub.map(function (r) { return r.order_id; }).sort().join(",") ===
+    [mine1.id, mine2.id].sort().join(","));
+  check("scrub keeps the proof route",
+    postScrub.every(function (r) { return r.linked_via === "verified-email"; }));
+  check("scrubbed hashes are tombstones, not the original",
+    postScrub.every(function (r) {
+      return typeof r.email_hash === "string" &&
+             r.email_hash.indexOf("erased:") === 0 && r.email_hash !== buyerHash;
+    }));
+  // The tombstone derives from its OWN namespace — never the customers
+  // row's "customer-erased-email" label — so the two tombstones for the
+  // same customer id never share a digest and can't be correlated as
+  // the same derivation.
+  var custRowTombstone = "erased:" +
+    bShop.framework.crypto.namespaceHash("customer-erased-email", customerId);
+  check("scrub tombstone namespace differs from the customers-row tombstone",
+    postScrub.every(function (r) { return r.email_hash !== custRowTombstone; }));
+
+  // Re-running the scrub is a no-op (no live hash left to rewrite).
+  var scrubAgain = await order.scrubReconciliationEmailHashForCustomer(customerId);
+  check("scrub re-run rewrites nothing", scrubAgain.deleted === 0);
+
+  // Validation + the never-claimed account.
+  await assert.rejects(order.scrubReconciliationEmailHashForCustomer("not-a-uuid"), /customer id/);
+  var scrubClean = await order.scrubReconciliationEmailHashForCustomer(_validUUID());
+  check("scrub of a clean account touches nothing", scrubClean.deleted === 0);
+}
+
+// The audit table is optional schema (a partial-schema deploy, a test DB
+// that never ran 0226): the read collapses to [] and the scrub to
+// deleted: 0 — neither may throw, or one missing table would fail a
+// whole erasure run.
+async function _reconciliationMissingTableDegrades() {
+  var db = new DatabaseSync(":memory:");
+  db.prepare("PRAGMA foreign_keys = ON").run();
+  MIGS.filter(function (p) { return p.indexOf("0226") === -1; }).forEach(function (p) {
+    _splitSchema(nodeFs.readFileSync(p, "utf8")).forEach(function (s) { db.prepare(s).run(); });
+  });
+  var queryNoRecon = async function (sql, params) {
+    var stmt = db.prepare(sql);
+    var verb = sql.replace(/^\s+|\s*--[^\n]*\n/g, "").trim().split(/\s+/)[0].toUpperCase();
+    if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
+      var info = stmt.run.apply(stmt, params || []);
+      return { rows: [], rowCount: Number(info.changes), lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
+    }
+    var rows = stmt.all.apply(stmt, params || []);
+    return { rows: rows, rowCount: rows.length };
+  };
+  var order = bShop.order.create({ query: queryNoRecon });
+  var cid = _validUUID();
+  check("missing-table reconciliation read degrades to []",
+    (await order.reconciliationsForCustomer(cid)).length === 0);
+  var dry = await order.scrubReconciliationEmailHashForCustomer(cid, { dry_run: true });
+  check("missing-table scrub dry-run degrades to 0", dry.deleted === 0);
+  var wet = await order.scrubReconciliationEmailHashForCustomer(cid);
+  check("missing-table scrub degrades to 0", wet.deleted === 0);
 }
 
 async function run() {
@@ -702,6 +777,7 @@ async function run() {
   await _claimGuardLostRace();
   await _newOrderObserver();
   await _guestOrderReconciliation();
+  await _reconciliationMissingTableDegrades();
 }
 
 module.exports = { run: run };
