@@ -762,7 +762,8 @@ export default {
         const rows = (r.results || []);
         return _json({ ok: true, rows: rows, rowCount: rows.length });
       } catch (e) {
-        return _json({ ok: false, error: "QUERY_FAILED", message: (e && e.message) || String(e) }, 500);
+        console.error("d1-bridge query failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        return _json({ ok: false, error: "QUERY_FAILED" }, 500);
       }
     }
 
@@ -798,7 +799,8 @@ export default {
         await env.ASSETS.put(key, body, { httpMetadata: { contentType: contentType } });
         return _json({ ok: true, key: key, size: body.byteLength });
       } catch (e) {
-        return _json({ ok: false, error: "PUT_FAILED", message: (e && e.message) || String(e) }, 500);
+        console.error("r2-bridge put failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        return _json({ ok: false, error: "PUT_FAILED" }, 500);
       }
     }
 

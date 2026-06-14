@@ -1,0 +1,26 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.43",
+  "date": "2026-06-13",
+  "headline": "Harden input handling: linear-time pattern matching on caller-influenced strings, complete escaping, and redacted edge-bridge error responses",
+  "summary": "A set of input-handling hardening fixes. Several internal pattern matches that run on caller-influenced strings used regular expressions whose shape could be driven into super-linear (polynomial) backtracking by a long run of a single character — a denial-of-service shape. These are rewritten to linear-time equivalents that accept and reject exactly the same inputs: the email-shape guard in the analytics and clickstream PII filters, a whitespace trim in the captcha gate, and the trailing-slash trim on the D1 and R2 bridge URLs. A JSON-escape helper in the catalog draft path now escapes backslashes as well as quotes so a crafted value can't smuggle an escape. And the edge worker's database- and storage-bridge error responses no longer return internal error detail to the caller — the detail is logged at the edge and the client receives only a generic failure code. No migration to apply.",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Pattern matching on caller-influenced input is now linear-time",
+          "body": "The email-shape detector used by the analytics and clickstream PII guards, the whitespace trim in the captcha gate, and the trailing-slash trim applied to the D1 and R2 bridge URLs were regular expressions whose backtracking could grow polynomially with the input length — a long run of one character could pin a request thread. Each is replaced with a linear-time form (a bounded, unambiguous regex; a native trim; a small character loop) proven to accept and reject the identical set of inputs, so the same values still pass and fail while a crafted long input can no longer cause super-linear work."
+        },
+        {
+          "title": "Edge bridge errors no longer leak internal detail",
+          "body": "The Cloudflare Worker's database-bridge and storage-bridge endpoints returned the underlying error message in their 500 responses. They now return only a generic failure code to the caller and log the (redacted) detail at the edge, so an internal error string or stack fragment is never exposed in a response body."
+        },
+        {
+          "title": "Complete escaping in the catalog draft lookup",
+          "body": "The catalog draft path builds a JSON-fragment match string from a SKU; its escape step now escapes backslashes before quotes, so the escaping is complete and a value containing a backslash cannot break out of the quoted fragment."
+        }
+      ]
+    }
+  ]
+}

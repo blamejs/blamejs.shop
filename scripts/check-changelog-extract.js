@@ -86,12 +86,16 @@ function main() {
   }
 
   // The first line must match the canonical shape — `- vX.Y.Z (date) — summary`.
+  // The version is compared as a literal prefix; only the fixed
+  // date-and-summary tail is matched with a regex, so no caller-supplied
+  // text is ever compiled into a pattern.
   var firstLine = section[0];
-  var canonical = new RegExp(
-    "^- v" + version.replace(/\./g, "\\.") +
-    " \\(\\d{4}-\\d{2}-\\d{2}\\) — \\S.+$"
-  );
-  if (!canonical.test(firstLine)) {
+  var prefix    = "- v" + version + " (";
+  var tailRe    = /^\d{4}-\d{2}-\d{2}\) — \S.+$/;
+  var canonicalFirstLine =
+    firstLine.slice(0, prefix.length) === prefix &&
+    tailRe.test(firstLine.slice(prefix.length));
+  if (!canonicalFirstLine) {
     console.error("[check-changelog-extract] FAIL: v" + version +
       " entry's first line does not match the canonical shape:");
     console.error("[check-changelog-extract]   expected: `- v" + version +
