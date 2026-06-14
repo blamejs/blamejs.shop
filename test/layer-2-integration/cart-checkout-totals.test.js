@@ -202,8 +202,10 @@ async function _run() {
     check("applied code shows the discount row",     afterApply.body.indexOf("totals-list__discount") !== -1 && afterApply.body.indexOf("$4.00") !== -1);
     check("applied code chip echoes the code",       afterApply.body.indexOf(">SAVE4<") !== -1);
     check("applied code offers a Remove control",    afterApply.body.indexOf("action=\"/cart/coupon/remove\"") !== -1);
-    // The grand total dropped by $4.00 vs the un-coded $39.56 → $35.56.
-    check("applied code reduces the grand total",    afterApply.body.indexOf("$35.56") !== -1);
+    // The grand total drops by the $4.00 discount AND the ~$0.35 of tax it
+    // sheds — tax applies to the post-discount base (2599 → $2.27, vs $2.62) —
+    // so $39.56 → $35.21.
+    check("applied code reduces the grand total",    afterApply.body.indexOf("$35.21") !== -1);
 
     // Apply an UNKNOWN code → 303 with ?code_err=1 and a UNIFORM message.
     var applyBad = await helpers.httpRequest({ port: port, path: "/cart/coupon", method: "POST", jar: jar, form: { code: "NOPE-404" } });
@@ -212,7 +214,7 @@ async function _run() {
     var afterBad = await helpers.httpRequest({ port: port, path: "/cart?code_err=1", jar: jar });
     check("unknown code shows the uniform error",    afterBad.body.indexOf("That code can't be applied to this cart.") !== -1);
     // The valid SAVE4 is still applied (the bad apply didn't clear it).
-    check("unknown code didn't drop the valid one",  afterBad.body.indexOf("$35.56") !== -1);
+    check("unknown code didn't drop the valid one",  afterBad.body.indexOf("$35.21") !== -1);
 
     // XSS in the code echo: a payload-shaped code can't resolve to a rule
     // (so it never applies), but if it WERE echoed it must be escaped. Apply

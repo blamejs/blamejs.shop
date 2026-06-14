@@ -124,6 +124,12 @@ async function _run() {
   // round on .5 to even -> 438), shipping 695.
   var SUBTOTAL = 5000;
   var TAX      = 438;
+  // A $5.00 auto-discount drops the TAXABLE base to 4500: tax @8.75% =
+  // 4500*875/10000 = 393.75 -> 394. Sales tax applies to the POST-discount
+  // subtotal per the tax primitive's documented contract (lib/tax.js: "Tax is
+  // computed against subtotal_minor (post-discount, pre-shipping)").
+  var TAX_DISCOUNTED = 394;       // tax on 4500 (after a 500 discount)
+  var TAX_OFF_1200   = 332;       // tax on 3800 (after a 1200 discount): 332.5 half-even -> 332
   var SHIP     = 695;
 
   // ---- (a) no rules: identical to a checkout without the engine -----
@@ -158,12 +164,12 @@ async function _run() {
   var ruleQuote = await wiredCheckout.quote({ cart_id: ruleCartId, ship_to: SHIP_TO, selected_shipping_id: "std" });
   check("matching rule sets discount = engine savings", ruleQuote.totals.discount_minor === 500);
   check("matching rule subtotal unchanged",             ruleQuote.totals.subtotal_minor === SUBTOTAL);
-  check("matching rule tax unchanged",                  ruleQuote.totals.tax_minor === TAX);
+  check("matching rule taxes the DISCOUNTED base",      ruleQuote.totals.tax_minor === TAX_DISCOUNTED);
   check("matching rule shipping unchanged",             ruleQuote.totals.shipping_minor === SHIP);
-  check("matching rule grand total drops by the discount",
-    ruleQuote.totals.grand_total_minor === SUBTOTAL - 500 + TAX + SHIP);
-  check("matching rule grand total < no-rule grand total",
-    ruleQuote.totals.grand_total_minor === noRuleQuote.totals.grand_total_minor - 500);
+  check("matching rule grand total = discounted sub + discounted tax + ship",
+    ruleQuote.totals.grand_total_minor === SUBTOTAL - 500 + TAX_DISCOUNTED + SHIP);
+  check("matching rule grand total drops by the discount + the tax it sheds",
+    ruleQuote.totals.grand_total_minor === noRuleQuote.totals.grand_total_minor - 500 - (TAX - TAX_DISCOUNTED));
 
   // Confirm the order and assert the persisted row carries the reduced
   // total + the discount.
@@ -176,7 +182,7 @@ async function _run() {
   check("confirmed order persists the discount",        placed && placed.discount_minor === 500);
   check("confirmed order persists the reduced subtotal", placed && placed.subtotal_minor === SUBTOTAL);
   check("confirmed order persists the reduced grand total",
-    placed && placed.grand_total_minor === SUBTOTAL - 500 + TAX + SHIP);
+    placed && placed.grand_total_minor === SUBTOTAL - 500 + TAX_DISCOUNTED + SHIP);
   // The PaymentIntent is created for the reduced grand total — assert the
   // ACTUAL amount the stub was asked to charge, not merely that it exists.
   check("charged amount = reduced grand total",
@@ -206,7 +212,10 @@ async function _run() {
   var overQuote = await overCheckout.quote({ cart_id: await _freshCart(), ship_to: SHIP_TO, selected_shipping_id: "std" });
   check("over-subtotal savings clamped to subtotal",    overQuote.totals.discount_minor === SUBTOTAL);
   check("clamped quote grand total never negative",     overQuote.totals.grand_total_minor >= 0);
-  check("clamped quote grand total = tax + shipping",   overQuote.totals.grand_total_minor === TAX + SHIP);
+  // Discount clamps to the full subtotal -> taxable base is 0 -> tax is 0,
+  // so the order is shipping only (the merchandise is fully discounted).
+  check("clamped quote grand total = shipping only (zero taxable base)",
+    overQuote.totals.grand_total_minor === SHIP);
 
   // ---- (d) a throwing engine falls back to discount 0 ---------------
   var throwDeps = _checkoutDeps(query, catalog, cart, order);
@@ -287,8 +296,8 @@ async function _run() {
   var codeCartId = await _freshCart();
   var codeQuote  = await wiredCheckout.quote({ cart_id: codeCartId, ship_to: SHIP_TO, selected_shipping_id: "std", codes: ["SAVE7"] });
   check("code unlocks the gated rule's savings",    codeQuote.totals.discount_minor === 1200);
-  check("code grand total drops by the full discount",
-    codeQuote.totals.grand_total_minor === SUBTOTAL - 1200 + TAX + SHIP);
+  check("code grand total = discounted sub + discounted tax + ship",
+    codeQuote.totals.grand_total_minor === SUBTOTAL - 1200 + TAX_OFF_1200 + SHIP);
 
   // A confirmed order carrying the code persists the reduced total.
   var codeConfirm = await wiredCheckout.confirm({
@@ -300,7 +309,7 @@ async function _run() {
   var codePlaced = await order.get(codeConfirm.order.id);
   check("confirmed coded order persists the reduced discount", codePlaced && codePlaced.discount_minor === 1200);
   check("confirmed coded order grand total honours the code",
-    codePlaced && codePlaced.grand_total_minor === SUBTOTAL - 1200 + TAX + SHIP);
+    codePlaced && codePlaced.grand_total_minor === SUBTOTAL - 1200 + TAX_OFF_1200 + SHIP);
 
   // An unknown code presented at quote behaves like no code (the engine
   // simply finds no rule for it) — never a throw, never a phantom discount.

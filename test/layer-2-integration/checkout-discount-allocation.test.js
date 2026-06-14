@@ -135,7 +135,8 @@ async function _run() {
 
   // Subtotal 8000, tax @8.75% = 8000*875/10000 = 700, shipping 695.
   var SUBTOTAL = 8000;
-  var TAX      = 700;
+  var TAX      = 700;            // tax on the full 8000 (the zero-discount case)
+  var TAX_DISCOUNTED = 525;      // tax on 6000 after the 2000 discount: 6000*875/10000 = 525
   var SHIP     = 695;
 
   // A $20.00-off rule that fires on any cart over $40.00.
@@ -156,8 +157,8 @@ async function _run() {
   var cartId = await _freshCart();
   var quote = await checkout.quote({ cart_id: cartId, ship_to: SHIP_TO, selected_shipping_id: "std" });
   check("quote applies the discount",          quote.totals.discount_minor === DISCOUNT);
-  check("quote grand total = sub - disc + tax + ship",
-    quote.totals.grand_total_minor === SUBTOTAL - DISCOUNT + TAX + SHIP);
+  check("quote grand total = sub - disc + discounted tax + ship",
+    quote.totals.grand_total_minor === SUBTOTAL - DISCOUNT + TAX_DISCOUNTED + SHIP);
 
   var confirm = await checkout.confirm({
     cart_id: cartId, ship_to: SHIP_TO, selected_shipping_id: "std",
@@ -169,7 +170,7 @@ async function _run() {
   // (b) NO charge impact: the order total + the amount the stub was asked
   // to charge equal the reduced grand total — the allocation recording
   // touched neither.
-  var expectedGrand = SUBTOTAL - DISCOUNT + TAX + SHIP;
+  var expectedGrand = SUBTOTAL - DISCOUNT + TAX_DISCOUNTED + SHIP;
   check("order persists the discount",         placed && placed.discount_minor === DISCOUNT);
   check("order persists the reduced subtotal", placed && placed.subtotal_minor === SUBTOTAL);
   check("order grand total unchanged by recording", placed && placed.grand_total_minor === expectedGrand);
