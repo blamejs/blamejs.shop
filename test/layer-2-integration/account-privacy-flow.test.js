@@ -41,7 +41,7 @@ var MIGS = [
   "0047_support_tickets.sql", "0022_loyalty.sql", "0109_compliance_export.sql",
   // The customer-keyed personalization / feedback / consent domains the
   // full export now covers.
-  "0011_reviews.sql", "0185_consent_ledger.sql", "0012_wishlist.sql",
+  "0011_reviews.sql", "0185_consent_ledger.sql", "0232_consent_ledger_lawful_basis.sql", "0012_wishlist.sql",
   "0128_customer_surveys.sql", "0050_recently_viewed.sql",
   // The feedback / holdover / wallet domains added to the full export.
   "0181_suggestion_box.sql", "0041_save_for_later.sql", "0094_store_credit.sql",
