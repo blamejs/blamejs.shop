@@ -391,6 +391,83 @@ async function _cleanupExpiredIgnoresOperatorExpires() {
     (await f.credit.balance(cust2)).balance_minor === 400);
 }
 
+// Two sweeps racing over one customer must burn the expired pool
+// exactly once. The pending-burn remainder (expired total minus the
+// sweep's own prior output) and the balance cap are recomputed INSIDE
+// the guarded insert, so the second sweep serializes behind the
+// first's committed row, sees zero pending, and matches no rows —
+// never burning the still-valid (non-expired) credit the first sweep
+// left in the wallet. A JS-side read-then-write here let both sweeps
+// read a zero prior-burn before either wrote, then the second's capped
+// write drained the valid balance.
+async function _cleanupExpiredConcurrentSweepNeverOverBurns() {
+  var f = _factory();
+  var now = Date.now();
+  var past = now - (10 * 86400 * 1000);
+
+  // 1000 expired credit + 500 still-valid credit. Wallet = 1500. Only
+  // the expired 1000 may be burned; the 500 must survive.
+  var cust = _uuid();
+  await f.credit.credit({ customer_id: cust, amount_minor: 1000, source: "promotional",
+                           expires_at: past, occurred_at: past - 2000 });
+  await f.credit.credit({ customer_id: cust, amount_minor: 500, source: "goodwill",
+                           occurred_at: past - 1000 });
+  check("pre-sweep balance is 1500",        (await f.credit.balance(cust)).balance_minor === 1500);
+
+  var res = await Promise.all([
+    f.credit.cleanupExpired({ now: now }),
+    f.credit.cleanupExpired({ now: now }),
+  ]);
+  var totalBurned = 0;
+  res.forEach(function (r) {
+    r.processed.forEach(function (p) { if (p.customer_id === cust) totalBurned += p.amount_minor; });
+  });
+  check("concurrent sweeps burn the expired pool exactly once", totalBurned === 1000);
+  check("concurrent sweeps leave the still-valid credit intact",
+        (await f.credit.balance(cust)).balance_minor === 500);
+
+  // The ledger carries exactly one sweep-stamped expire row for 1000 —
+  // the loser of the race wrote nothing.
+  var sweepRows = f.db.prepare(
+    "SELECT amount_minor FROM store_credit_ledger " +
+    "WHERE customer_id = ? AND kind = 'expire' AND source_ref = 'scheduled-expiry-sweep'"
+  ).all(cust);
+  check("exactly one sweep expire row landed", sweepRows.length === 1 && sweepRows[0].amount_minor === 1000);
+
+  // A third sweep is still a no-op.
+  var third = await f.credit.cleanupExpired({ now: now });
+  check("post-race sweep is a no-op",
+        third.processed.filter(function (p) { return p.customer_id === cust; }).length === 0);
+  check("balance stable after third sweep", (await f.credit.balance(cust)).balance_minor === 500);
+
+  // Partly-drained wallet: a debit between credit and sweep already
+  // spent part of the balance. The sweep caps the burn at the live
+  // balance (the schema tracks no row-level FIFO, so a debit draws
+  // generically against the wallet). The concurrency property under
+  // test is that two racing sweeps burn EXACTLY what a single sweep
+  // burns — never more. Single-sweep baseline for this fixture: the
+  // 1000 expired pool capped at the 800 live balance burns 800.
+  var cust2 = _uuid();
+  await f.credit.credit({ customer_id: cust2, amount_minor: 1000, source: "promotional",
+                           expires_at: past, occurred_at: past - 3000 });
+  await f.credit.credit({ customer_id: cust2, amount_minor: 400, source: "goodwill",
+                           occurred_at: past - 2000 });
+  await f.credit.debit ({ customer_id: cust2, amount_minor: 600, order_id: _uuid(),
+                           occurred_at: past - 1000 });   // wallet now 800
+  check("cust2 pre-sweep balance is 800",   (await f.credit.balance(cust2)).balance_minor === 800);
+  var res2 = await Promise.all([
+    f.credit.cleanupExpired({ now: now }),
+    f.credit.cleanupExpired({ now: now }),
+  ]);
+  var burned2 = 0;
+  res2.forEach(function (r) {
+    r.processed.forEach(function (p) { if (p.customer_id === cust2) burned2 += p.amount_minor; });
+  });
+  check("partly-drained: concurrent sweeps burn exactly the single-sweep amount", burned2 === 800);
+  check("partly-drained: balance lands where a single sweep would (0)",
+        (await f.credit.balance(cust2)).balance_minor === 0);
+}
+
 async function _validation() {
   var f = _factory();
   var ok = _uuid();
@@ -528,6 +605,7 @@ async function run() {
   await _transactionsForOrder();
   await _cleanupExpiredWalksExpiredRows();
   await _cleanupExpiredIgnoresOperatorExpires();
+  await _cleanupExpiredConcurrentSweepNeverOverBurns();
   await _validation();
   await _exportedConstants();
 }

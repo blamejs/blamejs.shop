@@ -1,0 +1,39 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.48",
+  "date": "2026-06-14",
+  "headline": "Hardening: pickup scheduling integrity, the save-for-later CSRF token, a store-credit expiry race, and gift-card ledger verification",
+  "summary": "A batch of correctness and security hardening. A click-and-collect pickup already marked ready could be silently un-readied by re-scheduling it, which the pickup state machine has no transition for; re-scheduling in place is now restricted to a pending pickup. The pickup capacity gate counted bookings and then inserted in two steps, so two concurrent checkouts could over-book a full time slot; the cap is now enforced inside the write atomically. The authenticated Save-for-later cart action (POST /cart/lines/:line_id/save) inherited the edge cart forms' CSRF exemption by a path-prefix accident and shipped without requiring a token; it now demands the double-submit CSRF token like any other authenticated mutation, while the genuinely token-less edge cart forms stay exempt. Two concurrent store-credit expiry sweeps could over-burn still-valid credit; the sweep is now atomic and idempotent. And the gift-card ledger's chain verification accepted a populated ledger whose hash columns had all been cleared — a full-ledger rewrite read as verified; an unanchored populated chain now fails verification, while a genuinely empty ledger still passes. No migration to apply.",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "The save-for-later cart action now requires its CSRF token",
+          "body": "POST /cart/lines/:line_id/save is a login-required cart mutation rendered only on the session-bound cart page, but it sat under the /cart/lines path prefix that exempts the cookie-less, token-less edge cart forms from CSRF — so it inherited that exemption and accepted state changes without a double-submit token. The exemption now carves this authenticated path back into CSRF protection from a single source shared by the request guard and the form renderer (so the set the guard enforces and the set the renderer tokenizes can't drift), while the legitimate edge cart forms remain exempt."
+        },
+        {
+          "title": "A hash-cleared gift-card ledger no longer verifies as valid",
+          "body": "The gift-card ledger's chain verification reported a populated ledger whose hash-chain columns had all been nulled as verified — so an attacker who rewrote balances and cleared the chain hashes could pass verification undetected. A populated ledger with no chain anchor now fails verification; a genuinely empty ledger (no rows) still passes."
+        }
+      ]
+    },
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "A ready pickup can't be un-readied by re-scheduling",
+          "body": "Re-scheduling a click-and-collect pickup in place is now allowed only while it is still scheduled. A pickup already marked ready (its goods on the hold shelf) no longer regresses to scheduled and loses its ready timestamp when re-scheduled — the pickup state machine has no ready-to-scheduled transition, so the operator completes or escalates a ready pickup instead."
+        },
+        {
+          "title": "Pickup time slots can't be over-booked under concurrency",
+          "body": "The pickup capacity limit is now enforced inside the booking write as a single conditional insert gated on the live count for the time slot, so two checkouts booking the same nearly-full slot at once can't both slip past the limit. Previously the count and the insert were separate steps, leaving a window where concurrent bookings over-filled a slot."
+        },
+        {
+          "title": "Concurrent store-credit expiry sweeps can't over-burn valid credit",
+          "body": "The store-credit expiry sweep now burns expired credit atomically: the amount to expire is computed inside the write and conditioned on the credit still being unexpired, so a second sweep running at the same time finds nothing left to burn and can't dip into still-valid balance. Previously the sweep read the expirable total and then wrote in separate steps, so two concurrent sweeps could double-burn."
+        }
+      ]
+    }
+  ]
+}
