@@ -1334,6 +1334,107 @@ async function _orderTracking() {
   check("cancelled order keeps Reorder",            cancelled.indexOf("/orders/ord_x/reorder") !== -1);
 }
 
+// Rich, dated, chronological event timeline rendered from the order's own
+// transition ledger (the same `order.transitions` shape order.get()
+// hydrates). Asserts: customer-meaningful events render with their labels
+// + a refund amount, an internal-only transition (start_fulfillment) is
+// NOT shown, the internal operator-process `reason` never leaks, an
+// HTML-bearing metadata value (a hostile tracking number) is escaped, and
+// the feed is newest-first.
+async function _orderEventTimeline() {
+  var ts0 = 1700000000000;
+  var html = storefront.renderOrder({
+    order: {
+      id: "ord_evt", status: "paid", currency: "USD",
+      subtotal_minor: 5998, tax_minor: 525, shipping_minor: 695, grand_total_minor: 7218,
+      lines: [{ sku: "X-1", qty: 2, unit_amount_minor: 2999, unit_currency: "USD", line_total_minor: 5998 }],
+      // placed → paid → partial-refund, plus an internal start_fulfillment
+      // edge that must NOT surface, and a refund carrying an HTML-bearing
+      // provider id (which is never rendered, but the partial flag + amount
+      // are) — the shipped row carries a hostile tracking number to prove
+      // the detail line is escaped.
+      transitions: [
+        { from_state: "__init__", to_state: "pending", on_event: "create",
+          reason: null, metadata_json: "{}", occurred_at: ts0 },
+        { from_state: "pending", to_state: "paid", on_event: "mark_paid",
+          reason: "admin:console", metadata_json: "{}", occurred_at: ts0 + 1000 },
+        { from_state: "paid", to_state: "paid", on_event: "start_fulfillment",
+          reason: "admin:console", metadata_json: "{}", occurred_at: ts0 + 1500 },
+        { from_state: "paid", to_state: "shipped", on_event: "mark_shipped",
+          reason: null,
+          metadata_json: JSON.stringify({ carrier: "ups", tracking_number: "<img src=x onerror=alert(1)>" }),
+          occurred_at: ts0 + 2000 },
+        { from_state: "shipped", to_state: "shipped", on_event: "refund",
+          reason: "admin:refund:partial",
+          metadata_json: JSON.stringify({ amount_minor: 1000, partial: true, stripe_refund_id: "re_test" }),
+          occurred_at: ts0 + 3000 },
+      ],
+    },
+    shop_name: "Acme",
+  });
+  check("order page renders the event timeline", html.indexOf("order-events") !== -1);
+  check("event timeline titled Order activity",  html.indexOf("Order activity") !== -1);
+  check("event timeline shows Order placed",      html.indexOf("Order placed") !== -1);
+  check("event timeline shows Payment received",  html.indexOf("Payment received") !== -1);
+  check("event timeline shows Order shipped",     html.indexOf("Order shipped") !== -1);
+  check("event timeline shows Refund issued",     html.indexOf("Refund issued") !== -1);
+  // The partial-refund amount surfaces, formatted in the order currency.
+  check("event timeline shows refund amount",     html.indexOf("$10.00") !== -1);
+  check("event timeline labels a partial refund", html.indexOf("Partial refund:") !== -1);
+  // The shipped event surfaces the carrier + tracking detail.
+  check("event timeline shows tracking detail",   html.indexOf("Tracking") !== -1);
+
+  // Internal-only transition (start_fulfillment) is NOT shown to the customer.
+  check("event timeline hides start_fulfillment", html.indexOf("start_fulfillment") === -1);
+  // The internal operator-process reason never leaks into customer HTML.
+  check("event timeline hides internal reason",   html.indexOf("admin:console") === -1 &&
+                                                   html.indexOf("admin:refund") === -1);
+  // An HTML-bearing metadata value (the hostile tracking number) is escaped,
+  // never rendered as live markup.
+  check("event timeline escapes HTML in tracking", html.indexOf("<img src=x onerror") === -1 &&
+                                                    html.indexOf("&lt;img src=x onerror") !== -1);
+
+  // Newest-first within the event block: refund precedes shipped precedes
+  // paid precedes placed in document order. Scope to the events block so the
+  // status-rail's "Order placed" copy doesn't confuse the positions.
+  var block = html.match(/<div class="order-events">[\s\S]*?<\/ol><\/div>/);
+  check("event timeline block present for ordering check", !!block);
+  var b0 = block ? block[0] : "";
+  var iRefund  = b0.indexOf("Refund issued");
+  var iShipped = b0.indexOf("Order shipped");
+  var iPaid    = b0.indexOf("Payment received");
+  var iPlaced  = b0.indexOf("Order placed");
+  check("event timeline is newest-first",
+    iRefund !== -1 && iShipped !== -1 && iPaid !== -1 && iPlaced !== -1 &&
+    iRefund < iShipped && iShipped < iPaid && iPaid < iPlaced);
+
+  // A single-event order (just placed) still renders the feed with that one
+  // event — the empty-state floor.
+  var single = storefront.renderOrder({
+    order: {
+      id: "ord_one", status: "pending", currency: "USD",
+      subtotal_minor: 1000, tax_minor: 0, shipping_minor: 0, grand_total_minor: 1000,
+      lines: [{ sku: "O-1", qty: 1, unit_amount_minor: 1000, unit_currency: "USD", line_total_minor: 1000 }],
+      transitions: [{ from_state: "__init__", to_state: "pending", on_event: "create",
+        reason: null, metadata_json: "{}", occurred_at: ts0 }],
+    },
+    shop_name: "Acme",
+  });
+  check("single-event order shows the placed event",
+    single.indexOf("order-events") !== -1 && single.indexOf("Order placed") !== -1);
+
+  // A legacy caller that passes no transitions array omits the event block
+  // entirely (no crash) — the status rail still renders.
+  var legacy = storefront.renderOrder({
+    order: { id: "ord_legacy", status: "paid", currency: "USD",
+      subtotal_minor: 1000, tax_minor: 0, shipping_minor: 0, grand_total_minor: 1000,
+      lines: [{ sku: "L-1", qty: 1, unit_amount_minor: 1000, unit_currency: "USD", line_total_minor: 1000 }] },
+    shop_name: "Acme",
+  });
+  check("legacy order without transitions omits event block", legacy.indexOf("order-events") === -1);
+  check("legacy order still renders the status rail",          legacy.indexOf("order-timeline") !== -1);
+}
+
 // Order-history list: rows link to each order + carry the per-row Reorder /
 // Return affordances; a next-cursor renders a Load-more link.
 async function _orderList() {
@@ -1620,6 +1721,7 @@ async function run() {
   await _passkeyRemoveConfirm();
   await _profilePage();
   await _orderTracking();
+  await _orderEventTimeline();
   await _orderList();
   await _search();
   await _searchEmpty();
