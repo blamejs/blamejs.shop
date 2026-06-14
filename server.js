@@ -1787,6 +1787,17 @@ async function main() {
       // handle is needed.
       var cookieConsent = (catalog && cart) ? bShop.cookieConsent.create({}) : null;
 
+      // Consent ledger — the durable, per-CUSTOMER consent of record (GDPR
+      // Art. 7(1)). Distinct from cookieConsent (session-keyed, the runtime
+      // gate): this is the append-only audit trail that proves an identified
+      // data subject's decision to a supervisory authority. The storefront
+      // mirrors a signed-in customer's cookie-banner choices and a
+      // newsletter unsubscribe that resolves to an account into it; the DSR
+      // export/erasure path reads it (see dsrConsentLedger below, which is a
+      // separate instance scoped to that reader set). Only the externalDb
+      // query handle is needed.
+      var consentLedger = (catalog && cart) ? bShop.consentLedger.create({}) : null;
+
       // Returns — customer self-serve RMA requests (/account/returns) +
       // operator moderation (/admin/returns). Cursor HMAC key like the
       // others. Single instance shared by both surfaces.
@@ -3595,6 +3606,14 @@ async function main() {
         if (giftRegistry) sfDeps.giftRegistry = giftRegistry;
         if (addresses) sfDeps.addresses = addresses;
         if (cookieConsent) sfDeps.cookieConsent = cookieConsent;
+        // Durable per-customer consent of record (GDPR Art. 7(1)). The
+        // storefront populates it from a signed-in customer's cookie-banner
+        // save (POST /consent) and from a newsletter unsubscribe that
+        // resolves to an account (POST /unsubscribe). Both writers are
+        // drop-silent and customer-keyed — an anonymous / email-only event
+        // never touches it. Absent it, those writers no-op and the session-
+        // level cookieConsent + the email-suppression behavior are unchanged.
+        if (consentLedger) sfDeps.consentLedger = consentLedger;
         // Analytics event stream — threads the same read-only/recordEvent
         // handle the admin /admin/analytics screen uses so the storefront
         // can record browse→buy funnel events. Every recordEvent in the
