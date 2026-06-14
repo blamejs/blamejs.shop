@@ -282,6 +282,9 @@ async function _run() {
     var out = await helpers.httpRequest({ port: port, path: "/admin/logout", method: "POST", jar: jar });
     check("logout then 303",                   out.status === 303);
     check("logout clears the cookie",          /shop_admin=;|shop_admin=;? ?Max-Age=0|shop_admin=\s*;/.test(String(out.headers["set-cookie"] || "")) || jar.get("shop_admin") === "");
+    // Defense-in-depth: sign-out wipes the browser's client-side state for the
+    // origin (cookies / storage / cache / execution contexts) via Clear-Site-Data.
+    check("logout emits Clear-Site-Data",      (String(out.headers["clear-site-data"] || "")).indexOf("\"cookies\"") !== -1);
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }

@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.47",
+  "date": "2026-06-14",
+  "headline": "Signing out wipes the browser's client-side state via Clear-Site-Data",
+  "summary": "Both the storefront account sign-out and the admin sign-out now emit an RFC 9527 Clear-Site-Data response header, instructing the browser to clear its cookies, storage, cache, and execution contexts for the origin. Previously sign-out tore down the server-side session and expired the auth cookie but left the rest of the browser's client-side state in place — on a shared or public browser, the next person could find a cached authenticated page or leftover local/session storage. This is defense-in-depth on top of the existing server-side session teardown. No migration to apply.",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Sign-out clears client-side browser state",
+          "body": "The /account/logout and /admin/logout routes now send Clear-Site-Data with the cookies, storage, cache, and execution-context directives, so a browser drops the origin's client-side state on sign-out rather than only expiring the auth cookie. This closes the window on a shared or public machine where a cached authenticated page or leftover storage could outlive the session."
+        }
+      ]
+    }
+  ]
+}
