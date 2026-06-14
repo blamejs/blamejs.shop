@@ -29,12 +29,17 @@ jobs:
           languages: javascript-typescript
           # The vendored blamejs tree comes from upstream; scan only
           # our own surface so we get signal on integration code, not
-          # on the framework we vendor. `paths-ignore` is a config
-          # property — it is silently ignored if passed as a bare
-          # action input, so it must nest under `config:`.
+          # on the framework we vendor. The test suite is not part of
+          # any shipped artifact — the npm `files` allowlist omits it
+          # and the container runtime stage never COPYs it — so its
+          # fixtures are not an attack surface; exclude it too.
+          # `paths-ignore` is a config property — it is silently
+          # ignored if passed as a bare action input, so it must nest
+          # under `config:`.
           config: |
             paths-ignore:
               - lib/vendor/**
+              - test/**
       - uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
         with:
           category: "/language:javascript-typescript"
