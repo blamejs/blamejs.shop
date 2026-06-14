@@ -44,6 +44,9 @@ var assert         = helpers.assert;
 var MIG = nodePath.resolve(
   __dirname, "..", "..", "migrations-d1", "0185_consent_ledger.sql"
 );
+var MIG_LAWFUL_BASIS = nodePath.resolve(
+  __dirname, "..", "..", "migrations-d1", "0232_consent_ledger_lawful_basis.sql"
+);
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -54,6 +57,11 @@ function _makeQuery() {
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
   _splitSchema(nodeFs.readFileSync(MIG, "utf8")).forEach(function (s) {
+    db.prepare(s).run();
+  });
+  // The lawful_basis column lands in a follow-on migration; apply it so
+  // the in-memory schema matches production.
+  _splitSchema(nodeFs.readFileSync(MIG_LAWFUL_BASIS, "utf8")).forEach(function (s) {
     db.prepare(s).run();
   });
   return async function (sql, params) {
@@ -102,6 +110,7 @@ async function _recordConsentRefusals() {
   check("recordConsentChange preserves jurisdiction", row.jurisdiction === "DE");
   check("recordConsentChange preserves evidence_ref", row.evidence_ref === "signup_form_v3:submission_abc");
   check("recordConsentChange stamps occurred_at",     typeof row.occurred_at === "number" && row.occurred_at > 0);
+  check("recordConsentChange defaults lawful_basis from kind", row.lawful_basis === "consent");
 
   // Optional columns nullable.
   var minimal = await ctx.ledger.recordConsentChange({
@@ -151,6 +160,73 @@ async function _recordConsentRefusals() {
     customer_id: cust, consent_kind: "marketing_email", state: "granted", source: "signup_form",
     evidence_ref: "x".repeat(257),
   }), /evidence_ref/);
+
+  // An explicit lawful_basis outside the Art. 6(1) set is refused.
+  await assert.rejects(ctx.ledger.recordConsentChange({
+    customer_id: cust, consent_kind: "data_processing", state: "granted", source: "signup_form",
+    lawful_basis: "telepathy",
+  }), /lawful_basis/);
+}
+
+async function _lawfulBasisTagging() {
+  var ctx = _setup();
+  var cust = _uuid();
+
+  // Every consent kind defaults to the consent basis (they are all
+  // consent-gated in this ledger). Spot-check across the categories.
+  var kinds = ["cookies_marketing", "marketing_sms", "data_sharing_partners", "data_processing"];
+  for (var i = 0; i < kinds.length; i += 1) {
+    var rec = await ctx.ledger.recordConsentChange({
+      customer_id: cust, consent_kind: kinds[i], state: "granted", source: "preference_center",
+    });
+    check("lawful_basis defaults to consent for " + kinds[i], rec.lawful_basis === "consent");
+  }
+
+  // A withdrawal row carries the same (kind-derived) basis as its grant.
+  var withdrawal = await ctx.ledger.recordConsentChange({
+    customer_id: cust, consent_kind: "marketing_email", state: "withdrawn", source: "preference_center",
+  });
+  check("withdrawal row carries the kind's lawful_basis", withdrawal.lawful_basis === "consent");
+
+  // An explicit basis overrides the default and persists.
+  var explicit = await ctx.ledger.recordConsentChange({
+    customer_id: cust, consent_kind: "data_processing", state: "granted", source: "customer_support",
+    lawful_basis: "legal_obligation",
+  });
+  check("explicit lawful_basis overrides the default", explicit.lawful_basis === "legal_obligation");
+
+  // The persisted basis round-trips through the read path.
+  var history = await ctx.ledger.historyForCustomer(cust);
+  var persisted = history.find(function (r) { return r.id === explicit.id; });
+  check("explicit lawful_basis round-trips through read", persisted && persisted.lawful_basis === "legal_obligation");
+
+  // A backfill-style row inserted without a basis hydrates as null
+  // (the column is nullable; pre-existing rows are not retro-stamped).
+  var legacyId = _uuid();
+  await ctx.query(
+    "INSERT INTO consent_ledger " +
+    "(id, customer_id, consent_kind, state, source, jurisdiction, evidence_ref, occurred_at) " +
+    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    [legacyId, cust, "marketing_email", "granted", "system_default", null, null, 1000],
+  );
+  var withLegacy = await ctx.ledger.historyForCustomer(cust);
+  var legacy = withLegacy.find(function (r) { return r.id === legacyId; });
+  check("backfill row without a basis hydrates null", legacy && legacy.lawful_basis === null);
+
+  // The migration's CHECK rejects an out-of-set basis at the DB layer
+  // for a row written after the ALTER.
+  var checkRejected = false;
+  try {
+    await ctx.query(
+      "INSERT INTO consent_ledger " +
+      "(id, customer_id, consent_kind, state, source, lawful_basis, occurred_at) " +
+      "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      [_uuid(), cust, "marketing_email", "granted", "system_default", "garbage", 1001],
+    );
+  } catch (_e) {
+    checkRejected = true;
+  }
+  check("DB CHECK rejects an out-of-set lawful_basis", checkRejected);
 }
 
 async function _currentStateReflectsLatest() {
@@ -287,7 +363,7 @@ async function _auditExportCsvFormat() {
 
   var lines = csv.body.split("\n");
   check("auditExport CSV emits header row",
-    lines[0] === "id,customer_id,consent_kind,state,source,jurisdiction,evidence_ref,occurred_at");
+    lines[0] === "id,customer_id,consent_kind,state,source,lawful_basis,jurisdiction,evidence_ref,occurred_at");
   check("auditExport CSV emits one line per row + header", lines.length === 4);
   // Newest-first ordering carries into CSV output.
   check("auditExport CSV first data line is data_sharing_partners grant",
@@ -499,6 +575,7 @@ async function _appendOnly() {
 
 async function run() {
   await _recordConsentRefusals();
+  await _lawfulBasisTagging();
   await _currentStateReflectsLatest();
   await _historyOrdering();
   await _auditExportCsvFormat();

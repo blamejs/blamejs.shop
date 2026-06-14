@@ -39,6 +39,7 @@ var MIGS = [
   "0031_cart_abandonment_runs.sql",
   "0171_cart_recovery.sql",
   "0185_consent_ledger.sql",
+  "0232_consent_ledger_lawful_basis.sql",
 ].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
