@@ -296,12 +296,15 @@ async function _runProviderRefund() {
     // The provider money is now recorded into the ORDER ledger — otherwise
     // order.refundedTotalMinor would undercount and the direct-refund console's
     // over-refund cap (capped at the order's remaining balance) would let an
-    // operator pay out the order total a SECOND time. The RMA cleared the full
-    // $59.98 balance, so the order's own ledger reads fully refunded.
+    // operator pay out the order total a SECOND time. It is recorded via
+    // recordPartialRefund, which dedupes on the provider refund id, so a
+    // charge.refunded webhook mirroring the SAME refund counts it once — and
+    // the RMA path never drives the non-deduping terminal edge.
     check("RMA refund recorded in the order ledger",
       (await order.refundedTotalMinor(seeded.orderId)) === 5998);
-    check("balance-clearing RMA drove the order to refunded",
-      (await order.get(seeded.orderId)).status === "refunded");
+    check("RMA refund recorded as exactly one ledger row (no double-count)",
+      (await query("SELECT id FROM order_transitions WHERE order_id = ?1 AND on_event = 'refund'",
+        [seeded.orderId])).rows.length === 1);
     // The Stripe idempotency key is DETERMINISTIC in the return id (no
     // per-request uuid) so a double-fire collapses onto one Refund on
     // Stripe's side — even a logic regression can't double-charge.
