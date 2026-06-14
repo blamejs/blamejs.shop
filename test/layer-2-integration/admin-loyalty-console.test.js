@@ -45,6 +45,7 @@ var MIGS = [
   "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0004_shop_config.sql",
   "0206_orders_email_hash.sql", "0006_customers.sql",
   "0022_loyalty.sql", "0085_loyalty_redemptions.sql", "0163_loyalty_earn_rules.sql",
+  "0141_tier_benefits.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _split(t) {
@@ -84,6 +85,7 @@ async function _run() {
   var loyalty           = bShop.loyalty.create({ query: query });
   var loyaltyEarnRules  = bShop.loyaltyEarnRules.create({ query: query, loyalty: loyalty });
   var loyaltyRedemption = bShop.loyaltyRedemption.create({ query: query, loyalty: loyalty });
+  var tierBenefits      = bShop.tierBenefits.create({ query: query, loyalty: loyalty });
 
   // A customer the adjustment targets. The loyalty primitive keys on a
   // strict UUID customer_id — the same id the customers roster shows.
@@ -100,10 +102,12 @@ async function _run() {
         token: TOKEN, shop_name: "Test Shop", catalog: catalog, order: order, config: config,
         customers: customers,
         loyalty: loyalty, loyaltyEarnRules: loyaltyEarnRules, loyaltyRedemption: loyaltyRedemption,
+        tierBenefits: tierBenefits,
       });
       bShop.storefront.mount(r, {
         catalog: catalog, cart: cart, order: order, customers: customers,
         loyalty: loyalty, loyaltyEarnRules: loyaltyEarnRules, loyaltyRedemption: loyaltyRedemption,
+        tierBenefits: tierBenefits,
         config: { shop_name: "Test Shop" },
       });
     },
@@ -312,6 +316,62 @@ async function _run() {
     });
     check("bearer adjust missing reason then 400", apiAdjustNoReason.status === 400);
     check("bearer missing reason: no change", (await loyalty.balance(buyer)).balance === 160);
+
+    // ---- tier benefits: author via the browser form -------------------
+    // The buyer's lifetime ended at 250 → BRONZE, so a bronze benefit
+    // must surface on their /account/loyalty page after authoring.
+    var tbOverview = await helpers.httpRequest({ port: port, path: "/admin/loyalty", jar: jar });
+    check("overview links tier-benefit management", tbOverview.body.indexOf("/admin/loyalty/tier-benefits") !== -1);
+
+    var tbCreate = await _post(port, "/admin/loyalty/tier-benefits", jar, {
+      slug: "bronze-welcome-ship", tier: "bronze", kind: "free_shipping", value_min_order_minor: "2500",
+    });
+    check("tier-benefit create then 303",    tbCreate.status === 303);
+    check("tier-benefit create redirects created", (tbCreate.headers.location || "").indexOf("created=1") !== -1);
+    var tbRow = (await tierBenefits.listBenefits({ tier: "bronze" }))[0];
+    check("tier benefit persisted",          tbRow && tbRow.slug === "bronze-welcome-ship" && tbRow.kind === "free_shipping");
+    check("tier benefit value built per kind", tbRow.value.min_order_minor === 2500);
+
+    // It shows in the admin list + the bearer JSON list.
+    var tbList = await helpers.httpRequest({ port: port, path: "/admin/loyalty/tier-benefits", jar: jar });
+    check("admin tier-benefit list shows it", tbList.body.indexOf("bronze-welcome-ship") !== -1);
+    var tbListApi = await helpers.httpRequest({ port: port, path: "/admin/loyalty/tier-benefits", headers: bearer });
+    check("admin tier-benefit list API rows", JSON.parse(tbListApi.body).rows.length === 1);
+
+    // The customer (bronze) now sees the perk under "what your tier includes".
+    var custWithBenefit = await helpers.httpRequest({ port: port, path: "/account/loyalty", jar: custJar });
+    check("customer sees tier-benefit",      custWithBenefit.body.indexOf("Free shipping on orders over") !== -1);
+    check("customer benefit framing honest", custWithBenefit.body.indexOf("not applied automatically") !== -1 || custWithBenefit.body.indexOf("Ask at checkout") !== -1);
+
+    // A percent_off benefit value validation flows the SAME create path.
+    var tbPct = await _post(port, "/admin/loyalty/tier-benefits", jar, {
+      slug: "bronze-5-off", tier: "bronze", kind: "percent_off", value_percent: "5",
+    });
+    check("percent tier-benefit create then 303", tbPct.status === 303);
+    check("percent benefit value built",     (await tierBenefits.listBenefits({ tier: "bronze", kind: "percent_off" }))[0].value.percent === 5);
+
+    // Bad input on the authoring path is a clean 400 (no row), not a 500.
+    var tbBad = await _post(port, "/admin/loyalty/tier-benefits", jar, {
+      slug: "bronze-bad-pct", tier: "bronze", kind: "percent_off", value_percent: "150",
+    });
+    check("out-of-range percent then 400",   tbBad.status === 400);
+    check("bad percent: no row persisted",   (await tierBenefits.listBenefits({ tier: "bronze" })).filter(function (x) { return x.slug === "bronze-bad-pct"; }).length === 0);
+    check("bad percent leaks no SQL/prefix", tbBad.body.indexOf("SQLITE") === -1 && tbBad.body.indexOf("tierBenefits.") === -1);
+
+    // Archive removes the benefit from the customer page.
+    var tbArchive = await helpers.httpRequest({ port: port, path: "/admin/loyalty/tier-benefits/bronze-welcome-ship/archive", method: "POST", jar: jar });
+    check("tier-benefit archive then 303",   tbArchive.status === 303);
+    var custAfterTbArchive = await helpers.httpRequest({ port: port, path: "/account/loyalty", jar: custJar });
+    check("archived benefit gone from customer", custAfterTbArchive.body.indexOf("Free shipping on orders over") === -1);
+
+    // Bearer JSON create contract.
+    var apiTb = await helpers.httpRequest({
+      port: port, path: "/admin/loyalty/tier-benefits", method: "POST",
+      headers: { authorization: "Bearer " + TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ slug: "bronze-bday", tier: "bronze", kind: "birthday_bonus", value_points: "100" }),
+    });
+    check("bearer tier-benefit create 201 JSON", apiTb.status === 201 && (apiTb.headers["content-type"] || "").indexOf("application/json") === 0);
+    check("bearer tier-benefit persisted",   (await tierBenefits.listBenefits({ tier: "bronze", kind: "birthday_bonus" }))[0].value.points === 100);
 
     // ---- auth gate -----------------------------------------------------
     var anon = await helpers.httpRequest({ port: port, path: "/admin/loyalty" });
