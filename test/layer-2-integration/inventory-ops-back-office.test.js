@@ -48,6 +48,9 @@ var MIGS = [
   "0034_inventory_locations.sql",
   "0089_stock_transfers.sql",
   "0138_inventory_writeoffs.sql",
+  // recordWriteoff debits the shelf with respect_holds, which reads
+  // inventory_holds to refuse over-debiting below the paid-hold sum.
+  "0152_inventory_allocations.sql",
 ].map(function (f) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f); });
 
 function _split(t) {

@@ -37,6 +37,9 @@ var assert  = helpers.assert;
 var MIGS = [
   "0034_inventory_locations.sql",
   "0138_inventory_writeoffs.sql",
+  // recordWriteoff debits the shelf with respect_holds, which reads
+  // inventory_holds to refuse over-debiting below the paid-hold sum.
+  "0152_inventory_allocations.sql",
 ].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
@@ -510,6 +513,81 @@ async function _monotonicClockPerSku() {
   check("monotonic per-sku independence",     d.occurred_at === ts);
 }
 
+// Seed a single live hold row directly so the test can assert
+// recordWriteoff's respect_holds floor without standing up the full
+// allocations primitive. Mirrors the inventory_holds schema from
+// migration 0152.
+async function _seedHeld(q, opts) {
+  await q(
+    "INSERT INTO inventory_holds (id, cart_id, sku, variant_id, location_code, " +
+    "quantity, status, ttl_seconds, expires_at, created_at) " +
+    "VALUES (?1, ?2, ?3, NULL, ?4, ?5, 'held', 600, ?6, ?7)",
+    [
+      require("../../lib/vendor/blamejs").uuid.v7(),
+      opts.cart_id || "cart-1",
+      opts.sku,
+      opts.location_code == null ? null : opts.location_code,
+      opts.quantity,
+      (opts.created_at || Date.now()) + 600000,
+      opts.created_at || Date.now(),
+    ],
+  );
+}
+
+// A write-off (operator shrinkage) must not over-debit the shelf below
+// the outstanding paid-hold sum for the SKU+location — a later
+// commitHold would otherwise fail with the hold stranded.
+async function _writeoffRespectsHolds() {
+  var wired = await _wire();
+  var q = wired.q, locSvc = wired.locSvc, svc = wired.svc;
+
+  // Shelf=10 at WH-EAST, with a held row reserving 6 there.
+  await locSvc.setStock({ sku: "WDG-H", location_code: "WH-EAST", quantity: 10 });
+  await _seedHeld(q, { sku: "WDG-H", location_code: "WH-EAST", quantity: 6 });
+
+  // A write-off of 5 would leave shelf=5 < held=6 → refused, shelf
+  // untouched.
+  await assert.rejects(svc.recordWriteoff({
+    sku: "WDG-H", location_code: "WH-EAST", quantity: 5,
+    reason: "damaged", actor: "a@b.com",
+  }), /would strand 6 held units/);
+  var s1 = await locSvc.stockForSku("WDG-H");
+  var east1 = s1.by_location.find(function (l) { return l.code === "WH-EAST"; });
+  check("respect_holds: over-debit refused, shelf untouched", east1 && east1.quantity === 10);
+  var rows1 = (await q("SELECT COUNT(*) AS n FROM inventory_writeoffs", [])).rows[0];
+  check("respect_holds: refusal writes no row",               Number(rows1.n) === 0);
+
+  // A write-off of 4 leaves shelf=6 >= held=6 → allowed.
+  var w = await svc.recordWriteoff({
+    sku: "WDG-H", location_code: "WH-EAST", quantity: 4,
+    reason: "damaged", actor: "a@b.com",
+  });
+  check("respect_holds: at-floor debit allowed",              w.status === "recorded");
+  var s2 = await locSvc.stockForSku("WDG-H");
+  var east2 = s2.by_location.find(function (l) { return l.code === "WH-EAST"; });
+  check("respect_holds: shelf debited to held floor",         east2 && east2.quantity === 6);
+
+  // An un-pinned hold (NULL location_code) counts against every
+  // location's floor.
+  await locSvc.setStock({ sku: "WDG-U", location_code: "WH-EAST", quantity: 8 });
+  await _seedHeld(q, { sku: "WDG-U", location_code: null, quantity: 5 });
+  await assert.rejects(svc.recordWriteoff({
+    sku: "WDG-U", location_code: "WH-EAST", quantity: 4,
+    reason: "lost", actor: "a@b.com",
+  }), /would strand 5 held units/);
+
+  // A normal commitHold-style debit (respect_holds OFF) is NOT blocked
+  // by the held sum — commitHold flips held -> committed before
+  // debiting, so its own qty is already out of the held total. Call
+  // adjustStock directly without the flag and confirm it succeeds even
+  // though held(6) > resulting shelf.
+  var commitDebit = await locSvc.adjustStock({
+    sku: "WDG-H", location_code: "WH-EAST", delta: -6,
+    reason: "hold-commit:simulated",
+  });
+  check("commitHold-style debit (no flag) not hold-blocked",  commitDebit.quantity === 0);
+}
+
 async function _getWriteoff() {
   var wired = await _wire();
   var locSvc = wired.locSvc, svc = wired.svc;
@@ -533,6 +611,7 @@ async function run() {
   await _reverseWriteoffRestores();
   await _factoryRefusals();
   await _monotonicClockPerSku();
+  await _writeoffRespectsHolds();
   await _getWriteoff();
 }
 

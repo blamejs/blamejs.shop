@@ -54,6 +54,10 @@ var assert  = helpers.assert;
 var MIGS = [
   "0034_inventory_locations.sql",
   "0197_inventory_audits.sql",
+  // finalizeAudit({ apply_adjustments: true }) debits the shelf with
+  // respect_holds, which reads inventory_holds to refuse over-debiting
+  // below the paid-hold sum.
+  "0152_inventory_allocations.sql",
 ].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
