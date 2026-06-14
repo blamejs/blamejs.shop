@@ -14,7 +14,7 @@
         },
         {
           "title": "A double-submitted partial refund no longer phantom-credits gift card and loyalty",
-          "body": "Recording a partial refund now dedupes on the payment-provider refund id, the same identity the webhook mirror keys on. A double-click, a retry, or a refund webhook arriving after a console refund computes the same provider idempotency key, so the provider refunds once — and recording a second ledger row for that same refund is now a no-op. Previously the duplicate row double-counted the order's refunded total, which on a split-tender order pushed the cumulative past the cash captured and re-credited the full gift-card and loyalty value that was never refunded."
+          "body": "Recording a partial refund now dedupes on the payment-provider refund id in a single conditional write, so the existence check and the ledger append are one atomic statement — two concurrent submits of the same refund (a double-click, a retry, or a refund webhook racing the console) can no longer both record. The Stripe refund webhook now stamps that same refund id alongside the cash share it mirrors, so a refund the webhook records before the console write is recognized and the console write becomes a no-op. Previously a duplicate row double-counted the order's refunded total, which on a split-tender order pushed the cumulative past the cash captured and re-credited the full gift-card and loyalty value the customer was never refunded."
         }
       ]
     }
