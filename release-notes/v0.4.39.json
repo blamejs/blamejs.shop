@@ -14,7 +14,7 @@
         },
         {
           "title": "A single failing domain no longer aborts the whole erasure",
-          "body": "Each customer-keyed domain is now deleted in isolation: a handler that throws is recorded as a failure and the erasure continues to the remaining domains, instead of aborting and stranding everything after it half-erased. The request is marked fulfilled only when every domain succeeds — a partial run stays open and reports exactly which domains failed, so re-running retries just the failures and converges to a clean, complete erasure. Every domain handler is idempotent, so the retry removes nothing twice."
+          "body": "Each customer-keyed domain is now deleted in isolation: a handler that throws is recorded as a failure and the erasure continues to the remaining domains, instead of aborting and stranding everything after it half-erased. The request is marked fulfilled only when every domain succeeds — a partial run stays open and reports exactly which domains failed, so re-running retries just the failures and converges to a clean, complete erasure. The erasure console reflects an incomplete run as needing a re-run rather than reporting success, and every domain handler is idempotent, so the retry removes nothing twice."
         }
       ]
     }
