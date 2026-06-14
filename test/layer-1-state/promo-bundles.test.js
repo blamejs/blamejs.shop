@@ -481,6 +481,88 @@ async function _recordRedemption() {
   }), /savings_minor/);
 }
 
+// ---- recordRedemption per-customer cap --------------------------------
+
+async function _perCustomerCap() {
+  var s = _setup();
+  await s.pb.defineBundle({
+    slug: "per-cust", title: "per-cust",
+    components: [{ sku: "A", quantity: 1 }],
+    bundle_price_minor: 1000, currency: "USD",
+    starts_at: T0 - DAY, expires_at: T0 + DAY,
+    max_per_customer: 1,
+  });
+
+  var cust1 = bShop.framework.uuid.v7();
+  var cust2 = bShop.framework.uuid.v7();
+
+  // First redemption for cust1 is allowed.
+  var first = await s.pb.recordRedemption({
+    slug: "per-cust", order_id: bShop.framework.uuid.v7(), customer_id: cust1, savings_minor: 200,
+  });
+  check("per-cust first redemption ok",          first.customer_id === cust1);
+  var afterFirst = await s.pb.getBundle("per-cust");
+  check("per-cust counter ticked once",          afterFirst.redemptions_used === 1);
+
+  // Second redemption (distinct order) for the SAME customer is refused.
+  var capHit = false;
+  try {
+    await s.pb.recordRedemption({
+      slug: "per-cust", order_id: bShop.framework.uuid.v7(), customer_id: cust1, savings_minor: 200,
+    });
+  } catch (e) {
+    capHit = true;
+    check("per-cust refusal code",               e.code === "BUNDLE_PER_CUSTOMER_CAP_REACHED");
+    check("per-cust refusal is not a TypeError",  !(e instanceof TypeError));
+    check("per-cust refusal message",            /max_per_customer/.test(e.message));
+  }
+  check("per-cust second redemption refused",    capHit === true);
+
+  // The refused redemption must NOT have ticked the total counter or
+  // left a stray ledger row.
+  var afterRefuse = await s.pb.getBundle("per-cust");
+  check("per-cust counter unchanged on refusal", afterRefuse.redemptions_used === 1);
+  var custRows = (await s.query(
+    "SELECT COUNT(*) AS n FROM promo_bundle_redemptions WHERE slug = ?1 AND customer_id = ?2",
+    ["per-cust", cust1],
+  )).rows[0];
+  check("per-cust ledger holds one row",         Number(custRows.n) === 1);
+
+  // A DIFFERENT customer is unaffected by cust1's exhausted cap.
+  var second = await s.pb.recordRedemption({
+    slug: "per-cust", order_id: bShop.framework.uuid.v7(), customer_id: cust2, savings_minor: 200,
+  });
+  check("per-cust other customer allowed",       second.customer_id === cust2);
+  var afterSecond = await s.pb.getBundle("per-cust");
+  check("per-cust counter ticks for new cust",   afterSecond.redemptions_used === 2);
+
+  // Replaying cust1's original order is still an idempotent no-op (the
+  // cap is per-customer redemption count, not a hard block on the
+  // already-recorded order).
+  var replay = await s.pb.recordRedemption({
+    slug: "per-cust", order_id: first.order_id, customer_id: cust1, savings_minor: 999,
+  });
+  check("per-cust idempotent replay",            replay.id === first.id);
+  check("per-cust replay keeps savings",         replay.savings_minor === 200);
+
+  // A null per_customer cap leaves a customer unbounded.
+  await s.pb.defineBundle({
+    slug: "uncapped-cust", title: "uncapped-cust",
+    components: [{ sku: "A", quantity: 1 }],
+    bundle_price_minor: 1000, currency: "USD",
+    starts_at: T0 - DAY, expires_at: T0 + DAY,
+  });
+  var cust3 = bShop.framework.uuid.v7();
+  await s.pb.recordRedemption({
+    slug: "uncapped-cust", order_id: bShop.framework.uuid.v7(), customer_id: cust3, savings_minor: 10,
+  });
+  await s.pb.recordRedemption({
+    slug: "uncapped-cust", order_id: bShop.framework.uuid.v7(), customer_id: cust3, savings_minor: 10,
+  });
+  var uncapped = await s.pb.getBundle("uncapped-cust");
+  check("per-cust null cap is unlimited",        uncapped.redemptions_used === 2);
+}
+
 // ---- updateBundle + archiveBundle -------------------------------------
 
 async function _updateAndArchive() {
@@ -613,6 +695,7 @@ async function run() {
   await _detectInCart();
   await _applyBundleToCart();
   await _recordRedemption();
+  await _perCustomerCap();
   await _updateAndArchive();
   await _metricsRollup();
 }

@@ -17,9 +17,10 @@
  *     consumed redemptions; cancelled redemptions don't count
  *   - markConsumed: active → consumed, sets order_id; refuses anything
  *     other than 'active'
- *   - cancelRedemption: active → cancelled refunds points via
- *     loyalty.adjust(+points); consumed redemption refused (no auto
- *     refund after consumption)
+ *   - cancelRedemption: active → cancelled refunds points to the
+ *     spendable balance via loyalty.creditBalance (lifetime untouched,
+ *     so a redeem→cancel loop can't ratchet the tier); consumed
+ *     redemption refused (no auto refund after consumption)
  *   - updateReward / archiveReward / listRewards
  *   - redemptionsForCustomer pagination
  */
@@ -446,6 +447,50 @@ async function _cancelRefundsOnlyActive() {
   await assert.rejects(f.lr.cancelRedemption({ redemption_id: r.redemption_id }),      /reason/);
 }
 
+async function _cancelDoesNotInflateLifetime() {
+  // redeem debits the spendable balance and leaves lifetime alone;
+  // cancelRedemption must give the points back to the balance WITHOUT
+  // crediting lifetime. Otherwise a redeem→cancel loop ratchets the
+  // tier-driving lifetime total upward without bound.
+  var f = _factory();
+  var cid = _uuid();
+
+  await f.lr.defineReward({
+    slug: "fifty-off", kind: "discount_percent", title: "50% off",
+    point_cost: 400, value_json: { percent: 50 }, active: true,
+  });
+
+  // Earn 1000 → lifetime 1000, balance 1000, tier silver (>=500).
+  await f.loyalty.earn({ customer_id: cid, points: 1000, source: "order-paid" });
+  var earned = await f.loyalty.balance(cid);
+  check("baseline lifetime == earned",      earned.lifetime === 1000);
+  check("baseline balance == earned",       earned.balance === 1000);
+  check("baseline tier silver",             earned.tier === "silver");
+
+  // Loop redeem→cancel many times. Each cancel refunds 400 points.
+  // Lifetime must stay pinned at 1000 across the whole loop, and the
+  // balance must return to 1000 after each cancel.
+  for (var i = 0; i < 6; i += 1) {
+    var r = await f.lr.redeemForCustomer({ customer_id: cid, reward_slug: "fifty-off" });
+    var afterRedeem = await f.loyalty.balance(cid);
+    check("loop redeem debits balance to 600",       afterRedeem.balance === 600);
+    check("loop redeem leaves lifetime at 1000",     afterRedeem.lifetime === 1000);
+
+    await f.lr.cancelRedemption({ redemption_id: r.redemption_id, reason: "operator-rollback" });
+    var afterCancel = await f.loyalty.balance(cid);
+    check("loop cancel restores balance to 1000",    afterCancel.balance === 1000);
+    check("loop cancel does NOT grow lifetime",      afterCancel.lifetime === 1000);
+    check("loop cancel does NOT escalate tier",      afterCancel.tier === "silver");
+  }
+
+  // Final state: lifetime never moved off the earned total, so the
+  // tier never escalated past where the genuine earn placed it.
+  var final = await f.loyalty.balance(cid);
+  check("final lifetime unchanged == 1000",  final.lifetime === 1000);
+  check("final balance restored == 1000",    final.balance === 1000);
+  check("final tier still silver",           final.tier === "silver");
+}
+
 async function _updateAndArchiveReward() {
   var f = _factory();
 
@@ -558,6 +603,7 @@ async function run() {
   await _maxPerCustomerCap();
   await _markConsumedFsm();
   await _cancelRefundsOnlyActive();
+  await _cancelDoesNotInflateLifetime();
   await _updateAndArchiveReward();
   await _listAndPaginate();
 }

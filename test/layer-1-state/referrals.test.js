@@ -212,6 +212,64 @@ async function _funnel() {
   check("trackPurchase no invitation -> null", orphan === null);
 }
 
+async function _concurrentFunnel() {
+  // Two concurrent trackPurchase calls for the same customer (a
+  // double-submit or a re-delivered purchase webhook) must complete
+  // the funnel exactly once — only one bumps referrals_count.
+  var refs = bShop.referrals.create({ query: _makeQuery() });
+  var referrer = bShop.framework.uuid.v7();
+  var c = await refs.issueCode({ referrer_customer_id: referrer });
+  await refs.invite({ code: c.code, referee_email: "race@example.com" });
+  var cust = bShop.framework.uuid.v7();
+  await refs.trackSignup({ code: c.code, customer_id: cust });
+
+  var order = bShop.framework.uuid.v7();
+  var results = await Promise.all([
+    refs.trackPurchase({ customer_id: cust, order_id: order }),
+    refs.trackPurchase({ customer_id: cust, order_id: order }),
+  ]);
+  var completed = results.filter(function (r) { return r && r.status === "completed"; });
+  var recorded  = results.filter(function (r) { return r && r.status === "already-recorded"; });
+  check("concurrent purchase one completes",        completed.length === 1);
+  check("concurrent purchase loser already-recorded", recorded.length === 1);
+  // The leaderboard counter — the money/integrity-relevant field — is
+  // bumped exactly once despite both calls passing the null check.
+  var after = await refs.byCode(c.code);
+  check("concurrent purchase counts once",          Number(after.referrals_count) === 1);
+
+  // Two different customers signing up concurrently can't both claim
+  // the same oldest pending invitation — each lands on a distinct row.
+  var refs2 = bShop.referrals.create({ query: _makeQuery() });
+  var ref2  = bShop.framework.uuid.v7();
+  var c2    = await refs2.issueCode({ referrer_customer_id: ref2 });
+  await refs2.invite({ code: c2.code, referee_email: "s1@example.com" });
+  await refs2.invite({ code: c2.code, referee_email: "s2@example.com" });
+  var custA = bShop.framework.uuid.v7();
+  var custB = bShop.framework.uuid.v7();
+  var signups = await Promise.all([
+    refs2.trackSignup({ code: c2.code, customer_id: custA }),
+    refs2.trackSignup({ code: c2.code, customer_id: custB }),
+  ]);
+  check("concurrent signup both pinned",            signups[0] && signups[1]);
+  check("concurrent signup distinct invitations",   signups[0].id !== signups[1].id);
+  check("concurrent signup distinct customers",
+    signups[0].signed_up_customer_id !== signups[1].signed_up_customer_id);
+
+  // A double-submit signup by the SAME customer is a no-op (returns null)
+  // and does NOT consume a second pending invitation — the friend stays
+  // pinned to exactly one invitation.
+  var custC = bShop.framework.uuid.v7();
+  var refs3 = bShop.referrals.create({ query: _makeQuery() });
+  var ref3  = bShop.framework.uuid.v7();
+  var c3    = await refs3.issueCode({ referrer_customer_id: ref3 });
+  await refs3.invite({ code: c3.code, referee_email: "d1@example.com" });
+  await refs3.invite({ code: c3.code, referee_email: "d2@example.com" });
+  var first  = await refs3.trackSignup({ code: c3.code, customer_id: custC });
+  var second = await refs3.trackSignup({ code: c3.code, customer_id: custC });
+  check("signup double-submit is a no-op (null)",   second === null);
+  check("double-submit kept the friend pinned once", first && first.signed_up_customer_id === custC);
+}
+
 async function _rewards() {
   var refs = bShop.referrals.create({ query: _makeQuery() });
   var referrer = bShop.framework.uuid.v7();
@@ -379,6 +437,7 @@ async function run() {
   await _issueCodeValidation();
   await _inviteIdempotent();
   await _funnel();
+  await _concurrentFunnel();
   await _rewards();
   await _byCodeCaseInsensitive();
   await _statsForReferrer();
