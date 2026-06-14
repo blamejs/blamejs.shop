@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "frameworkVersion": "0.15.9",
-  "createdAt": "2026-06-13T22:58:01.805Z",
+  "frameworkVersion": "0.15.11",
+  "createdAt": "2026-06-14T05:18:13.280Z",
   "exports": {
     "a2a": {
       "type": "object",
@@ -48328,6 +48328,10 @@
           "type": "function",
           "arity": 1
         },
+        "indexAfterOpenTag": {
+          "type": "function",
+          "arity": 2
+        },
         "isHex": {
           "type": "function",
           "arity": 2
@@ -51210,6 +51214,10 @@
         "listBackends": {
           "type": "function",
           "arity": 0
+        },
+        "listVersions": {
+          "type": "function",
+          "arity": 2
         },
         "presignedDownloadUrl": {
           "type": "function",
