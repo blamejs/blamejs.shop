@@ -106,6 +106,14 @@ function _fakeBilling() {
   return {
     invoices: invoices,
     recordInvoice: async function (input) {
+      // Mirror the real subscriptionBilling: dedupe on processor_invoice_id so
+      // a replayed period close returns the existing invoice instead of
+      // enqueuing a duplicate (the production UNIQUE constraint + dedupe path).
+      if (input.processor_invoice_id != null) {
+        for (var j = 0; j < invoices.length; j += 1) {
+          if (invoices[j].processor_invoice_id === input.processor_invoice_id) return invoices[j];
+        }
+      }
       counter += 1;
       var invoice = {
         invoice_id:      "inv_" + counter,
@@ -114,6 +122,7 @@ function _fakeBilling() {
         period_end:      input.period_end,
         amount_minor:    input.amount_minor,
         currency:        input.currency,
+        processor_invoice_id: input.processor_invoice_id == null ? null : input.processor_invoice_id,
       };
       invoices.push(invoice);
       return invoice;
@@ -627,6 +636,19 @@ async function _periodSummaryMultiMeter() {
   check("recordPeriodInvoice invoice[1] USD",  rolled.invoices[1].currency === "USD");
   check("recordPeriodInvoice invoice[1] amount", rolled.invoices[1].amount_minor === 700);
   check("recordPeriodInvoice handle saw 2 calls", f.billing.invoices.length === 2);
+
+  // Re-running the SAME period close (a cron retry / at-least-once redelivery
+  // / operator re-run) must NOT double-bill: recordPeriodInvoice stamps a
+  // deterministic processor_invoice_id, so the billing layer dedupes the
+  // replay instead of enqueuing a second invoice for the period.
+  var rerun = await f.mu.recordPeriodInvoice({
+    subscription_id: subId, period_start: t0, period_end: t1,
+  });
+  check("period invoice carries a stable idempotency key", !!rolled.invoices[0].processor_invoice_id);
+  check("re-run did not enqueue more invoices",   f.billing.invoices.length === 2);
+  check("re-run returned the existing invoices",
+    rerun.invoices[0].invoice_id === rolled.invoices[0].invoice_id &&
+    rerun.invoices[1].invoice_id === rolled.invoices[1].invoice_id);
 
   // Zero-charge currencies skipped — define a meter whose total is
   // fully consumed by the included-floor.

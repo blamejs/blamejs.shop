@@ -550,11 +550,42 @@ async function _validation() {
 
 var MAX_REASON_LEN = planChanges.MAX_REASON_LEN;
 
+// Two concurrent executeChange calls for the same immediate change must charge
+// proration ONCE. The _pendingFor guard only blocks PENDING changes, so the
+// conditional plan update (WHERE plan_id = the pre-change id) is the
+// serialization point: both calls read the old plan id, but only the first
+// conditional update transitions the row and records proration; the second
+// matches zero rows and skips the invoice. Without the guard both would charge.
+async function _concurrentImmediateNoDoubleProration() {
+  var ctx = _setup({ with_billing: true });
+  var now = Date.now();
+  var seed = await _seed(ctx.query, {
+    plan_a_amount: 1000,
+    plan_b_amount: 3000,
+    period_start:  now - 1000,
+    period_end:    now + 9000,
+  });
+
+  var both = await Promise.all([
+    ctx.pc.executeChange({ subscription_id: seed.subscription_id, new_plan_id: seed.plan_b_id }),
+    ctx.pc.executeChange({ subscription_id: seed.subscription_id, new_plan_id: seed.plan_b_id }),
+  ]);
+  check("both concurrent executeChange calls returned a row",
+    both.length === 2 && typeof both[0].id === "string" && typeof both[1].id === "string");
+
+  var sub = await ctx.query("SELECT plan_id FROM subscriptions WHERE id = ?1", [seed.subscription_id]);
+  check("plan transitioned to the new plan", sub.rows[0].plan_id === seed.plan_b_id);
+
+  var invoices = await ctx.bill.invoicesForSubscription(seed.subscription_id);
+  check("concurrent immediate change charged proration exactly once", invoices.length === 1);
+}
+
 async function run() {
   await _prorationMidPeriod();
   await _proposeImmediate();
   await _proposeNextCycle();
   await _executeImmediateFsm();
+  await _concurrentImmediateNoDoubleProration();
   await _cancelPendingFsm();
   await _applyScheduledWindow();
   await _historyOrdering();
