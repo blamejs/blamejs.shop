@@ -525,6 +525,78 @@ async function _deletionFlow() {
                        /use processDeletion for deletion/);
 }
 
+// A domain handler that throws must NOT abort the whole erasure: the
+// access-cut (`customers` — passkeys/OAuth/email-hash/sessions) runs FIRST
+// so the account can no longer sign in even when a later domain fails, the
+// domains after the failing one still erase (not stranded), the run reports
+// incomplete and stays `processing` (retryable, never falsely fulfilled),
+// and a retry once the transient clears converges to fulfilled.
+async function _deletionResilientAccessFirst() {
+  var q  = _makeQuery();
+  var customersReader  = _mockReader("customers",  "customers",   { email: "x" }, 1);
+  var orderNotesReader = _mockReader("orderNotes", "order_notes", [{ id: "n1" }], 1);
+  var loyaltyReader    = _mockReader("loyalty",    "loyalty",     { points: 0 }, 1);
+  var addressesReader  = _mockReader("addresses",  "addresses",   [], 3);
+
+  // `order` throws on its first wet-run, then behaves on retry.
+  var orderStore  = { rows: 2 };
+  var orderThrows = true;
+  var orderReader = {
+    name: "order", table: "orders",
+    forCustomerExport: async function () { return [{ id: "o1" }]; },
+    forCustomerDeletion: async function (_id, opts) {
+      if (orderThrows && (!opts || opts.dry_run !== true)) {
+        throw new Error("order erase failed (simulated transient)");
+      }
+      var n = orderStore.rows;
+      if (!opts || opts.dry_run !== true) orderStore.rows = 0;
+      return { table: "orders", deleted: n };
+    },
+    _peekStore: function () { return orderStore; },
+  };
+
+  var ce = complianceExport.create({
+    query:      q,
+    customers:  customersReader,
+    orderNotes: orderNotesReader,
+    order:      orderReader,
+    loyalty:    loyaltyReader,
+    addresses:  addressesReader,
+  });
+
+  var customerId = _uuid();
+  var del = await ce.requestDeletion({
+    customer_id:  customerId,
+    requested_by: "operator-csr",
+    jurisdiction: "gdpr",
+    reason:       "Customer invoked right to erasure under GDPR Art. 17",
+  });
+
+  // Wet run while `order` throws — the erasure must not abort.
+  var first = await ce.processDeletion({ request_id: del.id });
+  check("resilient: run reports incomplete",              first.complete === false);
+  check("resilient: order recorded as a failure",         first.failures.some(function (f) { return f.domain === "order"; }));
+  // Access-cut ran FIRST — customers erased even though a later domain threw.
+  check("access-first: customers erased despite later throw", customersReader._peekStore().rows === 0);
+  // The domain BEFORE the failing one and the ones AFTER it all still erase.
+  check("resilient: orderNotes still erased",             orderNotesReader._peekStore().rows === 0);
+  check("resilient: loyalty (after order) still erased",  loyaltyReader._peekStore().rows === 0);
+  check("resilient: addresses (after order) still erased", addressesReader._peekStore().rows === 0);
+  check("resilient: failing domain keeps its rows",       orderReader._peekStore().rows === 2);
+  // Incomplete run stays processing — retryable, never falsely fulfilled.
+  var midRow = await ce.getRequest(del.id);
+  check("resilient: incomplete run stays processing",     midRow.status === "processing");
+
+  // Retry once the transient clears — converges to fulfilled.
+  orderThrows = false;
+  var second = await ce.processDeletion({ request_id: del.id });
+  check("retry: second run complete",                     second.complete === true);
+  check("retry: no failures on the clean pass",           second.failures.length === 0);
+  check("retry: order finally erased",                    orderReader._peekStore().rows === 0);
+  var finalRow = await ce.getRequest(del.id);
+  check("retry: status converges to fulfilled",           finalRow.status === "fulfilled");
+}
+
 // ---- auditForCustomer --------------------------------------------------
 
 async function _auditHistory() {
@@ -634,6 +706,7 @@ async function run() {
   await _fulfillScopeFilters();
   await _dispatchExport();
   await _deletionFlow();
+  await _deletionResilientAccessFirst();
   await _auditHistory();
   await _statutoryDeadline();
 }
