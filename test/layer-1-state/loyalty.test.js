@@ -27,7 +27,8 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIG_LOYALTY = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0022_loyalty.sql");
+var MIG_LOYALTY  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0022_loyalty.sql");
+var MIG_RESTORED = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0223_loyalty_txn_restored_points.sql");
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -38,6 +39,9 @@ function _makeQuery() {
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
   _splitSchema(nodeFs.readFileSync(MIG_LOYALTY, "utf8")).forEach(function (s) {
+    db.prepare(s).run();
+  });
+  _splitSchema(nodeFs.readFileSync(MIG_RESTORED, "utf8")).forEach(function (s) {
     db.prepare(s).run();
   });
   return async function (sql, params) {
@@ -143,6 +147,33 @@ async function _redeemAndInsufficientRefusal() {
   // Drain to exactly zero — allowed.
   var r2 = await loy.redeem({ customer_id: cid, points: 200 });
   check("redeem to zero",                  r2.balance === 0);
+}
+
+// restoreRedemption must converge on the original spend no matter how many
+// passes run. The cash-first refund path calls it TWICE per order — once for
+// the partial cash slice (recordPartialRefund) and once on the terminal
+// refund edge. Each pass writes a positive 'redeem-reversal' ledger row that
+// also carries transaction_type 'redeem'; without filtering the scan to the
+// genuine burn (source = 'redeem'), a later pass re-reads a prior pass's
+// reversal as a fresh redemption and credits it again — minting points the
+// customer never had (money creation). At 100 pts/$1, 1 point == 1 minor.
+async function _restoreRedemptionDoesNotOverMintAcrossPasses() {
+  var loy = bShop.loyalty.create({ query: _makeQuery() });
+  var cid = _uuid();
+  var oid = _uuid();
+  await loy.earn({ customer_id: cid, points: 2000, source: "order-paid" });
+  await loy.redeem({ customer_id: cid, points: 2000, order_id: oid });   // $20 order, fully points-paid
+  check("over-mint: redeemed 2000 → balance 0", (await loy.balance(cid)).balance === 0);
+
+  // Pass 1 — a $5 partial slice of the $20 order restores 500 points.
+  var p1 = await loy.restoreRedemption(oid, { refunded_minor: 500, order_total_minor: 2000 });
+  check("over-mint: partial restore credits 500", p1.restored_points === 500);
+  // Pass 2 — the terminal full refund restores the REMAINING 1500, never 2000,
+  // and must not re-scan the +500 reversal row pass 1 wrote.
+  var p2 = await loy.restoreRedemption(oid, { refunded_minor: 2000, order_total_minor: 2000 });
+  check("over-mint: terminal restore credits the remaining 1500", p2.restored_points === 1500);
+  check("over-mint: cumulative restored == the spend exactly (no over-mint)",
+        (await loy.balance(cid)).balance === 2000);
 }
 
 async function _adjustPositiveAndNegative() {
@@ -416,6 +447,7 @@ async function run() {
   await _ensureAccount();
   await _earnAndTierPromotion();
   await _redeemAndInsufficientRefusal();
+  await _restoreRedemptionDoesNotOverMintAcrossPasses();
   await _adjustPositiveAndNegative();
   await _concurrentEarnAndAdjustAtomic();
   await _expireCapsAtBalance();
