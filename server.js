@@ -2526,6 +2526,47 @@ async function main() {
         }
       });
 
+      // Win-back send tick — the Worker's scheduled() POSTs here over the
+      // SHOP service binding, same shared-secret timing-safe gate + never-
+      // 5xx shape as the other ticks. One bounded pass: scan the order
+      // history for lapsed customers in each active campaign's window,
+      // enroll the eligible, then send every due step through the SAME
+      // suppression + marketing-consent gate every marketing flow uses
+      // (an unsubscribed / marketing-withdrawn lapsed customer is NOT
+      // emailed). Idempotent — a re-run or an overlapping tick can't
+      // double-enroll a customer (UNIQUE customer+campaign) nor double-send
+      // a step (UNIQUE enrollment+step + the conditional FSM advance), and
+      // the dispatch loop is drop-silent per recipient so one bad address
+      // never strands the batch. Inert (no mail) on a deploy with no SMTP /
+      // no deliverable-address source — it still walks the FSM + logs.
+      r.post("/_/winback-send-tick", async function (req, res) {
+        var gotWb = req.headers && req.headers["x-d1-bridge-secret"];
+        var wantWb = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !wantWb ||
+          typeof gotWb !== "string" ||
+          gotWb.length !== wantWb.length ||
+          !b.crypto.timingSafeEqual(gotWb, wantWb)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!winback) {
+          res.json({ ok: true, enabled: false, reason: "winback campaigns not composed" });
+          return;
+        }
+        try {
+          var wbSummary = await winback.runTick({
+            now:          Date.now(),
+            resolveEmail: winbackResolveEmail,
+          });
+          res.json({ ok: true, enabled: true, candidates: wbSummary.candidates, enrolled: wbSummary.enrolled, dispatched: wbSummary.dispatched });
+        } catch (e) {
+          // Never 5xx — a thrown tick would mark the cron run failed.
+          res.json({ ok: false, error: (e && e.message) || String(e) });
+        }
+      });
+
       // Customer-portal session-expiry tick — flips stale `issued`
       // magic-link rows to `expired` so the FSM column stays durable for
       // audit. Cheap (one bounded UPDATE) every minute; no cadence gate.
@@ -3152,6 +3193,134 @@ async function main() {
       var taxRates       = (catalog && cart) ? bShop.taxRates.create({})       : null;
       var shippingZones  = (catalog && cart) ? bShop.shippingZones.create({})  : null;
       var autoDiscount   = (catalog && cart) ? bShop.autoDiscount.create({})   : null;
+
+      // Win-back lapsed-customer campaigns — escalating re-engagement
+      // sequences for customers whose last paid order is N days old. The
+      // primitive owns the scan/enroll/FSM/delivery-log; we compose the
+      // three optional deps it needs to actually SEND (rather than just
+      // walk the FSM): a coupon-minter, a marketing mailer adapter, and
+      // an email-suppression gate. The console (define/list/activate/
+      // archive + metrics) and the cron tick are wired below.
+      //
+      // Coupon-minter: each step that declares a coupon mints a fresh,
+      // single-use, per-customer unlock code by composing autoDiscount —
+      // a code-gated rule capped at one redemption for that customer. The
+      // winback step kinds (percent / fixed / free_shipping) map onto
+      // autoDiscount's value kinds. Drop-silent on a mint failure (the
+      // primitive records a null coupon_code and the operator's mailer can
+      // still honor the step's declared kind/value).
+      var winbackCouponMinter = autoDiscount
+        ? {
+            mint: async function (mintInput) {
+              mintInput = mintInput || {};
+              var kind  = mintInput.kind;
+              var value = mintInput.value;
+              var custId = mintInput.customer_id;
+              // A short, collision-resistant code: WB + 10 url-safe chars.
+              var code = "WB" + b.uuid.v7().replace(/-/g, "").slice(0, 10).toUpperCase();
+              var ruleValue;
+              if (kind === "percent")            ruleValue = { kind: "percent_off", basis_points: value * 100 };
+              else if (kind === "fixed")         ruleValue = { kind: "amount_off_total", minor: value };
+              else if (kind === "free_shipping") ruleValue = { kind: "free_shipping" };
+              else return null;
+              await autoDiscount.defineRule({
+                slug:        "winback-" + code.toLowerCase(),
+                title:       "Win-back offer",
+                // Fires on any cart — the unlock code is the gate, not a
+                // minimum spend. cart_total_min:1 means "any non-empty cart".
+                trigger:     { kind: "cart_total_min", min_minor: 1 },
+                value:       ruleValue,
+                unlock_code: code,
+                // Single-use, single-customer: the code is minted FOR this
+                // lapsed customer; cap total + per-customer redemptions at 1
+                // so a forwarded code can't be spent twice.
+                max_redemptions_total:        1,
+                max_redemptions_per_customer: 1,
+              });
+              return { code: code, customer_id: custId };
+            },
+          }
+        : null;
+
+      // Marketing mailer adapter: the win-back primitive calls
+      // `email.send({ to, template_slug, variables })`; translate that into
+      // a real marketing message through the raw campaign mailer (the same
+      // transport the broadcast path uses). Null when SMTP isn't configured
+      // — the primitive then walks the FSM + logs deliveries but sends no
+      // mail (inert-until-configured, like cart-recovery). The body is a
+      // minimal templated marketing message; operators wanting richer
+      // templates wire their own template store and resolve template_slug
+      // here.
+      var winbackMailer = campaignMailer
+        ? {
+            send: async function (msg) {
+              msg = msg || {};
+              var vars = msg.variables || {};
+              var couponLine = vars.coupon_code
+                ? "\n\nYour code: " + vars.coupon_code
+                : "";
+              return campaignMailer.send({
+                to:      msg.to,
+                from:    process.env.MAIL_FROM,
+                subject: "We miss you",
+                text:    "It's been a while — here's something to bring you back." + couponLine,
+              });
+            },
+          }
+        : null;
+
+      // Consent-gated address resolver: maps a winback enrollment's
+      // customer_id to a deliverable plaintext address — but ONLY when the
+      // customer has NOT withdrawn marketing_email consent. This is the
+      // compliance chokepoint: a lapsed customer who unsubscribed (the
+      // unsubscribe path records a `marketing_email: withdrawn` row in the
+      // customer-keyed consent ledger, GDPR Art. 7(1)) resolves to null and
+      // is NEVER emailed. The email-suppression list is the SECOND gate,
+      // applied by the primitive's dispatcher after this resolver returns an
+      // address — so an unsubscribed OR suppressed lapsed customer is double-
+      // gated out of the send.
+      //
+      // Customer email is stored hash-only in this store, so there is no
+      // per-customer plaintext lookup in the default deploy: the address
+      // source returns null and the resolver is honestly inert (no mail
+      // leaves) until an operator wires their own customer_id → address
+      // lookup into `_winbackAddressForCustomer`. Returning null is the
+      // correct no-deliverable-address signal, not a silent failure.
+      var _winbackAddressForCustomer = function (_customerId) {
+        // No plaintext-email store keyed by customer_id in the default
+        // deploy. An operator with a plaintext source wires it here.
+        return Promise.resolve(null);
+      };
+      var winbackResolveEmail = function (enrollment) {
+        if (!enrollment || !enrollment.customer_id) return Promise.resolve(null);
+        return _winbackAddressForCustomer(enrollment.customer_id).then(function (addr) {
+          if (!addr) return null;
+          // Consent gate — refuse to resolve an address for a customer who
+          // withdrew marketing_email consent. Without the ledger wired we
+          // can't prove consent, so we DON'T send (fail-closed for marketing
+          // mail).
+          if (!consentLedger || typeof consentLedger.currentStateForCustomer !== "function") {
+            return null;
+          }
+          return consentLedger.currentStateForCustomer(enrollment.customer_id).then(function (state) {
+            var marketing = state && state.marketing_email;
+            if (marketing && marketing.state === "withdrawn") return null;
+            return addr;
+          }).catch(function () {
+            // A ledger read fault errs toward NOT sending marketing mail.
+            return null;
+          });
+        }).catch(function () { return null; });
+      };
+
+      var winback = (catalog && cart)
+        ? bShop.winbackCampaigns.create({
+            email:             winbackMailer,
+            emailSuppressions: campaignSuppressions,
+            coupons:           winbackCouponMinter,
+          })
+        : null;
+
       // Delivery-estimate — the PDP + cart "Get it by <date>" window from the
       // operator's carrier-transit / cutoff / holiday / postal-zone tables.
       // `shippingZones` is wired so a destination that misses the postal-prefix
@@ -3403,6 +3572,12 @@ async function main() {
           // the new-campaign form reads to populate its audience picker.
           emailCampaigns:   emailCampaigns,
           mailingAudiences: mailingAudiences,
+          // Win-back lapsed-customer campaign console (/admin/winback) —
+          // define/list/activate/archive sequences + recovery metrics +
+          // the recent delivery log. The send itself rides the
+          // /_/winback-send-tick cron (mounted below) through the same
+          // suppression + marketing-consent gate.
+          winback:          winback,
           collections:   collections,
           // Quotes console — the RFQ response queue + detail (respond /
           // reprice / withdraw / convert-to-order). The notifier sends the

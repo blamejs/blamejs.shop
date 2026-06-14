@@ -411,6 +411,7 @@ var _INTERNAL_CRON_PATHS = {
   "/_/quote-expiry-tick":     true,
   "/_/customer-portal-expire": true,
   "/_/campaign-send-tick":    true,
+  "/_/winback-send-tick":     true,
 };
 
 export default {
@@ -1037,6 +1038,31 @@ export default {
           await _shopContainer(env).fetch(csReq);
         } catch (e) {
           console.error("campaign-send-tick failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        }
+      })());
+
+      // Win-back send tick — drains lapsed-customer re-engagement
+      // sequences: scan the order history for customers gone quiet, enroll
+      // the eligible, and send the due step as a marketing-consent + email-
+      // suppression-gated message (an unsubscribed / marketing-withdrawn
+      // lapsed customer is never emailed). SEPARATE ctx.waitUntil so a slow
+      // pass never blocks the others. The container handler self-limits per
+      // pass via the per-step next_step_at gate; inert without a mailer /
+      // deliverable-address source.
+      ctx.waitUntil((async function () {
+        try {
+          var wbUrl = new URL("/_/winback-send-tick", "http://shop.container");
+          var wbReq = new Request(wbUrl.toString(), {
+            method:  "POST",
+            headers: {
+              "content-type":       "application/json; charset=utf-8",
+              "x-d1-bridge-secret": env.D1_BRIDGE_SECRET || "",
+            },
+            body: "{}",
+          });
+          await _shopContainer(env).fetch(wbReq);
+        } catch (e) {
+          console.error("winback-send-tick failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
         }
       })());
     }

@@ -53,6 +53,7 @@ var GATED_PATHS = [
   "/_/quote-expiry-tick",
   "/_/customer-portal-expire",
   "/_/campaign-send-tick",
+  "/_/winback-send-tick",
 ];
 
 function _run() {

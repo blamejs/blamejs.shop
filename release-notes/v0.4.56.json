@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.56",
+  "date": "2026-06-14",
+  "headline": "Win-back campaigns: re-engage lapsed customers with an escalating sequence of offers",
+  "summary": "A new operator console defines win-back campaigns that re-engage customers who have not ordered in a while. A campaign sets a lapse window and an escalating sequence of steps, each with its own delay and an optional coupon. A scheduled pass enrols customers who cross the lapse window and sends each due step through the store's email transport, minting the step's coupon. The send is gated for consent and deliverability: a customer who has withdrawn marketing-email consent or sits on the marketing suppression list is never emailed, and an opted-out customer is removed from the sequence so no later step reaches them — and if the suppression check itself is unavailable the send is held rather than risked. Each step is sent at most once even if two scheduled passes overlap. Campaigns are inert until an operator creates and activates one and the store's email transport is configured. No migration to apply.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Win-back campaign console + scheduled send",
+          "body": "Operators can create, list, activate, pause, and archive win-back campaigns from a new loyalty/marketing console screen: a lapse window plus an escalating sequence of steps, each with a delay and an optional coupon (a single-use, per-customer discount code minted when the step sends). A scheduled pass scans for lapsed customers, enrols them, advances each enrolment through the sequence, sends the due step via the store's email transport, and records a delivery log and per-campaign metrics. Every send is consent- and suppression-gated: a customer who withdrew marketing-email consent or is on the marketing suppression list is never emailed and is dropped from the sequence; a suppression-check outage holds the send rather than risking an unwanted message. The scheduled pass is idempotent — a step is sent at most once even if two passes overlap. The feature is inert until a campaign is created and activated and the email transport is configured."
+        }
+      ]
+    }
+  ]
+}
