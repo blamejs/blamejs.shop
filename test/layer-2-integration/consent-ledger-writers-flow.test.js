@@ -159,6 +159,26 @@ async function _run() {
     check("latest analytics now withdrawn",    st2.cookies_analytics.state === "withdrawn");
     check("latest marketing now withdrawn",    st2.cookies_marketing.state === "withdrawn");
 
+    // ---- 1c) GPC / DNT collapses analytics + marketing in the ledger -----
+    // A signed-in customer sends Sec-GPC:1 and ticks analytics + marketing +
+    // functional. The runtime gate (_consentAllows) forces analytics +
+    // marketing off under a browser opt-out, so the durable record must show
+    // them WITHDRAWN even though the boxes were checked — otherwise the
+    // customer record claims consent the app refuses to honor. functional is
+    // not opt-out-collapsed, so it reflects the ticked box (granted).
+    var rowsBeforeGpc = _ledgerRowCount(db);
+    var gpcSave = await helpers.httpRequest({
+      port: handle.port, path: "/consent", method: "POST", jar: authedJar,
+      headers: { "sec-gpc": "1" },
+      form: { choice: "granular", return_to: "/", cat_analytics: "1", cat_marketing: "1", cat_functional: "1" },
+    });
+    check("gpc banner save 303",                  gpcSave.status === 303);
+    check("gpc save appends 4 ledger rows",       _ledgerRowCount(db) === rowsBeforeGpc + 4);
+    var stGpc = _ledgerStateFor(db, buyer.id);
+    check("gpc collapses analytics to withdrawn", stGpc.cookies_analytics.state === "withdrawn");
+    check("gpc collapses marketing to withdrawn", stGpc.cookies_marketing.state === "withdrawn");
+    check("gpc leaves functional granted",        stGpc.cookies_functional.state === "granted");
+
     // ---- 2) anonymous banner save writes NOTHING to the durable ledger --
     var ledgerBeforeAnon = _ledgerRowCount(db);
     var sessBeforeAnon   = _sessionRecordCount(db);

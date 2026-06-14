@@ -10,7 +10,7 @@
       "items": [
         {
           "title": "Cookie-banner choices recorded in the durable consent ledger for signed-in customers",
-          "body": "When an authenticated customer saves their cookie preferences, each of the four optional categories is now mirrored into the durable per-customer consent ledger as a granted or withdrawn decision (source: cookie banner), so a supervisory-authority audit shows the identified individual's choice and not only the session-keyed record. The customer is resolved from the existing signed-in session (a revoked session is treated as signed-out); anonymous visitors carry no account and are written only to the session-level cookie record as before."
+          "body": "When an authenticated customer saves their cookie preferences, each of the four optional categories is now mirrored into the durable per-customer consent ledger as a granted or withdrawn decision (source: cookie banner), so a supervisory-authority audit shows the identified individual's choice and not only the session-keyed record. The durable record reflects the consent the storefront actually enforces: a browser-level opt-out signal (Global Privacy Control or Do Not Track) collapses the analytics and marketing categories to withdrawn even if their boxes were ticked, matching the runtime gate, so the record never claims consent the app refuses to honor. The customer is resolved from the existing signed-in session (a revoked session is treated as signed-out); anonymous visitors carry no account and are written only to the session-level cookie record as before."
         },
         {
           "title": "Newsletter unsubscribe records a marketing withdrawal for account holders",
