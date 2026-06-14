@@ -1332,6 +1332,19 @@ async function main() {
 
   var app = await b.createApp({
     dataDir: DATA_DIR,
+    // Accept the node-owned persistent tmpDir under /app. blamejs v0.15.0+
+    // fail-closes db.init when the encrypted-at-rest working-copy tmpDir is
+    // not a recognized tmpfs mount (/dev/shm, /run/shm, /run/user, /tmp) —
+    // the guard exists so the decrypted copy can't leak into backup
+    // snapshots, replication, or forensic disk images. On Cloudflare
+    // Containers (Firecracker) the non-root `node` user can't write /dev/shm,
+    // so BLAMEJS_TMPDIR points at /app/tmp (a node-owned path created in the
+    // Dockerfile). The container filesystem is ephemeral — destroyed on stop,
+    // never snapshotted or replicated — so the disk-residency the guard
+    // protects against does not exist here; take the documented opt-out
+    // rather than relax to atRest:'plain'. Without this, every 0.15.x boot
+    // throws db/tmpdir-not-tmpfs and the container crash-loops.
+    db: { allowNonTmpfsTmpDir: true },
     // Generous GLOBAL per-client-IP rate limit — the backstop against
     // credential / passkey spraying, gift-card balance brute-force,
     // checkout hammering, and unauthenticated row-flood writes. Keyed on
