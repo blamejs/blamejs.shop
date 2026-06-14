@@ -620,6 +620,54 @@ async function _dispatchTickSuppressionCancels() {
   check("next_step_at cleared on cancel", post.next_step_at === null);
 }
 
+async function _dispatchTickSuppressionFailsClosed() {
+  // A suppression-list OUTAGE (isSuppressed throws) must fail CLOSED — the
+  // win-back send is cancelled rather than emailing an address that may
+  // have opted out while the suppression store is unreachable.
+  var sends = [];
+  var mockEmail = {
+    send: async function (input) { sends.push(input); return { ok: true }; },
+  };
+  var mockSuppressions = {
+    isSuppressed: async function () { throw new Error("suppression store unavailable"); },
+  };
+  var f = _factory({
+    email:             mockEmail,
+    emailSuppressions: mockSuppressions,
+  });
+  var tick = _clock();
+  var t0 = tick();
+
+  await f.winback.defineCampaign({
+    slug:           "supp-outage",
+    lapse_days_min: 60,
+    steps: [
+      { delay_days: 0, template_slug: "wb_hi" },
+      { delay_days: 7, template_slug: "wb_7d" },
+    ],
+    now: t0,
+  });
+
+  var customerId = _uuid("c1");
+  var createdAt = t0 + 100;
+  var enr = await f.winback.enrollCustomer({
+    campaign_slug: "supp-outage",
+    customer_id:   customerId,
+    now:           createdAt,
+  });
+
+  var r = await f.winback.dispatchTick({
+    now:          createdAt,
+    resolveEmail: async function () { return "maybe-opted-out@example.com"; },
+  });
+  check("suppression-outage tick dispatches nothing (fail-closed)", r.dispatched === 0);
+  check("no email sent when the suppression check is unavailable", sends.length === 0);
+
+  var post = await f.winback.getEnrollment(enr.id);
+  check("fail-closed enrollment cancelled", post.status === "cancelled");
+  check("fail-closed cancel reason recorded", post.cancelled_reason === "suppression-check-unavailable");
+}
+
 async function _dispatchTickMintsCoupon() {
   var mintedCodes = [];
   var mockCoupons = {
@@ -972,6 +1020,7 @@ async function run() {
   await _enrollCustomerSchedulesNextStep();
   await _dispatchTickAdvancesSteps();
   await _dispatchTickSuppressionCancels();
+  await _dispatchTickSuppressionFailsClosed();
   await _dispatchTickMintsCoupon();
   await _markRecoveredHaltsSequence();
   await _recordStepDeliveryAndCancel();
