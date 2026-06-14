@@ -299,6 +299,74 @@ async function _scheduleAtLocationCapacityAndLeadTime() {
   }), /not active/);
 }
 
+async function _rescheduleReadyRefused() {
+  // A `ready` pickup must NOT regress to `scheduled` via a re-schedule —
+  // once goods are on the hold shelf the FSM has no ready -> scheduled
+  // edge. The re-schedule is refused and the row stays `ready` with its
+  // ready_at intact (a regressed row would silently un-ready a confirmed
+  // pickup).
+  var w = await _wire();
+  await w.svc.definePickupLocation({ code: "STORE-NYC", name: "Manhattan",
+    address: _validAddress(), hours_json: _validHours(),
+    capacity_per_hour: 4, lead_time_hours: 0 });
+  var orderId = _orderId();
+  await w.svc.scheduleAtLocation({
+    order_id: orderId, location_code: "STORE-NYC",
+    scheduled_window_start: FUTURE_BASE, scheduled_window_end: FUTURE_BASE + HOUR_MS,
+  });
+  var readyTs = Date.now() + 1000;
+  var ready = await w.svc.markReadyForPickup({ order_id: orderId, scheduled_for: readyTs });
+  check("reschedule-ready: row is ready first", ready.status === "ready");
+
+  // Re-scheduling the ready row is refused.
+  await assert.rejects(w.svc.scheduleAtLocation({
+    order_id: orderId, location_code: "STORE-NYC",
+    scheduled_window_start: FUTURE_BASE + 500, scheduled_window_end: FUTURE_BASE + 500 + HOUR_MS,
+  }), /non-rescheduleable|only a scheduled/);
+
+  // The row is untouched — still ready, ready_at preserved, window unchanged.
+  var after = await w.svc.getScheduleByOrder(orderId);
+  check("reschedule-ready: still ready",         after.status === "ready");
+  check("reschedule-ready: ready_at preserved",  Number(after.ready_at) === readyTs);
+  check("reschedule-ready: window unchanged",    Number(after.scheduled_window_start) === FUTURE_BASE);
+}
+
+async function _capacityRaceAtomic() {
+  // A capacity-1 bucket must admit exactly one booking even when two
+  // checkouts pass the read-side count before either insert lands. The
+  // capacity check is folded into the INSERT, so concurrent bookings
+  // resolve to exactly one row written + one refusal.
+  var w = await _wire();
+  await w.svc.definePickupLocation({ code: "STORE-ONE", name: "Single-slot",
+    address: _validAddress(), hours_json: _validHours(),
+    capacity_per_hour: 1, lead_time_hours: 0 });
+
+  var orderA = _orderId();
+  var orderB = _orderId();
+  var book = function (oid) {
+    return w.svc.scheduleAtLocation({
+      order_id: oid, location_code: "STORE-ONE",
+      scheduled_window_start: FUTURE_BASE, scheduled_window_end: FUTURE_BASE + HOUR_MS,
+    });
+  };
+  // Fire both bookings before awaiting either — the synchronous query
+  // backend interleaves them through the shared in-memory db, so this
+  // exercises the count+insert atomicity rather than a serialised path.
+  var results = await Promise.allSettled([book(orderA), book(orderB)]);
+  var ok    = results.filter(function (r) { return r.status === "fulfilled"; });
+  var bad   = results.filter(function (r) { return r.status === "rejected"; });
+  check("capacity-race: exactly one booking succeeded", ok.length === 1);
+  check("capacity-race: the other refused",             bad.length === 1);
+  check("capacity-race: refusal is at-capacity",
+    bad.length === 1 && /at capacity/.test(bad[0].reason && bad[0].reason.message || ""));
+
+  // The bucket holds exactly one scheduled row.
+  var inBucket = await w.svc.pickupsForLocation({
+    location_code: "STORE-ONE", from: FUTURE_BASE, to: FUTURE_BASE + HOUR_MS,
+  });
+  check("capacity-race: exactly one row in bucket",     inBucket.length === 1);
+}
+
 async function _fsmTransitions() {
   var notif = _notificationsStub();
   var ord   = _orderStub();
@@ -600,6 +668,8 @@ async function run() {
   await _archiveLocation();
   await _availableLocationsSkuFilter();
   await _scheduleAtLocationCapacityAndLeadTime();
+  await _rescheduleReadyRefused();
+  await _capacityRaceAtomic();
   await _fsmTransitions();
   await _markReadyForPickupNotificationFailureSilent();
   await _markPickedUpOrderFsmAlreadyDelivered();

@@ -445,6 +445,7 @@ async function run() {
   await _debitOverdraftRefused();
   await _concurrentDebitAtomic();
   await _concurrentWritesKeepChainUnforked();
+  await _allNullChainFailsVerification();
   await _historyPagination();
   await _bulkBalance();
   await _expiringBalanceWindow();
@@ -496,6 +497,35 @@ async function _concurrentWritesKeepChainUnforked() {
   h.db.prepare("UPDATE gift_card_ledger SET amount_minor = amount_minor + 1 WHERE gift_card_id = ? AND kind = 'expire'").run(cardId);
   var tampered = await ledger.verifyChain(cardId);
   check("chain burst: a tampered row breaks verification", tampered.ok === false && tampered.reason === "row_hash mismatch");
+}
+
+// A full-ledger rewrite — clear every hash column, then edit balances —
+// must NOT read as verified. An all-NULL chain has no cryptographic root to
+// check against: it is unanchored, not valid. A genuinely empty ledger (zero
+// rows) stays ok, and an intact chain still verifies.
+async function _allNullChainFailsVerification() {
+  var h = _makeQuery();
+  var ledger = giftCardLedger.create({ query: h.query });
+  var cardId = bShop.framework.uuid.v7();
+
+  // Empty ledger: no rows, no anchor — legitimately ok.
+  var empty = await ledger.verifyChain(cardId);
+  check("verifyChain: empty ledger is ok", empty.ok === true && empty.rows_verified === 0);
+
+  // Populate, then confirm the intact chain verifies.
+  await ledger.credit({ gift_card_id: cardId, amount_minor: 5000, source: "purchase", source_ref: bShop.framework.uuid.v7() });
+  await ledger.debit({ gift_card_id: cardId, amount_minor: 1200, order_id: bShop.framework.uuid.v7() });
+  var intact = await ledger.verifyChain(cardId);
+  check("verifyChain: intact populated chain is ok", intact.ok === true && intact.rows_verified === 2);
+
+  // Attacker clears every hash column AND rewrites a balance. Before the fix
+  // this read as a wholly-legacy prefix and returned ok:true.
+  h.db.prepare("UPDATE gift_card_ledger SET row_hash = NULL, prev_hash = NULL WHERE gift_card_id = ?").run(cardId);
+  h.db.prepare("UPDATE gift_card_ledger SET balance_after_minor = 999999 WHERE gift_card_id = ? AND kind = 'debit'").run(cardId);
+  var rewritten = await ledger.verifyChain(cardId);
+  check("verifyChain: all-NULL populated chain fails (unanchored)",
+        rewritten.ok === false && rewritten.reason === "unanchored chain (no hashed row in a populated ledger)");
+  check("verifyChain: unanchored break reports zero rows verified", rewritten.rows_verified === 0);
 }
 
 module.exports = { run: run };
