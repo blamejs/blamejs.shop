@@ -284,6 +284,39 @@ async function _splitTenderCashRefundDoesNotRecreditGiftCard() {
     (await s.giftcards.balance(card.code)).balance_minor === 2000);
 }
 
+// A console partial-refund DOUBLE-SUBMIT (double-click / retry / a webhook
+// arriving after a console refund) must not double-append the refund ledger.
+// The provider idempotency key collapses the real refund to one, but two
+// recordPartialRefund calls carrying the SAME provider refund id would each
+// append a 'refund' row -> refundedTotalMinor double-counts -> the cash-first
+// block re-credits gift + loyalty value the customer was never refunded
+// (money creation). The provider-refund-id dedupe makes the replay a no-op.
+async function _refundIdDedupePreventsPhantomCredit() {
+  var s = await _setup({ price_minor: 5000 });
+  var card = await s.giftcards.issue({ amount_minor: 2000, currency: "USD" });
+  await s.ledger.credit({ gift_card_id: card.id, amount_minor: 2000, source: "manual", source_ref: "seed" });
+  var c = await _freshCart(s);
+  var result = await s.checkout.confirm({
+    cart_id: c.id, ship_to: { country: "US" }, selected_shipping_id: "std",
+    customer: { email: "buyer@example.com" }, gift_card_code: card.code,
+    idempotency_key: "checkout:" + c.id + ":dedup",
+  });
+  await s.order.transition(result.order.id, "mark_paid", { reason: "webhook" });
+  check("dedupe: card spent at checkout", (await s.giftcards.balance(card.code)).balance_minor === 0);
+
+  // grand 5000 = gift 2000 + cash 3000. Refund the $30 cash slice TWICE under
+  // the SAME provider refund id (the double-submit shape — provider moved $30 once).
+  var slice = { amount_minor: 3000, metadata: { stripe_refund_id: "re_DEDUP" } };
+  await s.order.recordPartialRefund(result.order.id, slice);
+  await s.order.recordPartialRefund(result.order.id, slice);   // replay — must no-op
+  check("dedupe: refunded total counts the slice once (not 6000)",
+    (await s.order.refundedTotalMinor(result.order.id)) === 3000);
+  var refundRows = (await s.query(
+    "SELECT id FROM order_transitions WHERE order_id = ?1 AND on_event = 'refund'", [result.order.id])).rows;
+  check("dedupe: exactly one refund ledger row", refundRows.length === 1);
+  check("dedupe: gift card NOT phantom re-credited", (await s.giftcards.balance(card.code)).balance_minor === 0);
+}
+
 // The CROSS-CART double-spend gate: two different carts presenting the SAME
 // gift card concurrently must yield exactly one paid order — the card debit
 // runs pre-charge, so the SQL balance predicate decides the race and the
@@ -360,6 +393,7 @@ async function run() {
   await _fullyCoveredRedeemFailureNeverStrands();
   await _giftCardProRataOnPartialRefund();
   await _splitTenderCashRefundDoesNotRecreditGiftCard();
+  await _refundIdDedupePreventsPhantomCredit();
   await _crossCartDoubleSpendRefused();
   await _preOrderFailureReversesDebit();
 }
