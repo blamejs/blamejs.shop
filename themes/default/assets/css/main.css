@@ -3713,6 +3713,19 @@ body { padding-bottom: var(--consent-bar-reserve); }
 .loyalty-tx--adjust,
 .loyalty-tx--tier-bonus { background: var(--bg-2); color: var(--mute); border-color: transparent; }
 .loyalty-more { margin-top: var(--space-4); }
+.loyalty-progress {
+  height: 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  overflow: hidden;
+  margin: var(--space-2) 0 var(--space-4);
+}
+.loyalty-progress__bar {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+}
 .referral-stage--converted { background: var(--success-l); color: var(--success); border-color: transparent; }
 .referral-stage--signed-up { background: var(--accent-l); color: var(--accent-d); border-color: transparent; }
 .referral-stage--visited,

@@ -1849,6 +1849,18 @@ async function main() {
       var loyaltyRedemption = (catalog && cart)
         ? bShop.loyaltyRedemption.create({ loyalty: loyalty })
         : null;
+      // Tier benefits — the operator-authored perks a loyalty tier
+      // INCLUDES (free shipping, percent off, early access, priority
+      // support, exclusive collections, birthday bonus). Composes the
+      // SAME loyalty handle so `benefitsForCustomer` resolves the
+      // signed-in customer's tier off their live points balance. The
+      // perks are operator-defined inclusions surfaced on the rewards
+      // page + authored on the loyalty admin screen — checkout/shipping/
+      // earn do not auto-apply them, so the customer surface frames them
+      // as "what your tier includes", never an automatic guarantee.
+      var tierBenefits = (catalog && cart)
+        ? bShop.tierBenefits.create({ loyalty: loyalty })
+        : null;
 
       // Referrals — refer-a-friend with two-sided rewards. `referrals`
       // owns the per-customer code + the invitation funnel; the reward-
@@ -3427,6 +3439,7 @@ async function main() {
           loyalty:           loyalty,
           loyaltyEarnRules:  loyaltyEarnRules,
           loyaltyRedemption: loyaltyRedemption,
+          tierBenefits:      tierBenefits,
           wishlistAlerts:    wishlistAlerts,
           wishlistDigest:    wishlistDigest,
           // Integration state map for /admin/integrations — "enabled" |
@@ -3767,6 +3780,9 @@ async function main() {
         if (loyalty) sfDeps.loyalty = loyalty;
         if (loyaltyEarnRules) sfDeps.loyaltyEarnRules = loyaltyEarnRules;
         if (loyaltyRedemption) sfDeps.loyaltyRedemption = loyaltyRedemption;
+        // Tier benefits — the rewards page shows the perks the customer's
+        // tier includes (operator-authored, resolved off their live tier).
+        if (tierBenefits) sfDeps.tierBenefits = tierBenefits;
         // Store credit — the read-only /account/credit wallet (balance +
         // expiring-soon callout + the credit/debit/expire ledger). The
         // SAME instance the admin customer-detail screen grants/deducts

@@ -40,6 +40,7 @@ var MIGS = [
   "0006_customers.sql", "0022_loyalty.sql", "0085_loyalty_redemptions.sql",
   "0163_loyalty_earn_rules.sql", "0217_loyalty_earn_reversal.sql",
   "0223_loyalty_txn_restored_points.sql", "0224_loyalty_earn_clawed_points.sql",
+  "0141_tier_benefits.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
@@ -120,6 +121,7 @@ async function _run() {
   var loyalty           = bShop.loyalty.create({ query: query });
   var loyaltyEarnRules  = bShop.loyaltyEarnRules.create({ query: query, loyalty: loyalty });
   var loyaltyRedemption = bShop.loyaltyRedemption.create({ query: query, loyalty: loyalty });
+  var tierBenefits      = bShop.tierBenefits.create({ query: query, loyalty: loyalty });
   var order             = bShop.order.create({ query: query, cursorSecret: "loy-flow-order", loyaltyEarnRules: loyaltyEarnRules });
   var customers         = bShop.customers.create({ query: query });
 
@@ -139,11 +141,25 @@ async function _run() {
     value_json: { amount_minor: 1000 }, active: true,
   });
 
+  // Tier benefits the operator authored. The buyer climbs to lifetime
+  // 1050 below → SILVER tier (threshold 500), so the silver perks must
+  // surface on their rewards page; the gold perk must NOT (wrong tier).
+  await tierBenefits.defineBenefit({
+    slug: "silver-free-ship", tier: "silver", kind: "free_shipping", value: { min_order_minor: 5000 },
+  });
+  await tierBenefits.defineBenefit({
+    slug: "silver-early", tier: "silver", kind: "early_access", value: { hours: 24 },
+  });
+  await tierBenefits.defineBenefit({
+    slug: "gold-15-off", tier: "gold", kind: "percent_off", value: { percent: 15 },
+  });
+
   var buyer = b.uuid.v7();
 
   var handle = await _bootApp({
     catalog: catalog, cart: cart, order: order, customers: customers,
     loyalty: loyalty, loyaltyEarnRules: loyaltyEarnRules, loyaltyRedemption: loyaltyRedemption,
+    tierBenefits: tierBenefits,
   });
 
   try {
@@ -164,6 +180,14 @@ async function _run() {
     check("how-you-earn lists a rule",      first.body.indexOf("10 points per $1 spent") !== -1);
     check("reward catalog shows the reward", first.body.indexOf("$5 off") !== -1);
     check("empty ledger state",             first.body.indexOf("No points activity yet") !== -1);
+
+    // --- tier progress + benefits at bronze (zero lifetime) -----------
+    // A fresh account is bronze; the page shows progress toward silver
+    // (500 lifetime points away) and NO benefits yet (bronze has none).
+    check("progress section present",       first.body.indexOf("Your tier progress") !== -1);
+    check("progress to silver remaining",   first.body.indexOf("500") !== -1 && first.body.indexOf("to reach") !== -1);
+    check("bronze sees no tier benefits",   first.body.indexOf("Free shipping on orders over") === -1);
+    check("bronze hides benefits heading",  first.body.indexOf("tier includes") === -1);
 
     // --- earn-on-purchase ---------------------------------------------
     // Transition a seeded $50 order to paid through the order primitive;
@@ -194,6 +218,20 @@ async function _run() {
     check("ledger shows an earn row",   loaded.body.indexOf("loyalty-tx--earn") !== -1);
     check("affordable reward redeemable", loaded.body.indexOf(">Redeem<") !== -1);
     check("unaffordable reward disabled", loaded.body.indexOf("Not enough points") !== -1);
+
+    // --- tier benefits at silver (lifetime 525 ≥ 500) -----------------
+    // The buyer is now silver, so their rewards page lists the SILVER
+    // perks the operator authored — and not the gold one. The framing is
+    // "what your silver tier includes" (an inclusion, not an auto-applied
+    // guarantee), with the honest checkout footnote.
+    check("silver benefits heading",        loaded.body.indexOf("what your silver tier includes".replace("what", "What")) !== -1);
+    check("silver free-shipping perk",      loaded.body.indexOf("Free shipping on orders over") !== -1);
+    check("silver early-access perk",       loaded.body.indexOf("shop new drops 24 hours before") !== -1);
+    check("gold perk hidden at silver",     loaded.body.indexOf("15% off your order") === -1);
+    check("honest non-auto framing",        loaded.body.indexOf("not applied automatically") !== -1 || loaded.body.indexOf("Ask at checkout or contact support") !== -1);
+    // Progress now targets gold (2000 lifetime); 2000 − 1050-on-page... at
+    // this point lifetime is 525, so 1475 remaining to gold.
+    check("progress targets gold next",     loaded.body.indexOf("to reach <strong>gold</strong>") !== -1);
 
     // --- earn-reversal on refund --------------------------------------
     // A buy-then-refund must claw the awarded points back off the
@@ -263,9 +301,45 @@ async function _run() {
     // --- malformed history cursor degrades, never 500 ----------------
     var badCursor = await helpers.httpRequest({ port: handle.port, path: "/account/loyalty?cursor=not-a-number", jar: jar });
     check("malformed cursor then 200", badCursor.status === 200);
+
+    // --- benefit labels are escaped (stored-XSS defense) --------------
+    // The primitive validates tier/value shapes, so HTML can't reach the
+    // label through the authoring path — but the renderer is manual HTML
+    // concat, so it must escape DEFENSIVELY. Drive renderLoyalty directly
+    // with a hostile benefit object (a tier carrying a <script> payload
+    // and a collection slug carrying one) and assert neither escapes raw.
+    var XSS = "<script>alert(1)</script>";
+    var hostileHtml = bShop.storefront.renderLoyalty({
+      balance: { balance: 600, lifetime: 600, tier: XSS },
+      tiers: loyalty.TIERS,
+      tier_thresholds: loyalty.TIER_THRESHOLDS,
+      redemption_points_per_usd: 100,
+      tier_benefits: [
+        { slug: "x", tier: XSS, kind: "exclusive_access", value: { collection_slug: XSS }, conditions: null },
+      ],
+      history: [], earn_rules: [], rewards: [], redemptions: [],
+      shop_name: "T", cart_count: 0,
+    });
+    check("hostile benefit not raw in page",  hostileHtml.indexOf(XSS) === -1);
+    check("hostile benefit escaped",          hostileHtml.indexOf("&lt;script&gt;") !== -1);
   } finally {
     await _teardown(handle);
   }
+
+  // --- progress-to-next helper (pure) ---------------------------------
+  // Re-asserts the maths the live page renders, independent of HTTP, so a
+  // threshold/ladder regression is caught even if the page markup shifts.
+  var th = bShop.loyalty.DEFAULT_TIER_THRESHOLDS;
+  var ladder = bShop.loyalty.TIERS;
+  // The renderLoyalty progress helper isn't exported, but the rendered
+  // page already asserts the copy; here we re-derive the expected values
+  // from computeTier to pin the tier boundaries themselves.
+  var loy2 = bShop.loyalty.create({ query: _makeQuery() });
+  check("computeTier bronze at 0",     loy2.computeTier(0) === "bronze");
+  check("computeTier silver at floor", loy2.computeTier(th.silver) === "silver");
+  check("computeTier gold at floor",   loy2.computeTier(th.gold) === "gold");
+  check("computeTier platinum at top", loy2.computeTier(th.platinum) === "platinum");
+  void ladder;
 }
 
 module.exports = { run: _run };
