@@ -415,6 +415,60 @@ async function _webhookReplayDefense() {
     other.handled === true && other.skipped !== "replay");
 }
 
+// A refund webhook must record THIS refund's own amount, not the cumulative-
+// minus-ledger delta. When two refunds happen close together and refund B's
+// webhook is processed while refund A's hasn't recorded yet, the charge shows
+// the cumulative (3000 = A's 1000 + B's 2000) but B's own amount is 2000. A
+// delta-based mirror records 3000 here (the stale read drives it to the
+// cumulative), so when A's delayed webhook then records its own 1000 the ledger
+// reaches 4000 — over-counting. Keying on the event's own refund amount records
+// 2000 now and 1000 later, converging on the true 3000.
+async function _stripeRefundMirrorRecordsOwnAmount() {
+  var s = await _setup();
+  var conf = await s.checkout.confirm({
+    cart_id: s.cartRow.id,
+    ship_to: { country: "US", state: "CA", postal: "94103" },
+    selected_shipping_id: "std",
+    customer: { email: "buyer@example.com" },
+    idempotency_key: "idemp_refund_ownamount",
+  });
+  var pi = conf.payment_intent.id;
+  var orderId = conf.order.id;
+
+  function _signed(event) {
+    var rawBody = JSON.stringify(event);
+    var ts = Math.floor(Date.now() / 1000);
+    var sig = nodeCrypto.createHmac("sha256", s.webhookSecret).update(ts + "." + rawBody).digest("hex");
+    return { headers: { "stripe-signature": "t=" + ts + ",v1=" + sig }, rawBody: rawBody };
+  }
+
+  // Mark the order paid first (grand total 7218, well above the refunds below).
+  await s.checkout.handleStripeEvent(_signed({
+    id: "evt_paid_refund", type: "payment_intent.succeeded",
+    data: { object: { id: pi, payment_intent: pi } },
+  }));
+
+  // Refund B's webhook arrives while refund A's is still in flight: cumulative
+  // 3000 but B's own amount is 2000, and the ledger has recorded neither yet.
+  await s.checkout.handleStripeEvent(_signed({
+    id: "evt_refund_b", type: "charge.refunded",
+    data: { object: { id: "ch_x", payment_intent: pi, amount_refunded: 3000,
+      refunds: { data: [{ id: "re_b", amount: 2000 }] } } },
+  }));
+  check("mirror records the refund's OWN amount (2000), not the cumulative delta (3000)",
+    (await s.order.refundedTotalMinor(orderId)) === 2000);
+
+  // Refund A's delayed webhook then records its own 1000 → the ledger converges
+  // on the true cumulative 3000, never the 4000 a delta-based mirror would reach.
+  await s.checkout.handleStripeEvent(_signed({
+    id: "evt_refund_a", type: "charge.refunded",
+    data: { object: { id: "ch_x", payment_intent: pi, amount_refunded: 3000,
+      refunds: { data: [{ id: "re_a", amount: 1000 }] } } },
+  }));
+  check("delayed sibling refund converges the ledger on the true total (3000, not 4000)",
+    (await s.order.refundedTotalMinor(orderId)) === 3000);
+}
+
 async function run() {
   await _quote();
   await _confirm();
@@ -426,6 +480,7 @@ async function run() {
   await _webhookDispatchHappyPath();
   await _webhookBadSig();
   await _webhookReplayDefense();
+  await _stripeRefundMirrorRecordsOwnAmount();
 }
 
 module.exports = { run: run };
