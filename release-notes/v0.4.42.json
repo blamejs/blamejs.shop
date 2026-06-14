@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.42",
+  "date": "2026-06-13",
+  "headline": "A return refund is now recorded against the order, so it can't be paid out a second time from the order console",
+  "summary": "Issuing a provider refund for a return moved the money but never recorded it against the order, so order.refundedTotalMinor didn't count it. The order console's refund caps each refund at the order's remaining un-refunded balance — but with the return refund invisible to that balance, an operator could refund the full order total a second time from the order screen, paying the customer back twice. A return's provider refund now writes to the order's refund ledger like a console refund does: a balance-clearing return drives the order to refunded (firing the gift-card and loyalty reversals), and a partial return appends a refund row. The provider refund id is stamped so the entry collapses with the payment provider's own refund webhook — the same refund is counted once, never twice. No migration to apply.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "A return refund now counts against the order's refunded total",
+          "body": "When the returns console issues a provider refund, the amount is now recorded against the order through the same ledger path a console refund uses, stamped with the provider refund id. Previously the money moved but the order's refunded total never saw it, so the order console's over-refund cap — which limits a refund to the order's remaining balance — could be cleared again and pay the customer back a second time. The refund id makes the entry idempotent against the provider's refund webhook, so a return refund mirrored by both paths is counted exactly once."
+        }
+      ]
+    }
+  ]
+}
