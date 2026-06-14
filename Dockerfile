@@ -28,7 +28,7 @@
 # Run locally:
 #   docker run --rm -p 8080:8080 -e PORT=8080 blamejs-shop:local
 
-ARG NODE_VERSION=24.14.1
+ARG NODE_VERSION=24.16.0
 ARG BUILD_ID=2026-05-22-admin-landing-page
 
 # ---- base -----------------------------------------------------------------
