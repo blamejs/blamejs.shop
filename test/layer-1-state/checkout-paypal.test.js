@@ -364,11 +364,51 @@ async function _captureIncomplete() {
   check("incomplete capture leaves order pending", cap.order.status === "pending");
 }
 
+// A FAILED first delivery must NOT permanently burn the event id. The replay
+// claim is taken eagerly (before processing) to win the concurrency race, but a
+// first delivery that throws (here, a garbled/missing refund amount; equally a
+// transient DB error or an illegal transition) returns 5xx so the provider
+// redelivers — and the eager claim, if left in place, would drop that
+// redelivery as a replay and lose the refund forever. The handler releases the
+// claim on a processing throw, so the redelivery (with a recovered amount) is
+// reprocessed and the refund finally lands in the ledger.
+async function _failedDeliveryReleasesClaim() {
+  var s = await _setup({ priceMinor: 5000, flatRates: true });   // $50.00 order
+  var c = await _newCart(s, 1);
+  var created = await s.checkout.createPaypalOrder(_input(c.id));
+  await s.checkout.capturePaypalOrder(created.paypal_order_id);
+  var orderId = created.order.id;
+  var ppId    = created.paypal_order_id;
+
+  // First delivery of WH-FAIL carries a garbled (missing) amount → throws.
+  await helpers.assert.rejects(
+    s.checkout.handlePaypalEvent({ headers: {}, rawBody: _refundEvt("WH-FAIL", "REF-FAIL", ppId, undefined) }),
+    /resource\.amount is missing or unparseable/,
+  );
+  // The eager claim for WH-FAIL was RELEASED — it is not left in the store.
+  var claimed = await s.query(
+    "SELECT event_id FROM stripe_webhook_events WHERE event_id = ?1", ["paypal:WH-FAIL"]);
+  check("failed delivery released the replay claim", claimed.rows.length === 0);
+  check("failed delivery recorded nothing in the ledger",
+    (await s.order.refundedTotalMinor(orderId)) === 0);
+
+  // Redelivery of WH-FAIL with a VALID $20 amount is REPROCESSED (not dropped
+  // as a replay), and the refund finally lands in the ledger.
+  var redeliver = await s.checkout.handlePaypalEvent({
+    headers: {}, rawBody: _refundEvt("WH-FAIL", "REF-FAIL", ppId, { currency_code: "USD", value: "20.00" }),
+  });
+  check("redelivery of a previously-failed event is NOT dropped as replay",
+    redeliver.skipped !== "replay");
+  check("redelivery records the recovered refund in the ledger",
+    (await s.order.refundedTotalMinor(orderId)) === 2000);
+}
+
 async function run() {
   await _createAndCapture();
   await _captureIdRecovery();
   await _webhookBackstop();
   await _partialRefundMirror();
+  await _failedDeliveryReleasesClaim();
   await _fullCoverageNoPaypalDial();
   await _loyaltyRidesPaypal();
   await _captureIncomplete();
