@@ -202,6 +202,13 @@ async function _defineRewardRefusals() {
   // Factory refuses missing loyalty handle.
   assert.throws(function () { loyaltyRedemption.create({ query: f.query }); }, /loyalty handle required/);
 
+  // Factory refuses a loyalty handle that can't reverse a burn — the
+  // redemption compensation paths (lost cap claim / mint failure) rely on
+  // reverseRedemptionById, so the contract is enforced at wiring time.
+  assert.throws(function () {
+    loyaltyRedemption.create({ query: f.query, loyalty: { redeem: function () {}, adjust: function () {} } });
+  }, /reverseRedemptionById/);
+
   // Factory refuses bad coupons handle shape.
   assert.throws(function () {
     loyaltyRedemption.create({ query: f.query, loyalty: f.loyalty, coupons: { unexpected: true } });
@@ -674,12 +681,48 @@ async function _orphanedDebitRolledBackOnMintFailure() {
   check("orphan-debit: no redemption row left behind",    Number(rows[0].n) === 0);
 }
 
+// The coupon mint can SUCCEED while persisting its code to the claimed row
+// is lost (a transient D1 write that changes zero rows). That must roll the
+// redemption back like a mint failure — points returned, claimed row
+// removed — not leave the customer charged for a redemption holding a NULL
+// coupon_code it can never use.
+async function _lostCouponPersistRollsBack() {
+  var h = _makeQuery();
+  var loy = bShop.loyalty.create({ query: h.query });
+  var coupons = _fakeCoupons();
+  // Force ONLY the coupon_code UPDATE to report zero rows changed.
+  var lossyQuery = async function (sql, params) {
+    if (/^\s*UPDATE\s+loyalty_redemptions\s+SET\s+coupon_code/i.test(sql)) {
+      return { rows: [], rowCount: 0 };
+    }
+    return h.query(sql, params);
+  };
+  var lr = loyaltyRedemption.create({ query: lossyQuery, loyalty: loy, coupons: coupons });
+
+  await lr.defineReward({
+    slug: "lossy-link", kind: "free_shipping", title: "Lossy link",
+    point_cost: 300, value_json: {}, active: true,
+  });
+  var cid = _uuid();
+  await loy.earn({ customer_id: cid, points: 1000, source: "order-paid" });
+
+  var threw = false;
+  try { await lr.redeemForCustomer({ customer_id: cid, reward_slug: "lossy-link" }); }
+  catch (_e) { threw = true; }
+  check("coupon-persist-loss: redemption fails",          threw);
+  check("coupon-persist-loss: points restored",           (await loy.balance(cid)).balance === 1000);
+  check("coupon-persist-loss: coupon WAS minted",         coupons.mints.length === 1);
+  var rows = h.db.prepare("SELECT COUNT(*) AS n FROM loyalty_redemptions WHERE customer_id = ?").all(cid);
+  check("coupon-persist-loss: no redemption row left",    Number(rows[0].n) === 0);
+}
+
 async function run() {
   await _defineRewardRefusals();
   await _redeemHappyAndInsufficient();
   await _maxPerCustomerCap();
   await _capEnforcedAtomicallyDespiteStalePrecheck();
   await _orphanedDebitRolledBackOnMintFailure();
+  await _lostCouponPersistRollsBack();
   await _markConsumedFsm();
   await _cancelRefundsOnlyActive();
   await _cancelDoesNotInflateLifetime();
