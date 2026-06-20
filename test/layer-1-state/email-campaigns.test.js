@@ -741,6 +741,52 @@ async function _refusals() {
   );
 }
 
+// Concurrency: the scheduled → sending flip is the exactly-once gate
+// on the drain. Model two racing senders by wrapping `query` so the
+// FIRST guarded `scheduled → sending` UPDATE has a concurrent winner
+// flip the row immediately before it runs — SQLite serializes the
+// writers, so the second one observes `sending` and changes 0 rows.
+// The loser must refuse, NOT drain (no second audience mailing).
+async function _claimRefusesDoubleSend() {
+  var rawQuery = _makeQuery();
+  var raced    = false;
+  var query = async function (sql, params) {
+    var isClaim = /SET status = 'sending'/.test(sql) && /status = 'scheduled'/.test(sql);
+    if (isClaim && !raced) {
+      raced = true;
+      // The concurrent winner takes the flip first.
+      await rawQuery(sql, params);
+    }
+    return rawQuery(sql, params);
+  };
+  var aud    = _stubAudiences({ "release-watchers": ["h-1", "h-2"] });
+  var mailer = _stubMailer();
+  var camps  = emailCampaigns.create({
+    query:            query,
+    mailingAudiences: aud,
+    email:            mailer,
+  });
+
+  await camps.defineCampaign(_validCampaignInput({ slug: "race-camp" }));
+  await camps.scheduleCampaign({ slug: "race-camp", schedule_at: Date.now() - 1 });
+
+  // This sendNow LOSES the claim — its guarded UPDATE changes 0 rows.
+  var threw = null;
+  try {
+    await camps.sendNow("race-camp");
+  } catch (e) {
+    threw = e;
+  }
+  check("lost-race sendNow refuses",            threw !== null);
+  check("lost-race carries typed code",         threw && threw.code === "EMAIL_CAMPAIGN_SEND_RACE");
+  check("lost-race does NOT drain (no mail)",   mailer.sent.length === 0);
+
+  // The winner left the row in 'sending'; the audience was never mailed
+  // by the loser, so no `delivered` events were stamped twice.
+  var m = await camps.metricsForCampaign("race-camp");
+  check("lost-race stamped no delivered events", m.delivered === 0);
+}
+
 async function _emailFactoryComposition() {
   // The primitive accepts a raw mailer (object with .send()) OR
   // a transactional `email` factory result that exposes `_mailer`.
@@ -769,6 +815,7 @@ async function run() {
   await _recordEventAndMetrics();
   await _secondLineSuppressionFilter();
   await _flakyMailerDropSilent();
+  await _claimRefusesDoubleSend();
   await _refusals();
   await _emailFactoryComposition();
 }

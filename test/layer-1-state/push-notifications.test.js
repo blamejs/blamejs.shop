@@ -516,6 +516,88 @@ async function _fsmTransitions() {
   check("dispatchTick advances correct row",   late[0].id === laterMsg.id);
 }
 
+// ---- concurrent dispatchTick claim (no double-send) --------------------
+
+// Two ticks whose SELECT snapshots BOTH saw the same row `queued` must
+// hand it to the operator send hook EXACTLY once. The fix makes the
+// queued→sent advance an atomic claim guarded by `AND status =
+// 'queued'`; the tick that loses the serialised-writer race sees
+// rowCount 0 and drops the row from its `advanced` set, so the customer
+// is never double-dispatched.
+//
+// The interleave is forced deterministically: the wrapper defers the
+// winning tick's first advancing UPDATE until a SECOND dispatchTick has
+// taken its own snapshot (still observing the row as `queued` — the
+// exact double-fire precondition). Both ticks then run their claims; the
+// union of what they hand to the hook must contain the row once.
+async function _concurrentDispatchClaim() {
+  var base = _setup();
+  var customerId = _uuid();
+  await base.push.registerProvider({
+    slug:        "apns-prod",
+    kind:        "apns",
+    credentials: APNS_CREDS,
+    active:      true,
+  });
+  await base.push.registerDevice({
+    customer_id:   customerId,
+    provider_slug: "apns-prod",
+    device_token:  _token("race-ios-1"),
+    device_class:  "ios",
+  });
+  var queued = await base.push.enqueueNotification({
+    recipient_customer_id: customerId,
+    channel:               "transactional",
+    title:                 "Race target",
+    body:                  "Should dispatch exactly once.",
+  });
+  var when = Date.now() + 1000;
+
+  // Wrap the shared query so the FIRST advancing UPDATE the winner tick
+  // issues is held until the loser tick has snapshotted the still-queued
+  // row, then released. Both ticks share one DB (one `base.query`), so
+  // this models two workers racing the same row.
+  var releaseSecondSnapshot;
+  var secondSnapshotTaken = new Promise(function (res) { releaseSecondSnapshot = res; });
+  var heldOnce = false;
+  var racingPush = push.create({
+    query: async function (sql, params) {
+      var isAdvanceUpdate =
+        /^\s*UPDATE push_notifications SET status = 'sent'/.test(sql);
+      if (isAdvanceUpdate && !heldOnce) {
+        heldOnce = true;
+        // Let the loser tick run its SELECT (which still sees `queued`)
+        // before this winning UPDATE commits.
+        await secondSnapshotTaken;
+      }
+      return base.query(sql, params);
+    },
+  });
+
+  var winner = racingPush.dispatchTick({ now: when });
+  // Loser tick snapshots the still-queued row, then signals the winner
+  // to proceed; the loser's own claim races behind it.
+  var loser = base.push.dispatchTick({ now: when }).then(function (r) {
+    releaseSecondSnapshot();
+    return r;
+  });
+
+  var results = await Promise.all([winner, loser]);
+  var handedToHook = results[0].concat(results[1]).filter(function (n) {
+    return n && n.id === queued.id;
+  });
+  check("race: row handed to the send hook exactly once (not double-sent)",
+    handedToHook.length === 1);
+  check("race: the single dispatch advanced queued → sent",
+    handedToHook[0].status === "sent");
+
+  // Final DB state is a single `sent` row — no re-queue, no second send.
+  var finalRow = (await base.query(
+    "SELECT * FROM push_notifications WHERE id = ?1", [queued.id],
+  )).rows[0];
+  check("race: final row is sent (one dispatch only)", finalRow.status === "sent");
+}
+
 // ---- retry back-off + exhaustion ---------------------------------------
 
 async function _retryBackoff() {
@@ -783,6 +865,7 @@ async function run() {
   await _optInOptOut();
   await _enqueueGates();
   await _fsmTransitions();
+  await _concurrentDispatchClaim();
   await _retryBackoff();
   await _metricsForProvider();
   await _validationRefusals();

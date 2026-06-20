@@ -321,6 +321,40 @@ async function _submitResponseValidates() {
     /unknown question id/,
   );
 
+  // Concurrent double-submit: two ticks on the same token both read
+  // status='issued' (the JS pre-check passes for both) — only the
+  // WHERE status='issued' claim may win, so the side-effect (the
+  // survey_responses INSERT) fires exactly once. Simulate the race by
+  // committing a concurrent responder's flip in the window between the
+  // primitive's SELECT and its claiming UPDATE: a query() interposer
+  // flips the row to 'responded' right before the UPDATE runs, so the
+  // primitive's own claim observes status != 'issued' and refuses.
+  var invRace = await f.surv.issueInvitation({ survey_slug: "mixed-survey", customer_id: _uuid() });
+  var responsesBefore = f.db.prepare(
+    "SELECT COUNT(*) AS n FROM survey_responses WHERE invitation_id = ?",
+  ).all(invRace.invitation_id)[0].n;
+  var racedOnce = false;
+  var raceSurv = customerSurveys.create({
+    query: async function (sql, params) {
+      // Right before the primitive's claiming UPDATE, let a concurrent
+      // submit win by flipping the invitation to 'responded'.
+      if (!racedOnce && /UPDATE survey_invitations SET status = 'responded'/.test(sql)) {
+        racedOnce = true;
+        f.db.prepare("UPDATE survey_invitations SET status = 'responded', responded_at = ? WHERE id = ?")
+             .run(Date.now(), invRace.invitation_id);
+      }
+      return f.query(sql, params);
+    },
+  });
+  await assert.rejects(
+    raceSurv.submitResponse({ token: invRace.plaintext_token, answers: { rate: 4, reason: "service" } }),
+    function (err) { return err && err.code === "SURVEY_INVITATION_ALREADY_RESPONDED"; },
+  );
+  var responsesAfter = f.db.prepare(
+    "SELECT COUNT(*) AS n FROM survey_responses WHERE invitation_id = ?",
+  ).all(invRace.invitation_id)[0].n;
+  check("concurrent submit does not double-record response", responsesAfter === responsesBefore);
+
   // Optional free_text can be omitted entirely.
   var inv3 = await f.surv.issueInvitation({ survey_slug: "mixed-survey", customer_id: _uuid() });
   var resp3 = await f.surv.submitResponse({

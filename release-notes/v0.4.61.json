@@ -1,0 +1,26 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.61",
+  "date": "2026-06-19",
+  "headline": "Scheduled and dispatched sends no longer double-fire under concurrent ticks",
+  "summary": "Closes a class of concurrency races in the scheduled-send and dispatch paths where a tick read a row, checked its status or schedule cursor in application code, and then performed the send (and its ledger write) before an unconditional update committed — so two overlapping ticks (a cron overrun, two workers, or a manual tick racing the schedule) could both pass the check and both send. Each path now claims the row with a single conditional update — flipping the status, or advancing the schedule cursor, only when the row is still in the expected state — and performs the send only when that claim wins; the losing tick changes zero rows and skips. The affected sends: an email campaign drain (the whole audience could be mailed twice), a queued push notification, a wishlist digest email and its sent-ledger row, a reorder reminder, a survey response record, and a dunning step's reminder email / subscription action. Behavior for a single (sequential) caller is unchanged; only the concurrent double-fire is removed. Where a send fails after the claim wins, the schedule cursor is rolled back so the row is retried on the next tick rather than skipped.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Email campaign sends claim the campaign before draining",
+          "body": "sendNow, the scheduled dispatch tick, and the consent-gated broadcast drain now flip the campaign from scheduled to sending with a conditional update (WHERE slug = ? AND status = 'scheduled') and drain only when that update changes exactly one row. Previously the status check ran in application code before an unconditional flip, so two concurrent sends could both drain and mail the entire audience twice. The losing caller refuses (a typed send-race error) or, for the tick, skips the campaign."
+        },
+        {
+          "title": "Push, wishlist-digest, and reorder-reminder ticks claim each row before sending",
+          "body": "Each per-row advance is now the atomic claim: a queued push notification advances to sent/failed only via WHERE id = ? AND status = 'queued'; a wishlist digest and a reorder reminder advance their schedule cursor with WHERE id = ? AND next_*_at = <the observed value>. The external send (and, for the digest, its sent-ledger row) runs only when the claim changes one row, so two overlapping ticks can't both dispatch the same row. A send that fails after winning the reminder claim rolls the cursor back so the row retries next tick."
+        },
+        {
+          "title": "Survey responses and dunning steps gate their side-effect on an atomic claim",
+          "body": "Submitting a survey response now flips the invitation from issued to responded with WHERE id = ? AND status = 'issued' and inserts the response row only when that claim wins (a lost race returns a typed already-responded error), so a double-submit can't record two responses for one invitation. A dunning tick now claims the enrollment with WHERE id = ? AND status = 'active' AND next_action_at = <the observed value> before executing the step (the reminder email / in-app notification / pause or cancel), so overlapping dunning ticks can't send a step twice; the subsequent state transitions carry the same status guard."
+        }
+      ]
+    }
+  ]
+}
