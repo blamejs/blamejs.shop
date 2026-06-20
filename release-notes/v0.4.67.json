@@ -18,8 +18,8 @@
       "heading": "Changed",
       "items": [
         {
-          "title": "supportTickets.listByCustomerId returns { rows, next_cursor }",
-          "body": "The customer-id-keyed ticket reader now returns a paginated envelope — { rows, next_cursor } on the (opened_at desc, id desc) tuple — instead of a bare array, matching the email-keyed listForCustomer, so callers can page a customer's full ticket history to the end. If you call it directly, read the rows off the .rows field and follow next_cursor for the next page; passing the previous next_cursor as the cursor option continues where the last page ended."
+          "title": "supportTickets.listByCustomerId and customerSurveys.invitationsForCustomer return { rows, next_cursor }",
+          "body": "Both customer-scoped readers that the export uses now return a paginated envelope — { rows, next_cursor } — instead of a bare array, so a caller can page a customer's full history to the end. listByCustomerId pages on the (opened_at desc, id desc) tuple (matching the email-keyed listForCustomer); invitationsForCustomer pages on the invitation id. If you call either directly, read the rows off the .rows field and pass the previous next_cursor as the cursor option to continue where the last page ended."
         }
       ]
     }

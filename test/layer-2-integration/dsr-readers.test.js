@@ -197,7 +197,7 @@ function _buildReaders(handles, query) {
     },
     surveys: {
       forCustomerExport: async function (id) {
-        try { return await handles.customerSurveys.invitationsForCustomer(id, { limit: 100 }); } catch (_e) { return []; }
+        try { return (await handles.customerSurveys.invitationsForCustomer(id, { limit: 100 })).rows; } catch (_e) { return []; }
       },
       forCustomerDeletion: async function () { return { table: "survey_invitations", deleted: 0, note: "retained" }; },
     },
