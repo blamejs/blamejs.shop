@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.59",
+  "date": "2026-06-19",
+  "headline": "Win-back campaign sends now actually run (they were being silently blocked)",
+  "summary": "Fixes a defect that left win-back campaigns completely inert since they shipped: the scheduled worker tick that drives win-back enrolment and dispatch was being rejected by the application bot-guard before it could reach its own shared-secret gate, so no win-back step ever sent. The worker fires its internal cron ticks machine-to-machine with only a content type and the bridge-secret header — no browser fingerprint — and the bot-guard's missing-Accept-Language heuristic returned 403 for the win-back path. Every other internal cron tick (cart-recovery, stock-alert and low-stock sweeps, wishlist alerts and digests, campaign send, customer-portal expiry, stale-order reap, quote expiry) was already exempt from the bot-guard; the win-back tick was the one omission. It is now exempt as well, so the tick reaches its handler (still gated by the bridge secret), and an operator who has win-back configured now sees the escalating offer sequence actually go out. A new test asserts every internal cron path is exempt from the bot-guard, so a future cron-driven feature can't ship blocked the same way.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Win-back campaign cron tick was blocked by the bot-guard",
+          "body": "The internal /_/winback-send-tick POST the worker fires on a schedule was missing from the bot-guard exemption list, so the application bot-guard returned 403 on the missing-Accept-Language heuristic before the handler's bridge-secret check ran. Win-back enrolment and step dispatch therefore never executed. The path is now exempt like the other nine internal cron ticks (the bridge-secret gate remains the deciding check, so an unauthenticated caller is still refused). A bot-guard skip-list parity test now asserts every internal cron path is exempt, anchored to the security middleware so it runs in the container image too — closing the gap that let this ship."
+        }
+      ]
+    }
+  ]
+}

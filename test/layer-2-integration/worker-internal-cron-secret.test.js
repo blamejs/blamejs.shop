@@ -36,6 +36,7 @@
 var nodeFs   = require("node:fs");
 var nodePath = require("node:path");
 
+var bShop   = require("../../lib");
 var helpers = require("../helpers");
 var check   = helpers.check;
 
@@ -57,6 +58,20 @@ var GATED_PATHS = [
 ];
 
 function _run() {
+  // (0) Bot-guard skip-list parity. Every worker-internal cron POST path must
+  //     ALSO be exempt from the app-level bot-guard (INTERNAL_BRIDGE_PATHS via
+  //     botGuardOpts().skipPaths) — otherwise the worker's secret-bearing POST
+  //     is 403'd on the missing-Accept-Language heuristic BEFORE its own secret
+  //     gate runs, and the feature silently never fires. That is exactly how the
+  //     win-back cron shipped dark (in the worker's cron-secret table here, but
+  //     missing from the skip-list). This anchors to securityMiddleware, not the
+  //     worker source, so it runs in-image too (where worker/ is absent).
+  var skipPaths = bShop.securityMiddleware.botGuardOpts().skipPaths || [];
+  GATED_PATHS.forEach(function (p) {
+    check("bot-guard skip-list exempts internal cron path " + p,
+      skipPaths.indexOf(p) !== -1);
+  });
+
   var workerIndexPath = nodePath.resolve(__dirname, "..", "..", "worker", "index.js");
   if (!nodeFs.existsSync(workerIndexPath)) return;   // worker/ absent in-image — skip
 
