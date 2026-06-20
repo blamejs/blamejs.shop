@@ -416,6 +416,18 @@ async function _applyScheduledWindow() {
   var peek = await ctx.pc.pendingChangeFor(seed.subscription_id);
   check("applyScheduledChanges clears pending queue", peek == null);
 
+  // Idempotent re-run: a second applyScheduledChanges pass (a cron
+  // overrun, a retry, or two workers) must NOT re-execute the
+  // already-executed change or record a second proration invoice. The
+  // pending->executed claim matches zero rows the second time, and the
+  // deterministic processor_invoice_id would dedupe even if it didn't.
+  var invBefore = await ctx.bill.invoicesForSubscription(seed.subscription_id);
+  check("first apply recorded exactly one proration invoice", invBefore.length === 1);
+  var reRun = await ctx.pc.applyScheduledChanges({ now: now + 40 * 60 * 1000 });
+  check("applyScheduledChanges re-run executes nothing",       reRun.length === 0);
+  var invAfter = await ctx.bill.invoicesForSubscription(seed.subscription_id);
+  check("applyScheduledChanges re-run records no second invoice", invAfter.length === invBefore.length);
+
   // Validation.
   await assert.rejects(ctx.pc.applyScheduledChanges(), /input object required/);
   await assert.rejects(ctx.pc.applyScheduledChanges({ now: "soon" }), /now/);
