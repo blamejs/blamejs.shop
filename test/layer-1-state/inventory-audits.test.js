@@ -735,12 +735,58 @@ async function _finalizeRetryDoesNotDoubleApply() {
   check("retry: exactly one RT-A adjustment row",                aRows.length === 1);
 }
 
+// The atomic claim is the serialization point: a finalize that does NOT
+// win the open/in_progress -> finalized claim (because a concurrent
+// finalize already advanced the audit) must touch NO shelves. Simulate
+// the lost claim by forcing the inventory_audits status UPDATE to match
+// zero rows, and assert finalize applies nothing.
+async function _finalizeLostClaimAppliesNothing() {
+  var qBase = _makeQuery();
+  var locSvc = inventoryLocations.create({ query: qBase, catalog: {} });
+  await locSvc.defineLocation({ code: "WH-EAST", name: "East Warehouse", type: "warehouse", priority: 1 });
+  await locSvc.setStock({ sku: "LC-A", location_code: "WH-EAST", quantity: 50 });
+
+  // Pass-through query EXCEPT the finalize claim UPDATE, which we force to
+  // report zero rows changed — i.e. another finalize won the claim first.
+  var qLostClaim = async function (sql, params) {
+    if (/^\s*UPDATE\s+inventory_audits\s+SET\s+status\s*=\s*'finalized'/i.test(sql)) {
+      return { rows: [], rowCount: 0 };
+    }
+    return qBase(sql, params);
+  };
+  var auditSvc = inventoryAudits.create({
+    query:              qLostClaim,
+    inventoryLocations: locSvc,
+    costLayers:         _makeCostLayers({ "LC-A": 1000 }),
+  });
+
+  var audit = await auditSvc.openAudit({
+    slug: "lostclaim-1", kind: "spot", scope: "location",
+    scheduled_at: Date.now(), location_codes: ["WH-EAST"],
+  });
+  await auditSvc.recordScanLine({ audit_id: audit.id, sku: "LC-A", location_code: "WH-EAST", counted_qty: 44, counter_id: "alice" }); // -6
+
+  var result = await auditSvc.finalizeAudit({ audit_id: audit.id, apply_adjustments: true });
+  check("lost-claim: finalize returns the computed variance",    result.variance_count === 1);
+  check("lost-claim: reports the audit's adjustment count",      result.adjustments_written === 1);
+
+  // The shelf must be UNTOUCHED — the claim loser applies nothing.
+  var shelf = (await locSvc.stockForSku("LC-A")).by_location.find(function (l) { return l.code === "WH-EAST"; }).quantity;
+  check("lost-claim: shelf NOT adjusted (still 50)",             shelf === 50);
+  var adjRows = (await qBase(
+    "SELECT * FROM inventory_adjustments WHERE reason = ?1",
+    ["inventory-audit:lostclaim-1"],
+  )).rows;
+  check("lost-claim: zero adjustment rows written",             adjRows.length === 0);
+}
+
 async function run() {
   await _openAuditAndKinds();
   await _recordScanLineAndWorksheet();
   await _markRecountAndOverride();
   await _finalizeWritesAdjustments();
   await _finalizeRetryDoesNotDoubleApply();
+  await _finalizeLostClaimAppliesNothing();
   await _readsAndCancel();
   await _compareToPriorAudit();
   await _factoryRefusals();

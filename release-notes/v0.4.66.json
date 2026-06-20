@@ -1,20 +1,20 @@
 {
   "$schema": "../scripts/release-notes-schema.json",
   "version": "0.4.66",
-  "date": "2026-06-19",
-  "headline": "Re-running a partially-failed inventory audit no longer double-applies its stock adjustments",
-  "summary": "Finalizing an inventory audit with apply_adjustments writes one shelf adjustment per counted line through the stock-adjustment path, then marks the audit finalized. If a later line was refused mid-loop — most commonly a negative variance that would have pushed the shelf below its outstanding paid holds — the audit stayed open, but the lines already adjusted had moved their shelves. Re-running the finalize to clear the blocked line re-applied those earlier adjustments on top of themselves, debiting or crediting the same shelf twice. Finalize is now idempotent per line: before adjusting a shelf it checks whether this audit's adjustment for that SKU and location already landed, and skips it if so, so a retry only applies the lines that haven't been applied yet. The completing run reports the audit's full applied total. The final status flip is also gated on the audit still being open, so two finalizes racing the same audit can't both stamp it. No API change.",
+  "date": "2026-06-20",
+  "headline": "Inventory-audit finalization can no longer double-apply its stock adjustments",
+  "summary": "Finalizing an inventory audit with apply_adjustments writes one shelf adjustment per counted line, then marks the audit finalized. Two failure modes could move a shelf twice. First, if a later line was refused mid-loop — most commonly a negative variance that would have pushed the shelf below its outstanding paid holds — the audit stayed open, but the lines already adjusted had moved; re-running the finalize re-applied those earlier adjustments on top of themselves. Second, two finalize calls overlapping on the same audit both applied every adjustment before either marked the audit finalized. Finalization now claims the audit's transition to finalized in a single conditional write BEFORE touching any shelf, so exactly one finalize applies the adjustments and a concurrent or duplicate call applies nothing. Each adjustment is applied as the difference between the counted variance and what this audit has already moved, so a retry lands only the not-yet-applied remainder and a recount made before the retry is reflected exactly. A finalize that is refused part-way re-opens the audit so the operator can clear the blocker and retry. No API change.",
   "sections": [
     {
       "heading": "Fixed",
       "items": [
         {
-          "title": "finalizeAudit is idempotent per line on retry",
-          "body": "Each per-shelf adjustment is keyed by the audit's unique reason plus the line's SKU and location, which identify exactly one logical adjustment (an audit holds one line per SKU+location). Before adjusting a shelf, finalize checks whether that adjustment already exists and skips re-applying it. A finalize aborted partway — by a respect-holds floor refusal on a later line, or any transient failure — leaves the audit open and re-runnable; the retry applies only the lines that didn't land the first time, instead of double-counting the ones that did."
+          "title": "Finalization claims the audit before moving any shelf",
+          "body": "The transition that marks an audit finalized now lands in one conditional write, gated on the audit still being open or in progress, BEFORE any stock adjustment is written. Two finalize calls racing the same audit — or a duplicate retry overlapping a still-running finalize — resolve to a single winner that applies the adjustments; the loser writes nothing and returns the computed totals. The claim also freezes the audit's scan lines, so the variances being applied can't change underneath the writer."
         },
         {
-          "title": "Audit finalization claims the open state",
-          "body": "The transition that stamps an audit finalized now only lands while the audit is still open or in progress. Two finalize calls racing the same audit (or a duplicate retry that overlaps a completing run) collapse to a single finalization rather than re-stamping the completion time or overwriting the recorded variance totals."
+          "title": "Adjustments reconcile against what already landed",
+          "body": "Each shelf adjustment is applied as the counted variance minus what this audit has already moved for that SKU and location. A finalize refused part-way (a respect-holds floor on one line) re-opens the audit; the retry then applies only the remaining difference instead of re-applying lines that already succeeded, and a recount that changed a line's variance before the retry is corrected to the new value rather than left at the old one."
         }
       ]
     }
