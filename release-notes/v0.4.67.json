@@ -1,0 +1,27 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.67",
+  "date": "2026-06-20",
+  "headline": "Subject-access exports now carry the customer's complete record, not just the first page",
+  "summary": "A data-subject access export assembled each domain by reading a single page from that domain's reader. A customer with more than one page in any paginated domain — orders, the loyalty points ledger, product reviews, wishlist entries, survey invitations, or support tickets — silently received a truncated export, which is an incomplete response to a GDPR Article 15 request. Each of those domains is now drained to the end by following the reader's own cursor, so the export carries every row. Readers that already return the whole set in one read (addresses, the consent ledger, subscriptions) were already complete and are unchanged. As part of this, the support-ticket reader keyed on customer id (the one the export uses, since it holds no plaintext email) gained cursor pagination so it can be paged to completion.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Access exports drain every paginated domain to completion",
+          "body": "The export now follows each reader's cursor to the end for orders, the loyalty points ledger, product reviews, wishlist entries, survey invitations, and support tickets, concatenating every page. A customer with hundreds of orders or ledger entries receives all of them rather than the most recent hundred. A page-count backstop far above any real per-customer record guards against a misbehaving cursor without ever truncating a genuine export."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "supportTickets.listByCustomerId and customerSurveys.invitationsForCustomer return { rows, next_cursor }",
+          "body": "Both customer-scoped readers that the export uses now return a paginated envelope — { rows, next_cursor } — instead of a bare array, so a caller can page a customer's full history to the end. listByCustomerId pages on the (opened_at desc, id desc) tuple (matching the email-keyed listForCustomer); invitationsForCustomer pages on the invitation id. If you call either directly, read the rows off the .rows field and pass the previous next_cursor as the cursor option to continue where the last page ended."
+        }
+      ]
+    }
+  ]
+}

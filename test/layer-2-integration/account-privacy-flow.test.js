@@ -109,7 +109,7 @@ function _buildReaders(h, query) {
     },
     paymentMethods: { forCustomerExport: async function () { return []; } },
     supportTickets: {
-      forCustomerExport: async function (id) { try { return await h.supportTickets.listByCustomerId(id, { limit: 100 }); } catch (_e) { return []; } },
+      forCustomerExport: async function (id) { try { return (await h.supportTickets.listByCustomerId(id, { limit: 100 })).rows; } catch (_e) { return []; } },
       forCustomerDeletion: async function () { return { table: "support_tickets", deleted: 0, note: "retained" }; },
     },
     loyalty: {
@@ -139,7 +139,7 @@ function _buildReaders(h, query) {
       },
     },
     surveys: {
-      forCustomerExport: async function (id) { try { return await h.customerSurveys.invitationsForCustomer(id, { limit: 100 }); } catch (_e) { return []; } },
+      forCustomerExport: async function (id) { try { return (await h.customerSurveys.invitationsForCustomer(id, { limit: 100 })).rows; } catch (_e) { return []; } },
       forCustomerDeletion: async function () { return { table: "survey_invitations", deleted: 0, note: "retained" }; },
     },
     recentlyViewed: {

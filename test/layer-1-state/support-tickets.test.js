@@ -740,6 +740,53 @@ async function _metricsAggregation() {
   await assert.rejects(ctx.tickets.metrics({ from: 10,  to: 5 }),          /from must be <= to/);
 }
 
+// listByCustomerId (keyed on customer_id, the path the subject-access
+// export uses — it has no plaintext email for listForCustomer) returns
+// { rows, next_cursor } and pages, so an export can drain a customer's
+// COMPLETE ticket history instead of stopping at the first limit.
+async function _listByCustomerIdPagination() {
+  var ctx = _setup();
+  var customerId = _validUUID();
+  var ids = [];
+  for (var i = 0; i < 5; i += 1) {
+    var t = await ctx.tickets.open({
+      customer_id:    customerId,
+      customer_email: "drain@example.com",
+      subject:        "Drain " + i,
+      body:           "Body " + i,
+      category:       i % 2 === 0 ? "order_issue" : "billing",
+    });
+    ids.push(t.id);
+    await helpers.waitUntil(function () { return true; }, { timeoutMs: 10, intervalMs: 2 });
+  }
+  // A ticket for a different customer_id must not leak into the page.
+  await ctx.tickets.open({
+    customer_id: _validUUID(), customer_email: "other@example.com",
+    subject: "Other", body: "B", category: "other",
+  });
+
+  var page1 = await ctx.tickets.listByCustomerId(customerId, { limit: 2 });
+  check("listByCustomerId page1 returns 2",            page1.rows.length === 2);
+  check("listByCustomerId page1 emits a cursor",       typeof page1.next_cursor === "string" && page1.next_cursor.length > 0);
+  check("listByCustomerId page1 scoped to customer",   page1.rows.every(function (r) { return ids.indexOf(r.id) !== -1; }));
+
+  // Drain to completion — the exact loop the DSR export runs.
+  var drained = [];
+  var cursor = null;
+  do {
+    var page = await ctx.tickets.listByCustomerId(customerId, cursor ? { limit: 2, cursor: cursor } : { limit: 2 });
+    drained = drained.concat(page.rows);
+    cursor = page.next_cursor;
+  } while (cursor);
+  check("listByCustomerId drains all 5 tickets",       drained.length === 5);
+  check("listByCustomerId drain excludes other customer",
+    drained.every(function (r) { return ids.indexOf(r.id) !== -1; }));
+  var counts = {};
+  drained.forEach(function (r) { counts[r.id] = (counts[r.id] || 0) + 1; });
+  check("listByCustomerId drain has no duplicates",
+    Object.keys(counts).length === 5 && Object.keys(counts).every(function (k) { return counts[k] === 1; }));
+}
+
 async function run() {
   await _openHappyPath();
   await _openRefusalClasses();
@@ -751,6 +798,7 @@ async function run() {
   await _assignUnassign();
   await _tagCRUD();
   await _listForCustomerPagination();
+  await _listByCustomerIdPagination();
   await _assignedAndUnassignedQueues();
   await _slaCheckThresholds();
   await _metricsAggregation();

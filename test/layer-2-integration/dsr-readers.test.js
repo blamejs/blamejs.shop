@@ -150,7 +150,7 @@ function _buildReaders(handles, query) {
     },
     supportTickets: {
       forCustomerExport: async function (id) {
-        try { return await handles.supportTickets.listByCustomerId(id, { limit: 100 }); }
+        try { return (await handles.supportTickets.listByCustomerId(id, { limit: 100 })).rows; }
         catch (_e) { return []; }
       },
       forCustomerDeletion: async function () { return { table: "support_tickets", deleted: 0, note: "retained" }; },
@@ -197,7 +197,7 @@ function _buildReaders(handles, query) {
     },
     surveys: {
       forCustomerExport: async function (id) {
-        try { return await handles.customerSurveys.invitationsForCustomer(id, { limit: 100 }); } catch (_e) { return []; }
+        try { return (await handles.customerSurveys.invitationsForCustomer(id, { limit: 100 })).rows; } catch (_e) { return []; }
       },
       forCustomerDeletion: async function () { return { table: "survey_invitations", deleted: 0, note: "retained" }; },
     },

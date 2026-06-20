@@ -210,9 +210,10 @@ async function _issueInvitationPlaintextOnce() {
   check("getInvitation never exposes plaintext",    !Object.prototype.hasOwnProperty.call(fetched, "plaintext_token"));
   check("getInvitation never exposes token_hash",   !Object.prototype.hasOwnProperty.call(fetched, "token_hash"));
 
-  // invitationsForCustomer returns the row.
+  // invitationsForCustomer returns the row in a { rows, next_cursor } envelope.
   var list = await f.surv.invitationsForCustomer(customerId);
-  check("invitationsForCustomer returns issued",    list.length === 1 && list[0].id === inv.invitation_id);
+  check("invitationsForCustomer returns issued",    list.rows.length === 1 && list.rows[0].id === inv.invitation_id);
+  check("invitationsForCustomer single page no cursor", list.next_cursor === null);
 
   // issueInvitation refuses an unknown survey.
   await assert.rejects(
@@ -691,9 +692,60 @@ async function _exportedConstants() {
   check("instance exposes TRIGGERS",       inst.TRIGGERS.length === customerSurveys.TRIGGERS.length);
 }
 
+// invitationsForCustomer returns { rows, next_cursor } and pages on the
+// v7 id, so the subject-access export can drain a customer's COMPLETE
+// invitation history instead of stopping at the first limit.
+async function _invitationsForCustomerPagination() {
+  var f = _factory();
+  await f.surv.defineSurvey({
+    slug:    "drain-csat",
+    title:   "Drain",
+    kind:    "csat",
+    trigger: "after_delivery",
+    questions: [{ id: "score", kind: "rating", label: "Rate", max: 5 }],
+  });
+  var customerId = _uuid();
+  var ids = [];
+  for (var i = 0; i < 5; i += 1) {
+    var inv = await f.surv.issueInvitation({
+      survey_slug:      "drain-csat",
+      customer_id:      customerId,
+      source_event_id:  "evt-" + i + "-" + _uuid(),
+      expires_in_hours: 24,
+    });
+    ids.push(inv.invitation_id);
+  }
+  // A different customer's invitation must not leak into the page.
+  await f.surv.issueInvitation({
+    survey_slug: "drain-csat", customer_id: _uuid(),
+    source_event_id: "other-" + _uuid(), expires_in_hours: 24,
+  });
+
+  var page1 = await f.surv.invitationsForCustomer(customerId, { limit: 2 });
+  check("invitationsForCustomer page1 returns 2",          page1.rows.length === 2);
+  check("invitationsForCustomer page1 emits a cursor",     typeof page1.next_cursor === "string" && page1.next_cursor.length > 0);
+
+  // Drain — the exact loop the DSR export runs.
+  var drained = [];
+  var cursor = null;
+  do {
+    var page = await f.surv.invitationsForCustomer(customerId, cursor ? { limit: 2, cursor: cursor } : { limit: 2 });
+    drained = drained.concat(page.rows);
+    cursor = page.next_cursor;
+  } while (cursor);
+  check("invitationsForCustomer drains all 5",             drained.length === 5);
+  check("invitationsForCustomer drain scoped to customer",
+    drained.every(function (r) { return ids.indexOf(r.id) !== -1; }));
+  var counts = {};
+  drained.forEach(function (r) { counts[r.id] = (counts[r.id] || 0) + 1; });
+  check("invitationsForCustomer drain no duplicates",
+    Object.keys(counts).length === 5 && Object.keys(counts).every(function (k) { return counts[k] === 1; }));
+}
+
 async function run() {
   await _defineSurveyShape();
   await _issueInvitationPlaintextOnce();
+  await _invitationsForCustomerPagination();
   await _submitResponseValidates();
   await _rollupNpsAndCsatMath();
   await _expiryAndCloseFsm();
