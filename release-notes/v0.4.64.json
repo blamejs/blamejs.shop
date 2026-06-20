@@ -1,0 +1,30 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.64",
+  "date": "2026-06-19",
+  "headline": "A failed side-effect can no longer strand a claimed record",
+  "summary": "Hardens the atomic-claim concurrency fixes (shipped over the previous releases) against the case where the side-effect fails or the worker crashes AFTER a record was claimed. Each claim now restores or recovers the record so a transient failure can't leave it permanently stuck. A scheduled payment retry that is claimed out of the due set but then fails to advance (a malformed policy or a database write error) restores its next-retry time, so the retry isn't silently dropped. Approving a seller application that crashes between claiming the approval and persisting the vendor is now recoverable — an application left approved with no vendor can be approved again rather than being stranded in a terminal state. A survey response whose insert fails after the invitation was claimed reverts the invitation to issued so it can be answered. A reorder reminder or wishlist digest whose send fails defers the retry to a later tick on a distinct cursor, so a concurrent overlapping tick can't pick up the rolled-back row and send a duplicate in the same window. No API change.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Payment retry restores its schedule on a failed advance",
+          "body": "The retry scheduler claims an enrollment out of the due set by clearing its next-retry time before doing processor work. If advancing the enrollment then throws (a malformed retry policy, or a database write failure while recording the attempt), the next-retry time is restored to the value the tick observed, so a later tick re-attempts the retry. Previously the enrollment was left active with no next-retry time, and the due query (which requires a next-retry time) would never pick it up again, silently stopping the customer's recovery retries."
+        },
+        {
+          "title": "Seller approval is recoverable after a mid-approval crash",
+          "body": "Approving a seller application claims the in-review-to-approved transition before registering the vendor. If the worker crashes or times out between the claim and persisting the vendor, the application is left approved with no vendor — a terminal state the rest of the primitive could never move out of. Approval now treats an approved application that has no vendor attached as re-approvable, so the registration can be retried and the application recovered instead of stranded."
+        },
+        {
+          "title": "Survey response keeps the invitation retryable on insert failure",
+          "body": "Submitting a survey response claims the invitation (issued to responded) before inserting the response row. If that insert fails (a transient write error), the invitation is reverted to issued so the response can be submitted again, rather than being stuck responded with no response recorded and every retry rejected as already-responded."
+        },
+        {
+          "title": "Reorder reminder and wishlist digest defer a failed send instead of re-firing it",
+          "body": "When a reorder reminder or a wishlist digest send fails after the row was claimed, the schedule cursor is rolled to a value distinct from the one the tick observed (still due, so a later tick retries) rather than back to the exact observed value. A concurrent overlapping tick that read the same cursor was waiting to claim it; restoring the exact value let it match and send a duplicate in the same window. The retry is now deferred to a later tick with no duplicate."
+        }
+      ]
+    }
+  ]
+}
