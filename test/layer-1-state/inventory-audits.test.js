@@ -671,11 +671,76 @@ async function _factoryRefusals() {
   }), /inventoryLocations/);
 }
 
+// finalizeAudit({ apply_adjustments: true }) is re-runnable: a
+// respect_holds floor refusal (or a crash) can abort the per-line
+// adjustStock loop before the status flips, leaving the audit
+// non-terminal so the operator retries. adjustStock is NOT idempotent,
+// so the retry MUST skip the lines whose shelf already moved. This pins
+// that: a mid-loop failure leaves the first line applied exactly once,
+// and the completing retry applies only the remaining line.
+async function _finalizeRetryDoesNotDoubleApply() {
+  var q = _makeQuery();
+  var locSvc = inventoryLocations.create({ query: q, catalog: {} });
+  await locSvc.defineLocation({ code: "WH-EAST", name: "East Warehouse", type: "warehouse", priority: 1 });
+  await locSvc.setStock({ sku: "RT-A", location_code: "WH-EAST", quantity: 50 });
+  await locSvc.setStock({ sku: "RT-B", location_code: "WH-EAST", quantity: 30 });
+
+  // Interpose adjustStock so RT-B throws ONCE (a simulated transient
+  // failure) — aborting the first finalize after RT-A has been applied.
+  var failOnce = { "RT-B": true };
+  var wrappedLoc = Object.create(locSvc);
+  wrappedLoc.adjustStock = async function (input) {
+    if (failOnce[input.sku]) {
+      failOnce[input.sku] = false;
+      throw new Error("simulated transient adjustStock failure on " + input.sku);
+    }
+    return locSvc.adjustStock(input);
+  };
+  var auditSvc = inventoryAudits.create({
+    query:              q,
+    inventoryLocations: wrappedLoc,
+    costLayers:         _makeCostLayers({ "RT-A": 1000, "RT-B": 500 }),
+  });
+
+  var audit = await auditSvc.openAudit({
+    slug: "retry-1", kind: "spot", scope: "location",
+    scheduled_at: Date.now(), location_codes: ["WH-EAST"],
+  });
+  // RT-A short 3 (47 vs 50); RT-B over 1 (31 vs 30).
+  await auditSvc.recordScanLine({ audit_id: audit.id, sku: "RT-A", location_code: "WH-EAST", counted_qty: 47, counter_id: "alice" });
+  await auditSvc.recordScanLine({ audit_id: audit.id, sku: "RT-B", location_code: "WH-EAST", counted_qty: 31, counter_id: "alice" });
+
+  // First finalize aborts on RT-B; RT-A already applied, audit stays open.
+  var threw = false;
+  try { await auditSvc.finalizeAudit({ audit_id: audit.id, apply_adjustments: true }); }
+  catch (_e) { threw = true; }
+  check("retry: first finalize throws mid-loop",                 threw);
+  check("retry: audit NOT finalized after mid-loop throw",       (await auditSvc.getAudit(audit.id)).status !== "finalized");
+  var aMid = (await locSvc.stockForSku("RT-A")).by_location.find(function (l) { return l.code === "WH-EAST"; }).quantity;
+  check("retry: RT-A applied once after first attempt (50->47)", aMid === 47);
+
+  // Retry completes: RT-A is skipped (its adjustment row exists), RT-B now succeeds.
+  var result = await auditSvc.finalizeAudit({ audit_id: audit.id, apply_adjustments: true });
+  check("retry: second finalize finalizes",                      (await auditSvc.getAudit(audit.id)).status === "finalized");
+  check("retry: completing retry reports both adjustments",      result.adjustments_written === 2);
+
+  var aFinal = (await locSvc.stockForSku("RT-A")).by_location.find(function (l) { return l.code === "WH-EAST"; }).quantity;
+  check("retry: RT-A NOT double-applied (still 47, not 44)",     aFinal === 47);
+  var bFinal = (await locSvc.stockForSku("RT-B")).by_location.find(function (l) { return l.code === "WH-EAST"; }).quantity;
+  check("retry: RT-B applied on retry (30->31)",                 bFinal === 31);
+  var aRows = (await q(
+    "SELECT * FROM inventory_adjustments WHERE sku = ?1 AND reason = ?2",
+    ["RT-A", "inventory-audit:retry-1"],
+  )).rows;
+  check("retry: exactly one RT-A adjustment row",                aRows.length === 1);
+}
+
 async function run() {
   await _openAuditAndKinds();
   await _recordScanLineAndWorksheet();
   await _markRecountAndOverride();
   await _finalizeWritesAdjustments();
+  await _finalizeRetryDoesNotDoubleApply();
   await _readsAndCancel();
   await _compareToPriorAudit();
   await _factoryRefusals();
