@@ -414,6 +414,38 @@ async function _redeemReCreditsOnOrphanedInsert() {
   check("gc-orphan: no redemption row left behind",     Number(rows[0].n) === 0);
 }
 
+// Harder case: on an autocommit bridge a thrown insert does NOT prove the
+// row didn't land (a connection reset on the response, or a retry that
+// collides on the redemption-id PK). The recovery must DELETE the row by id
+// before re-crediting, or a committed row would survive against a restored
+// balance and a later reversal could credit the spend twice. Simulate the
+// row committing and THEN the call throwing.
+async function _redeemDeletesCommittedRowOnThrow() {
+  var h = _makeQuery();
+  var commitThenThrowQuery = async function (sql, params) {
+    if (/^\s*INSERT\s+INTO\s+giftcard_redemptions/i.test(sql)) {
+      await h.query(sql, params);   // the row actually commits...
+      throw new Error("simulated connection reset after the redemption row committed");
+    }
+    return h.query(sql, params);
+  };
+  var gc = bShop.giftcards.create({ query: commitThenThrowQuery });
+
+  var issued = await gc.issue({ amount_minor: 5000, currency: "USD" });
+  var threw = false;
+  try { await gc.redeem({ code: issued.code, amount_minor: 5000 }); }
+  catch (_e) { threw = true; }
+  check("gc-committed-throw: redeem surfaces the error",      threw);
+
+  var bal = await gc.balance(issued.code);
+  check("gc-committed-throw: balance re-credited to 5000",    bal && bal.balance_minor === 5000);
+  check("gc-committed-throw: card un-terminated to active",   bal && bal.status === "active");
+  // The committed row must have been DELETED so a later reversal can't
+  // credit the spend a second time.
+  var rows = h.db.prepare("SELECT COUNT(*) AS n FROM giftcard_redemptions").all();
+  check("gc-committed-throw: committed row deleted (none left)", Number(rows[0].n) === 0);
+}
+
 async function run() {
   await _issueAndStoredShape();
   await _issueAddressing();
@@ -421,6 +453,7 @@ async function run() {
   await _codeFormatTolerance();
   await _redeemFullAndPartial();
   await _redeemReCreditsOnOrphanedInsert();
+  await _redeemDeletesCommittedRowOnThrow();
   await _reverseRedemption();
   await _redeemRefusals();
   await _voidBehavior();
