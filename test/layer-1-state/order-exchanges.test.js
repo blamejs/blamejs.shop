@@ -216,8 +216,12 @@ async function _approveExchangeOpensHold() {
   check("approveExchange hold quantity",       inv.calls[0].quantity === req.replacement_qty);
   check("approveExchange hold cart_id = id",   inv.calls[0].cart_id === ex.id);
 
-  // Cannot approve a non-pending exchange
+  // Cannot approve a non-pending exchange. The atomic claim
+  // (status='pending' in the UPDATE's WHERE) refuses the re-approve
+  // AND must not fire the exactly-once side-effect again — the hold
+  // count stays at 1, proving no duplicate shelf pin on the loser path.
   await assert.rejects(w.svc.approveExchange(ex.id, { approver_id: approverId }),                   /refused/);
+  check("re-approve does not double-open a hold", inv.calls.length === 1);
 
   // Refusals
   await assert.rejects(w.svc.approveExchange(ex.id),                                                /input object required/);

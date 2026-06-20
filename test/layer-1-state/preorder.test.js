@@ -587,10 +587,14 @@ async function _convertReservationToOrder() {
   check("convert payload sku",                  stub.calls[0].lines[0].sku === "S-1");
   check("convert payload customer",             stub.calls[0].customer_id === cust);
 
-  // Re-convert refuses
+  // Re-convert refuses — and the exactly-once side-effect (the order
+  // create) does NOT fire a second time. The status flip is the atomic
+  // claim, so a second converter that loses the race against the
+  // already-'converted' row never reaches createFromCart.
   await assert.rejects(pre.convertReservationToOrder({
     reservation_id: res.id,
   }), /only active reservations/);
+  check("re-convert did not double-fire order stub", stub.calls.length === 1);
 
   // Missing reservation refuses
   await assert.rejects(pre.convertReservationToOrder({

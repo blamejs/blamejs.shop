@@ -397,6 +397,30 @@ async function _executeSplitWritesShipments() {
   await assert.rejects(svc.executeSplit({ order_id: seeded.order_id, plan: executed }),
     /only proposed plans can be executed/);
 
+  // Concurrency: two executeSplit calls racing the SAME proposed plan
+  // must double-create NOTHING. The conditional claim (proposed →
+  // executed, rowCount === 1) is the gate — exactly one caller wins,
+  // the loser refuses without calling orderTracking, so the order ends
+  // up with exactly one shipment per parcel (not two).
+  var seededRace = await _seedOrder(q, [{ sku: "RACE-1", qty: 1 }]);
+  var otRace     = _stubOrderTracking(q);
+  var svcRace    = splitShipments.create({
+    query: q, order: _stubOrder(seededRace), orderTracking: otRace,
+    backorder: _stubBackorder({}),
+  });
+  var planRace = await svcRace.planSplit({ order_id: seededRace.order_id, strategy: "availability" });
+  var raceResults = await Promise.allSettled([
+    svcRace.executeSplit({ order_id: seededRace.order_id, plan: planRace }),
+    svcRace.executeSplit({ order_id: seededRace.order_id, plan: planRace }),
+  ]);
+  var raceWon  = raceResults.filter(function (r) { return r.status === "fulfilled"; });
+  var raceLost = raceResults.filter(function (r) { return r.status === "rejected"; });
+  check("executeSplit race: exactly one winner", raceWon.length === 1 && raceLost.length === 1);
+  check("executeSplit race: loser refused as non-proposed",
+    /only proposed plans can be executed/.test(raceLost[0].reason && raceLost[0].reason.message));
+  var raceShipRows = (await q("SELECT * FROM shipments WHERE order_id = ?1", [seededRace.order_id])).rows;
+  check("executeSplit race: side-effect fired once (no double-create)", raceShipRows.length === 1);
+
   // carrier='other' auto-fills carrier_other_name when missing
   var seeded2 = await _seedOrder(q, [{ sku: "WDG-9", qty: 1 }]);
   var svc2 = splitShipments.create({

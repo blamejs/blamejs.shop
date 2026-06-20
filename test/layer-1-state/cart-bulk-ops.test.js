@@ -434,6 +434,24 @@ async function _splitCartByVendor() {
   var acmeLines = await ctx.cart.listLines(byGroup.ACME.cart_id);
   check("splitCart: ACME child has both ACME lines",     acmeLines.length === 2);
 
+  // A second split of the already-claimed (abandoned) cart refuses,
+  // and does NOT mint a second set of child carts — the atomic claim
+  // (UPDATE ... WHERE status='active') lost the race so the
+  // side-effect never fired. Count carts before/after to prove no
+  // double-create happened.
+  var childCartsBefore = (await ctx.query(
+    "SELECT COUNT(*) AS n FROM carts WHERE status = 'active'", [],
+  )).rows[0].n;
+  await assert.rejects(
+    ctx.bulk.splitCart({ cart_id: c.id, split_by: "vendor" }),
+    /already split\/modified|cannot modify/,
+  );
+  var childCartsAfter = (await ctx.query(
+    "SELECT COUNT(*) AS n FROM carts WHERE status = 'active'", [],
+  )).rows[0].n;
+  check("splitCart: re-split of a claimed cart mints no new children",
+    childCartsBefore === childCartsAfter);
+
   // Refuses when every line collapses to the same group.
   var c2 = await ctx.cart.create(_newSessionId(), { currency: "USD" });
   await ctx.bulk.addLines({
