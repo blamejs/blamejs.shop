@@ -383,12 +383,77 @@ async function _hashCollisionsAndUniqueness() {
   }
 }
 
+// The balance debit and the redemption-row INSERT are separate statements
+// (no interactive transaction on the bridge). If the INSERT faults after a
+// debit that zeroed the card, the card is left debited + 'redeemed' with no
+// redemption row for reverseRedemption to key on — the spend would be lost.
+// redeem now re-credits (and un-terminates) the card on that failure.
+async function _redeemReCreditsOnOrphanedInsert() {
+  var h = _makeQuery();
+  var failingQuery = async function (sql, params) {
+    if (/^\s*INSERT\s+INTO\s+giftcard_redemptions/i.test(sql)) {
+      throw new Error("simulated transient redemption-insert failure");
+    }
+    return h.query(sql, params);
+  };
+  var gc = bShop.giftcards.create({ query: failingQuery });
+
+  var issued = await gc.issue({ amount_minor: 5000, currency: "USD" });
+  // Redeem the FULL balance — the debit zeroes the card and flips it to
+  // 'redeemed' before the INSERT faults, so this also exercises the status
+  // un-terminate on recovery.
+  var threw = false;
+  try { await gc.redeem({ code: issued.code, amount_minor: 5000 }); }
+  catch (_e) { threw = true; }
+  check("gc-orphan: redeem fails when the redemption row can't be written", threw);
+
+  var bal = await gc.balance(issued.code);
+  check("gc-orphan: balance re-credited to full 5000",  bal && bal.balance_minor === 5000);
+  check("gc-orphan: card un-terminated back to active", bal && bal.status === "active");
+  var rows = h.db.prepare("SELECT COUNT(*) AS n FROM giftcard_redemptions").all();
+  check("gc-orphan: no redemption row left behind",     Number(rows[0].n) === 0);
+}
+
+// Harder case: on an autocommit bridge a thrown insert does NOT prove the
+// row didn't land (a connection reset on the response, or a retry that
+// collides on the redemption-id PK). The recovery must DELETE the row by id
+// before re-crediting, or a committed row would survive against a restored
+// balance and a later reversal could credit the spend twice. Simulate the
+// row committing and THEN the call throwing.
+async function _redeemDeletesCommittedRowOnThrow() {
+  var h = _makeQuery();
+  var commitThenThrowQuery = async function (sql, params) {
+    if (/^\s*INSERT\s+INTO\s+giftcard_redemptions/i.test(sql)) {
+      await h.query(sql, params);   // the row actually commits...
+      throw new Error("simulated connection reset after the redemption row committed");
+    }
+    return h.query(sql, params);
+  };
+  var gc = bShop.giftcards.create({ query: commitThenThrowQuery });
+
+  var issued = await gc.issue({ amount_minor: 5000, currency: "USD" });
+  var threw = false;
+  try { await gc.redeem({ code: issued.code, amount_minor: 5000 }); }
+  catch (_e) { threw = true; }
+  check("gc-committed-throw: redeem surfaces the error",      threw);
+
+  var bal = await gc.balance(issued.code);
+  check("gc-committed-throw: balance re-credited to 5000",    bal && bal.balance_minor === 5000);
+  check("gc-committed-throw: card un-terminated to active",   bal && bal.status === "active");
+  // The committed row must have been DELETED so a later reversal can't
+  // credit the spend a second time.
+  var rows = h.db.prepare("SELECT COUNT(*) AS n FROM giftcard_redemptions").all();
+  check("gc-committed-throw: committed row deleted (none left)", Number(rows[0].n) === 0);
+}
+
 async function run() {
   await _issueAndStoredShape();
   await _issueAddressing();
   await _balanceAndLookup();
   await _codeFormatTolerance();
   await _redeemFullAndPartial();
+  await _redeemReCreditsOnOrphanedInsert();
+  await _redeemDeletesCommittedRowOnThrow();
   await _reverseRedemption();
   await _redeemRefusals();
   await _voidBehavior();
