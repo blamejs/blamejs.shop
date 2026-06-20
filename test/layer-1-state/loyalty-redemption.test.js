@@ -36,6 +36,9 @@ var check             = helpers.check;
 var assert            = helpers.assert;
 
 var MIG_LOYALTY     = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0022_loyalty.sql");
+// Adds loyalty_transactions.restored_points — the column reverseRedemptionById
+// claims against when a redemption is rolled back (lost cap claim / mint failure).
+var MIG_RESTORED    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0223_loyalty_txn_restored_points.sql");
 var MIG_REDEMPTIONS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0085_loyalty_redemptions.sql");
 
 function _splitSchema(text) {
@@ -47,6 +50,9 @@ function _makeQuery() {
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
   _splitSchema(nodeFs.readFileSync(MIG_LOYALTY, "utf8")).forEach(function (s) {
+    db.prepare(s).run();
+  });
+  _splitSchema(nodeFs.readFileSync(MIG_RESTORED, "utf8")).forEach(function (s) {
     db.prepare(s).run();
   });
   _splitSchema(nodeFs.readFileSync(MIG_REDEMPTIONS, "utf8")).forEach(function (s) {
@@ -195,6 +201,13 @@ async function _defineRewardRefusals() {
 
   // Factory refuses missing loyalty handle.
   assert.throws(function () { loyaltyRedemption.create({ query: f.query }); }, /loyalty handle required/);
+
+  // Factory refuses a loyalty handle that can't reverse a burn — the
+  // redemption compensation paths (lost cap claim / mint failure) rely on
+  // reverseRedemptionById, so the contract is enforced at wiring time.
+  assert.throws(function () {
+    loyaltyRedemption.create({ query: f.query, loyalty: { redeem: function () {}, adjust: function () {} } });
+  }, /reverseRedemptionById/);
 
   // Factory refuses bad coupons handle shape.
   assert.throws(function () {
@@ -597,10 +610,119 @@ async function _listAndPaginate() {
   await assert.rejects(f.lr.listRewards({ limit: 0 }),                        /limit/);
 }
 
+// The per-customer cap is enforced ATOMICALLY by the redemption INSERT,
+// not only the pre-check: even when the pre-check count is stale (a
+// concurrent redeem filled the slot after it read), the INSERT...SELECT
+// recomputes the live count and the loser inserts zero rows. Simulate the
+// stale pre-check by forcing the standalone COUNT to read 0, and prove the
+// INSERT still refuses the over-cap redemption AND returns the points.
+async function _capEnforcedAtomicallyDespiteStalePrecheck() {
+  var h = _makeQuery();
+  var loy = bShop.loyalty.create({ query: h.query });
+  var coupons = _fakeCoupons();
+  // Pre-check COUNT always reads 0 (stale); the INSERT...SELECT (verb
+  // INSERT) passes through and sees the real count.
+  var staleQuery = async function (sql, params) {
+    if (/^\s*SELECT\s+COUNT\(\*\)\s+AS\s+n\s+FROM\s+loyalty_redemptions/i.test(sql)) {
+      return { rows: [{ n: 0 }], rowCount: 1 };
+    }
+    return h.query(sql, params);
+  };
+  var lr = loyaltyRedemption.create({ query: staleQuery, loyalty: loy, coupons: coupons });
+
+  await lr.defineReward({
+    slug: "one-only", kind: "free_shipping", title: "One only",
+    point_cost: 100, value_json: {}, max_per_customer: 1, active: true,
+  });
+  var cid = _uuid();
+  await loy.earn({ customer_id: cid, points: 500, source: "order-paid" });
+
+  var r1 = await lr.redeemForCustomer({ customer_id: cid, reward_slug: "one-only" });
+  check("atomic-cap: first redemption succeeds",          typeof r1.redemption_id === "string");
+  check("atomic-cap: one debit after first",              (await loy.balance(cid)).balance === 400);
+
+  // Second redemption: pre-check is stale-0 (would wrongly pass), but the
+  // atomic INSERT sees the live count (1) and refuses.
+  var capErr = null;
+  try { await lr.redeemForCustomer({ customer_id: cid, reward_slug: "one-only" }); }
+  catch (e) { capErr = e; }
+  check("atomic-cap: second refused by the INSERT guard",
+    capErr && capErr.code === "REDEMPTION_CAP_REACHED");
+  check("atomic-cap: refused redemption's points restored", (await loy.balance(cid)).balance === 400);
+  var rows = h.db.prepare("SELECT COUNT(*) AS n FROM loyalty_redemptions WHERE customer_id = ?").all(cid);
+  check("atomic-cap: exactly one redemption row",         Number(rows[0].n) === 1);
+}
+
+// If the coupon mint fails AFTER the points are debited and the slot is
+// claimed, BOTH are rolled back: the points are returned and no redemption
+// row is left behind — the customer is never charged for a reward they
+// didn't receive and the burn isn't orphaned.
+async function _orphanedDebitRolledBackOnMintFailure() {
+  var h = _makeQuery();
+  var loy = bShop.loyalty.create({ query: h.query });
+  var throwingCoupons = {
+    issueSingleUseFromReward: async function () { throw new Error("coupon mint failed"); },
+  };
+  var lr = loyaltyRedemption.create({ query: h.query, loyalty: loy, coupons: throwingCoupons });
+
+  await lr.defineReward({
+    slug: "mint-fail", kind: "free_shipping", title: "Mint fail",
+    point_cost: 250, value_json: {}, active: true,
+  });
+  var cid = _uuid();
+  await loy.earn({ customer_id: cid, points: 1000, source: "order-paid" });
+
+  var threw = false;
+  try { await lr.redeemForCustomer({ customer_id: cid, reward_slug: "mint-fail" }); }
+  catch (_e) { threw = true; }
+  check("orphan-debit: mint failure propagates",          threw);
+  check("orphan-debit: points fully restored",            (await loy.balance(cid)).balance === 1000);
+  var rows = h.db.prepare("SELECT COUNT(*) AS n FROM loyalty_redemptions WHERE customer_id = ?").all(cid);
+  check("orphan-debit: no redemption row left behind",    Number(rows[0].n) === 0);
+}
+
+// The coupon mint can SUCCEED while persisting its code to the claimed row
+// is lost (a transient D1 write that changes zero rows). That must roll the
+// redemption back like a mint failure — points returned, claimed row
+// removed — not leave the customer charged for a redemption holding a NULL
+// coupon_code it can never use.
+async function _lostCouponPersistRollsBack() {
+  var h = _makeQuery();
+  var loy = bShop.loyalty.create({ query: h.query });
+  var coupons = _fakeCoupons();
+  // Force ONLY the coupon_code UPDATE to report zero rows changed.
+  var lossyQuery = async function (sql, params) {
+    if (/^\s*UPDATE\s+loyalty_redemptions\s+SET\s+coupon_code/i.test(sql)) {
+      return { rows: [], rowCount: 0 };
+    }
+    return h.query(sql, params);
+  };
+  var lr = loyaltyRedemption.create({ query: lossyQuery, loyalty: loy, coupons: coupons });
+
+  await lr.defineReward({
+    slug: "lossy-link", kind: "free_shipping", title: "Lossy link",
+    point_cost: 300, value_json: {}, active: true,
+  });
+  var cid = _uuid();
+  await loy.earn({ customer_id: cid, points: 1000, source: "order-paid" });
+
+  var threw = false;
+  try { await lr.redeemForCustomer({ customer_id: cid, reward_slug: "lossy-link" }); }
+  catch (_e) { threw = true; }
+  check("coupon-persist-loss: redemption fails",          threw);
+  check("coupon-persist-loss: points restored",           (await loy.balance(cid)).balance === 1000);
+  check("coupon-persist-loss: coupon WAS minted",         coupons.mints.length === 1);
+  var rows = h.db.prepare("SELECT COUNT(*) AS n FROM loyalty_redemptions WHERE customer_id = ?").all(cid);
+  check("coupon-persist-loss: no redemption row left",    Number(rows[0].n) === 0);
+}
+
 async function run() {
   await _defineRewardRefusals();
   await _redeemHappyAndInsufficient();
   await _maxPerCustomerCap();
+  await _capEnforcedAtomicallyDespiteStalePrecheck();
+  await _orphanedDebitRolledBackOnMintFailure();
+  await _lostCouponPersistRollsBack();
   await _markConsumedFsm();
   await _cancelRefundsOnlyActive();
   await _cancelDoesNotInflateLifetime();
