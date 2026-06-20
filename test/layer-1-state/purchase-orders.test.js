@@ -325,6 +325,34 @@ async function _recordPartialComposesInventoryReceive() {
   });
   check("no-receive-handle still advances PO line",    rN.lines.filter(function (l) { return l.sku === "WDG-A"; })[0].quantity_received === 3);
   check("no-receive-handle leaves rcpt undefined",     rN.receipt === null);
+
+  // Concurrency: two receipts racing the same confirmed PO. Both read
+  // status=confirmed before either claims the transition, so the JS
+  // status check passes for both — only the conditional claim-UPDATE
+  // serializes them. Exactly one caller must win; the loser refuses
+  // with PO_TRANSITION_REFUSED and the inventoryReceive restock
+  // (draft+apply) must fire exactly once, not twice.
+  var ctxRace = _setup();
+  var poR = await ctxRace.pos.createDraft(_validDraft());
+  await ctxRace.pos.submitToVendor({ po_id: poR.id });
+  await ctxRace.pos.confirmByVendor({ po_id: poR.id, confirmed_at: Date.now() });
+  var raceInput = { po_id: poR.id, received_lines: [{ sku: "WDG-A", quantity_received: 4 }] };
+  var settled = await Promise.allSettled([
+    ctxRace.pos.recordPartialReceipt(raceInput),
+    ctxRace.pos.recordPartialReceipt(raceInput),
+  ]);
+  var won  = settled.filter(function (s) { return s.status === "fulfilled"; });
+  var lost = settled.filter(function (s) { return s.status === "rejected"; });
+  check("concurrent receipts: exactly one wins",       won.length === 1);
+  check("concurrent receipts: exactly one refuses",    lost.length === 1);
+  check("concurrent loser refuses with PO_TRANSITION_REFUSED",
+    lost.length === 1 && lost[0].reason && lost[0].reason.code === "PO_TRANSITION_REFUSED");
+  check("concurrent receipts restock once (no double-apply)",
+    ctxRace.receive.applies.length === 1);
+  // The winning receipt landed a single 4-unit advance on line A — not 8.
+  var raceLineA = (await ctxRace.pos.getPO(poR.id)).lines
+    .filter(function (l) { return l.sku === "WDG-A"; })[0];
+  check("concurrent receipts advance line A once (qty=4)", raceLineA.quantity_received === 4);
 }
 
 // ---- 4. closePO refuses unless every line fully received --------------

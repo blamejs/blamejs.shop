@@ -417,6 +417,14 @@ async function _linkDuplicatesMergesVotes() {
     function (err) { return err && err.code === "SUGGESTION_ALREADY_DUPLICATE"; },
   );
 
+  // A re-link against an already-claimed source must NOT migrate the
+  // source's votes onto the canonical a second time — the atomic claim
+  // (status <> 'duplicate' in the WHERE) is the exactly-once gate, so
+  // the canonical vote_count stays at its post-first-merge value rather
+  // than double-counting. Guards the double-create concurrency class.
+  var canonAfterRelink = await f.sb.getSuggestion(canonical.id);
+  check("relink does not double-migrate votes", canonAfterRelink.vote_count === 3);
+
   // Unknown ids refused.
   await assert.rejects(
     f.sb.linkDuplicates({ suggestion_id: _uuid(), canonical_id: canonical.id }),

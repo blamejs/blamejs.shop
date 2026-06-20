@@ -394,6 +394,51 @@ async function _executeMergeReparents() {
   await assert.rejects(ctx.cm.executeMerge({ merge_id: p.id, executed_by: "" }), /executed_by/);
 }
 
+async function _executeMergeConcurrentClaimsOnce() {
+  // Two operators double-click execute on the SAME proposed merge.
+  // The proposed->executed transition is an atomic conditional
+  // UPDATE, so exactly one caller runs the reparent / archive /
+  // redirect-insert side effects; the loser returns the executed row
+  // without re-firing them.
+  var sourceId = _uuid();
+  var targetId = _uuid();
+  var ctx = _setup({
+    seed: [
+      { id: sourceId, display_name: "Race A" },
+      { id: targetId, display_name: "Race B" },
+    ],
+  });
+  ctx.order.set(sourceId, 4);
+
+  var p = await ctx.cm.proposeMerge({
+    source_customer_id: sourceId, target_customer_id: targetId,
+    requested_by: "operator-a",
+  });
+
+  var results = await Promise.allSettled([
+    ctx.cm.executeMerge({ merge_id: p.id, executed_by: "operator-b" }),
+    ctx.cm.executeMerge({ merge_id: p.id, executed_by: "operator-c" }),
+  ]);
+  var fulfilled = results.filter(function (r) { return r.status === "fulfilled"; });
+  check("concurrent execute: both calls resolve to executed",
+    fulfilled.length === 2 &&
+    fulfilled.every(function (r) { return r.value.status === "executed"; }));
+
+  // The exactly-once side effect fired exactly once despite two callers.
+  check("concurrent execute: reparent fired exactly once",
+    ctx.order.transfers.length === 1);
+  check("concurrent execute: orders reparented once (no double-count)",
+    ctx.order.byCustomer[targetId] === 4 && ctx.order.byCustomer[sourceId] == null);
+  check("concurrent execute: source archived exactly once",
+    ctx.customers.archives.length === 1);
+
+  // Exactly one redirect marker exists.
+  var redirects = (await ctx.query(
+    "SELECT * FROM customer_merge_redirects WHERE source_customer_id = ?1", [sourceId],
+  )).rows;
+  check("concurrent execute: single redirect marker", redirects.length === 1);
+}
+
 async function _executeMergeChainedRefused() {
   // A target that is already the source of an existing redirect
   // cannot be merged INTO; the operator must merge onto the final

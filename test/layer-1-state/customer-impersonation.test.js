@@ -314,6 +314,32 @@ async function _notifyCustomerFanout() {
   check("re-notify does not re-enqueue",    notif.calls.length === 1);
   check("re-notify returns same stamp",     n2.customer_notified_at === n1.customer_notified_at);
 
+  // Concurrent double-notify enqueues AT LEAST once and the stamp
+  // resolves to a single value. The notice is enqueued BEFORE the
+  // confirmation stamp is recorded, so the stamp can never be observed
+  // before delivery was actually initiated (a claim-before-enqueue stamp
+  // let a loser report success while the winner's enqueue was still
+  // pending and might fail — silently dropping the privacy notice). Two
+  // racers may each enqueue (a duplicate "operator viewed your account"
+  // notice is benign and preferable to a missed one), but the idempotent
+  // stamp UPDATE (`... WHERE customer_notified_at IS NULL`) means both
+  // observe the same single customer_notified_at.
+  var raceNotif = _notifStub();
+  var raceW = await _wire({ notifications: raceNotif });
+  var raceSession = await raceW.svc.startImpersonation({
+    operator_id: _operatorId(), customer_id: _customerId(),
+    reason:      "concurrent notify",
+  });
+  var raceResults = await Promise.all([
+    raceW.svc.notifyCustomer({ impersonation_id: raceSession.impersonation_id }),
+    raceW.svc.notifyCustomer({ impersonation_id: raceSession.impersonation_id }),
+  ]);
+  check("concurrent notify enqueues at least once", raceNotif.calls.length >= 1);
+  check("concurrent notify both notified",  raceResults[0].notified === true &&
+                                            raceResults[1].notified === true);
+  check("concurrent notify same stamp",     raceResults[0].customer_notified_at ===
+                                            raceResults[1].customer_notified_at);
+
   // Without notifications wired — returns notified: false
   var bare = await _wire();
   var bareSession = await bare.svc.startImpersonation({

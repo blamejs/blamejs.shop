@@ -496,6 +496,38 @@ async function _markCompleteAndFanOut() {
 
   // Refuse re-completing a complete list (the list is terminal)
   await assert.rejects(svc.markListComplete({ list_id: list.id }),                         /only generated or in_progress/);
+
+  // Concurrency: two markListComplete callers racing on a freshly-
+  // confirmed list must NOT both fan out shipments. The completion is
+  // claimed by a conditional UPDATE (WHERE status IN
+  // ('generated','in_progress')) before any createShipment fires, so
+  // exactly one caller wins the claim and runs the fan-out; the loser
+  // refuses. Without the atomic claim both callers pass the JS status
+  // check and each create one shipment per parent order (double-create).
+  var qC = _makeQuery();
+  var otC = _stubOrderTracking();
+  var svcC = pickLists.create({
+    query: qC, order: _stubOrder(qC), orderTracking: otC,
+  });
+  var ocA = await _seedOrder(qC, [{ sku: "A1", qty: 1 }, { sku: "A2", qty: 1 }]);
+  var ocB = await _seedOrder(qC, [{ sku: "B1", qty: 1 }]);
+  var listC = await svcC.generateList({
+    location_code: "WH", order_ids: [ocA.order_id, ocB.order_id], sort_by: "priority",
+  });
+  for (var ci = 0; ci < listC.lines.length; ci += 1) {
+    await svcC.confirmLine({ list_id: listC.id, line_id: listC.lines[ci].id, picker_id: "p" });
+  }
+  var raced = await Promise.allSettled([
+    svcC.markListComplete({ list_id: listC.id }),
+    svcC.markListComplete({ list_id: listC.id }),
+  ]);
+  var fulfilled = raced.filter(function (r) { return r.status === "fulfilled"; });
+  var rejected  = raced.filter(function (r) { return r.status === "rejected"; });
+  check("race: exactly one markComplete wins", fulfilled.length === 1 && rejected.length === 1);
+  // 2 parent orders => exactly 2 shipments total, never 4 (the
+  // double-create the unguarded check-then-act would produce).
+  check("race: no double shipment fan-out",    otC.calls.length === 2);
+  check("race: winner returns 2 shipments",    fulfilled[0].value.shipments.length === 2);
   // Refuse cancelling a complete list
   await assert.rejects(svc.cancelList({ list_id: list.id, reason: "too late" }),           /only generated or in_progress/);
   // Refuse confirming on a complete list

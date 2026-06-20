@@ -394,6 +394,62 @@ async function _markFailedAndRetry() {
   }), /only in_progress/);
 }
 
+async function _markFailedConcurrentRace() {
+  // Two workstations (or an operator + an automated jam-detector) can
+  // both call markFailed on the SAME in_progress job. Both pass the JS
+  // status check because they read the row before either UPDATE
+  // commits; without an atomic claim both would fire the retry INSERT
+  // and mint TWO duplicate queued jobs (double-print). The guarded
+  // `WHERE ... AND status = 'in_progress'` + rowCount===1 makes the
+  // transition the claim: only the winner requeues; the loser sees
+  // rowCount 0 and returns the already-failed state, no second insert.
+  var baseQuery = _makeQuery();
+  var db = baseQuery.__db;
+
+  // Wrap the query so that the instant THIS caller runs the guarded
+  // failed-transition UPDATE, a concurrent winner has already flipped
+  // the row to 'failed'. We detect that exact statement and pre-apply
+  // the winner's commit, then let the real UPDATE run against the now-
+  // failed row (it matches zero rows, exactly as a serialized SQLite
+  // writer would observe after losing the race).
+  var jobId = null;
+  var wrapped = async function (sql, params) {
+    if (jobId &&
+        /UPDATE print_jobs SET status = 'failed'/.test(sql) &&
+        /AND status = 'in_progress'/.test(sql)) {
+      // Simulate the concurrent winner committing first.
+      db.prepare(
+        "UPDATE print_jobs SET status = 'failed', failed_at = 1, fail_reason = 'winner' " +
+        "WHERE id = ? AND status = 'in_progress'",
+      ).run(jobId);
+    }
+    return baseQuery(sql, params);
+  };
+  wrapped.__db = db;
+
+  var svc = printQueue.create({ query: wrapped });
+  var job = await svc.enqueueJob({
+    kind: "shipping_label", payload_ref: "ord:race", priority: 5,
+  });
+  await svc.claimJob({ station_id: "ws-1" });
+  jobId = job.id;   // arm the race shim only for the markFailed UPDATE
+
+  var lost = await svc.markFailed({
+    job_id: job.id, station_id: "ws-1", reason: "loser", retry: true,
+  });
+
+  // The losing caller observes the failed row but does NOT requeue.
+  check("race: loser returns failed state",  lost.failed.status === "failed");
+  check("race: loser does not requeue",       lost.requeued === undefined);
+
+  // Exactly ONE row exists for this payload — the winner's failed row.
+  // No duplicate queued retry was minted by the lost-race caller.
+  var all = baseQuery.__db.prepare(
+    "SELECT status FROM print_jobs WHERE payload_ref = 'ord:race'",
+  ).all();
+  check("race: no duplicate retry minted",    all.length === 1 && all[0].status === "failed");
+}
+
 async function _cancelPath() {
   var q = _makeQuery();
   var svc = printQueue.create({ query: q });
@@ -619,6 +675,7 @@ async function run() {
   await _claimRefusals();
   await _markCompleteFsm();
   await _markFailedAndRetry();
+  await _markFailedConcurrentRace();
   await _cancelPath();
   await _cleanupAgeCutoff();
   await _stationAndDailyMetrics();
