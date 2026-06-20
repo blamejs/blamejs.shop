@@ -195,6 +195,29 @@ function _problemFromError(res, e, ctx) {
 // legal-obligation basis — their deletion adapters retain (`deleted: 0` +
 // note). Addresses + subscriptions are archived; the customer row is
 // anonymized in place (PD-1) so FK children (orders, tickets) don't orphan.
+//
+// Completeness (Art. 15): a subject-access export must carry the customer's
+// FULL record, not the first page. Every cursor-paginated reader is drained
+// to the end via `_drainAll` — `fetchPage(cursor)` returns `{ rows, cursor }`
+// and the loop follows the reader's own cursor until it stops emitting one.
+// The page cap is an anti-runaway backstop set far above any real
+// per-customer record (1e4 pages × the reader's page size); it can never
+// truncate a genuine export, and a cursor that strictly advances terminates
+// the loop long before it. Readers that already return every row in one shot
+// (addresses, the consent ledger, subscriptions) need no drain.
+async function _drainAll(fetchPage) {
+  var all = [];
+  var cursor = null;
+  var pages = 0;
+  do {
+    var page = await fetchPage(cursor);
+    all = all.concat((page && page.rows) || []);
+    cursor = (page && page.cursor) || null;
+    pages += 1;
+  } while (cursor && pages < 10000);
+  return all;
+}
+
 var _dsrReader = {
   // customers: export reads the row + the customer's passkeys + their
   // OAuth sign-in providers. deletion anonymizes-in-place via update() —
@@ -281,10 +304,16 @@ var _dsrReader = {
   order: function (handle) {
     return {
       forCustomerExport: async function (id) {
-        // order.listForCustomer caps limit at 100 (lib/order.js MAX_LIST_LIMIT);
-        // a higher value throws and would silently empty the section.
-        try { return (await handle.listForCustomer(id, { limit: 100 })).rows; }
-        catch (_e) { return []; }
+        // Drain every page — a customer with more than one page of orders
+        // must get all of them in the export. order.listForCustomer returns
+        // { rows, next_cursor } and caps limit at 100 (lib/order.js).
+        try {
+          return await _drainAll(async function (cursor) {
+            var opts = cursor ? { limit: 100, cursor: cursor } : { limit: 100 };
+            var page = await handle.listForCustomer(id, opts);
+            return { rows: page.rows, cursor: page.next_cursor };
+          });
+        } catch (_e) { return []; }
       },
       forCustomerDeletion: async function (_id, _opts) {
         return { table: "orders", deleted: 0, note: "retained-for-accounting" };
@@ -335,10 +364,16 @@ var _dsrReader = {
   supportTickets: function (handle) {
     return {
       forCustomerExport: async function (id) {
-        // listByCustomerId caps limit at 100 (support-tickets MAX_LIST_LIMIT);
-        // a higher value throws and would silently empty the section.
-        try { return await handle.listByCustomerId(id, { limit: 100 }); }
-        catch (_e) { return []; }
+        // Drain every page — listByCustomerId now returns { rows, next_cursor }
+        // keyed on customer_id (the export has no plaintext email to drive
+        // listForCustomer), so the full ticket history lands in the export.
+        try {
+          return await _drainAll(async function (cursor) {
+            var opts = cursor ? { limit: 100, cursor: cursor } : { limit: 100 };
+            var page = await handle.listByCustomerId(id, opts);
+            return { rows: page.rows, cursor: page.next_cursor };
+          });
+        } catch (_e) { return []; }
       },
       forCustomerDeletion: async function (_id, _opts) {
         return { table: "support_tickets", deleted: 0, note: "retained" };
@@ -381,7 +416,15 @@ var _dsrReader = {
         try {
           var balance = await handle.balance(id);
           var history = [];
-          try { history = (await handle.history(id, { limit: 200 })).rows; } catch (_e) { history = []; }
+          // Drain the full points ledger — history returns { rows, next_cursor }
+          // (cursor = occurred_at) and caps limit at 500 (lib/loyalty.js).
+          try {
+            history = await _drainAll(async function (cursor) {
+              var opts = cursor ? { limit: 200, cursor: cursor } : { limit: 200 };
+              var page = await handle.history(id, opts);
+              return { rows: page.rows, cursor: page.next_cursor };
+            });
+          } catch (_e) { history = []; }
           return { balance: balance, history: history };
         } catch (_e) { return null; }
       },
@@ -402,9 +445,13 @@ var _dsrReader = {
       forCustomerExport: async function (id) {
         try {
           var hash = handle.hashCustomerId(id);
-          // byCustomer caps limit at MAX_LIST_LIMIT (100); a higher value
-          // throws and would silently empty the section.
-          return (await handle.byCustomer(hash, { limit: 100 })).rows;
+          // Drain every page of the customer's reviews. byCustomer returns
+          // { rows, next_cursor } and caps limit at 100 (lib/reviews.js).
+          return await _drainAll(async function (cursor) {
+            var opts = cursor ? { limit: 100, cursor: cursor } : { limit: 100 };
+            var page = await handle.byCustomer(hash, opts);
+            return { rows: page.rows, cursor: page.next_cursor };
+          });
         } catch (_e) { return []; }
       },
       forCustomerDeletion: async function (_id, _opts) {
@@ -438,8 +485,15 @@ var _dsrReader = {
   wishlist: function (handle, query) {
     return {
       forCustomerExport: async function (id) {
-        try { return (await handle.listForCustomer(id, { limit: 100 })).rows; }
-        catch (_e) { return []; }
+        // Drain every page of saved products. wishlist.listForCustomer
+        // returns { rows, nextCursor } (camelCase) and caps limit at 100.
+        try {
+          return await _drainAll(async function (cursor) {
+            var opts = cursor ? { limit: 100, cursor: cursor } : { limit: 100 };
+            var page = await handle.listForCustomer(id, opts);
+            return { rows: page.rows, cursor: page.nextCursor };
+          });
+        } catch (_e) { return []; }
       },
       forCustomerDeletion: async function (id, opts) {
         var dryRun = !!(opts && opts.dry_run);
@@ -466,8 +520,15 @@ var _dsrReader = {
   surveys: function (handle) {
     return {
       forCustomerExport: async function (id) {
-        try { return await handle.invitationsForCustomer(id, { limit: 100 }); }
-        catch (_e) { return []; }
+        // Drain every page of survey invitations. invitationsForCustomer
+        // returns { rows, next_cursor } and caps limit at 500 (lib/customer-surveys.js).
+        try {
+          return await _drainAll(async function (cursor) {
+            var opts = cursor ? { limit: 100, cursor: cursor } : { limit: 100 };
+            var page = await handle.invitationsForCustomer(id, opts);
+            return { rows: page.rows, cursor: page.next_cursor };
+          });
+        } catch (_e) { return []; }
       },
       forCustomerDeletion: async function (_id, _opts) {
         return { table: "survey_invitations", deleted: 0, note: "retained" };
@@ -4213,4 +4274,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { _zoneShippingRates: _zoneShippingRates, _problemFromError: _problemFromError };
+module.exports = { _zoneShippingRates: _zoneShippingRates, _problemFromError: _problemFromError, _drainAll: _drainAll };
