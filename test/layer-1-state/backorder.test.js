@@ -254,6 +254,12 @@ async function _fulfillCounterDecrement() {
   // Refuse re-fulfill (status is fulfilled, not pending)
   await assert.rejects(bo.fulfillBackorder({ order_id: order, sku: "WDG-FUL" }),
     /only pending lines/);
+  // The counter is debited exactly once: a refused re-fulfill must not
+  // decrement pending_quantity again (the line transition and the
+  // counter debit are claimed together — the debit only fires when the
+  // pending->fulfilled claim wins).
+  var postRefuse = await bo.getStatus("WDG-FUL");
+  check("counter unchanged after refused re-fulfill", postRefuse.pending_quantity === 0);
 
   // Refuse missing line
   await assert.rejects(bo.fulfillBackorder({

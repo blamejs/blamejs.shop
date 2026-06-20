@@ -1,0 +1,34 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.58",
+  "date": "2026-06-19",
+  "headline": "Make concurrent state transitions atomic across payouts, key rotation, and credit accounting",
+  "summary": "Closes a class of concurrency races where a state transition or ledger write read the current state, checked it in application code, and then wrote — leaving a window in which two requests for the same record could both pass the check and both apply their effect. Each of these now performs the check and the write as a single conditional statement (the update or insert only lands when the record is still in the expected state, or the balance still satisfies the invariant), so exactly one of two racing callers wins and the other is cleanly refused. The affected operations: an affiliate commission can no longer be marked paid (or voided) twice, so a second payout reference can't be issued for one commission; rotating an API key claims the rotation before minting the replacement, so two concurrent rotations can't issue two successor keys; a B2B credit charge, hold release, and payment now evaluate the credit limit and running balance inside the insert, so concurrent charges can't push an account past its limit or corrupt its denormalized balance; fulfilling or cancelling a backorder line debits the per-SKU pending counter only when it wins the line transition, so the counter can't be double-debited; and a click-and-collect pickup advances the parent order exactly once. No API change and no migration — the operations behave identically for a single caller and now stay correct under concurrent ones.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Affiliate commission payout transitions are atomic",
+          "body": "markCommissionPaid and markCommissionVoided now gate the status change on the row still being pending in the UPDATE itself and refuse (AFFILIATE_COMMISSION_TRANSITION_REFUSED) when they lose the race. Previously the pending check ran in application code before an unconditional write, so two concurrent payouts for the same commission could both proceed and issue two payout references for one commission, or a void could clobber a paid row."
+        },
+        {
+          "title": "API-key rotation claims the rotation before issuing the replacement",
+          "body": "rotate now transitions the key from active to rotated with a conditional update and refuses (API_KEY_NOT_ROTATABLE) if the row is no longer active, before minting the successor key. Previously two concurrent rotations of the same key could both pass the active check and both issue a replacement, leaving an unexpected extra valid credential."
+        },
+        {
+          "title": "B2B credit charges, releases, and payments enforce their invariant atomically",
+          "body": "chargeOrder, releaseHold, and recordPayment now compute the new running balance and evaluate their invariant (the credit limit for a charge, the outstanding balance for a payment, the order's net exposure for a release) inside a single conditional insert. Previously the balance was read, checked, and written in separate steps, so two concurrent charges could both pass the limit check — pushing the account past its credit limit and stamping the same balance_after on both rows, permanently under-stating outstanding exposure. Refusals carry the same typed codes (CREDIT_LIMIT_EXCEEDED, CREDIT_PAYMENT_EXCEEDS_OUTSTANDING, CREDIT_RELEASE_NOT_FOUND) and the denormalized per-customer balance chain stays correct under concurrent writes."
+        },
+        {
+          "title": "Backorder fulfilment and cancellation debit the counter exactly once",
+          "body": "fulfillBackorder and cancelBackorder now claim the line's pending to fulfilled/cancelled transition with a conditional update and only decrement the per-SKU pending_quantity counter when the claim wins. Previously the line status was checked in application code before an unconditional write and counter decrement, so two concurrent calls for one line could both decrement the counter, under-counting pending demand."
+        },
+        {
+          "title": "Click-and-collect pickup advances the order once",
+          "body": "markPickedUp now claims the schedule's ready to picked_up transition with a conditional update before driving the parent order to its delivered state, so two concurrent pickups for one order can't both advance the order FSM."
+        }
+      ]
+    }
+  ]
+}
