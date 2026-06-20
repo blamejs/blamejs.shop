@@ -284,6 +284,57 @@ async function _tickAdvancesState() {
   check("history outcomes are ok",               history.every(function (h) { return h.outcome === "ok"; }));
 }
 
+// ---- concurrency: two ticks on the same due row fire ONCE --------------
+
+async function _concurrentTickFiresOnce() {
+  var ctx = _setup();
+  await ctx.dun.defineDunningPolicy({
+    slug: "race-policy",
+    retry_schedule: [
+      { delay_hours: 0,  action: "send_reminder" },
+      { delay_hours: 24, action: "retry_charge"  },
+    ],
+    cancel_after_attempts: 4,
+  });
+
+  var invoiceId = _uuid();
+  ctx.invoicesById[invoiceId] = { id: invoiceId, subscription_id: _uuid() };
+  await ctx.dun.enrollInvoice({ invoice_id: invoiceId, policy_slug: "race-policy" });
+
+  // Two ticks fire concurrently against the SAME due enrollment (an
+  // overlapping cron fire, or a manual tick racing the scheduler).
+  // The atomic claim must let exactly one advance the row; the loser
+  // skips so the customer is emailed + notified ONCE, not twice.
+  var now = Date.now() + 1000;
+  var results = await Promise.all([
+    ctx.dun.tickDunning({ now: now }),
+    ctx.dun.tickDunning({ now: now }),
+  ]);
+
+  var status = await ctx.dun.statusForInvoice(invoiceId);
+  check("concurrent ticks advance attempt_count exactly once",
+    Number(status.attempt_count) === 1);
+  check("concurrent ticks fire send_reminder email exactly once",
+    ctx.email.calls.length === 1);
+  check("concurrent ticks fire in-app notification exactly once",
+    ctx.notifications.calls.length === 1);
+
+  // Exactly one dunning_events row was written for the step — the
+  // loser left no audit trail because it never ran the side-effect.
+  var history = await ctx.dun.historyForInvoice(invoiceId);
+  check("concurrent ticks write a single event row", history.length === 1);
+
+  // The row is still active on its NEXT step (attempt 1's
+  // next_action_at advanced to step 2's +24h), proving exactly one
+  // claim moved the scheduler forward by a single step.
+  check("concurrent ticks leave the row active on the next step",
+    status.status === "active" && status.last_action === "send_reminder");
+
+  // Suppress the unused-var lint; `results` documents that both ticks
+  // ran to completion (one claimed, one skipped) without throwing.
+  check("both concurrent ticks resolved", Array.isArray(results[0]) && Array.isArray(results[1]));
+}
+
 // ---- retry success: unsetEnrollment("paid_out_of_band") ----------------
 
 async function _unsetEnrollmentRecovers() {
@@ -541,6 +592,7 @@ async function _validationRefusals() {
 (async function () {
   await _definePolicyAndEnroll();
   await _tickAdvancesState();
+  await _concurrentTickFiresOnce();
   await _unsetEnrollmentRecovers();
   await _attemptCapCancels();
   await _metricsAggregation();

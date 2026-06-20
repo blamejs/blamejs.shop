@@ -761,10 +761,77 @@ async function _staleEnrollmentCatchesUpWithOneDigest() {
     Number(enr.rows[0].next_dispatch_at) === Date.UTC(2025, 2, 3, 9, 0));
 }
 
+// Concurrency regression: two dispatcher ticks racing the SAME due
+// enrollment must email + ledger EXACTLY ONCE. Both ticks run their due-
+// SELECT against the same snapshot (next_dispatch_at still in the past),
+// so both would pass the JS checks; the atomic claim — a conditional
+// advance of next_dispatch_at guarded on the observed value — lets only
+// one tick win. The loser's claim returns rowCount 0 and it skips with no
+// send and no ledger row. Interleaving is forced by holding tick #1 right
+// after its due-SELECT while tick #2 runs to completion.
+async function _concurrentTickClaimsOnce() {
+  var customerId = _customerId();
+  var emailStub = _emailStub();
+  var emailMap = {}; emailMap[customerId] = "race@example.com";
+
+  var q = _makeQuery();
+  // Wrap the raw query fn so we can pause tick #1 right after the due
+  // SELECT (the first SELECT against wishlist_digest_enrollments that
+  // filters on status = 'active' AND next_dispatch_at).
+  var gateResolve = null;
+  var gate = new Promise(function (res) { gateResolve = res; });
+  var armed = true;        // only gate the FIRST due-SELECT
+  var pausedOnce = false;
+  var qGated = async function (sql, params) {
+    var isDueSelect = /^\s*SELECT/i.test(sql)
+      && /FROM wishlist_digest_enrollments/.test(sql)
+      && /status = 'active'/.test(sql)
+      && /next_dispatch_at <=/.test(sql);
+    var rv = await q(sql, params);
+    if (isDueSelect && armed && !pausedOnce) {
+      pausedOnce = true;
+      armed = false;       // tick #2's due-SELECT runs ungated
+      await gate;          // hold tick #1 here until tick #2 has claimed
+    }
+    return rv;
+  };
+  qGated.__db = q.__db;
+
+  var svc = wishlistDigest.create({
+    query:            qGated,
+    wishlist:         _wishlistStub(),
+    catalog:          _catalogStub(),
+    email:            emailStub,
+    emailForCustomer: function (cid) { return emailMap[cid] || null; },
+  });
+  await svc.defineSchedule({
+    slug: "weekly-monday-9am", frequency: "weekly", day_of_week: 1,
+    time_local: "09:00", timezone: "UTC",
+  });
+  var anchor = Date.UTC(2025, 5, 4, 12, 0);
+  await svc.enrollCustomer({ customer_id: customerId, schedule_slug: "weekly-monday-9am", now: anchor });
+
+  var atDue = Date.UTC(2025, 5, 9, 9, 0);
+  // Tick #1 starts and parks on the gate after its due-SELECT.
+  var tick1Promise = svc.dispatchTick({ now: atDue });
+  // Let tick #1 reach the gate, then run tick #2 fully (it claims + sends).
+  await new Promise(function (r) { setImmediate(r); });
+  var tick2 = await svc.dispatchTick({ now: atDue });
+  // Release tick #1 — it now finds its claim lost and skips.
+  gateResolve();
+  var tick1 = await tick1Promise;
+
+  check("concurrent: exactly one tick sent", (tick1.sent + tick2.sent) === 1);
+  check("concurrent: email fired exactly once", emailStub.calls.length === 1);
+  var ledger = await q("SELECT COUNT(*) AS n FROM wishlist_digest_sent", []);
+  check("concurrent: ledgered exactly one sent row", Number(ledger.rows[0].n) === 1);
+}
+
 async function run() {
   await _defineSchedule();
   await _enrollCustomerNextDispatchAtMath();
   await _dispatchTickFanOut();
+  await _concurrentTickClaimsOnce();
   await _staleEnrollmentCatchesUpWithOneDigest();
   await _composeDigestShape();
   await _listSchedulesReturnsLiveOnly();

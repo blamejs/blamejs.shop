@@ -287,6 +287,104 @@ async function _testDispatchTickBatches() {
   await assert.rejects(rr.dispatchTick({ now: -1 }),          /now must be/);
 }
 
+// ---- 3b. dispatchTick claims each due row — no double-send under race --
+
+async function _testDispatchTickAtomicClaim() {
+  // Two concurrent ticks over the SAME due row must send exactly once.
+  // The send is an exactly-once side-effect; without the atomic
+  // next_remind_at claim, both ticks read the same due snapshot and
+  // both fire it (the customer is double-nudged). The conditional
+  // UPDATE (advance next_remind_at WHERE it still equals the observed
+  // value) lets exactly one tick win the row; the loser's claim
+  // matches zero rows and it skips the send.
+  //
+  // The in-memory DatabaseSync resolves each query synchronously, so a
+  // bare Promise.all would let tick A run start-to-finish before tick B
+  // ever reads its snapshot — no interleave, no race exposed. To model
+  // two scheduler ticks that BOTH read the same due row before either
+  // advances the cursor, the notifications stub blocks tick A inside
+  // its send until tick B has read its snapshot and reached its own
+  // claim. Both ticks therefore observe the pre-advance cursor.
+  var query = _makeQuery();
+  var c = _newCustomerId();
+
+  var bothSnapshotsRead;
+  var bothRead = new Promise(function (res) { bothSnapshotsRead = res; });
+  var enqueueCalls = [];
+  var firstSendGated = false;
+  var notif = {
+    calls: enqueueCalls,
+    enqueue: async function (input) {
+      enqueueCalls.push(input);
+      // Gate ONLY the first send: hold the winning tick inside the
+      // side-effect until BOTH ticks have read the due snapshot,
+      // guaranteeing they observed the same row before the winner
+      // advanced the cursor. Both ticks' SELECTs land before either
+      // reaches enqueue (the in-memory DB resolves each query on the
+      // microtask queue), so the gate is keyed off the snapshot count,
+      // not a post-send read.
+      if (!firstSendGated) {
+        firstSendGated = true;
+        await bothRead;
+      }
+      return { ok: true, id: "stub-notif-" + enqueueCalls.length };
+    },
+  };
+
+  // Wrap query to count the dispatchTick snapshot SELECTs. Once both
+  // ticks have read (count === 2), release the gated winner so it can
+  // claim + send; the loser's claim then matches zero rows and it
+  // skips without sending.
+  var snapshotReads = 0;
+  var gatedQuery = async function (sql, params) {
+    var r = await query(sql, params);
+    if (/SELECT \* FROM reorder_enrollments\s+WHERE status = 'active'/.test(sql)) {
+      snapshotReads += 1;
+      if (snapshotReads >= 2) { bothSnapshotsRead(); }
+    }
+    return r;
+  };
+
+  var rr = reorderReminders.create({ query: gatedQuery, notifications: notif });
+  await rr.defineReminderProfile({
+    sku: "RACE-FILTER", interval_days: 30, message_template_slug: "reorder-race", channel: "in_app",
+  });
+  // Under one interval stale so a single cadence advance clears the
+  // due window: next = (now - 40d) + 30d = now - 10d (due now), and
+  // after one advance = now + 20d (future).
+  await rr.enrollCustomerSku({
+    customer_id: c, sku: "RACE-FILTER", last_order_at: Date.now() - 40 * DAY_MS,
+  });
+
+  var now = Date.now();
+  var results = await Promise.all([
+    rr.dispatchTick({ now: now }),
+    rr.dispatchTick({ now: now }),
+  ]);
+
+  check("atomic claim: both ticks read the same due snapshot", snapshotReads === 2);
+
+  // Exactly one tick reports a sent row; the loser's claim lost the
+  // race and it skipped without sending.
+  var sentRows = results[0].concat(results[1]).filter(function (d) { return d.status === "sent"; });
+  check("atomic claim: exactly one tick sent the row", sentRows.length === 1);
+  check("atomic claim: side-effect fired exactly once", enqueueCalls.length === 1);
+
+  // The dispatches table holds exactly one sent row for this enrollment.
+  var enrs = await rr.remindersForCustomer({ customer_id: c });
+  var dRows = await query(
+    "SELECT * FROM reorder_dispatches WHERE enrollment_id = ?1 AND status = 'sent'",
+    [enrs.rows[0].id],
+  );
+  check("atomic claim: one sent dispatch persisted", dRows.rows.length === 1);
+
+  // A follow-up tick is a no-op — the cursor advanced one interval past
+  // the (now - 10d) due value to (now + 20d), clearing the window.
+  var third = await rr.dispatchTick({ now: now });
+  check("atomic claim: re-tick is a no-op", third.length === 0);
+  check("atomic claim: no extra send on re-tick", enqueueCalls.length === 1);
+}
+
 // ---- 4. channel dispatch via stub --------------------------------------
 
 async function _testChannelDispatch() {
@@ -625,6 +723,7 @@ async function run() {
   await _testDefineProfile();
   await _testEnrollMath();
   await _testDispatchTickBatches();
+  await _testDispatchTickAtomicClaim();
   await _testChannelDispatch();
   await _testUnsubscribe();
   await _testTerminalMarkers();
