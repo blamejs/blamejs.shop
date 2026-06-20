@@ -459,12 +459,75 @@ async function _vendorsHandleAndReads() {
   check("FSM exposes shape",                      typeof dropshipForwarding._getDropshipFsm === "function");
 }
 
+// A transition validates the legal edge with b.fsm `can` (no audit
+// emit) and only drives the real `transition()` — which emits the
+// `fsm.dropship_forwarding.transition=success` audit event — AFTER the
+// conditional UPDATE wins the atomic claim. This pins both halves:
+//   * a WINNER emits exactly one fsm success;
+//   * a concurrent LOSER (UPDATE matches zero rows) emits NONE, so the
+//     audit trail never records a transition that didn't happen.
+async function _transitionAuditReflectsClaimOutcome() {
+  var auditMod = bShop.framework.audit;
+  var captured = [];
+  var origSafeEmit = auditMod.safeEmit;
+  function _isFsmTransition(e) {
+    return e && e.action === "fsm.dropship_forwarding.transition" && e.outcome === "success";
+  }
+
+  // --- winner: real transition, emit fires exactly once ---
+  var qWin = _makeQuery();
+  var dsWin = dropshipForwarding.create({ query: qWin });
+  await dsWin.bindSkuToVendor(_validBinding({ sku: "DS-W" }));
+  var winFwd = (await dsWin.forwardOrder({
+    order_id: _orderId(),
+    lines:    [{ sku: "DS-W", quantity: 1, shipping_address: _addr() }],
+  })).forwarding_ids[0];
+  captured.length = 0;
+  auditMod.safeEmit = function (evt) { captured.push(evt); };
+  try {
+    await dsWin.markVendorAccepted({ forwarding_id: winFwd, vendor_ref: "PO-WIN", eta: Date.now() + 86400000 });
+  } finally {
+    auditMod.safeEmit = origSafeEmit;
+  }
+  check("winning transition emits exactly one fsm success audit",
+    captured.filter(_isFsmTransition).length === 1);
+
+  // --- loser: UPDATE matches zero rows (another writer moved the row);
+  //     transition is refused and NO fsm success is emitted ---
+  var qBase = _makeQuery();
+  var qRace = async function (sql, params) {
+    if (/^\s*UPDATE\s+dropship_forwardings\s+SET\s+status/i.test(sql)) {
+      return { rows: [], rowCount: 0 };   // simulate the lost atomic claim
+    }
+    return qBase(sql, params);
+  };
+  var dsLose = dropshipForwarding.create({ query: qRace });
+  await dsLose.bindSkuToVendor(_validBinding({ sku: "DS-L" }));
+  var loseFwd = (await dsLose.forwardOrder({
+    order_id: _orderId(),
+    lines:    [{ sku: "DS-L", quantity: 1, shipping_address: _addr() }],
+  })).forwarding_ids[0];
+  captured.length = 0;
+  auditMod.safeEmit = function (evt) { captured.push(evt); };
+  var refused = false;
+  try {
+    await dsLose.markVendorAccepted({ forwarding_id: loseFwd, vendor_ref: "PO-LOSE", eta: Date.now() + 86400000 });
+  } catch (e) {
+    refused = e && e.code === "DROPSHIP_FORWARDING_TRANSITION_REFUSED";
+  } finally {
+    auditMod.safeEmit = origSafeEmit;
+  }
+  check("lost-race transition is refused",                          refused);
+  check("lost-race transition emits NO phantom fsm success audit",  captured.filter(_isFsmTransition).length === 0);
+}
+
 async function run() {
   await _bindSkuToVendorHappyPath();
   await _bindSkuToVendorRefusals();
   await _forwardOrderWritesPerVendor();
   await _fsmHappyPath();
   await _fsmFailAndReturnBranches();
+  await _transitionAuditReflectsClaimOutcome();
   await _metricsForVendorWindow();
   await _vendorsHandleAndReads();
 }
