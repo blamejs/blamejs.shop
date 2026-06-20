@@ -326,6 +326,56 @@ async function _run() {
     });
   } catch (_e) { dupClaim = true; }
   check("a second rule can't claim an active code", dupClaim);
+
+  // ---- (g) a free_shipping rule WAIVES the charged shipping ----------
+  // The engine flags free shipping; the checkout layer must zero the
+  // CHARGED shipping (the selected rate is still surfaced for display)
+  // and reserve the rule's redemption. Before the fix the rule was a
+  // complete no-op — the engine flagged it but the buyer was still
+  // billed the full rate. Isolated store so the earlier automatic rule
+  // can't perturb the totals.
+  var fsQuery   = _makeQuery();
+  var fsCatalog = bShop.catalog.create({ query: fsQuery });
+  var fsCart    = bShop.cart.create({ query: fsQuery, catalog: fsCatalog });
+  var fsOrder   = bShop.order.create({ query: fsQuery, cursorSecret: "auto-disc-fs" });
+  var fsEngine  = autoDiscount.create({ query: fsQuery });
+  var fp = await fsCatalog.products.create({ slug: "fwidget", title: "F Widget", status: "active" });
+  var fv = await fsCatalog.variants.create(fp.id, { sku: "FWID-1", weight_grams: 100 });
+  await fsCatalog.prices.set(fv.id, { currency: "USD", amount_minor: 5000 });
+  await fsCatalog.inventory.create("FWID-1", { stock_on_hand: 100 });
+  await fsEngine.defineRule({
+    slug:    "free-ship-all",
+    title:   "Free shipping on everything",
+    trigger: { kind: "cart_total_min", min_minor: 1 },
+    value:   { kind: "free_shipping" },
+  });
+  var fsDeps = _checkoutDeps(fsQuery, fsCatalog, fsCart, fsOrder);
+  fsDeps.autoDiscount = fsEngine;
+  var fsCheckout = bShop.checkout.create(fsDeps);
+  var fsSid     = b.uuid.v7();
+  var fsCartRow = await fsCart.create(fsSid, { currency: "USD" });
+  await fsCart.addLine(fsCartRow.id, { variant_id: fv.id, qty: 1 });
+  var fsQuote = await fsCheckout.quote({ cart_id: fsCartRow.id, ship_to: SHIP_TO, selected_shipping_id: "std" });
+  check("free_shipping: quote flags free_shipping",          fsQuote.free_shipping === true);
+  check("free_shipping: CHARGED shipping is zero",           fsQuote.totals.shipping_minor === 0);
+  check("free_shipping: shipping_savings = the waived rate",  fsQuote.shipping_savings_minor === SHIP);
+  check("free_shipping: selected rate still surfaced",        fsQuote.selected_shipping && fsQuote.selected_shipping.amount_minor === SHIP);
+  check("free_shipping: no subtotal discount (shipping-only waiver)", fsQuote.totals.discount_minor === 0);
+  check("free_shipping: grand total excludes shipping",      fsQuote.totals.grand_total_minor === SUBTOTAL + TAX);
+  check("free_shipping: rule is in the applied list (redemption reserved)",
+    Array.isArray(fsQuote.auto_discounts) && fsQuote.auto_discounts.some(function (a) {
+      return a && a.rule_slug === "free-ship-all" && a.free_shipping === true;
+    }));
+  var fsConfirm = await fsCheckout.confirm({
+    cart_id: fsCartRow.id, ship_to: SHIP_TO, selected_shipping_id: "std",
+    customer: { email: "freeship@example.com", name: "Free Ship" },
+    idempotency_key: "auto-disc-fs-key-0001",
+  });
+  var fsPlaced = await fsOrder.get(fsConfirm.order.id);
+  check("free_shipping: confirmed order shipping is zero",   fsPlaced && fsPlaced.shipping_minor === 0);
+  check("free_shipping: confirmed grand total excludes shipping", fsPlaced && fsPlaced.grand_total_minor === SUBTOTAL + TAX);
+  check("free_shipping: charged amount excludes shipping",
+    fsConfirm.payment_intent && _chargeByPi[fsConfirm.payment_intent.id] === SUBTOTAL + TAX);
 }
 
 async function run() { await _run(); }
