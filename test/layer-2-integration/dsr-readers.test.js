@@ -66,6 +66,23 @@ var MIGS = [
   "0134_customer_notes.sql", "0013_giftcards.sql", "0025_referrals.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
+// Drain every page of a cursor-paginated reader (mirrors server.js _drainAll),
+// so the adapter copies below follow a reader's own cursor to exhaustion
+// exactly as the real _dsrReader does — the property that makes a subject-
+// access export carry the FULL record, not the first page.
+async function _drainAll(fetchPage) {
+  var all = [];
+  var cursor = null;
+  var pages = 0;
+  do {
+    var page = await fetchPage(cursor);
+    all = all.concat((page && page.rows) || []);
+    cursor = (page && page.cursor) || null;
+    pages += 1;
+  } while (cursor && pages < 10000);
+  return all;
+}
+
 // The SAME adapter shims server.js builds (kept in sync with _dsrReader).
 function _buildReaders(handles, query) {
   return {
@@ -281,7 +298,7 @@ function _buildReaders(handles, query) {
     },
     quotes: {
       forCustomerExport: async function (id) {
-        try { return await handles.quotes.quotesForCustomer(id, { limit: 100 }); }
+        try { return await handles.quotes.quotesForCustomer(id, { limit: 500 }); }
         catch (_e) { return []; }
       },
       forCustomerDeletion: async function (id, opts) {
@@ -301,7 +318,7 @@ function _buildReaders(handles, query) {
     },
     orderRatings: {
       forCustomerExport: async function (id) {
-        try { return await handles.orderRatings.ratingsForCustomer({ customer_id: id, limit: 100 }); }
+        try { return await handles.orderRatings.ratingsForCustomer({ customer_id: id, limit: 500 }); }
         catch (_e) { return []; }
       },
       forCustomerDeletion: async function (id, opts) {
@@ -319,12 +336,18 @@ function _buildReaders(handles, query) {
     productQa: {
       forCustomerExport: async function (id) {
         try {
-          return (await query(
-            "SELECT id, product_id, customer_id, body, status, pinned, vote_count, occurred_at " +
-            "FROM product_qa_questions WHERE customer_id = ?1 " +
-            "ORDER BY occurred_at DESC, id DESC LIMIT 100",
-            [id],
-          )).rows;
+          return await _drainAll(async function (cursor) {
+            var rows = cursor
+              ? (await query(
+                  "SELECT id, product_id, customer_id, body, status, pinned, vote_count, occurred_at " +
+                  "FROM product_qa_questions WHERE customer_id = ?1 AND id < ?2 " +
+                  "ORDER BY id DESC LIMIT 100", [id, cursor])).rows
+              : (await query(
+                  "SELECT id, product_id, customer_id, body, status, pinned, vote_count, occurred_at " +
+                  "FROM product_qa_questions WHERE customer_id = ?1 " +
+                  "ORDER BY id DESC LIMIT 100", [id])).rows;
+            return { rows: rows, cursor: rows.length === 100 ? rows[rows.length - 1].id : null };
+          });
         } catch (_e) { return []; }
       },
       forCustomerDeletion: async function (id, opts) {
@@ -344,8 +367,15 @@ function _buildReaders(handles, query) {
     },
     customerNotes: {
       forCustomerExport: async function (id) {
-        try { return (await handles.customerNotes.notesForCustomer({ customer_id: id, include_archived: true, limit: 100 })).rows; }
-        catch (_e) { return []; }
+        try {
+          return await _drainAll(async function (cursor) {
+            var opts = cursor
+              ? { customer_id: id, include_archived: true, limit: 100, cursor: cursor }
+              : { customer_id: id, include_archived: true, limit: 100 };
+            var page = await handles.customerNotes.notesForCustomer(opts);
+            return { rows: page.rows, cursor: page.next_cursor };
+          });
+        } catch (_e) { return []; }
       },
       forCustomerDeletion: async function (id, opts) {
         var dryRun = !!(opts && opts.dry_run);
@@ -898,6 +928,30 @@ async function _run() {
   // whose balance throws — the shim returns null, not throws.
   var loyaltySection = await brokenReaders.loyalty.forCustomerExport(cid);
   check("a failing export adapter returns null", loyaltySection === null);
+
+  // ---- 6. Art. 15 completeness: the export DRAINS past the first page ----
+  // The readers that previously took only the first 100 rows now carry the
+  // customer's FULL record. Seed a long-tenured customer with more than two
+  // pages of operator notes and assert the export returns every one — the
+  // regression that shipped a truncated bundle while the manifest reported
+  // the section complete. (customerNotes is the most plausible >100 case; its
+  // drain follows notesForCustomer's own next_cursor, which previously existed
+  // but was simply not followed.)
+  var bigId = b.uuid.v7();
+  await _seedCustomer(query, bigId, "Long-Tenured VIP");
+  var NOTE_COUNT = 230;
+  for (var bn = 0; bn < NOTE_COUNT; bn += 1) {
+    await query(
+      "INSERT INTO customer_notes (id, customer_id, author, author_id, body, kind, " +
+      "tags_json, pinned, archived_at, created_at, updated_at) " +
+      "VALUES (?1, ?2, 'operator', 'op-1', ?3, 'general', '[]', 0, NULL, ?4, ?4)",
+      [b.uuid.v7(), bigId, "VIP note #" + bn, 1000 + bn],
+    );
+  }
+  var bigReaders = _buildReaders({ customerNotes: customerNotes }, query);
+  var drainedNotes = await bigReaders.customerNotes.forCustomerExport(bigId);
+  check("export drains EVERY operator note past the first page (Art. 15 completeness)",
+    Array.isArray(drainedNotes) && drainedNotes.length === NOTE_COUNT);
 
   console.log("dsr-readers: " + helpers.getChecks() + " checks passed");
 }

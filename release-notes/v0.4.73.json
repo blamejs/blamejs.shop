@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.73",
+  "date": "2026-06-21",
+  "headline": "Subject-access exports now carry every operator note, question, quote and rating — not the first page",
+  "summary": "A data-subject-access (GDPR Art. 15) export read only the first 100 rows of four sections — operator CRM notes, product questions, RFQ quotes, and post-fulfilment ratings — yet the bundle's completeness manifest still reported each of those sections as fully exported. A customer with a long history (most plausibly a long-tenured account carrying many operator notes) received a bundle that silently dropped the remainder while presenting as complete. The export now drains the operator-notes and product-question sections to the last row by following each reader's own cursor, and pulls the quotes and ratings sections up to the primitive's maximum of 500 rows — beyond any realistic per-customer count — so a subject-access bundle carries the customer's complete record. Both the assembled bundle and the streamed download share the same readers, so both are now complete.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Export sections drain past the first 100 rows",
+          "body": "The operator-notes and product-question export sections now follow their reader's cursor to exhaustion, so every row reaches the bundle; the quotes and ratings sections read up to the 500-row primitive maximum, which a single customer's RFQ or rating history never exceeds in practice. A long-tenured customer's subject-access export no longer omits rows past the first page while reporting the section complete."
+        }
+      ]
+    }
+  ]
+}

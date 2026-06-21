@@ -688,9 +688,14 @@ var _dsrReader = {
   quotes: function (handle, query) {
     return {
       forCustomerExport: async function (id) {
-        // quotesForCustomer caps limit at 500 (lib/quotes.js MAX_LIMIT);
-        // a higher value throws and would silently empty the section.
-        try { return await handle.quotesForCustomer(id, { limit: 100 }); }
+        // Art. 15 completeness: pull up to the primitive's MAX_LIMIT so the
+        // export carries the customer's full quote history, not the first
+        // page. quotesForCustomer is single-shot (no cursor) and hydrates
+        // lines while omitting the view-token hash; 500 RFQ quotes for ONE
+        // customer is far beyond any real account, so this cap is not a
+        // reachable truncation (a value above MAX_LIMIT throws and would
+        // silently empty the section).
+        try { return await handle.quotesForCustomer(id, { limit: 500 }); }
         catch (_e) { return []; }
       },
       forCustomerDeletion: async function (id, opts) {
@@ -722,10 +727,13 @@ var _dsrReader = {
   orderRatings: function (handle, query) {
     return {
       forCustomerExport: async function (id) {
-        // ratingsForCustomer caps limit at 500 (order-ratings
-        // MAX_LIST_LIMIT); a higher value throws and would silently
-        // empty the section.
-        try { return await handle.ratingsForCustomer({ customer_id: id, limit: 100 }); }
+        // Art. 15 completeness: pull up to the primitive's MAX_LIST_LIMIT so
+        // the export carries every rating the customer left, not the first
+        // page. ratingsForCustomer is single-shot (no cursor); 500 ratings
+        // for ONE customer means 500+ rated orders, far beyond any real
+        // account, so this cap is not a reachable truncation (a value above
+        // MAX_LIST_LIMIT throws and would silently empty the section).
+        try { return await handle.ratingsForCustomer({ customer_id: id, limit: 500 }); }
         catch (_e) { return []; }
       },
       forCustomerDeletion: async function (id, opts) {
@@ -758,13 +766,22 @@ var _dsrReader = {
   productQa: function (query) {
     return {
       forCustomerExport: async function (id) {
+        // Art. 15 completeness: drain every page via a stable id keyset
+        // (uuid v7 ids are unique + monotonic) so a customer who asked more
+        // than one page of questions gets all of them, not the first 100.
         try {
-          return (await query(
-            "SELECT id, product_id, customer_id, body, status, pinned, vote_count, occurred_at " +
-            "FROM product_qa_questions WHERE customer_id = ?1 " +
-            "ORDER BY occurred_at DESC, id DESC LIMIT 100",
-            [id],
-          )).rows;
+          return await _drainAll(async function (cursor) {
+            var rows = cursor
+              ? (await query(
+                  "SELECT id, product_id, customer_id, body, status, pinned, vote_count, occurred_at " +
+                  "FROM product_qa_questions WHERE customer_id = ?1 AND id < ?2 " +
+                  "ORDER BY id DESC LIMIT 100", [id, cursor])).rows
+              : (await query(
+                  "SELECT id, product_id, customer_id, body, status, pinned, vote_count, occurred_at " +
+                  "FROM product_qa_questions WHERE customer_id = ?1 " +
+                  "ORDER BY id DESC LIMIT 100", [id])).rows;
+            return { rows: rows, cursor: rows.length === 100 ? rows[rows.length - 1].id : null };
+          });
         } catch (_e) { return []; }
       },
       forCustomerDeletion: async function (id, opts) {
@@ -796,10 +813,20 @@ var _dsrReader = {
   customerNotes: function (handle, query) {
     return {
       forCustomerExport: async function (id) {
-        // notesForCustomer caps limit at 200 (customer-notes MAX_LIMIT);
-        // a higher value throws and would silently empty the section.
-        try { return (await handle.notesForCustomer({ customer_id: id, include_archived: true, limit: 100 })).rows; }
-        catch (_e) { return []; }
+        // Art. 15 completeness: drain every page — notesForCustomer returns
+        // { rows, next_cursor } (lib/customer-notes.js), so an operator's
+        // full CRM note history on a long-tenured customer lands in the
+        // export, not just the first 100. The cursor that makes this
+        // drainable already existed and was simply not followed.
+        try {
+          return await _drainAll(async function (cursor) {
+            var opts = cursor
+              ? { customer_id: id, include_archived: true, limit: 100, cursor: cursor }
+              : { customer_id: id, include_archived: true, limit: 100 };
+            var page = await handle.notesForCustomer(opts);
+            return { rows: page.rows, cursor: page.next_cursor };
+          });
+        } catch (_e) { return []; }
       },
       forCustomerDeletion: async function (id, opts) {
         var dryRun = !!(opts && opts.dry_run);
