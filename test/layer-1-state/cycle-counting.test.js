@@ -58,6 +58,10 @@ var assert  = helpers.assert;
 var MIGS = [
   "0034_inventory_locations.sql",
   "0108_cycle_counting.sql",
+  // finalizeCount({ apply_adjustments: true }) debits the shelf with
+  // respect_holds, which reads inventory_holds to refuse over-debiting
+  // below the paid-hold sum.
+  "0152_inventory_allocations.sql",
 ].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
@@ -612,11 +616,97 @@ async function _factoryRefusals() {
   check("finalize no-loc: no adjustments",      result.adjustments_written === 0);
 }
 
+// finalizeCount applies shelf adjustments in PASS 2 AFTER the atomic claim.
+// A mid-loop adjustStock throw (a respect_holds floor refusal, or a transient
+// failure) must NOT strand the count `finalized` with only some lines applied:
+// the catch re-opens it to in_progress so the operator can clear the blocker
+// and retry, and the reconciling PASS 2 applies only the remaining delta so a
+// line that already landed is never double-applied. Mirrors the inventory-
+// audits finalize-retry test (the hardened twin this fix ports).
+async function _finalizeRetryReopensAndReconciles() {
+  var wired = await _wire({
+    inventory:      { "WDG-1": 50, "WDG-2": 30 },
+    unitValueMinor: { "WDG-1": 1000, "WDG-2": 500 },
+  });
+  var locSvc = wired.locSvc, q = wired.q;
+  await locSvc.setStock({ sku: "WDG-1", location_code: "WH-EAST", quantity: 50 });
+  await locSvc.setStock({ sku: "WDG-2", location_code: "WH-EAST", quantity: 30 });
+
+  // Interpose adjustStock so WDG-2 throws ONCE (a simulated transient
+  // failure / hold-floor refusal) — aborting the first finalize AFTER WDG-1
+  // has already been applied.
+  var failOnce = { "WDG-2": true };
+  var adjustCalls = [];
+  var wrappedLoc = Object.create(locSvc);
+  wrappedLoc.adjustStock = async function (input) {
+    adjustCalls.push({ sku: input.sku, delta: input.delta, respect_holds: input.respect_holds });
+    if (failOnce[input.sku]) {
+      failOnce[input.sku] = false;
+      throw new Error("simulated transient adjustStock failure on " + input.sku);
+    }
+    return locSvc.adjustStock(input);
+  };
+  var raceCc = cycleCounting.create({ query: q, catalog: wired.catalog, inventoryLocations: wrappedLoc });
+
+  await raceCc.defineCount({
+    slug: "retry-cc", kind: "rotating",
+    scope: { skus: ["WDG-1", "WDG-2"] },
+    scheduled_at: Date.now(), location_code: "WH-EAST",
+  });
+  await raceCc.worksheetFor("retry-cc");
+  // WDG-1 short 3 (47 vs 50); WDG-2 over 1 (31 vs 30).
+  await raceCc.recordCount({
+    slug: "retry-cc",
+    lines: [
+      { sku: "WDG-1", location_code: "WH-EAST", actual_quantity: 47, counted_by: "alice" },
+      { sku: "WDG-2", location_code: "WH-EAST", actual_quantity: 31, counted_by: "alice" },
+    ],
+  });
+
+  // First finalize aborts on WDG-2; WDG-1 already applied, count RE-OPENS.
+  var threw = false;
+  try { await raceCc.finalizeCount({ slug: "retry-cc", apply_adjustments: true }); }
+  catch (_e) { threw = true; }
+  check("cc retry: first finalize throws mid-loop", threw);
+  var midHeader = await raceCc.getCount("retry-cc");
+  check("cc retry: count re-opened to in_progress (NOT stranded finalized)",
+    midHeader.status === "in_progress");
+  check("cc retry: finalized_at cleared on re-open", midHeader.finalized_at == null);
+  var w1Mid = (await locSvc.stockForSku("WDG-1")).by_location
+    .find(function (l) { return l.code === "WH-EAST"; }).quantity;
+  check("cc retry: WDG-1 applied once after first attempt (50->47)", w1Mid === 47);
+
+  // Retry completes: WDG-1 reconciled (skipped), WDG-2 now succeeds.
+  var result = await raceCc.finalizeCount({ slug: "retry-cc", apply_adjustments: true });
+  var finalHeader = await raceCc.getCount("retry-cc");
+  check("cc retry: second finalize finalizes", finalHeader.status === "finalized");
+  check("cc retry: variance_count stamped on the finalized header (never NULL)",
+    finalHeader.variance_count === 2);
+  check("cc retry: completing retry reports both adjustments", result.adjustments_written === 2);
+  var w1Final = (await locSvc.stockForSku("WDG-1")).by_location
+    .find(function (l) { return l.code === "WH-EAST"; }).quantity;
+  check("cc retry: WDG-1 NOT double-applied (still 47, not 44)", w1Final === 47);
+  var w2Final = (await locSvc.stockForSku("WDG-2")).by_location
+    .find(function (l) { return l.code === "WH-EAST"; }).quantity;
+  check("cc retry: WDG-2 applied on retry (30->31)", w2Final === 31);
+  var w1Rows = (await q(
+    "SELECT * FROM inventory_adjustments WHERE sku = ?1 AND reason = ?2",
+    ["WDG-1", "cycle-count:retry-cc"],
+  )).rows;
+  check("cc retry: exactly one WDG-1 adjustment row (reconcile, no double)", w1Rows.length === 1);
+  // The shrinkage debit (negative variance) must carry respect_holds:true so
+  // it can't drive the shelf below an outstanding paid-hold sum and strand a
+  // later commitHold — the lone shrinkage writer that was missing the flag.
+  check("cc retry: negative-variance debit passes respect_holds:true (hold-floor guard)",
+    adjustCalls.some(function (c) { return c.sku === "WDG-1" && c.delta < 0 && c.respect_holds === true; }));
+}
+
 async function run() {
   await _defineCountAndKinds();
   await _worksheetForResolvesAndIdempotent();
   await _recordCountAndVariance();
   await _finalizeWritesAdjustments();
+  await _finalizeRetryReopensAndReconciles();
   await _discrepanciesAndReadVerbs();
   await _cancelAndHistory();
   await _factoryRefusals();

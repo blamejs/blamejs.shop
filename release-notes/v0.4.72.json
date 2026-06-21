@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.72",
+  "date": "2026-06-21",
+  "headline": "Cycle counting no longer strands a finalized count when a shelf adjustment fails midway",
+  "summary": "When a cycle count was finalized with shelf adjustments, it advanced the count to finalized first and then applied each per-location adjustment in an unguarded loop. If one adjustment failed partway — most plausibly a negative (shrinkage) variance that would drive a location below the units already held for paid orders — the lines before it stayed applied, the lines after it never applied, and the count was left stuck finalized: a retry was refused and the header's aggregate totals were never stamped, so a tool whose whole job is to close shelf-vs-record drift instead baked in an unrecoverable partial drift. finalizeCount now mirrors the inventory-audit finalize it diverged from: it computes every variance first, claims the finalize transition AND stamps the aggregate totals in one statement, then applies each shelf adjustment reconciling against what already landed under the count's own reason — so a retry lands only the remaining delta and never doubles — and passes the hold-aware guard so a shrinkage debit can't drop a shelf below its outstanding holds. On any failure the count re-opens to in_progress, so the operator clears the blocker and re-runs to completion.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "A failed shelf adjustment re-opens the count instead of stranding it finalized",
+          "body": "finalizeCount now computes and persists every line's variance before claiming the finalize transition, stamps the aggregate variance totals in the same statement as the status flip (so a finalized count is never left with empty totals), and applies the per-location adjustments in a guarded pass that reconciles each against the deltas already recorded under the count's reason. If an adjustment throws, the count re-opens to in_progress and the error surfaces; a re-run applies only the remaining delta, so the lines that already moved are never double-applied."
+        },
+        {
+          "title": "Shrinkage adjustments respect outstanding holds",
+          "body": "A negative cycle-count variance now debits the shelf with the hold-aware guard, matching the inventory-audit and write-off paths, so a count that records less stock than the record believed can no longer drop a location below the units already held for paid orders and strand a later fulfilment."
+        }
+      ]
+    }
+  ]
+}
