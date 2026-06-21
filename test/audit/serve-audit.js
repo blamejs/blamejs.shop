@@ -33,8 +33,9 @@ process.env.BLAMEJS_SKIP_NTP_CHECK = "1";
 if (!process.env.ADMIN_API_KEY) process.env.ADMIN_API_KEY = "audit-admin-key-0001";
 
 // The harness runs on loopback http with no TLS-terminating proxy in front,
-// but the production security middleware keeps trustProxy on and reconstructs
-// the expected CSRF origin as https. With no proxy the browser sends an http
+// but the production security middleware owns the protocol decision
+// (resolveProtocol) and reconstructs the expected CSRF origin as https when
+// the Worker forwards `x-forwarded-proto: https`. With no proxy the browser sends an http
 // loopback Origin, which would be refused as cross-origin. Allowlist the
 // loopback origin (127.0.0.1 + localhost, on this port) so browser-driven
 // POSTs — admin login, admin mutations, account changes — pass the origin

@@ -121,8 +121,8 @@ async function _container() {
     // securityHeaders middleware emits Strict-Transport-Security only when
     // the request protocol resolves to https; behind the CF Worker the
     // container socket is plain http and the real scheme rides in
-    // `x-forwarded-proto`. securityHeadersOpts() now passes trustProxy:true
-    // so the middleware reads that header and ships HSTS — without it the
+    // `x-forwarded-proto`. securityHeadersOpts() supplies a protocolResolver
+    // that owns that header read and ships HSTS — without it the
     // container served NO HSTS on any response. A forwarded-https request
     // carries the 2-year preload value; a plain-http request (dev / direct,
     // no forwarded-proto) correctly omits it (RFC 6797 §7.2).
