@@ -466,6 +466,70 @@ async function _markClaimApprovedAndDenied() {
   }), /not found/);
 }
 
+// Two concurrent adjudications of the SAME filed claim must produce exactly
+// one outcome. The fix gates the transition UPDATE on `AND status = 'filed'`
+// (mirroring affiliates.markCommissionPaid), so the serialised-writer loser
+// matches zero rows and is refused — one payout_minor sticks, and an approve
+// can't clobber a deny (or vice-versa). The JS `status === 'filed'` check
+// alone only stops a SEQUENTIAL re-adjudication.
+async function _concurrentAdjudicationClaim() {
+  var base = _wire();
+  await base.svc.defineProvider({
+    code: "shipsurance", name: "Shipsurance",
+    premium_rate_bps: 150, premium_min_minor: 95,
+    min_declared_value_minor: 100, max_declared_value_minor: 500000,
+    claim_window_days: 90, currency: "USD",
+  });
+  var ins = await base.svc.purchaseInsurance({
+    provider_code: "shipsurance", shipment_id: _uuid(),
+    order_id: _uuid(), customer_id: _uuid(),
+    declared_value_minor: 10000, currency: "USD",
+  });
+  var claim = await base.svc.fileClaim({
+    insurance_id: ins.id, claim_type: "lost", claimed_amount_minor: 8000,
+  });
+
+  // Hold the racing adjudication's UPDATE until the other has fully
+  // committed its own, so BOTH passed the JS `status === 'filed'` check
+  // first — the exact double-adjudication precondition.
+  var release;
+  var firstCommitted = new Promise(function (res) { release = res; });
+  var heldOnce = false;
+  var racing = shippingInsurance.create({
+    query: async function (sql, params) {
+      var isAdjudicate = /^\s*UPDATE insurance_claims SET status = '(approved|denied)'/.test(sql);
+      if (isAdjudicate && !heldOnce) {
+        heldOnce = true;
+        await firstCommitted;
+      }
+      return base.q(sql, params);
+    },
+  });
+
+  var held = racing.markClaimApproved({ claim_id: claim.id, payout_minor: 7500 });
+  var free = base.svc.markClaimApproved({ claim_id: claim.id, payout_minor: 6000 }).then(function (r) {
+    release();
+    return r;
+  });
+
+  var settled = await Promise.allSettled([held, free]);
+  var fulfilled = settled.filter(function (s) { return s.status === "fulfilled"; });
+  var rejected  = settled.filter(function (s) { return s.status === "rejected"; });
+  check("insurance race: exactly one adjudication succeeds", fulfilled.length === 1);
+  check("insurance race: the other is refused (no second outcome)", rejected.length === 1);
+  check("insurance race: loser threw the filed-only refusal",
+    rejected.length === 1 &&
+    /only filed claims can move to approved/.test(String(rejected[0].reason && rejected[0].reason.message)));
+
+  // Exactly one payout recorded — the winning amount, never a clobber.
+  var finalRow = (await base.q(
+    "SELECT * FROM insurance_claims WHERE id = ?1", [claim.id],
+  )).rows[0];
+  check("insurance race: final claim is approved", finalRow.status === "approved");
+  check("insurance race: payout is the single winning amount (6000), not clobbered",
+    Number(finalRow.payout_minor) === 6000);
+}
+
 async function _readsAndMetrics() {
   var w = _wire();
   await w.svc.defineProvider({
@@ -559,6 +623,7 @@ async function run() {
   await _fileClaimFsm();
   await _fileClaimWindowExpiry();
   await _markClaimApprovedAndDenied();
+  await _concurrentAdjudicationClaim();
   await _readsAndMetrics();
   await _factoryRefusals();
 }

@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.71",
+  "date": "2026-06-21",
+  "headline": "SMS dispatch and shipping-insurance adjudication now claim their state transition atomically",
+  "summary": "Two exactly-once state transitions advanced their row with a primary-key UPDATE that was not gated on the expected prior status, so two concurrent callers could both win the transition. The scheduled SMS dispatch tick flipped a queued message to sent without an `AND status = 'queued'` guard, so two overlapping ticks could both hand the same message to the provider send hook — a duplicate text and a duplicate carrier charge. The shipping-insurance claim adjudication flipped a filed claim to approved or denied the same way, so a double-submitted approval (or an approval racing a denial) could record two different payout amounts as THE payout, or let a denial clobber an approval. Both transitions now gate the UPDATE on the prior status and act only on the row the UPDATE actually claimed (rowCount === 1); the loser is skipped or refused, matching the atomic-claim shape already used by the push-notification dispatch tick and the affiliate-commission payout.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "SMS dispatch tick advances each message exactly once under concurrent ticks",
+          "body": "The queued→sent (and the no-provider queued→failed) transition in the SMS dispatch tick now gates its UPDATE on `AND status = 'queued'` and hands a message to the operator's send hook only when the UPDATE actually claimed the row. Two overlapping ticks can no longer both dispatch the same message, so a customer is never double-texted and the carrier is never billed twice for one message."
+        },
+        {
+          "title": "Shipping-insurance claim adjudication records exactly one outcome under concurrent callers",
+          "body": "markClaimApproved and markClaimDenied now gate their transition on `AND status = 'filed'` and refuse the caller whose UPDATE claimed no row. A double-submitted approval can no longer record two different payout amounts as the approved payout, and an approval can no longer clobber a denial (or vice-versa) — exactly one adjudication outcome sticks."
+        }
+      ]
+    }
+  ]
+}

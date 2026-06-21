@@ -744,6 +744,81 @@ async function _validationRefusals() {
     /must be a positive integer/);
 }
 
+// ---- concurrent dispatchTick claim (no double-send) --------------------
+
+// Two ticks whose SELECT snapshots BOTH saw the same row `queued` must hand
+// it to the operator send hook EXACTLY once. The fix makes the queued→sent
+// advance an atomic claim guarded by `AND status = 'queued'`; the tick that
+// loses the serialised-writer race sees rowCount 0 and drops the row from
+// its `advanced` set, so the customer is never double-texted (and the
+// carrier billed twice). Mirrors the push-notifications concurrent-claim
+// test — the same FSM shape, the same guard.
+//
+// The interleave is forced deterministically: the wrapper holds the racing
+// tick's first advancing UPDATE until a SECOND dispatchTick has taken its
+// own snapshot (still observing the row as `queued` — the exact double-fire
+// precondition). Both ticks then run their claims; the union of what they
+// hand to the hook must contain the row once.
+async function _concurrentDispatchClaim() {
+  var base = _setup();
+  await base.sms.registerProvider({
+    slug:         "twilio",
+    name:         "Twilio",
+    regions:      ["US"],
+    endpoint_url: "https://api.twilio.com/2010-04-01/Accounts/test/Messages",
+    active:       true,
+  });
+  var queued = await base.sms.enqueue({
+    recipient_phone: "+15555557000",
+    country_code:    "US",
+    body:            "Should dispatch exactly once.",
+    kind:            "verification",
+  });
+  var when = Date.now() + 1000;
+
+  // Wrap the shared query so the FIRST advancing UPDATE the racing tick
+  // issues is held until the other tick has snapshotted the still-queued
+  // row, then released. Both ticks share one DB (one `base.query`), so this
+  // models two workers racing the same row.
+  var releaseSecondSnapshot;
+  var secondSnapshotTaken = new Promise(function (res) { releaseSecondSnapshot = res; });
+  var heldOnce = false;
+  var racingSms = sms.create({
+    query: async function (sql, params) {
+      var isAdvanceUpdate = /^\s*UPDATE sms_messages SET status = 'sent'/.test(sql);
+      if (isAdvanceUpdate && !heldOnce) {
+        heldOnce = true;
+        await secondSnapshotTaken;
+      }
+      return base.query(sql, params);
+    },
+  });
+
+  var held = racingSms.dispatchTick({ now: when });
+  // The other tick snapshots the still-queued row, then (once it has fully
+  // run its own claim) releases the held tick, whose UPDATE now sees the
+  // row already `sent` and matches zero rows.
+  var free = base.sms.dispatchTick({ now: when }).then(function (r) {
+    releaseSecondSnapshot();
+    return r;
+  });
+
+  var results = await Promise.all([held, free]);
+  var handedToHook = results[0].concat(results[1]).filter(function (m) {
+    return m && m.id === queued.id;
+  });
+  check("sms race: row handed to the send hook exactly once (not double-sent)",
+    handedToHook.length === 1);
+  check("sms race: the single dispatch advanced queued → sent",
+    handedToHook[0].status === "sent");
+
+  // Final DB state is a single `sent` row — no second send.
+  var finalRow = (await base.query(
+    "SELECT * FROM sms_messages WHERE id = ?1", [queued.id],
+  )).rows[0];
+  check("sms race: final row is sent (one dispatch only)", finalRow.status === "sent");
+}
+
 // ---- driver ------------------------------------------------------------
 
 (async function () {
@@ -753,6 +828,7 @@ async function _validationRefusals() {
   await _enqueueGates();
   await _fsmTransitions();
   await _dispatchTickWindow();
+  await _concurrentDispatchClaim();
   await _providerRefLookup();
   await _validationRefusals();
 
