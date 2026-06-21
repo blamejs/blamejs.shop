@@ -157,8 +157,8 @@ async function _run() {
 
     // ---- storefront session cookie: https path (__Host-, Secure) -------
     // `x-forwarded-proto: https` is what the Cloudflare Worker forwards to
-    // the container when the public connection is TLS. `trustProxy` in the
-    // shop's protocol read honours it, so the cookie hardens to `__Host-`.
+    // the container when the public connection is TLS. The shop's shared
+    // protocol resolver honours it, so the cookie hardens to `__Host-`.
     var httpsJar = helpers.cookieJar();
     var addHttps = await helpers.httpRequest({
       port: sf.port, path: "/cart/lines", method: "POST",

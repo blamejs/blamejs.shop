@@ -346,6 +346,38 @@ async function _run() {
       body: JSON.stringify({ id: "WH-other" }),
     });
     check("(g) a different source IP is NOT throttled (per-IP keying)", ppOther.status >= 200 && ppOther.status < 300);
+
+    // ---- (h) Proxy-trust is one owned model, peer-gated by construction --
+    //
+    // blamejs 0.15.14 refuses a bare `trustProxy` for any forwarded-header
+    // security decision (HSTS proto, csrf Secure-cookie + Origin) because a
+    // directly-reachable socket could forge X-Forwarded-Proto. The shop owns
+    // the decision via securityMiddleware.resolveProtocol — sound because the
+    // container has no public ingress (the Worker is the only caller). These
+    // assertions lock that contract so a regression back to `trustProxy:true`
+    // (which crash-loops createApp at boot) fails here with a clear message,
+    // and prove the resolver maps every input the same way the HSTS, csrf,
+    // and both session-cookie paths now rely on.
+    var smw = bShop.securityMiddleware;
+    check("(h) securityHeadersOpts owns the proto decision (protocolResolver, not trustProxy)",
+      typeof smw.securityHeadersOpts().protocolResolver === "function" &&
+      smw.securityHeadersOpts().trustProxy === undefined);
+    var headersCtorThrew = false;
+    try { b.middleware.securityHeaders(smw.securityHeadersOpts()); }
+    catch (_e) { headersCtorThrew = true; }
+    check("(h) securityHeaders constructs under the peer-gated contract (no throw)", !headersCtorThrew);
+    check("(h) resolveProtocol: forwarded https → https",
+      smw.resolveProtocol({ headers: { "x-forwarded-proto": "https" }, socket: {} }) === "https");
+    check("(h) resolveProtocol: forwarded http → http",
+      smw.resolveProtocol({ headers: { "x-forwarded-proto": "http" }, socket: { encrypted: true } }) === "http");
+    check("(h) resolveProtocol: a multi-hop forwarded list takes the leftmost (client) hop",
+      smw.resolveProtocol({ headers: { "x-forwarded-proto": "https, http" }, socket: {} }) === "https");
+    check("(h) resolveProtocol: no forwarded header + plain socket → http (dev/e2e)",
+      smw.resolveProtocol({ headers: {}, socket: {} }) === "http");
+    check("(h) resolveProtocol: no forwarded header + TLS socket → https (direct https)",
+      smw.resolveProtocol({ headers: {}, socket: { encrypted: true } }) === "https");
+    check("(h) resolveProtocol: malformed forwarded value falls back to the socket scheme",
+      smw.resolveProtocol({ headers: { "x-forwarded-proto": "ftp" }, socket: {} }) === "http");
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
