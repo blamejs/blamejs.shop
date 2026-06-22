@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.83",
+  "date": "2026-06-22",
+  "headline": "Downloading a subject-access export now requires the customer-write grant, not just read access",
+  "summary": "Closes an access-control gap on the data-subject-request surface. Downloading a fulfilled subject-access export streams the customer's full personal-data bundle, but the download route was gated as a plain read, so a read-only operator (a viewer with no customers-write grant) could pull the entire PII bundle. The download now gates on the customers-write capability — the same grant fulfilling, dispatching, and erasing a request already require — so a read-only viewer is refused on the verb and the denial is recorded in the operator audit log, on both the API and browser paths. No configuration changes; upgrade to pick it up.",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Subject-access export download requires customers-write",
+          "body": "The DSR export-download route streams a customer's full PII bundle, so it is a customers-write-class capability like fulfilling, dispatching, or erasing a request — not a read. It now gates on customers-write on both the bearer-API and cookie/browser paths, so a read-only viewer can no longer download the bundle; the refused attempt is chained through the operator audit log like the other DSR write denials. Viewing the DSR queue (a read) is unchanged."
+        }
+      ]
+    }
+  ]
+}
