@@ -364,6 +364,23 @@ async function _captureIncomplete() {
   check("incomplete capture leaves order pending", cap.order.status === "pending");
 }
 
+// The order ENVELOPE can read COMPLETED while the CAPTURE itself is still
+// PENDING (a delayed-settlement / under-review payment — funds not yet
+// settled). Settlement is a property of the capture, so the order must stay
+// pending; the prior `cap.status === "COMPLETED" || ...` gate trusted the
+// order envelope and marked the order paid before the money landed.
+async function _orderCompletedCapturePending() {
+  var s = await _setup();
+  s.paypal.captureOrder = async function (id) {
+    return { id: id, status: "COMPLETED", purchase_units: [{ payments: { captures: [{ id: "PP-CAP-" + id, status: "PENDING" }] } }] };
+  };
+  var c = await _newCart(s);
+  var created = await s.checkout.createPaypalOrder(_input(c.id));
+  var cap = await s.checkout.capturePaypalOrder(created.paypal_order_id);
+  check("order-COMPLETED + capture-PENDING not handled",          cap.handled === false);
+  check("order-COMPLETED + capture-PENDING leaves order pending", cap.order.status === "pending");
+}
+
 // A FAILED first delivery must NOT permanently burn the event id. The replay
 // claim is taken eagerly (before processing) to win the concurrency race, but a
 // first delivery that throws (here, a garbled/missing refund amount; equally a
@@ -412,6 +429,7 @@ async function run() {
   await _fullCoverageNoPaypalDial();
   await _loyaltyRidesPaypal();
   await _captureIncomplete();
+  await _orderCompletedCapturePending();
   await _validation();
 }
 

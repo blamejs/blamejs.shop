@@ -44,7 +44,19 @@ var SERVER_JS = nodePath.join(REPO_ROOT, "server.js");
 // short observation window elapses. We only ever assert on whether the
 // gate's message appeared, so observing the first second of boot is
 // sufficient and keeps the spawn fast.
-function _spawnServer(envOverrides, observeMs) {
+// opts: { observeMs, settleOnMatch }
+//   settleOnMatch — a RegExp; resolve the instant accumulated output matches
+//   it, instead of burning a fixed budget. The config-validation entropy gate
+//   runs very early but only AFTER Node has loaded the whole app graph, which
+//   on a cold/contended CI runner can take several seconds — a fixed 2.5s
+//   budget settled before the gate ran and read the warning as absent (a
+//   macOS-only flake). settleOnMatch ends the wait deterministically on the
+//   warning (positive cases) or the first framework boot log (absence cases,
+//   which proves the upstream gate already ran); observeMs is only a backstop.
+function _spawnServer(envOverrides, opts) {
+  opts = opts || {};
+  var observeMs     = opts.observeMs || 20000;
+  var settleOnMatch = opts.settleOnMatch || null;
   return new Promise(function (resolve) {
     var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-bridge-"));
     var tmpDir  = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-bridge-tmp-"));
@@ -75,13 +87,17 @@ function _spawnServer(envOverrides, observeMs) {
       _cleanup();
       resolve({ exited: exited, out: out });
     }
-    child.stdout.on("data", function (b) { out += b.toString(); if (/listening on :/.test(out)) _settle(); });
-    child.stderr.on("data", function (b) { out += b.toString(); });
+    function _checkMatch() {
+      if (/listening on :/.test(out)) return _settle();
+      if (settleOnMatch && settleOnMatch.test(out)) return _settle();
+    }
+    child.stdout.on("data", function (b) { out += b.toString(); _checkMatch(); });
+    child.stderr.on("data", function (b) { out += b.toString(); _checkMatch(); });
     child.on("exit", function (code) { exited = code; _settle(); });
-    // Observation window: the gate fires within the first tick of boot, so
-    // ~2.5s comfortably covers it even on a loaded runner. A throwing case
-    // exits well before this; a non-throwing case settles here.
-    setTimeout(_settle, observeMs || 2500).unref();
+    // Backstop only — settleOnMatch resolves the instant the asserted output
+    // appears, so this generous window just bounds the wait if the process
+    // stalls without ever emitting it (e.g. a hang on the unreachable bridge).
+    setTimeout(_settle, observeMs).unref();
   });
 }
 
@@ -92,7 +108,7 @@ async function _run() {
     NODE_ENV:         "production",
     D1_BRIDGE_URL:    "http://127.0.0.1:1",   // unreachable — irrelevant; we assert on the warning only
     D1_BRIDGE_SECRET: "short-secret",          // 12 chars, below the 32 floor
-  });
+  }, { settleOnMatch: /D1_BRIDGE_SECRET is too short/ });
   check("prod short bridge secret warns",           /D1_BRIDGE_SECRET is too short/.test(prodShort.out));
   check("prod short bridge secret states the rule", /at least 32 characters/.test(prodShort.out));
   check("prod short bridge secret warning is a warning, not a crash", /WARNING/.test(prodShort.out));
@@ -104,7 +120,7 @@ async function _run() {
     NODE_ENV:         "production",
     D1_BRIDGE_URL:    "http://127.0.0.1:1",
     D1_BRIDGE_SECRET: "x".repeat(43),          // documented recipe yields 43 base64url chars
-  });
+  }, { settleOnMatch: /"boot":true/ });
   check("prod 43-char secret clears the entropy warning", !/D1_BRIDGE_SECRET is too short/.test(prodLong.out));
 
   // 3. Dev (NODE_ENV unset) + bridge configured + short secret → the
@@ -113,7 +129,7 @@ async function _run() {
   var devShort = await _spawnServer({
     D1_BRIDGE_URL:    "http://127.0.0.1:1",
     D1_BRIDGE_SECRET: "short-secret",
-  });
+  }, { settleOnMatch: /"boot":true/ });
   check("dev short bridge secret skips the entropy gate", !/D1_BRIDGE_SECRET is too short/.test(devShort.out));
 }
 

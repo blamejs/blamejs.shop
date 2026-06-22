@@ -351,6 +351,35 @@ async function _testTickComposes() {
   check("empty scan did not call createDraft",     poB.calls.createDraft.length === 0);
 }
 
+// Two ticks firing at the same instant (overlapping scheduler invocations)
+// must run a due policy exactly once. The cadence claim is the serialization
+// point: both ticks read the same null/old last_run_at, but only one
+// conditional UPDATE matches the "due" predicate, so exactly one vendor PO is
+// composed and submitted. With the prior in-memory cadence check + unconditional
+// stamp, both passed the check and double-cut the PO.
+async function _testTickConcurrentSinglePO() {
+  var query = _makeQuery();
+  var rt = _stubReorderThresholds({
+    "acme-supplies": [{ sku: "WIDGET-A", suggested_qty: 50, unit_cost_minor: 200 }],
+  });
+  var po = _stubPurchaseOrders();
+  var ar = autoReplenish.create({ query: query, reorderThresholds: rt, purchaseOrders: po });
+  await ar.definePolicy({
+    slug: "acme-conc", vendor_slug: "acme-supplies",
+    min_po_value_minor: 1000, max_po_value_minor: 100000,
+    max_concurrent_open_pos: 5, approval_required: false, schedule: "hourly",
+  });
+  var now = Date.now();
+  var results = await Promise.all([
+    ar.tickReplenishment({ now: now }),
+    ar.tickReplenishment({ now: now }),
+  ]);
+  var produced = results.reduce(function (n, s) { return n + s.length; }, 0);
+  check("concurrent ticks: due policy runs exactly once (atomic cadence claim)", produced === 1);
+  check("concurrent ticks: exactly one PO drafted (no double-PO)", po.calls.createDraft.length === 1);
+  check("concurrent ticks: exactly one PO submitted", po.calls.submitToVendor.length === 1);
+}
+
 // ---- 3. approval_required holds PO at draft ---------------------------
 
 async function _testApprovalRequiredHoldsDraft() {
@@ -663,6 +692,7 @@ async function _testRunSmoke() {
 async function run() {
   await _testDefinePolicy();
   await _testTickComposes();
+  await _testTickConcurrentSinglePO();
   await _testApprovalRequiredHoldsDraft();
   await _testMinMaxGates();
   await _testConcurrentCap();
