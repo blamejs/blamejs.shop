@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.74",
+  "date": "2026-06-21",
+  "headline": "Sign-in links are built from the configured origin, and signing out invalidates every device's session",
+  "summary": "Two account-security hardenings. The passwordless sign-in (magic) link was assembled from the request's Host header, so a request that reached the app carrying a forged Host could produce a link pointing at another domain while still carrying the customer's single-use sign-in token. The link is now built from the operator-configured trusted origin — the same source the referral links, back-in-stock links, and the OAuth redirect already use — so the link always points at the real storefront regardless of the request Host. Separately, signing out cleared the session cookie only in the responding browser; because the sealed auth cookie is stateless for its full lifetime, a copy captured before sign-out stayed valid until it naturally expired. Explicit sign-out now moves the account's server-side session-revocation boundary forward, so every live session cookie for the account is invalidated at once.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Magic-link sign-in URLs are built from the configured origin, not the request Host",
+          "body": "The passwordless sign-in link and the post-checkout account-claim link now derive their origin from the operator's configured trusted origin first, falling back to the request origin only when none is configured (single-host dev). A forged Host header can no longer redirect a credential-bearing sign-in link to another domain. Both email-link sends share one origin resolver, matching the referral, back-in-stock, and OAuth-redirect discipline."
+        },
+        {
+          "title": "Signing out invalidates every live session, not just the current browser",
+          "body": "POST /account/logout now moves the customer's server-side session-revocation boundary forward before clearing the cookie, so every sealed auth cookie issued for the account — including a copy captured on another device or before sign-out — fails its next request and signs out. Previously the stateless cookie was only cleared in the responding browser and remained valid elsewhere for its full lifetime."
+        }
+      ]
+    }
+  ]
+}
