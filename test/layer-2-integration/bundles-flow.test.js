@@ -188,6 +188,32 @@ async function _run() {
     check("bundle cart subtotal == $45",   subtotal === 4500);
     check("cart subtotal renders $45.00",  cart1.body.indexOf("$45.00") !== -1);
 
+    // ---- bundle add is price-authoritative over a pre-existing member -----
+    // A member already in the cart standalone (at its $30 list price) must be
+    // re-stated at the bundle's allocated price when the bundle is added, so
+    // the realized subtotal equals the quoted $45 — not $30 list + the bundle.
+    // (Before the fix the qty-bump kept the list price and overcharged.)
+    var jarSF = helpers.cookieJar();
+    await helpers.httpRequest({ port: handle.port, path: "/cart/lines", method: "POST", form: { variant_id: anchorV.id, qty: 1 }, jar: jarSF });
+    await helpers.httpRequest({ port: handle.port, path: "/cart/bundle", method: "POST", form: { bundle_sku: "BNDL-STARTER" }, jar: jarSF });
+    var cSF = await cart.bySession(jarSF.get("shop_sid"));
+    var linesSF = await cart.listLines(cSF.id);
+    var subtotalSF = 0;
+    for (var sf = 0; sf < linesSF.length; sf += 1) subtotalSF += linesSF[sf].qty * linesSF[sf].unit_amount_minor;
+    check("standalone-first bundle subtotal == $45", subtotalSF === 4500);
+
+    // ---- adding the same bundle twice is idempotent ----------------------
+    // Re-adding a bundle restates its members rather than stacking them, so the
+    // realized subtotal stays the quoted $45 (not $90).
+    var jarTwice = helpers.cookieJar();
+    await helpers.httpRequest({ port: handle.port, path: "/cart/bundle", method: "POST", form: { bundle_sku: "BNDL-STARTER" }, jar: jarTwice });
+    await helpers.httpRequest({ port: handle.port, path: "/cart/bundle", method: "POST", form: { bundle_sku: "BNDL-STARTER" }, jar: jarTwice });
+    var cTwice = await cart.bySession(jarTwice.get("shop_sid"));
+    var linesTwice = await cart.listLines(cTwice.id);
+    var subtotalTwice = 0;
+    for (var tw = 0; tw < linesTwice.length; tw += 1) subtotalTwice += linesTwice[tw].qty * linesTwice[tw].unit_amount_minor;
+    check("same-bundle-twice subtotal == $45 (idempotent)", subtotalTwice === 4500);
+
     // ---- quantity-break repricing in the cart -------------------------
     // Direct-add path: a fresh cart, add 5 tees at the catalog price,
     // confirm the 10%-off break drops the unit to $27 and the line to

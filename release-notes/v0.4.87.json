@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.87",
+  "date": "2026-06-22",
+  "headline": "Adding a bundle now charges the advertised bundle price even when a member item is already in the cart",
+  "summary": "Fixes a pricing bug when adding a product bundle to a cart that already contains one of the bundle's items. Adding a bundle allocates the discounted bundle price across its members and writes each member to the cart at its allocated per-unit price. But when a member variant was already in the cart on its own, the add merged into the existing line and kept that line's standalone list price, so the cart subtotal came out above the advertised bundle price — the shopper was quoted the discounted bundle but charged closer to the full sum of parts. The bundle add is now price-authoritative: a member already in the cart is restated at the bundle's allocated price, so the realized subtotal equals the quoted bundle price, and re-adding the same bundle is idempotent rather than stacking duplicate lines. No configuration changes; upgrade to pick it up.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Bundle add honors the bundle price over a pre-existing cart line",
+          "body": "Adding a bundle now writes each member at the bundle's allocated per-unit price even when that variant is already in the cart, instead of merging into the existing line and keeping its standalone list price. The realized cart subtotal therefore matches the advertised bundle price whether or not a member was already in the cart, and adding the same bundle twice restates its members rather than doubling them. Direct add-to-cart of a standalone item is unchanged."
+        }
+      ]
+    }
+  ]
+}
