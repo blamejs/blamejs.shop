@@ -30,7 +30,8 @@ var check   = helpers.check;
 
 var b = bShop.framework;
 
-var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0006_customers.sql", "0205_customer_oauth_identities.sql"]
+var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0006_customers.sql", "0205_customer_oauth_identities.sql",
+  "0222_customer_session_revocations.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
@@ -131,6 +132,12 @@ async function _run() {
     var revoke = await helpers.httpRequest({ port: handle.port, path: "/account/passkeys/" + pkA1.id + "/revoke", method: "POST", jar: jarA });
     check("revoke then 303",                     revoke.status === 303 && (revoke.headers["location"] || "") === "/account/passkeys?ok=revoked");
     check("revoked credential gone from DB",      (await customers.listPasskeys(custA.id)).length === 1);
+    // SECURITY: revoking a passkey (a lost/compromised authenticator) must
+    // also move the session-revocation boundary forward so the account's live
+    // sealed auth cookies — which are otherwise self-validating for 14 days —
+    // die on their next request. Deleting the credential alone left them live.
+    check("revoke moved the session-revocation boundary forward",
+                                                 (await customers.sessionsValidFrom(custA.id)) > 0);
 
     // ---- last-credential guard (NO oauth) ----------------------------
     // A now has exactly one passkey and no OAuth → revoking it is refused.
@@ -228,6 +235,13 @@ async function _run() {
     });
     check("new-email register-begin then 200",     freshBegin.status === 200);
     check("new-email register-begin mints a challenge", JSON.parse(freshBegin.body).challenge.length > 0);
+    // SECURITY: register-begin must NOT persist a customer row before the
+    // WebAuthn ceremony completes — the row is created only on a verified
+    // register-finish. An abandoned (or scripted) begin therefore can't squat
+    // an email or mint junk accounts. The pending signup rides in the sealed
+    // challenge cookie until finish.
+    check("new-email register-begin persists NO customer row yet",
+                                                 (await customers.byEmailHash(customers.hashEmail("newcomer@example.com"))) === null);
 
     // ---- profile edit -------------------------------------------------
     var profGet = await helpers.httpRequest({ port: handle.port, path: "/account/profile", jar: jarA });
