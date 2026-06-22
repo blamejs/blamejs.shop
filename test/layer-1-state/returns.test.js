@@ -201,6 +201,36 @@ async function _concurrentRefundClaim() {
   check("released claim is re-refundable",       (await ret.refund(r2.id, {})).status === "refunded");
 }
 
+// approve / markReceived / reject are atomic claims like refund. Two
+// concurrent same-edge calls on one RMA resolve to exactly one winner; the
+// loser is refused rather than both writing the new status last-write-wins.
+async function _concurrentApproveReject() {
+  var q = _makeQuery();
+  var seed = await _seedOrder(q);
+  var ret  = bShop.returns.create({ query: q });
+
+  // Two concurrent approve on a pending RMA → exactly one wins.
+  var r = await ret.request(_requestInput(seed));
+  var res = await Promise.allSettled([
+    ret.approve(r.id, { refund_amount_minor: 1000 }),
+    ret.approve(r.id, { refund_amount_minor: 2000 }),
+  ]);
+  var won  = res.filter(function (x) { return x.status === "fulfilled"; }).length;
+  var lost = res.filter(function (x) { return x.status === "rejected"; });
+  check("concurrent approve: exactly one wins", won === 1);
+  check("concurrent approve: loser refused RMA_TRANSITION_REFUSED",
+    lost.length === 1 && lost[0].reason && lost[0].reason.code === "RMA_TRANSITION_REFUSED");
+  check("RMA approved exactly once", (await ret.get(r.id)).status === "approved");
+
+  // Two concurrent markReceived on an approved RMA → exactly one wins.
+  var r2 = await ret.request(_requestInput(seed));
+  await ret.approve(r2.id, { refund_amount_minor: 1000 });
+  var rx = await Promise.allSettled([ ret.markReceived(r2.id, {}), ret.markReceived(r2.id, {}) ]);
+  check("concurrent markReceived: exactly one wins",
+    rx.filter(function (x) { return x.status === "fulfilled"; }).length === 1);
+  check("concurrent markReceived: RMA received", (await ret.get(r2.id)).status === "received");
+}
+
 async function _rejectPath() {
   var q = _makeQuery();
   var seed = await _seedOrder(q);
@@ -432,6 +462,7 @@ async function run() {
   await _request();
   await _happyPath();
   await _concurrentRefundClaim();
+  await _concurrentApproveReject();
   await _rejectPath();
   await _illegalTransitions();
   await _byCode();

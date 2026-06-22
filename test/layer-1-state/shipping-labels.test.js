@@ -568,8 +568,32 @@ async function _validationRefusals() {
   check("getLabel unknown → null",                  unknown === null);
 }
 
+// markPurchased / voidLabel / markUsed are atomic claims. Two concurrent
+// broker callbacks marking the same pending label purchased resolve to exactly
+// one winner; the loser is refused rather than both recording conflicting
+// tracking/cost last-write-wins.
+async function _concurrentMarkPurchased() {
+  var q = _makeQuery();
+  var seed = await _seedOrderAndShipment(q);
+  var labels = shippingLabels.create({ query: q });
+  var req = await labels.requestLabel(_validLabelInput(seed.shipment_id));
+
+  var res = await Promise.allSettled([
+    labels.markPurchased(_validPurchase(req.id, { cost_minor: 875 })),
+    labels.markPurchased(_validPurchase(req.id, { cost_minor: 999 })),
+  ]);
+  var won  = res.filter(function (x) { return x.status === "fulfilled"; });
+  var lost = res.filter(function (x) { return x.status === "rejected"; });
+  check("concurrent markPurchased: exactly one wins", won.length === 1);
+  check("concurrent markPurchased: loser refused",
+    lost.length === 1 && lost[0].reason && lost[0].reason.code === "SHIPPING_LABELS_TRANSITION_REFUSED");
+  check("concurrent markPurchased: label purchased once",
+    won[0].value && won[0].value.status === "purchased");
+}
+
 async function run() {
   await _requestPurchaseFlow();
+  await _concurrentMarkPurchased();
   await _voidWithinWindow();
   await _voidOutsideWindow();
   await _fsmRefusals();
