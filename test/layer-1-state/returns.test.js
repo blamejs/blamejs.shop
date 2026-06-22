@@ -356,6 +356,17 @@ async function _summary() {
   check("summary status filter narrows",       refundedOnly.total_count === 1);
   check("summary status filter refunded",      refundedOnly.counts_by_status.refunded === 1);
 
+  // A status filter must NOT zero the money rollups — those pin their own
+  // status ('refunded' / approved+received), so they're independent of the
+  // caller's filter. Filtering to 'rejected' (a status carrying no refund
+  // value) still reports the full refunded/pending payout totals; the prior
+  // contradictory `status = 'rejected' AND status = 'refunded'` WHERE silently
+  // summed to zero here.
+  var rejectedFilter = await ret.summaryForOperator({ status: "rejected" });
+  check("status filter does not zero refunded rollup", rejectedFilter.refunded_by_currency.USD === 2500);
+  check("status filter does not zero pending rollup",  rejectedFilter.pending_by_currency.USD === 1000);
+  check("status filter still narrows counts",          rejectedFilter.total_count === 1 && rejectedFilter.counts_by_status.rejected === 1);
+
   // window filter — `to` in the far past returns nothing
   var emptyWindow = await ret.summaryForOperator({ from: 1, to: 2 });
   check("summary window filter excludes",      emptyWindow.total_count === 0);
