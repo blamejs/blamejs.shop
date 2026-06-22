@@ -55,6 +55,7 @@ var GATED_PATHS = [
   "/_/customer-portal-expire",
   "/_/campaign-send-tick",
   "/_/winback-send-tick",
+  "/_/webhook-retry-tick",
 ];
 
 function _run() {

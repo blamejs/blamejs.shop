@@ -700,6 +700,52 @@ async function _retryOfExhaustedDeliveryIsIdempotent() {
   check("second endpoint created", typeof ep2.id === "string");
 }
 
+async function _processRetriesClaimPreventsDoubleAttempt() {
+  // Two overlapping retry passes (a slow pass still running when the next
+  // minute's cron fires) must not BOTH re-attempt the same due delivery. The
+  // per-row atomic claim ensures only the pass that wins the conditional UPDATE
+  // attempts; the other sees rowCount 0 and skips.
+  var clock = _mockClock(1700000000000);
+  var transport = _captureTransport([{ statusCode: 500 }]);   // sticky 500: every attempt fails
+  var realQ = _makeQuery();
+  var armed = false;
+  var reentered = false;
+  var nestedAttempted = null;
+  var webhooks;
+  var qWrap = async function (sql, params) {
+    var res = await realQ(sql, params);
+    // During the retry phase, the instant the outer pass SELECTs the due rows
+    // (but before it claims one), run a concurrent pass to completion against
+    // the SAME table — it sees the identical due row and races for the claim.
+    if (armed && !reentered && /^SELECT \* FROM webhook_deliveries/.test(sql) && res.rows.length > 0) {
+      reentered = true;
+      nestedAttempted = await webhooks.processRetries({ now: clock.now() });
+    }
+    return res;
+  };
+  webhooks = bShop.webhooks.create({
+    query:     qWrap,
+    transport: transport,
+    now:       clock.now,
+    retry:     { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 2 },
+  });
+  await webhooks.endpoints.create({ url: "https://example.com/", events: "*" });
+
+  await webhooks.send("order.mark_paid", { x: 1 });   // attempt #1 (500) → schedules +60s
+  var afterSend = transport.received.length;
+  check("inline send made exactly one attempt", afterSend === 1);
+
+  clock.advance(60 * 1000);
+  armed = true;
+  var outerAttempted = await webhooks.processRetries({ now: clock.now() });
+
+  check("the concurrent pass ran", nestedAttempted !== null);
+  check("exactly one of the two overlapping passes attempted the row",
+    (outerAttempted.length + nestedAttempted.length) === 1);
+  check("no double-send — exactly one extra transport attempt",
+    transport.received.length === afterSend + 1);
+}
+
 async function run() {
   await _crud();
   await _urlValidation();
@@ -712,6 +758,7 @@ async function run() {
   await _manualRetry();
   await _orderTransitionFanout();
   await _retryBackoff();
+  await _processRetriesClaimPreventsDoubleAttempt();
   await _dlqAfterFiveAttempts();
   await _replayFromDlq();
   await _rateLimitRefuses();
