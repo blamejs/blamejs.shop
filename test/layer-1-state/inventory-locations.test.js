@@ -47,13 +47,33 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIGS = ["0034_inventory_locations.sql"].map(function (f) {
+var MIGS = [
+  "0034_inventory_locations.sql",
+  "0233_inventory_adjustments_idempotency_key.sql",
+].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
-  return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
+  // Split on statement terminators, but keep CREATE TRIGGER ... BEGIN ... END
+  // blocks whole: a trigger body carries inner `;` that must NOT split it.
+  var raw = noComments.split(/;\s*(?:\n|$)/);
+  var stmts = [];
+  var pending = null;
+  for (var i = 0; i < raw.length; i += 1) {
+    var part = raw[i];
+    if (pending !== null) {
+      pending += ";\n" + part;
+      if (/\bEND\b/i.test(part)) { stmts.push(pending.trim()); pending = null; }
+      continue;
+    }
+    if (/\bBEGIN\b/i.test(part) && !/\bEND\b/i.test(part)) { pending = part; continue; }
+    var t = part.trim();
+    if (t) stmts.push(t);
+  }
+  if (pending !== null) stmts.push(pending.trim());
+  return stmts.filter(Boolean);
 }
 
 function _makeQuery() {
@@ -529,12 +549,73 @@ async function _factoryRefusals() {
   assert.throws(function () { inventoryLocations.create({ catalog: null }); },                 /catalog/);
 }
 
+async function _creditOnceIdempotent() {
+  var q = _makeQuery();
+  var svc = inventoryLocations.create({ query: q, catalog: _stubCatalog() });
+  await _defineThreeLocations(svc);
+
+  // First credit applies; the audit row carries the key.
+  var r1 = await svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: 12, idempotency_key: "k-1", reason: "transfer" });
+  check("creditOnce applies the first credit",      r1.applied === true && r1.quantity === 12 && r1.delta === 12);
+
+  // Replay with the same key is a no-op — no second credit, delta reported 0.
+  var r2 = await svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: 12, idempotency_key: "k-1", reason: "transfer" });
+  check("creditOnce replay is a no-op",             r2.applied === false && r2.delta === 0);
+  var afterReplay = await svc.stockForSku("WDG-1");
+  check("creditOnce replay leaves stock at 12",     afterReplay.total === 12);
+
+  // A different key credits again.
+  var r3 = await svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: 8, idempotency_key: "k-2" });
+  check("creditOnce distinct key credits again",    r3.applied === true && r3.quantity === 20);
+
+  // Exactly one audit row per key.
+  var rows = (await q("SELECT COUNT(*) AS n FROM inventory_adjustments WHERE idempotency_key = ?1", ["k-1"])).rows[0];
+  check("creditOnce writes one keyed audit row",    Number(rows.n) === 1);
+
+  // Refusals: non-positive delta, missing/oversized key, unknown location.
+  await assert.rejects(svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: 0, idempotency_key: "k-3" }),   /positive credit/);
+  await assert.rejects(svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: -5, idempotency_key: "k-3" }),  /positive credit/);
+  await assert.rejects(svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: 5 }),                            /idempotency_key/);
+  await assert.rejects(svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: 5, idempotency_key: "" }),       /idempotency_key/);
+  await assert.rejects(svc.creditOnce({ sku: "WDG-1", location_code: "NO-SUCH", delta: 5, idempotency_key: "k-4" }),    /not found/);
+}
+
+async function _creditOnceTriggerAtomicity() {
+  // The credit and its idempotency record are ONE atomic write: the keyed
+  // audit-row INSERT carries an AFTER INSERT trigger that upserts the shelf in
+  // the same statement (no separate JS upsert, no apply-vs-record gap). The
+  // trigger fires ONLY for keyed rows, so a plain adjustStock (NULL key, which
+  // upserts the shelf itself) is never double-credited.
+  var q = _makeQuery();
+  var svc = inventoryLocations.create({ query: q, catalog: _stubCatalog() });
+  await _defineThreeLocations(svc);
+
+  // Keyed credit: the audit row's delta is exactly the credited quantity (1:1).
+  await svc.creditOnce({ sku: "WDG-7", location_code: "WH-EAST", delta: 6, idempotency_key: "atom-1" });
+  var auditRow = (await q("SELECT delta FROM inventory_adjustments WHERE idempotency_key = ?1", ["atom-1"])).rows[0];
+  var stock = await svc.stockForSku("WDG-7");
+  check("keyed audit row delta matches the trigger-credited quantity",
+    Number(auditRow.delta) === 6 && stock.total === 6);
+
+  // A plain adjustStock writes a NULL-key audit row the trigger must skip,
+  // crediting exactly once (not twice).
+  await svc.adjustStock({ sku: "WDG-7", location_code: "WH-EAST", delta: 4, reason: "manual" });
+  var stock2 = await svc.stockForSku("WDG-7");
+  check("plain adjustStock credits once — trigger skips NULL-key rows", stock2.total === 10);
+
+  // A second creditOnce with a fresh key credits again, atomically.
+  var r = await svc.creditOnce({ sku: "WDG-7", location_code: "WH-EAST", delta: 5, idempotency_key: "atom-2" });
+  check("distinct keyed credit applies atomically", r.applied === true && r.quantity === 15);
+}
+
 async function run() {
   await _defineLocationHappyPath();
   await _defineLocationRefusals();
   await _listGetUpdateDeactivate();
   await _setStockArithmetic();
   await _adjustStockArithmetic();
+  await _creditOnceIdempotent();
+  await _creditOnceTriggerAtomicity();
   await _transferStockAtomicity();
   await _stockAggregations();
   await _routePriorityFill();

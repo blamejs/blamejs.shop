@@ -50,6 +50,7 @@ var assert  = helpers.assert;
 
 var MIGS = [
   "0034_inventory_locations.sql",
+  "0233_inventory_adjustments_idempotency_key.sql",
   "0089_stock_transfers.sql",
 ].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
@@ -57,7 +58,24 @@ var MIGS = [
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
-  return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
+  // Split on statement terminators, but keep CREATE TRIGGER ... BEGIN ... END
+  // blocks whole: a trigger body carries inner `;` that must NOT split it.
+  var raw = noComments.split(/;\s*(?:\n|$)/);
+  var stmts = [];
+  var pending = null;
+  for (var i = 0; i < raw.length; i += 1) {
+    var part = raw[i];
+    if (pending !== null) {
+      pending += ";\n" + part;
+      if (/\bEND\b/i.test(part)) { stmts.push(pending.trim()); pending = null; }
+      continue;
+    }
+    if (/\bBEGIN\b/i.test(part) && !/\bEND\b/i.test(part)) { pending = part; continue; }
+    var t = part.trim();
+    if (t) stmts.push(t);
+  }
+  if (pending !== null) stmts.push(pending.trim());
+  return stmts.filter(Boolean);
 }
 
 function _makeQuery() {
@@ -454,6 +472,14 @@ async function _factoryRefusals() {
   assert.throws(function () {
     stockTransfers.create({ inventoryLocations: { getLocation: function () {}, stockForSku: function () {} } });
   }, /adjustStock/);
+  // Wired with a stub missing creditOnce — reconcile credits the destination
+  // through creditOnce, so a stub without it must be refused at boot, not at
+  // first reconcile (after the status claim has already flipped).
+  assert.throws(function () {
+    stockTransfers.create({ inventoryLocations: {
+      adjustStock: function () {}, getLocation: function () {}, stockForSku: function () {},
+    } });
+  }, /creditOnce/);
   // cursorSecret required in production
   var origEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = "production";
@@ -461,7 +487,7 @@ async function _factoryRefusals() {
     assert.throws(function () {
       stockTransfers.create({
         inventoryLocations: {
-          adjustStock: function () {}, getLocation: function () {}, stockForSku: function () {},
+          adjustStock: function () {}, creditOnce: function () {}, getLocation: function () {}, stockForSku: function () {},
         },
       });
     }, /cursorSecret is required/);
@@ -469,6 +495,70 @@ async function _factoryRefusals() {
     if (origEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = origEnv;
   }
+}
+
+// Regression: a crash between crediting the destination and stamping the line
+// discrepancy must NOT double-credit on the retry. The destination credit is
+// keyed (creditOnce), so the re-run is a no-op rather than minting phantom
+// inventory. Before the keyed credit, the stamp-failure path rolled the status
+// claim back to 'received' with the line's discrepancy still NULL, so the retry
+// re-credited the shelf a second time.
+async function _reconcileCreditsExactlyOnceAcrossStampCrash() {
+  var q = _makeQuery();
+  var armed = true;
+  var qWrap = async function (sql, params) {
+    if (armed && /^\s*UPDATE stock_transfer_lines SET discrepancy/.test(sql)) {
+      armed = false;   // one-shot: only the first stamp throws
+      throw new Error("injected: discrepancy stamp failed");
+    }
+    return q(sql, params);
+  };
+  var locSvc = inventoryLocations.create({ query: qWrap, catalog: _stubCatalog() });
+  await locSvc.defineLocation({ code: "WH-EAST", name: "East Warehouse", type: "warehouse", priority: 1 });
+  await locSvc.defineLocation({ code: "WH-WEST", name: "West Warehouse", type: "warehouse", priority: 5 });
+  var stSvc = stockTransfers.create({ query: qWrap, inventoryLocations: locSvc });
+
+  await locSvc.setStock({ sku: "WDG-1", location_code: "WH-EAST", quantity: 50 });
+  var t = await stSvc.openTransfer({
+    from_location: "WH-EAST", to_location: "WH-WEST",
+    lines: [{ sku: "WDG-1", quantity: 10 }],
+  });
+  await stSvc.markShipped({ transfer_id: t.id });
+  await stSvc.markReceived({
+    transfer_id: t.id,
+    received_lines: [{ sku: "WDG-1", quantity_received: 10 }],
+  });
+
+  // First reconcile: creditOnce credits the destination, then the discrepancy
+  // stamp throws -> the status claim rolls back to 'received'.
+  await assert.rejects(stSvc.reconcile({ transfer_id: t.id }), /injected: discrepancy stamp failed/);
+
+  var rolledBack = (await q("SELECT status FROM stock_transfers WHERE id = ?1", [t.id])).rows[0];
+  check("status rolled back to received after stamp crash", rolledBack.status === "received");
+
+  // The credit DID land on the first attempt (creditOnce won the claim).
+  var westMid = await locSvc.stockForSku("WDG-1");
+  var atWestMid = westMid.by_location.find(function (l) { return l.code === "WH-WEST"; });
+  check("destination credited once after the failed reconcile", atWestMid && atWestMid.quantity === 10);
+
+  // Retry reconcile (the stamp no longer throws). creditOnce sees the same key
+  // and is a no-op -> destination stays at 10, NOT 20.
+  var done = await stSvc.reconcile({ transfer_id: t.id });
+  check("retry reconcile succeeds", done.status === "reconciled");
+  check("retry stamps discrepancy = 0", done.lines[0].discrepancy === 0);
+
+  var west = await locSvc.stockForSku("WDG-1");
+  var atWest = west.by_location.find(function (l) { return l.code === "WH-WEST"; });
+  check("destination credited EXACTLY once across crash+retry", atWest && atWest.quantity === 10);
+  check("total stock preserved — no phantom inventory", west.total === 50);
+
+  // Exactly one keyed credit row exists for this line.
+  var lineRow = (await q("SELECT id FROM stock_transfer_lines WHERE transfer_id = ?1", [t.id])).rows[0];
+  var creditRows = (await q(
+    "SELECT COUNT(*) AS n FROM inventory_adjustments WHERE idempotency_key = ?1",
+    ["stock-transfer:reconcile:" + t.id + ":" + lineRow.id],
+  )).rows[0];
+  check("exactly one keyed credit row for the line", Number(creditRows.n) === 1);
 }
 
 async function run() {
@@ -480,6 +570,7 @@ async function run() {
   await _markExceptionPath();
   await _listAndTransfersForLocation();
   await _factoryRefusals();
+  await _reconcileCreditsExactlyOnceAcrossStampCrash();
 }
 
 module.exports = { run: run };

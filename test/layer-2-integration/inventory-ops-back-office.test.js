@@ -46,6 +46,7 @@ var MIGS = [
   "0008_inventory_thresholds.sql",
   "0018_inventory_receipts.sql",
   "0034_inventory_locations.sql",
+  "0233_inventory_adjustments_idempotency_key.sql",
   "0089_stock_transfers.sql",
   "0138_inventory_writeoffs.sql",
   // recordWriteoff debits the shelf with respect_holds, which reads
@@ -54,7 +55,23 @@ var MIGS = [
 ].map(function (f) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f); });
 
 function _split(t) {
-  return t.replace(/--[^\n]*\n/g, "\n").split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
+  var raw = t.replace(/--[^\n]*\n/g, "\n").split(/;\s*(?:\n|$)/);
+  // Keep CREATE TRIGGER ... BEGIN ... END blocks whole (inner `;` must not split).
+  var stmts = [];
+  var pending = null;
+  for (var i = 0; i < raw.length; i += 1) {
+    var part = raw[i];
+    if (pending !== null) {
+      pending += ";\n" + part;
+      if (/\bEND\b/i.test(part)) { stmts.push(pending.trim()); pending = null; }
+      continue;
+    }
+    if (/\bBEGIN\b/i.test(part) && !/\bEND\b/i.test(part)) { pending = part; continue; }
+    var t2 = part.trim();
+    if (t2) stmts.push(t2);
+  }
+  if (pending !== null) stmts.push(pending.trim());
+  return stmts.filter(Boolean);
 }
 
 function _makeDb() {
