@@ -290,6 +290,49 @@ async function _reverseHappyPath() {
   await assert.rejects(receive.reverse(d.id),                                   /only applied receipts/);
 }
 
+// A reverse that fails MID-LOOP must compensate the lines it already
+// decremented by the EXACT amount removed, not the full qty_received. When a
+// SKU sits below its qty_received (a prior out-of-band decrement), the forward
+// decrement removes only what's on hand; the old compensation added back the
+// full qty_received, minting phantom stock. Order-independent: whichever line
+// is processed first is decremented-then-compensated to its original value, so
+// total stock is unchanged — the old clamp/over-compensate mismatch inflated it.
+async function _reverseNoPhantomStock() {
+  var q = _makeQuery();
+  var stub = _stubCatalog(q);
+  var receive = bShop.inventoryReceive.create({ query: q, catalog: stub });
+  var d = await receive.draft(_validInput());
+  await receive.apply(d.id);   // BLK-L=50, RED-L=25
+
+  // Out-of-band: drop both SKUs below their qty_received so the forward
+  // decrement clamps.
+  await q("UPDATE inventory SET stock_on_hand = 10 WHERE sku = ?1", ["WDG-PRO-BLK-L"]);
+  await q("UPDATE inventory SET stock_on_hand = 5  WHERE sku = ?1", ["WDG-PRO-RED-L"]);
+  var preTotal = 15;
+
+  // Wrap the query so the SECOND stock decrement throws, forcing the first
+  // line's decrement to be compensated.
+  var decCalls = 0;
+  var failing = async function (sql, params) {
+    if (/stock_on_hand = stock_on_hand - /.test(sql)) {
+      decCalls += 1;
+      if (decCalls === 2) throw new Error("injected: second decrement failed");
+    }
+    return q(sql, params);
+  };
+  failing.__db = q.__db;
+  var receive2 = bShop.inventoryReceive.create({ query: failing, catalog: _stubCatalog(failing) });
+  var threw = false;
+  try { await receive2.reverse(d.id, { reason: "mid-loop failure" }); }
+  catch (_e) { threw = true; }
+  check("reverse with a mid-loop decrement failure throws", threw);
+
+  var total = (await q("SELECT COALESCE(SUM(stock_on_hand),0) AS t FROM inventory WHERE sku IN ('WDG-PRO-BLK-L','WDG-PRO-RED-L')", [])).rows[0].t;
+  check("reverse compensation mints no phantom stock (total unchanged)", Number(total) === preTotal);
+  var refreshed = await receive2.get(d.id);
+  check("failed reverse released the claim (status back to applied)", refreshed.status === "applied");
+}
+
 async function _reverseRefusesNonApplied() {
   var q = _makeQuery();
   var stub = _stubCatalog(q);
@@ -385,6 +428,7 @@ async function run() {
   await _applyHappyPath();
   await _applyRollback();
   await _reverseHappyPath();
+  await _reverseNoPhantomStock();
   await _reverseRefusesNonApplied();
   await _applyRefusesUnknown();
   await _listAndPagination();
