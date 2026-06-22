@@ -1,0 +1,13 @@
+-- Drop the inventory keyed-credit trigger (forward cleanup)
+--
+-- An earlier iteration of migration 0233 created an AFTER INSERT trigger,
+-- trg_inventory_adjustments_keyed_credit, that upserted inventory_stock from a
+-- keyed audit row. That approach was withdrawn: inventoryLocations.creditOnce
+-- now applies the stock credit itself (claim-first), so a database that ever
+-- created the trigger would otherwise DOUBLE-credit — the explicit upsert plus
+-- the trigger both apply the same delta.
+--
+-- DROP ... IF EXISTS makes this idempotent and safe everywhere: it removes the
+-- trigger from any database that created it and is a no-op on every database
+-- that never did (the column-and-index form of 0233 ships without it).
+DROP TRIGGER IF EXISTS trg_inventory_adjustments_keyed_credit;
