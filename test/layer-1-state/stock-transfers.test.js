@@ -455,6 +455,14 @@ async function _factoryRefusals() {
   assert.throws(function () {
     stockTransfers.create({ inventoryLocations: { getLocation: function () {}, stockForSku: function () {} } });
   }, /adjustStock/);
+  // Wired with a stub missing creditOnce — reconcile credits the destination
+  // through creditOnce, so a stub without it must be refused at boot, not at
+  // first reconcile (after the status claim has already flipped).
+  assert.throws(function () {
+    stockTransfers.create({ inventoryLocations: {
+      adjustStock: function () {}, getLocation: function () {}, stockForSku: function () {},
+    } });
+  }, /creditOnce/);
   // cursorSecret required in production
   var origEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = "production";
@@ -462,7 +470,7 @@ async function _factoryRefusals() {
     assert.throws(function () {
       stockTransfers.create({
         inventoryLocations: {
-          adjustStock: function () {}, getLocation: function () {}, stockForSku: function () {},
+          adjustStock: function () {}, creditOnce: function () {}, getLocation: function () {}, stockForSku: function () {},
         },
       });
     }, /cursorSecret is required/);
