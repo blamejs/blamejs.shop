@@ -2107,6 +2107,50 @@ async function main() {
       // signing secret is generated per endpoint on create.
       var webhooks = (catalog && cart) ? bShop.webhooks.create({}) : null;
 
+      // Outbound-webhook retry tick — the Worker's scheduled() handler POSTs
+      // here once a minute over the SHOP service binding (a SEPARATE
+      // ctx.waitUntil so a slow retry pass never blocks the other crons). A
+      // delivery that fails its inline attempt stamps next_retry_at; this pass
+      // re-attempts every delivery whose backoff has come due, walking the
+      // BACKOFF_SCHEDULE until it succeeds or lands in the DLQ — without it the
+      // documented automatic backoff-to-DLQ never runs and a briefly-down
+      // receiver loses every event until an operator hand-clicks retry. Same
+      // timing-safe D1_BRIDGE_SECRET gate + never-5xx (a thrown tick marks the
+      // cron run failed) shape as the sibling /_/ ticks. processRetries claims
+      // each row atomically, so an _in_flight guard here is belt-and-suspenders
+      // against one slow pass overlapping the next minute's fire.
+      var _webhookRetryInFlight = false;
+      r.post("/_/webhook-retry-tick", async function (req, res) {
+        var got = req.headers && req.headers["x-d1-bridge-secret"];
+        var want = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !want ||
+          typeof got !== "string" ||
+          got.length !== want.length ||
+          !b.crypto.timingSafeEqual(got, want)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!webhooks) {
+          res.json({ ok: true, enabled: false, reason: "webhooks not composed (no catalog/cart)" });
+          return;
+        }
+        if (_webhookRetryInFlight) {
+          res.json({ ok: true, enabled: true, skipped: true, reason: "previous retry pass still running" });
+          return;
+        }
+        _webhookRetryInFlight = true;
+        try {
+          var attempted = await webhooks.processRetries({ now: Date.now(), max: 100 });
+          res.json({ ok: true, enabled: true, attempted: attempted.length });
+        } catch (e) {
+          res.json({ ok: false, enabled: true, error: (e && e.message) || "retry pass failed" });
+        } finally {
+          _webhookRetryInFlight = false;
+        }
+      });
+
       // Inventory low-stock alerts — the fan-out half of the InventoryLock
       // DO's threshold check. The DO detects the crossing at decrement time
       // and POSTs /_/low-stock-alert (the internal endpoint above); this

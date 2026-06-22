@@ -412,6 +412,7 @@ var _INTERNAL_CRON_PATHS = {
   "/_/customer-portal-expire": true,
   "/_/campaign-send-tick":    true,
   "/_/winback-send-tick":     true,
+  "/_/webhook-retry-tick":    true,
 };
 
 export default {
@@ -1063,6 +1064,27 @@ export default {
           await _shopContainer(env).fetch(wbReq);
         } catch (e) {
           console.error("winback-send-tick failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        }
+      })());
+
+      // Outbound-webhook retry tick — re-attempts deliveries whose backoff has
+      // come due, walking each toward success or the DLQ. SEPARATE ctx.waitUntil
+      // so a slow retry pass never blocks the other crons (and vice versa). The
+      // container handler claims each row atomically and never 5xxes.
+      ctx.waitUntil((async function () {
+        try {
+          var whUrl = new URL("/_/webhook-retry-tick", "http://shop.container");
+          var whReq = new Request(whUrl.toString(), {
+            method:  "POST",
+            headers: {
+              "content-type":       "application/json; charset=utf-8",
+              "x-d1-bridge-secret": env.D1_BRIDGE_SECRET || "",
+            },
+            body: "{}",
+          });
+          await _shopContainer(env).fetch(whReq);
+        } catch (e) {
+          console.error("webhook-retry-tick failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
         }
       })());
     }

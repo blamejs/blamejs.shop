@@ -1,0 +1,27 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.86",
+  "date": "2026-06-22",
+  "headline": "Failed outbound webhook deliveries are now retried automatically on the backoff schedule, not only by a manual click",
+  "summary": "Restores the automatic retry guarantee for outbound webhooks. When an order-lifecycle or low-stock delivery to a subscriber endpoint fails, the delivery already records its next retry time and walks a backoff schedule toward the dead-letter queue — but nothing was ever driving those retries, so a delivery only re-attempted when an operator hand-clicked retry in the admin console. A briefly-unreachable receiver (a deploy, a load-balancer reload) therefore lost every event in the gap. A scheduled tick now re-attempts every due delivery once a minute, so a failed delivery is retried automatically — at one minute, five minutes, thirty minutes, four hours, then a day — until it succeeds or lands in the dead-letter queue, with no manual intervention. The manual retry remains available as an immediate override. No configuration changes; upgrade to pick it up.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Outbound webhook retries now run automatically",
+          "body": "A scheduled retry pass re-attempts every delivery whose backoff has come due, advancing it through the retry schedule to success or to the dead-letter queue without an operator click. Each delivery is claimed atomically before it is attempted, so two overlapping passes can never re-send the same delivery twice, and a receiver that recovers within the backoff window now receives the events it missed. An operator can still force an immediate retry from the admin console."
+        }
+      ]
+    },
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Bundled framework refreshed to blamejs 0.15.16",
+          "body": "Picks up a broad fail-closed and resource-exhaustion hardening pass that rides inside the composed primitives: a present-but-unparseable timestamp on a credential or certificate verifier (DKIM, ARC, SAML NotBefore, FIDO/BIMI/S-MIME validity windows) now refuses the credential instead of silently skipping the check; DMARC refuses a record with no usable policy rather than defaulting a failing message to delivery; outbound clients enforce an overall wall-clock timeout (not only an idle timer) so a byte-trickling peer can no longer hold a request open indefinitely; DNS lookups gain a default deadline; and append-only log sinks refuse a symlinked path. No configuration changes."
+        }
+      ]
+    }
+  ]
+}
