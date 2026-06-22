@@ -216,6 +216,19 @@ async function _run() {
     var rowAfterMgrFulfill = await dsr.getRequest(exReqA.id);
     check("manager's fulfill advanced the status", rowAfterMgrFulfill.status === "fulfilled");
 
+    // The export DOWNLOAD streams the full PII bundle — a customers.write
+    // capability like fulfill/erase, NOT a plain read. A read-only viewer is
+    // refused even once the export is ready (it was previously gated as a read,
+    // letting a viewer exfiltrate the bundle); the manager is allowed.
+    var viewerDownload = await helpers.httpRequest({
+      port: port, path: "/admin/dsr/" + exReqA.id + "/export.json", headers: viewerBearer,
+    });
+    check("viewer DENIED export.json PII download (403)", viewerDownload.status === 403);
+    var mgrDownload = await helpers.httpRequest({
+      port: port, path: "/admin/dsr/" + exReqA.id + "/export.json", headers: managerBearer,
+    });
+    check("manager ALLOWED export.json download (2xx)", mgrDownload.status >= 200 && mgrDownload.status < 300);
+
     var delReqB = await dsr.requestDeletion({ customer_id: custB, requested_by: "operator-1", jurisdiction: "gdpr", reason: "right to erasure" });
     var mgrErase = await helpers.httpRequest({
       port: port, path: "/admin/dsr/" + delReqB.id + "/delete/confirm", method: "POST", headers: managerBearer, form: { confirmed: "1" },
