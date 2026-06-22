@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.78",
+  "date": "2026-06-21",
+  "headline": "Voiding a gift card no longer clobbers a concurrent redemption, and a credit order can't be charged twice",
+  "summary": "Two money-safety fixes that make terminal transitions exactly-once. Voiding a gift card is now a single atomic transition guarded on the card still being active, so a void that races a redemption can no longer overwrite the redemption's terminal state and silently discard the spent balance — whichever transition lands first wins and the other is refused. Separately, charging a credit-line order is now idempotent per order: the charge guard refuses a second charge for an order that already has one (and a retry returns the original charge rather than erroring), so the same order can't be charged twice against the customer's credit line. No configuration changes; upgrade to pick them up.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Voiding a gift card is an atomic, fenced transition",
+          "body": "Gift-card void is now a single guarded UPDATE that only matches a card still in the active state, mirroring redeem. A void that races a redemption (or an expiry) can no longer overwrite the card's terminal state — the prior read-decide-write could void a card a concurrent redemption had just spent, discarding the remaining-balance debit. A void that loses the race is refused (or returns idempotently if the card was already voided)."
+        },
+        {
+          "title": "A credit-line order is charged at most once",
+          "body": "creditLimits.chargeOrder now refuses a second charge for an order that already carries one, enforced in the same atomic statement as the credit-cap check. A retried charge for an already-charged order returns the original charge instead of erroring or charging the line a second time, so a duplicate capture or retry can't double-draw the customer's credit."
+        }
+      ]
+    }
+  ]
+}

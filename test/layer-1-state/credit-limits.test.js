@@ -148,6 +148,17 @@ async function _chargeOrderUpToLimit() {
 
   var avail = await f.credit.availableCredit(custId);
   check("available drained to 0",           avail.available_minor === 0 && avail.outstanding_minor === 1000);
+
+  // Idempotent: re-charging an order that already has a charge returns the
+  // ORIGINAL charge and lands NO second row — the same order_id can't be
+  // double-charged against the line (a retried capture is a safe no-op). The
+  // per-order dedup wins over the at-limit cap error, since the order was
+  // already charged successfully.
+  var dup = await f.credit.chargeOrder({ customer_id: custId, order_id: o1, amount_minor: 400 });
+  check("re-charge same order returns the original charge", dup.id === r1.id && dup.idempotent === true);
+  check("re-charge same order leaves balance at 1000",     (await f.credit.availableCredit(custId)).outstanding_minor === 1000);
+  var txnAfterDup = f.db.prepare("SELECT COUNT(*) AS c FROM credit_transactions WHERE customer_id = ?").all(custId)[0].c;
+  check("re-charge same order wrote no new row",           txnAfterDup === 2);
 }
 
 async function _releaseHoldRestoresCredit() {

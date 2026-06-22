@@ -312,6 +312,28 @@ async function _voidBehavior() {
   check("void null on unknown id",              miss === null);
 }
 
+// Voiding a card while it is concurrently redeemed must not clobber the
+// redemption. The status='active' fence makes both transitions mutually
+// exclusive: whichever lands first wins, the other refuses, and no balance is
+// silently discarded. The prior fence-less void UPDATE overwrote a racing
+// redemption's terminal state.
+async function _voidRaceNoClobber() {
+  var f = _gcFactory();
+  var card = await f.gc.issue({ amount_minor: 100, currency: "USD" });
+  await Promise.allSettled([
+    f.gc.redeem({ code: card.code, order_id: bShop.framework.uuid.v7(), amount_minor: 100 }),
+    f.gc.void(card.id),
+  ]);
+  var bal = await f.gc.balance(card.code);
+  check("void/redeem race: card reached exactly one terminal state",
+    bal.status === "redeemed" || bal.status === "voided");
+  if (bal.status === "redeemed") {
+    check("void/redeem race: redeem won — balance spent, not clobbered by void", bal.balance_minor === 0);
+  } else {
+    check("void/redeem race: void won — balance intact, redeem refused",         bal.balance_minor === 100);
+  }
+}
+
 async function _listForCustomer() {
   var f = _gcFactory();
   var custA = bShop.framework.uuid.v7();
@@ -457,6 +479,7 @@ async function run() {
   await _reverseRedemption();
   await _redeemRefusals();
   await _voidBehavior();
+  await _voidRaceNoClobber();
   await _listForCustomer();
   await _validation();
   await _hashCollisionsAndUniqueness();
