@@ -272,6 +272,61 @@ async function _idempotencyReplayPaymentIntent() {
   check("replay flag exposed",                        r2._replayed === true);
 }
 
+async function _idempotencyLegacyHashReplays() {
+  // A row written by the pre-canonical-JSON-primitive release stored its
+  // request_hash in the legacy encoding. A same-key, same-body replay after
+  // the upgrade must still replay the cached response (not be refused as a
+  // false collision) for the row's remaining TTL.
+  var fake  = _fakeHttp([{ status: 200, body: { id: "pi_should_not_dial" } }]);
+  var store = _fakeQuery();
+  var s = payment.create({
+    apiKey:        "sk_test_x",
+    webhookSecret: "whsec_xxxxxxxx",
+    httpClient:    fake.httpClient,
+    query:         store.query,
+  });
+
+  var key   = "ord_legacy_pi_v1";
+  // Integer-like metadata keys are exactly where the encodings diverge: the
+  // legacy path built a plain object and let JSON.stringify hoist numeric keys
+  // ahead of the sorted order, whereas the canonical primitive emits every key
+  // in string-sorted order. This input therefore exercises the fallback.
+  var input = { amount_minor: 2999, currency: "usd", metadata: { "10": "x", "2": "y" } };
+
+  // The hash is taken over the constructed Stripe request object, so the seeded
+  // legacy row must mirror createPaymentIntent's param shape.
+  var params = {
+    amount: 2999, currency: "usd",
+    automatic_payment_methods: { enabled: true },
+    metadata: { "10": "x", "2": "y" },
+  };
+  var legacyHash = payment._legacyCanonicalHash(params);
+  check("legacy and primitive encodings differ for integer-like keys",
+    legacyHash !== payment._canonicalHash(params));
+
+  // Seed a row exactly as the prior release would have written it.
+  store.setRows([{
+    idempotency_key: key,
+    operation:       "payment_intent.create",
+    request_hash:    legacyHash,
+    response_status: 200,
+    response_body:   JSON.stringify({ id: "pi_legacy" }),
+    created_at:      0,
+    expires_at:      payment.IDEMPOTENCY_TTL_MS,
+  }]);
+
+  var r = await s.createPaymentIntent(input, key);
+  check("legacy-hash row replays cached response", r.id === "pi_legacy");
+  check("legacy-hash replay flagged",              r._replayed === true);
+  check("legacy-hash replay did NOT dial Stripe",  fake.calls.length === 0);
+
+  // A DIFFERENT body under the same key must still be refused — the fallback
+  // only forgives the encoding change, never a mutated request.
+  await assert.rejects(
+    s.createPaymentIntent({ amount_minor: 5000, currency: "usd", metadata: { order_id: "ord_99" } }, key),
+    /idempotency_key collision \(different inputs\)/);
+}
+
 async function _idempotencyCollisionThrows() {
   var fake  = _fakeHttp([{ status: 200, body: { id: "pi_first", amount: 100 } }]);
   var store = _fakeQuery();
@@ -438,6 +493,16 @@ async function _canonicalHashStable() {
   check("canonical hash stable across key order", h1 === h2);
   var h3 = payment._canonicalHash({ a: 1, c: [2, 1], b: 2 });
   check("canonical hash sensitive to array order", h1 !== h3);
+  // Nested objects are canonicalised recursively — member order in a nested
+  // object must not change the hash either.
+  var n1 = payment._canonicalHash({ a: 1, meta: { y: 2, x: 1 } });
+  var n2 = payment._canonicalHash({ meta: { x: 1, y: 2 }, a: 1 });
+  check("canonical hash stable across nested key order", n1 === n2);
+  // An explicit `undefined` member is treated as omitted (idempotency leniency
+  // preserved through the canonical-JSON primitive composition).
+  var u1 = payment._canonicalHash({ a: undefined, b: 2 });
+  var u2 = payment._canonicalHash({ b: 2 });
+  check("canonical hash treats undefined member as omitted", u1 === u2);
 }
 
 async function _factoryRejectsBadOptionTypes() {
@@ -728,6 +793,7 @@ async function run() {
   await _factoryValidation();
   await _inputValidation();
   await _idempotencyReplayPaymentIntent();
+  await _idempotencyLegacyHashReplays();
   await _idempotencyCollisionThrows();
   await _idempotencyConcurrentSameKey();
   await _idempotencyBypassWhenNoQuery();
