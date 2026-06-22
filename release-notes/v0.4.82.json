@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.82",
+  "date": "2026-06-22",
+  "headline": "Return-authorization and shipping-label state transitions are exactly-once under concurrency",
+  "summary": "Two fulfillment surfaces gain the atomic-claim discipline the refund path already uses. Approving, receiving, and rejecting a return authorization now gate the transition on the observed status inside the UPDATE, so two operators (or a double-clicked action) acting on the same return can no longer both apply — exactly one transition wins and the other is refused, instead of a read-then-write letting both pass last-write-wins. Likewise, recording a shipping label as purchased, voided, or used is now a single guarded claim, so two concurrent broker callbacks for the same label can't both record (which previously left conflicting tracking numbers and costs last-write-wins). The losing caller gets the same transition-refused error a sequential illegal transition already produced. No configuration changes; upgrade to pick them up.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Return-authorization transitions are atomic claims",
+          "body": "returns approve, markReceived, and reject now fold the expected source status into the UPDATE (approve from pending, markReceived from approved, reject from pending or approved) and treat the row count as the claim signal, matching the refund path. Two concurrent transitions on the same return — two operators, or a double-submit — can no longer both write last-write-wins; exactly one wins and the loser is refused with the same transition-refused error, mapped to a 409. Sequential not-found and illegal-transition errors are unchanged."
+        },
+        {
+          "title": "Shipping-label transitions are atomic claims",
+          "body": "shipping-labels markPurchased, voidLabel, and markUsed now gate on the observed status inside the UPDATE. Two concurrent broker callbacks marking the same pending label purchased (a worker-drain double-fire) can no longer both record, leaving conflicting tracking numbers and costs by last-write-wins — exactly one records and the other is refused. The void 30-day window and not-found / wrong-status refusals are unchanged."
+        }
+      ]
+    }
+  ]
+}
