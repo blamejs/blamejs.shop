@@ -80,9 +80,11 @@ function _catalogCart() {
   return { catalog: catalog, cart: bShop.cart.create({ query: query, catalog: catalog }) };
 }
 
-// A minimal stub customers dep — register-begin only needs hashEmail +
-// byEmailHash + register; a registration sets `created` so we can assert no
-// customer was created on a refused captcha.
+// A minimal stub customers dep — register-begin needs hashEmail +
+// byEmailHash (the account row is created in register-finish, not begin); a
+// registration sets `created` so we can assert no customer was created at
+// register-begin (a refused captcha never reaches it, and a passed captcha
+// defers creation to finish).
 function _stubCustomers(state) {
   return {
     hashEmail:   function (email) { return "hash-of-" + String(email); },
@@ -172,7 +174,9 @@ async function _run() {
   try {
     var regB = await _postJson(handleB, "/account/passkey/register-begin", { email: "b@example.com", display_name: "Bb", captcha_token: "good-token" });
     check("(b) valid-token register-begin proceeds (2xx)", regB.status >= 200 && regB.status < 300);
-    check("(b) valid-token register-begin created the customer", stateB.created === 1);
+    check("(b) valid-token register-begin returns a challenge (proceeds past the gate)",
+      (function () { try { var j = JSON.parse(regB.body); return typeof j.challenge === "string" && j.challenge.length > 0; } catch (_e) { return false; } })());
+    check("(b) register-begin defers account creation to register-finish", stateB.created === 0);
     // recordOutcome is awaited in the handler, so the row is settled; poll
     // defensively in case of runner contention.
     await waitUntil(async function () {

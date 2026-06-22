@@ -401,8 +401,42 @@ async function _eraseAuthForCustomer() {
   await assert.rejects(customers.eraseAuthForCustomer("not-a-uuid"), /customer id/);
 }
 
+// registerWithPasskey creates the account + enrolls the first credential as
+// one unit, rolling the new row back if the enroll fails — so the deferred
+// passkey-register flow can never leave an empty, email-squatting account
+// behind when addPasskey fails (D1 has no interactive transaction).
+async function _registerWithPasskeyAtomic() {
+  var customers = bShop.customers.create({ query: _makeQuery() });
+
+  // Success: both rows land and the account is reachable.
+  var ok = await customers.registerWithPasskey({
+    email: "atomic@example.com", display_name: "Atomic",
+    passkey: { credential_id: "atomic-cred-1", public_key: "k1", transports: "internal" },
+  });
+  check("registerWithPasskey returns customer + passkey", !!(ok.customer && ok.customer.id && ok.passkey && ok.passkey.id));
+  check("registerWithPasskey account is reachable",        !!(await customers.byEmailHash(customers.hashEmail("atomic@example.com"))));
+  check("registerWithPasskey enrolled the credential",     (await customers.listPasskeys(ok.customer.id)).length === 1);
+
+  // Compensation: a failing enroll (duplicate credential_id) must roll the
+  // just-created customer row back, leaving no orphan to squat the email.
+  await assert.rejects(
+    customers.registerWithPasskey({
+      email: "orphan@example.com", display_name: "Orphan",
+      passkey: { credential_id: "atomic-cred-1", public_key: "k2", transports: "usb" },
+    }),
+    /already registered/i,
+  );
+  check("registerWithPasskey rolls back on enroll failure (no orphan row)",
+    (await customers.byEmailHash(customers.hashEmail("orphan@example.com"))) === null);
+
+  // Input validation (entry-point).
+  await assert.rejects(customers.registerWithPasskey(), /input object required/);
+  await assert.rejects(customers.registerWithPasskey({ email: "x@example.com", display_name: "X" }), /passkey object required/);
+}
+
 async function run() {
   await _register();
+  await _registerWithPasskeyAtomic();
   await _byEmailHash();
   await _duplicateRefused();
   await _canonicalNormalization();

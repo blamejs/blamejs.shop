@@ -439,10 +439,11 @@ async function _magicLinkUsesTrustedOrigin() {
 // must move the customer's server-side revocation boundary forward, so every
 // live sealed cookie for the account is invalidated.
 async function _logoutRevokesAllSessions() {
-  var query     = _makeQuery();
-  var catalog   = bShop.catalog.create({ query: query });
-  var cart      = bShop.cart.create({ query: query, catalog: catalog });
-  var customers = bShop.customers.create({ query: query });
+  var query          = _makeQuery();
+  var catalog        = bShop.catalog.create({ query: query });
+  var cart           = bShop.cart.create({ query: query, catalog: catalog });
+  var customers      = bShop.customers.create({ query: query });
+  var customerPortal = bShop.customerPortal.create({ query: query });
 
   var customerId = b.uuid.v7();
   var nowTs = Date.now();
@@ -452,7 +453,8 @@ async function _logoutRevokesAllSessions() {
   );
 
   var sf = await _bootStorefront({
-    catalog: catalog, cart: cart, customers: customers, shop_name: "Sign-in Shop",
+    catalog: catalog, cart: cart, customers: customers, customerPortal: customerPortal,
+    shop_name: "Sign-in Shop",
   });
 
   try {
@@ -465,12 +467,29 @@ async function _logoutRevokesAllSessions() {
     check("no session-revocation boundary before sign-out",
       Number(await customers.sessionsValidFrom(customerId)) === 0);
 
+    // A pending magic-link (portal) token issued before sign-out is a
+    // separate credential from the sealed cookie. Sign-out-everywhere must
+    // revoke it too, or an unredeemed link mailed before logout would still
+    // sign the account back in.
+    var pending = await customerPortal.createSession({ customer_id: customerId, scope: "full" });
+    var beforeRow = (await query(
+      "SELECT status FROM customer_portal_sessions WHERE id = ?1", [pending.session_id],
+    )).rows[0];
+    check("pending portal token is 'issued' before sign-out", beforeRow && beforeRow.status === "issued");
+
     var out = await helpers.httpRequest({
       port: sf.port, path: "/account/logout", method: "POST", jar: authJar,
     });
     check("logout → 303 home", out.status === 303 && (out.headers["location"] || "") === "/");
     check("sign-out moves the revocation boundary forward (invalidates every live cookie)",
       Number(await customers.sessionsValidFrom(customerId)) > 0);
+    var afterRow = (await query(
+      "SELECT status FROM customer_portal_sessions WHERE id = ?1", [pending.session_id],
+    )).rows[0];
+    check("sign-out revokes the pending magic-link/portal token",
+      afterRow && afterRow.status === "revoked");
+    check("the revoked portal token no longer verifies",
+      (await customerPortal.verifyToken(pending.plaintext_token)) === null);
   } finally {
     await _teardown(sf);
   }
