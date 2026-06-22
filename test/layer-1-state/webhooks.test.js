@@ -746,6 +746,39 @@ async function _processRetriesClaimPreventsDoubleAttempt() {
     transport.received.length === afterSend + 1);
 }
 
+async function _processRetriesSkipsPausedEndpoint() {
+  // An operator who disables an endpoint after it has failed deliveries must
+  // not have the automatic retry cron keep POSTing to it. The pending retries
+  // are held (not attempted, not failed) and resume when it is re-enabled.
+  var q = _makeQuery();
+  var clock = _mockClock(1700000000000);
+  var transport = _captureTransport([{ statusCode: 500 }]);   // sticky 500
+  var webhooks = bShop.webhooks.create({
+    query:     q,
+    transport: transport,
+    now:       clock.now,
+    retry:     { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 2 },
+  });
+  var ep = await webhooks.endpoints.create({ url: "https://example.com/", events: "*" });
+
+  await webhooks.send("order.mark_paid", { x: 1 });   // attempt #1 (500) → schedules +60s
+  var afterSend = transport.received.length;
+  check("inline send attempted once", afterSend === 1);
+
+  // Operator pauses the endpoint, then the retry comes due.
+  await webhooks.endpoints.update(ep.id, { active: false });
+  clock.advance(60 * 1000);
+  var paused = await webhooks.processRetries({ now: clock.now() });
+  check("paused endpoint is not retried", paused.length === 0);
+  check("no transport attempt while paused", transport.received.length === afterSend);
+
+  // Re-enable — the held retry resumes on the next pass (schedule preserved).
+  await webhooks.endpoints.update(ep.id, { active: true });
+  var resumed = await webhooks.processRetries({ now: clock.now() });
+  check("retry resumes after re-enable", resumed.length === 1);
+  check("one transport attempt after re-enable", transport.received.length === afterSend + 1);
+}
+
 async function run() {
   await _crud();
   await _urlValidation();
@@ -759,6 +792,7 @@ async function run() {
   await _orderTransitionFanout();
   await _retryBackoff();
   await _processRetriesClaimPreventsDoubleAttempt();
+  await _processRetriesSkipsPausedEndpoint();
   await _dlqAfterFiveAttempts();
   await _replayFromDlq();
   await _rateLimitRefuses();
