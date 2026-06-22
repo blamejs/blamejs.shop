@@ -48,6 +48,9 @@ var MIGS = [
   "0002_cart.sql",
   "0006_customers.sql",
   "0072_customer_portal_sessions.sql",
+  // The server-side session-revocation boundary that explicit sign-out moves
+  // forward (so a sealed cookie copied before logout can't outlive it).
+  "0222_customer_session_revocations.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
@@ -379,11 +382,107 @@ async function _deviceBindingDrift() {
   }
 }
 
+// ---- magic-link uses the trusted origin, not a forged Host -------------
+//
+// The single-use portal token in the magic-link authenticates on its own, so
+// the link must point at the operator's configured origin (shop_origin),
+// never a host an attacker forged into the request. Boot with shop_origin set,
+// POST the link request under a forged Host, and assert the mailed link points
+// at the trusted origin and never carries the forged host.
+async function _magicLinkUsesTrustedOrigin() {
+  var query     = _makeQuery();
+  var catalog   = bShop.catalog.create({ query: query });
+  var cart      = bShop.cart.create({ query: query, catalog: catalog });
+  var customers = bShop.customers.create({ query: query });
+  var customerPortal = bShop.customerPortal.create({ query: query });
+  var stub      = _stubEmailHandle();
+
+  var customerId = b.uuid.v7();
+  var nowTs = Date.now();
+  await query(
+    "INSERT INTO customers (id, email_hash, display_name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+    [customerId, customers.hashEmail("vip@example.com"), "VIP", nowTs],
+  );
+
+  var sf = await _bootStorefront({
+    catalog: catalog, cart: cart, customers: customers,
+    customerPortal: customerPortal, customerPortalEmail: stub.email,
+    shop_name: "Sign-in Shop", shop_origin: "https://shop.example",
+  });
+
+  try {
+    var before = stub.sent.length;
+    var resp = await helpers.httpRequest({
+      port: sf.port, path: "/account/login/link", method: "POST", jar: helpers.cookieJar(),
+      headers: { host: "evil.attacker.test" },
+      form: { email: "vip@example.com" },
+    });
+    check("magic-link POST → 303", resp.status === 303);
+    await helpers.waitUntil(function () { return stub.sent.length === before + 1; }, {
+      timeoutMs: 5000, label: "magic-link trusted-origin: mail dispatched",
+    });
+    var msg = stub.sent[stub.sent.length - 1];
+    check("magic-link is built from the trusted shop_origin, not the request Host",
+      msg.html.indexOf("https://shop.example/account/portal/") !== -1);
+    check("magic-link never carries the forged Host",
+      msg.html.indexOf("evil.attacker.test") === -1);
+  } finally {
+    await _teardown(sf);
+  }
+}
+
+// ---- explicit sign-out moves the session-revocation boundary -----------
+//
+// The sealed auth cookie is stateless for its full TTL, so clearing it on
+// sign-out only signs out the responding browser — a cookie copied before
+// sign-out would stay valid until it naturally expired. POST /account/logout
+// must move the customer's server-side revocation boundary forward, so every
+// live sealed cookie for the account is invalidated.
+async function _logoutRevokesAllSessions() {
+  var query     = _makeQuery();
+  var catalog   = bShop.catalog.create({ query: query });
+  var cart      = bShop.cart.create({ query: query, catalog: catalog });
+  var customers = bShop.customers.create({ query: query });
+
+  var customerId = b.uuid.v7();
+  var nowTs = Date.now();
+  await query(
+    "INSERT INTO customers (id, email_hash, display_name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
+    [customerId, customers.hashEmail("member@example.com"), "Member", nowTs],
+  );
+
+  var sf = await _bootStorefront({
+    catalog: catalog, cart: cart, customers: customers, shop_name: "Sign-in Shop",
+  });
+
+  try {
+    var authJar = helpers.cookieJar();
+    authJar.capture({ "set-cookie": [helpers.authCookie(b, customerId)] });
+    var signedIn = await helpers.httpRequest({ port: sf.port, path: "/account/login", jar: authJar });
+    check("signed-in visitor is bounced from the login page",
+      signedIn.status === 303 && (signedIn.headers["location"] || "") === "/account");
+
+    check("no session-revocation boundary before sign-out",
+      Number(await customers.sessionsValidFrom(customerId)) === 0);
+
+    var out = await helpers.httpRequest({
+      port: sf.port, path: "/account/logout", method: "POST", jar: authJar,
+    });
+    check("logout → 303 home", out.status === 303 && (out.headers["location"] || "") === "/");
+    check("sign-out moves the revocation boundary forward (invalidates every live cookie)",
+      Number(await customers.sessionsValidFrom(customerId)) > 0);
+  } finally {
+    await _teardown(sf);
+  }
+}
+
 async function _run() {
   await _unifiedFlow();
   await _passkeyOnlyFlow();
   await _magicLinkNonBlocking();
   await _deviceBindingDrift();
+  await _magicLinkUsesTrustedOrigin();
+  await _logoutRevokesAllSessions();
 }
 
 module.exports = { run: _run };
