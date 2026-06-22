@@ -51,9 +51,17 @@ var REPO_ROOT   = nodePath.resolve(__dirname, "..", "..");
 var SERVER_JS   = nodePath.join(REPO_ROOT, "server.js");
 var HEALTHCHECK = nodePath.join(REPO_ROOT, "scripts", "healthcheck.js");
 
+// Per-request budget for talking to a freshly-spawned server. A local request
+// normally answers in well under a second, but the FIRST request after boot on
+// a cold/contended CI runner (notably Windows) can warm up past a few seconds;
+// a 4–5s budget flaked there with Error("timeout"). Generous so a slow runner
+// doesn't false-fail (CLAUDE rule #11 — no too-short fixed waits); a genuinely
+// hung server still trips it and the boot wait (waitUntil 20s) bounds startup.
+var REQ_TIMEOUT_MS = 20000;
+
 function _get(port, headers) {
   return new Promise(function (resolve, reject) {
-    var req = nodeHttp.request({ host: "127.0.0.1", port: port, path: "/_/health", method: "GET", timeout: 4000, headers: headers || {} }, function (res) {
+    var req = nodeHttp.request({ host: "127.0.0.1", port: port, path: "/_/health", method: "GET", timeout: REQ_TIMEOUT_MS, headers: headers || {} }, function (res) {
       res.resume();
       resolve(res.statusCode);
     });
@@ -69,7 +77,7 @@ function _get(port, headers) {
 function _rawGet(port, path, headers) {
   return new Promise(function (resolve, reject) {
     var req = nodeHttp.request({
-      host: "127.0.0.1", port: port, path: path, method: "GET", timeout: 5000,
+      host: "127.0.0.1", port: port, path: path, method: "GET", timeout: REQ_TIMEOUT_MS,
       headers: headers || {},
     }, function (res) {
       var body = "";
@@ -89,7 +97,7 @@ function _rawPost(port, path, headers, bodyStr) {
   return new Promise(function (resolve, reject) {
     var buf = Buffer.from(bodyStr || "", "utf8");
     var req = nodeHttp.request({
-      host: "127.0.0.1", port: port, path: path, method: "POST", timeout: 5000,
+      host: "127.0.0.1", port: port, path: path, method: "POST", timeout: REQ_TIMEOUT_MS,
       headers: Object.assign({ "content-length": String(buf.length) }, headers || {}),
     }, function (res) {
       var body = "";
