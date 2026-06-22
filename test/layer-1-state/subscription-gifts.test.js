@@ -301,6 +301,39 @@ async function _redeemTwiceRefuses() {
   );
 }
 
+// Concurrent redeem of ONE token must mint exactly one subscription. The two
+// redeems interleave (both read status=pending before either claims), so the
+// in-memory status guard alone can't stop a double-create — the atomic FSM
+// claim must run BEFORE subscriptions.create and gate it. With the prior
+// create-then-claim order both callers minted before the claim dedup'd the
+// status row, double-creating subscriptions.
+async function _redeemRaceSingleMint() {
+  var f = _factory();
+  var purchased = await f.sg.purchaseGift({
+    giver_customer_id:   _uuid(),
+    plan_id:             _uuid(),
+    cycles_purchased:    1,
+    total_charged_minor: 1000,
+    currency:            "USD",
+  });
+  var recipientId = _uuid();
+  var results = await Promise.allSettled([
+    f.sg.redeemGift({ token: purchased.token, recipient_customer_id: recipientId }),
+    f.sg.redeemGift({ token: purchased.token, recipient_customer_id: recipientId }),
+  ]);
+  var fulfilled = results.filter(function (r) { return r.status === "fulfilled"; });
+  var rejected  = results.filter(function (r) { return r.status === "rejected"; });
+  check("concurrent redeem: exactly one succeeds", fulfilled.length === 1);
+  check("concurrent redeem: the loser is rejected ALREADY_REDEEMED",
+    rejected.length === 1 && rejected[0].reason && rejected[0].reason.code === "SUBSCRIPTION_GIFT_ALREADY_REDEEMED");
+  check("concurrent redeem: subscription minted exactly once (claim gates the mint)",
+    f.subs.calls.length === 1);
+  // The winning gift row carries the minted subscription id (backfilled).
+  var row = await f.sg.getGift(purchased.id);
+  check("concurrent redeem: winner row links the minted subscription",
+    row.status === "redeemed" && row.redeemed_subscription_id === f.subs.calls[0].minted_id);
+}
+
 async function _cancelBeforeRedemption() {
   var f = _factory();
   var giverId = _uuid();
@@ -557,6 +590,7 @@ async function run() {
   await _purchaseGiftShape();
   await _redeemGiftHappy();
   await _redeemTwiceRefuses();
+  await _redeemRaceSingleMint();
   await _cancelBeforeRedemption();
   await _transferOwnershipAudit();
   await _expiringGiftsWindow();

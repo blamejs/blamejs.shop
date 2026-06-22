@@ -250,6 +250,40 @@ async function _rotateCredentialsGrace() {
                                                                                    /not found/);
 }
 
+// Two rotations firing at once must not both commit. Both read the same
+// observed api_key_hash, but the compare-and-swap predicate
+// (api_key_hash = <observed>) lets only the first UPDATE match; the loser
+// changes zero rows and is refused with ROTATION_CONFLICT, so it can't clobber
+// the winner's fresh key or strand api_key_previous_hash. With the prior bare
+// WHERE id=? both committed and over-issued credentials.
+async function _rotateConcurrentConflict() {
+  var w = await _wire();
+  var defined = await w.svc.defineAccount({
+    carrier:        "ups",
+    account_number: "X1000222",
+    api_key:        "ups-original-key-1234",
+    account_label:  "production",
+    ship_from_address: _validAddress(),
+  });
+  var originalKey = defined.plaintext.api_key;
+  var results = await Promise.allSettled([
+    w.svc.rotateCredentials({ account_id: defined.id }),
+    w.svc.rotateCredentials({ account_id: defined.id }),
+  ]);
+  var ok  = results.filter(function (r) { return r.status === "fulfilled"; });
+  var bad = results.filter(function (r) { return r.status === "rejected"; });
+  check("concurrent rotate: exactly one succeeds", ok.length === 1);
+  check("concurrent rotate: the loser is refused ROTATION_CONFLICT",
+    bad.length === 1 && bad[0].reason && bad[0].reason.code === "CARRIER_ACCOUNT_ROTATION_CONFLICT");
+  // The winner's fresh key verifies live and the original slid into previous
+  // intact (not overwritten by a second rotation's key).
+  var live = await w.svc.verifyCredentials({ account_id: defined.id, plaintext_key: ok[0].value.plaintext.api_key });
+  check("concurrent rotate: winner key verifies live", live.ok === true && live.matched === "live");
+  var prev = await w.svc.verifyCredentials({ account_id: defined.id, plaintext_key: originalKey });
+  check("concurrent rotate: original slid into previous (within grace)",
+    prev.ok === true && prev.matched === "previous");
+}
+
 // ---- 4. verifyCredentials constant-time + disabled refusal -------------
 
 async function _verifyCredentialsConstantTimeAndDisabled() {
@@ -474,6 +508,7 @@ async function run() {
   await _defineAccountAcrossCarriers();
   await _defineAccountUpsertReplacesSecrets();
   await _rotateCredentialsGrace();
+  await _rotateConcurrentConflict();
   await _verifyCredentialsConstantTimeAndDisabled();
   await _disableEnableLifecycle();
   await _metricsForAccountSuccessRateAndLatency();
