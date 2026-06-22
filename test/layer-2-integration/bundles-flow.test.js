@@ -188,6 +188,40 @@ async function _run() {
     check("bundle cart subtotal == $45",   subtotal === 4500);
     check("cart subtotal renders $45.00",  cart1.body.indexOf("$45.00") !== -1);
 
+    // ---- bundle add over a pre-existing member: keep qty, honor bundle price
+    // A member already in the cart standalone (one tee at its $30 list price)
+    // must KEEP that unit when the bundle is added, and the bundle's tee must
+    // land at the bundle price — so the cart holds 2 tees worth $30 + $27 = $57
+    // plus the $18 cap = $75. The bundle's own contribution stays the quoted
+    // $45 (tee $27 + cap $18); the pre-existing tee neither vanishes (which
+    // would undercharge by dropping it) nor steals the bundle discount (which
+    // would undercharge the standalone unit). Before the fix the qty-bump kept
+    // the $30 list price for the bundle's tee and overcharged.
+    var jarSF = helpers.cookieJar();
+    await helpers.httpRequest({ port: handle.port, path: "/cart/lines", method: "POST", form: { variant_id: anchorV.id, qty: 1 }, jar: jarSF });
+    await helpers.httpRequest({ port: handle.port, path: "/cart/bundle", method: "POST", form: { bundle_sku: "BNDL-STARTER" }, jar: jarSF });
+    var cSF = await cart.bySession(jarSF.get("shop_sid"));
+    var linesSF = await cart.listLines(cSF.id);
+    var teeSF = null, subtotalSF = 0;
+    for (var sf = 0; sf < linesSF.length; sf += 1) {
+      subtotalSF += linesSF[sf].qty * linesSF[sf].unit_amount_minor;
+      if (linesSF[sf].variant_id === anchorV.id) teeSF = linesSF[sf];
+    }
+    check("standalone-first keeps both tee units", teeSF && teeSF.qty === 2);
+    check("standalone-first subtotal == $75 (kept $30 tee + $45 bundle)", subtotalSF === 7500);
+
+    // ---- adding the same bundle twice yields two bundles ------------------
+    // Re-adding a bundle adds another bundle's worth of units (not idempotent,
+    // not a no-op), so the realized subtotal is two bundles = $90.
+    var jarTwice = helpers.cookieJar();
+    await helpers.httpRequest({ port: handle.port, path: "/cart/bundle", method: "POST", form: { bundle_sku: "BNDL-STARTER" }, jar: jarTwice });
+    await helpers.httpRequest({ port: handle.port, path: "/cart/bundle", method: "POST", form: { bundle_sku: "BNDL-STARTER" }, jar: jarTwice });
+    var cTwice = await cart.bySession(jarTwice.get("shop_sid"));
+    var linesTwice = await cart.listLines(cTwice.id);
+    var subtotalTwice = 0;
+    for (var tw = 0; tw < linesTwice.length; tw += 1) subtotalTwice += linesTwice[tw].qty * linesTwice[tw].unit_amount_minor;
+    check("same-bundle-twice subtotal == $90 (two bundles)", subtotalTwice === 9000);
+
     // ---- quantity-break repricing in the cart -------------------------
     // Direct-add path: a fresh cart, add 5 tees at the catalog price,
     // confirm the 10%-off break drops the unit to $27 and the line to
