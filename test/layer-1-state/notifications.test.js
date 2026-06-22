@@ -401,10 +401,36 @@ async function _inputValidation() {
   }, /scheduled_at/);
 }
 
+// The transitions are atomic status claims, not read-then-write. Two
+// concurrent markSent both folding the status into the UPDATE means exactly one
+// wins; concurrent markFailed increments in-SQL so neither loses an increment.
+async function _concurrentTransitionClaim() {
+  var q = _makeQuery();
+  var n = bShop.notifications.create({ query: q });
+
+  // Two concurrent markSent: one transitions pending→sent, the other is
+  // refused (the row already left pending) — no last-write-wins double-stamp.
+  var e = await n.enqueue({ recipient_id: "rc", channel: "email", event_type: "order.shipped" });
+  var res = await Promise.allSettled([ n.markSent(e.id), n.markSent(e.id) ]);
+  var won  = res.filter(function (r) { return r.status === "fulfilled" && r.value; });
+  var lost = res.filter(function (r) { return r.status === "rejected"; });
+  check("concurrent markSent: exactly one wins",          won.length === 1 && won[0].value.status === "sent");
+  check("concurrent markSent: loser refused BAD_TRANSITION",
+    lost.length === 1 && lost[0].reason && lost[0].reason.code === "NOTIFICATION_BAD_TRANSITION");
+
+  // Two concurrent markFailed each increment exactly once — the in-SQL
+  // retry_count + ? add can't lose an increment to a read-then-write race.
+  var e2 = await n.enqueue({ recipient_id: "rc", channel: "email", event_type: "order.shipped" });
+  await Promise.allSettled([ n.markFailed(e2.id, { error: "a" }), n.markFailed(e2.id, { error: "b" }) ]);
+  var row = (await q("SELECT retry_count FROM notifications WHERE id = ?1", [e2.id])).rows[0];
+  check("concurrent markFailed: retry_count incremented atomically (=2)", Number(row.retry_count) === 2);
+}
+
 async function run() {
   await _enqueueHashedAndStored();
   await _enqueueRefusesOptedOut();
   await _statusTransitions();
+  await _concurrentTransitionClaim();
   await _schedulingAndPendingDueAt();
   await _unreadForRecipientPagination();
   await _setPreferenceUpsert();
