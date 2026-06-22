@@ -46,6 +46,7 @@ var MIGS = [
   "0008_inventory_thresholds.sql",
   "0018_inventory_receipts.sql",
   "0034_inventory_locations.sql",
+  "0233_inventory_adjustments_idempotency_key.sql",
   "0089_stock_transfers.sql",
   "0138_inventory_writeoffs.sql",
   // recordWriteoff debits the shelf with respect_holds, which reads

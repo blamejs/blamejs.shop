@@ -47,7 +47,10 @@ var helpers = require("../helpers");
 var check   = helpers.check;
 var assert  = helpers.assert;
 
-var MIGS = ["0034_inventory_locations.sql"].map(function (f) {
+var MIGS = [
+  "0034_inventory_locations.sql",
+  "0233_inventory_adjustments_idempotency_key.sql",
+].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
 
@@ -529,12 +532,76 @@ async function _factoryRefusals() {
   assert.throws(function () { inventoryLocations.create({ catalog: null }); },                 /catalog/);
 }
 
+async function _creditOnceIdempotent() {
+  var q = _makeQuery();
+  var svc = inventoryLocations.create({ query: q, catalog: _stubCatalog() });
+  await _defineThreeLocations(svc);
+
+  // First credit applies; the audit row carries the key.
+  var r1 = await svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: 12, idempotency_key: "k-1", reason: "transfer" });
+  check("creditOnce applies the first credit",      r1.applied === true && r1.quantity === 12 && r1.delta === 12);
+
+  // Replay with the same key is a no-op — no second credit, delta reported 0.
+  var r2 = await svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: 12, idempotency_key: "k-1", reason: "transfer" });
+  check("creditOnce replay is a no-op",             r2.applied === false && r2.delta === 0);
+  var afterReplay = await svc.stockForSku("WDG-1");
+  check("creditOnce replay leaves stock at 12",     afterReplay.total === 12);
+
+  // A different key credits again.
+  var r3 = await svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: 8, idempotency_key: "k-2" });
+  check("creditOnce distinct key credits again",    r3.applied === true && r3.quantity === 20);
+
+  // Exactly one audit row per key.
+  var rows = (await q("SELECT COUNT(*) AS n FROM inventory_adjustments WHERE idempotency_key = ?1", ["k-1"])).rows[0];
+  check("creditOnce writes one keyed audit row",    Number(rows.n) === 1);
+
+  // Refusals: non-positive delta, missing/oversized key, unknown location.
+  await assert.rejects(svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: 0, idempotency_key: "k-3" }),   /positive credit/);
+  await assert.rejects(svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: -5, idempotency_key: "k-3" }),  /positive credit/);
+  await assert.rejects(svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: 5 }),                            /idempotency_key/);
+  await assert.rejects(svc.creditOnce({ sku: "WDG-1", location_code: "WH-EAST", delta: 5, idempotency_key: "" }),       /idempotency_key/);
+  await assert.rejects(svc.creditOnce({ sku: "WDG-1", location_code: "NO-SUCH", delta: 5, idempotency_key: "k-4" }),    /not found/);
+}
+
+async function _creditOnceRollsBackClaimOnUpsertFailure() {
+  // If the stock upsert fails after the keyed audit row is claimed, the claim
+  // must be rolled back so a retry re-applies the credit (rather than the key
+  // stranding the credit at zero).
+  var q = _makeQuery();
+  var failNextUpsert = true;
+  var qWrap = async function (sql, params) {
+    if (failNextUpsert && /^\s*INSERT INTO inventory_stock/.test(sql)) {
+      failNextUpsert = false;   // one-shot
+      throw new Error("injected: stock upsert failed");
+    }
+    return q(sql, params);
+  };
+  var svc = inventoryLocations.create({ query: qWrap, catalog: _stubCatalog() });
+  await _defineThreeLocations(svc);
+
+  await assert.rejects(
+    svc.creditOnce({ sku: "WDG-9", location_code: "WH-EAST", delta: 7, idempotency_key: "rb-1" }),
+    /injected: stock upsert failed/);
+
+  // The claim row was rolled back — no orphan key, no credit.
+  var orphan = (await q("SELECT COUNT(*) AS n FROM inventory_adjustments WHERE idempotency_key = ?1", ["rb-1"])).rows[0];
+  check("failed creditOnce leaves no orphan claim row", Number(orphan.n) === 0);
+  var none = await svc.stockForSku("WDG-9");
+  check("failed creditOnce credited nothing",           none.total === 0);
+
+  // Retry now succeeds and credits exactly once.
+  var ok = await svc.creditOnce({ sku: "WDG-9", location_code: "WH-EAST", delta: 7, idempotency_key: "rb-1" });
+  check("retry after rollback credits once",            ok.applied === true && ok.quantity === 7);
+}
+
 async function run() {
   await _defineLocationHappyPath();
   await _defineLocationRefusals();
   await _listGetUpdateDeactivate();
   await _setStockArithmetic();
   await _adjustStockArithmetic();
+  await _creditOnceIdempotent();
+  await _creditOnceRollsBackClaimOnUpsertFailure();
   await _transferStockAtomicity();
   await _stockAggregations();
   await _routePriorityFill();
