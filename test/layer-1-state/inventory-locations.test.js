@@ -580,32 +580,42 @@ async function _creditOnceIdempotent() {
   await assert.rejects(svc.creditOnce({ sku: "WDG-1", location_code: "NO-SUCH", delta: 5, idempotency_key: "k-4" }),    /not found/);
 }
 
-async function _creditOnceTriggerAtomicity() {
-  // The credit and its idempotency record are ONE atomic write: the keyed
-  // audit-row INSERT carries an AFTER INSERT trigger that upserts the shelf in
-  // the same statement (no separate JS upsert, no apply-vs-record gap). The
-  // trigger fires ONLY for keyed rows, so a plain adjustStock (NULL key, which
-  // upserts the shelf itself) is never double-credited.
+async function _creditOnceRollsBackClaimOnUpsertFailure() {
+  // creditOnce claims by inserting the keyed audit row, then applies the stock
+  // credit. If the upsert throws after the claim landed, the claim must be
+  // rolled back so a retry re-applies the credit (rather than the key stranding
+  // the credit at zero).
   var q = _makeQuery();
-  var svc = inventoryLocations.create({ query: q, catalog: _stubCatalog() });
+  var failNextUpsert = true;
+  var qWrap = async function (sql, params) {
+    if (failNextUpsert && /^\s*INSERT INTO inventory_stock/.test(sql)) {
+      failNextUpsert = false;   // one-shot
+      throw new Error("injected: stock upsert failed");
+    }
+    return q(sql, params);
+  };
+  var svc = inventoryLocations.create({ query: qWrap, catalog: _stubCatalog() });
   await _defineThreeLocations(svc);
 
-  // Keyed credit: the audit row's delta is exactly the credited quantity (1:1).
-  await svc.creditOnce({ sku: "WDG-7", location_code: "WH-EAST", delta: 6, idempotency_key: "atom-1" });
-  var auditRow = (await q("SELECT delta FROM inventory_adjustments WHERE idempotency_key = ?1", ["atom-1"])).rows[0];
-  var stock = await svc.stockForSku("WDG-7");
-  check("keyed audit row delta matches the trigger-credited quantity",
-    Number(auditRow.delta) === 6 && stock.total === 6);
+  await assert.rejects(
+    svc.creditOnce({ sku: "WDG-9", location_code: "WH-EAST", delta: 7, idempotency_key: "rb-1" }),
+    /injected: stock upsert failed/);
 
-  // A plain adjustStock writes a NULL-key audit row the trigger must skip,
-  // crediting exactly once (not twice).
-  await svc.adjustStock({ sku: "WDG-7", location_code: "WH-EAST", delta: 4, reason: "manual" });
-  var stock2 = await svc.stockForSku("WDG-7");
-  check("plain adjustStock credits once — trigger skips NULL-key rows", stock2.total === 10);
+  // The claim row was rolled back — no orphan key, no credit.
+  var orphan = (await q("SELECT COUNT(*) AS n FROM inventory_adjustments WHERE idempotency_key = ?1", ["rb-1"])).rows[0];
+  check("failed creditOnce leaves no orphan claim row", Number(orphan.n) === 0);
+  var none = await svc.stockForSku("WDG-9");
+  check("failed creditOnce credited nothing",           none.total === 0);
 
-  // A second creditOnce with a fresh key credits again, atomically.
-  var r = await svc.creditOnce({ sku: "WDG-7", location_code: "WH-EAST", delta: 5, idempotency_key: "atom-2" });
-  check("distinct keyed credit applies atomically", r.applied === true && r.quantity === 15);
+  // Retry now succeeds and credits exactly once.
+  var ok = await svc.creditOnce({ sku: "WDG-9", location_code: "WH-EAST", delta: 7, idempotency_key: "rb-1" });
+  check("retry after rollback credits once",            ok.applied === true && ok.quantity === 7);
+
+  // A plain adjustStock (NULL key) and a keyed creditOnce never collide on the
+  // idempotency index — different keys, independent credits.
+  await svc.adjustStock({ sku: "WDG-9", location_code: "WH-EAST", delta: 3, reason: "manual" });
+  var both = await svc.stockForSku("WDG-9");
+  check("keyed credit + plain adjust coexist", both.total === 10);
 }
 
 async function run() {
@@ -615,7 +625,7 @@ async function run() {
   await _setStockArithmetic();
   await _adjustStockArithmetic();
   await _creditOnceIdempotent();
-  await _creditOnceTriggerAtomicity();
+  await _creditOnceRollsBackClaimOnUpsertFailure();
   await _transferStockAtomicity();
   await _stockAggregations();
   await _routePriorityFill();

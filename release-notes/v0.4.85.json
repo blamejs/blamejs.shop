@@ -18,8 +18,8 @@
       "heading": "Migration",
       "items": [
         {
-          "title": "inventory_adjustments gains a nullable idempotency key and an atomic keyed-credit trigger",
-          "body": "Adds a nullable idempotency_key column to inventory_adjustments, a unique index over it, and an insert trigger that credits the shelf in the same statement as a keyed audit row — so a keyed credit and its idempotency record commit or roll back together, and a replay credits nothing. The column is NULL for every existing row and for plain stock adjustments, which already apply atomically and which the trigger ignores; only keyed credits set it. The change is additive and backward-compatible — apply pending D1 migrations on upgrade."
+          "title": "inventory_adjustments gains a nullable idempotency key",
+          "body": "Adds a nullable idempotency_key column to inventory_adjustments and a unique index over it, so a keyed stock credit records that it has already been applied and a retry that re-presents the key credits nothing. The column is NULL for every existing row and for plain stock adjustments, which already apply atomically; only keyed credits set it. The change is additive and backward-compatible — apply pending D1 migrations on upgrade."
         }
       ]
     }
