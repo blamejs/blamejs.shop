@@ -56,7 +56,24 @@ var MIGS = [
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
-  return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
+  // Split on statement terminators, but keep CREATE TRIGGER ... BEGIN ... END
+  // blocks whole: a trigger body carries inner `;` that must NOT split it.
+  var raw = noComments.split(/;\s*(?:\n|$)/);
+  var stmts = [];
+  var pending = null;
+  for (var i = 0; i < raw.length; i += 1) {
+    var part = raw[i];
+    if (pending !== null) {
+      pending += ";\n" + part;
+      if (/\bEND\b/i.test(part)) { stmts.push(pending.trim()); pending = null; }
+      continue;
+    }
+    if (/\bBEGIN\b/i.test(part) && !/\bEND\b/i.test(part)) { pending = part; continue; }
+    var t = part.trim();
+    if (t) stmts.push(t);
+  }
+  if (pending !== null) stmts.push(pending.trim());
+  return stmts.filter(Boolean);
 }
 
 function _makeQuery() {
@@ -563,35 +580,32 @@ async function _creditOnceIdempotent() {
   await assert.rejects(svc.creditOnce({ sku: "WDG-1", location_code: "NO-SUCH", delta: 5, idempotency_key: "k-4" }),    /not found/);
 }
 
-async function _creditOnceRollsBackClaimOnUpsertFailure() {
-  // If the stock upsert fails after the keyed audit row is claimed, the claim
-  // must be rolled back so a retry re-applies the credit (rather than the key
-  // stranding the credit at zero).
+async function _creditOnceTriggerAtomicity() {
+  // The credit and its idempotency record are ONE atomic write: the keyed
+  // audit-row INSERT carries an AFTER INSERT trigger that upserts the shelf in
+  // the same statement (no separate JS upsert, no apply-vs-record gap). The
+  // trigger fires ONLY for keyed rows, so a plain adjustStock (NULL key, which
+  // upserts the shelf itself) is never double-credited.
   var q = _makeQuery();
-  var failNextUpsert = true;
-  var qWrap = async function (sql, params) {
-    if (failNextUpsert && /^\s*INSERT INTO inventory_stock/.test(sql)) {
-      failNextUpsert = false;   // one-shot
-      throw new Error("injected: stock upsert failed");
-    }
-    return q(sql, params);
-  };
-  var svc = inventoryLocations.create({ query: qWrap, catalog: _stubCatalog() });
+  var svc = inventoryLocations.create({ query: q, catalog: _stubCatalog() });
   await _defineThreeLocations(svc);
 
-  await assert.rejects(
-    svc.creditOnce({ sku: "WDG-9", location_code: "WH-EAST", delta: 7, idempotency_key: "rb-1" }),
-    /injected: stock upsert failed/);
+  // Keyed credit: the audit row's delta is exactly the credited quantity (1:1).
+  await svc.creditOnce({ sku: "WDG-7", location_code: "WH-EAST", delta: 6, idempotency_key: "atom-1" });
+  var auditRow = (await q("SELECT delta FROM inventory_adjustments WHERE idempotency_key = ?1", ["atom-1"])).rows[0];
+  var stock = await svc.stockForSku("WDG-7");
+  check("keyed audit row delta matches the trigger-credited quantity",
+    Number(auditRow.delta) === 6 && stock.total === 6);
 
-  // The claim row was rolled back — no orphan key, no credit.
-  var orphan = (await q("SELECT COUNT(*) AS n FROM inventory_adjustments WHERE idempotency_key = ?1", ["rb-1"])).rows[0];
-  check("failed creditOnce leaves no orphan claim row", Number(orphan.n) === 0);
-  var none = await svc.stockForSku("WDG-9");
-  check("failed creditOnce credited nothing",           none.total === 0);
+  // A plain adjustStock writes a NULL-key audit row the trigger must skip,
+  // crediting exactly once (not twice).
+  await svc.adjustStock({ sku: "WDG-7", location_code: "WH-EAST", delta: 4, reason: "manual" });
+  var stock2 = await svc.stockForSku("WDG-7");
+  check("plain adjustStock credits once — trigger skips NULL-key rows", stock2.total === 10);
 
-  // Retry now succeeds and credits exactly once.
-  var ok = await svc.creditOnce({ sku: "WDG-9", location_code: "WH-EAST", delta: 7, idempotency_key: "rb-1" });
-  check("retry after rollback credits once",            ok.applied === true && ok.quantity === 7);
+  // A second creditOnce with a fresh key credits again, atomically.
+  var r = await svc.creditOnce({ sku: "WDG-7", location_code: "WH-EAST", delta: 5, idempotency_key: "atom-2" });
+  check("distinct keyed credit applies atomically", r.applied === true && r.quantity === 15);
 }
 
 async function run() {
@@ -601,7 +615,7 @@ async function run() {
   await _setStockArithmetic();
   await _adjustStockArithmetic();
   await _creditOnceIdempotent();
-  await _creditOnceRollsBackClaimOnUpsertFailure();
+  await _creditOnceTriggerAtomicity();
   await _transferStockAtomicity();
   await _stockAggregations();
   await _routePriorityFill();

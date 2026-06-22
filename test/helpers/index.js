@@ -100,7 +100,24 @@ async function withTestTimeout(label, fn, opts) {
 // statements over the Worker bridge (one prepared statement at a time).
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
-  return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
+  // Split on statement terminators, but keep CREATE TRIGGER ... BEGIN ... END
+  // blocks whole: a trigger body carries inner `;` that must NOT split it.
+  var raw = noComments.split(/;\s*(?:\n|$)/);
+  var stmts = [];
+  var pending = null;
+  for (var i = 0; i < raw.length; i += 1) {
+    var part = raw[i];
+    if (pending !== null) {
+      pending += ";\n" + part;
+      if (/\bEND\b/i.test(part)) { stmts.push(pending.trim()); pending = null; }
+      continue;
+    }
+    if (/\bBEGIN\b/i.test(part) && !/\bEND\b/i.test(part)) { pending = part; continue; }
+    var t = part.trim();
+    if (t) stmts.push(t);
+  }
+  if (pending !== null) stmts.push(pending.trim());
+  return stmts.filter(Boolean);
 }
 
 // `opts.tolerant` loads best-effort: a statement node:sqlite can't
