@@ -161,10 +161,15 @@ async function _statusTransitions() {
   var failed2 = await n.markFailed(e2.id, { error: "smtp 500" });
   check("second fail bumps",     Number(failed2.retry_count) === 2);
 
-  // failed → sent (retry succeeded) clears last_error.
-  var recovered = await n.markSent(e2.id);
-  check("failed→sent allowed",   recovered.status === "sent");
-  check("last_error cleared",    recovered.last_error === null);
+  // failed → sent is REFUSED: a failed delivery is a durable failure record
+  // (the scheduler only re-dispatches 'pending'), so a stale or duplicate
+  // success callback can't silently flip it to sent and clear last_error.
+  // Retrying a failed notification requires an explicit re-queue to pending.
+  await assert.rejects(n.markSent(e2.id), /cannot transition/);
+  var stillFailed = (await q("SELECT status, last_error, retry_count FROM notifications WHERE id = ?1", [e2.id])).rows[0];
+  check("failed→sent refused: stays failed", stillFailed.status === "failed");
+  check("failed keeps its last_error",       stillFailed.last_error === "smtp 500");
+  check("failed keeps its retry_count",      Number(stillFailed.retry_count) === 2);
 
   // markRead requires in-app channel.
   var e3 = await n.enqueue({ recipient_id: "r1", channel: "email", event_type: "order.shipped" });

@@ -10,7 +10,7 @@
       "items": [
         {
           "title": "Notification status transitions are atomic claims",
-          "body": "mark-sent, mark-failed, and mark-read now gate the transition on the observed status inside the UPDATE and treat the row count as the claim signal, instead of checking status in a prior read and writing unconditionally. Concurrent delivery callbacks therefore can't both transition one notification last-write-wins, a mark-failed can't overwrite a mark-sent, and the retry counter is incremented in the database (count + 1) so two simultaneous failures can't lose an increment. Sequential behaviour and every transition guard are unchanged."
+          "body": "mark-sent, mark-failed, and mark-read now gate the transition on the observed status inside the UPDATE and treat the row count as the claim signal, instead of checking status in a prior read and writing unconditionally. Concurrent delivery callbacks therefore can't both transition one notification last-write-wins, a mark-failed can't overwrite a mark-sent, and the retry counter is incremented in the database (count + 1) so two simultaneous failures can't lose an increment. mark-sent now applies only to a pending notification: a failed delivery is a durable failure record (the scheduler only re-dispatches pending notifications), so a stale or duplicate success callback can no longer flip a failed notification to sent and clear its error — retrying a failed notification is an explicit re-queue."
         },
         {
           "title": "Approving an insurance claim with a missing parent policy fails cleanly",
