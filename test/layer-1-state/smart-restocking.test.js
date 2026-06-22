@@ -446,6 +446,21 @@ async function _testDegradedComposition() {
   check("degraded: policy_source default",         rec.reasoning.policy_source === "default");
 }
 
+// Location codes are validated against the canonical inventory-locations
+// shape (mixed case, dot/underscore/hyphen allowed). A divergent uppercase-
+// only regex here rejected valid lowercase/dotted codes the rest of the
+// inventory surface accepts.
+async function _testLowercaseDottedLocationCode() {
+  var query = _makeQuery();
+  var sr = smartRestocking.create({ query: query });
+  var lower = await sr.recommendOrderQty({ sku: "LOC-1", location_code: "aisle-3.bin-2" });
+  check("lowercase/dotted location_code accepted", Number.isInteger(lower.recommended_qty));
+  var upper = await sr.recommendOrderQty({ sku: "LOC-1", location_code: "WAREHOUSE_A" });
+  check("uppercase location_code still accepted",  Number.isInteger(upper.recommended_qty));
+  // A genuinely malformed code (embedded whitespace) is still refused.
+  await assert.rejects(sr.recommendOrderQty({ sku: "LOC-1", location_code: "bad code" }), /location_code/);
+}
+
 // ---- 6. bulkRecommend fans out + handles failure rows -----------------
 
 async function _testBulkRecommend() {
@@ -661,6 +676,7 @@ async function run() {
   await _testRecommendOrderQtyMath();
   await _testServiceLevelMonotonic();
   await _testDegradedComposition();
+  await _testLowercaseDottedLocationCode();
   await _testBulkRecommend();
   await _testMetricsForSku();
   await _testMetricsMixedCurrency();
