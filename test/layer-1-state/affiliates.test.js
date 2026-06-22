@@ -235,6 +235,22 @@ async function _commissionMath() {
   check("recordCommissionEvent idempotent on (order_id, affiliate_id)",
     first.id === second.id);
 
+  // Concurrent recordCommissionEvent for the SAME (order_id, affiliate_id):
+  // both pre-reads miss the racing insert, both INSERT, and the loser hits the
+  // UNIQUE constraint. It must converge on the committed row rather than
+  // throwing an unhandled error — exactly one commission row lands.
+  var raceOrder = _validUUID();
+  var both = await Promise.allSettled([
+    ctx.affiliates.recordCommissionEvent({ order_id: raceOrder, affiliate_id: pctAff.id, order_total_minor: 5000, currency: "USD" }),
+    ctx.affiliates.recordCommissionEvent({ order_id: raceOrder, affiliate_id: pctAff.id, order_total_minor: 5000, currency: "USD" }),
+  ]);
+  check("concurrent recordCommissionEvent: both resolve (no unhandled UNIQUE throw)",
+    both[0].status === "fulfilled" && both[1].status === "fulfilled");
+  check("concurrent recordCommissionEvent: both converge on the same row",
+    both[0].value && both[1].value && both[0].value.id === both[1].value.id);
+  var raceCount = (await ctx.query("SELECT COUNT(*) AS c FROM affiliate_commissions WHERE order_id = ?1", [raceOrder])).rows[0].c;
+  check("concurrent recordCommissionEvent: exactly one commission row", Number(raceCount) === 1);
+
   // order_total_minor = 0 yields commission_minor 0 (percent_bps).
   var c5 = await ctx.affiliates.recordCommissionEvent({
     order_id:          _validUUID(),
