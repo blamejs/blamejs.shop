@@ -159,6 +159,20 @@ async function _chargeOrderUpToLimit() {
   check("re-charge same order leaves balance at 1000",     (await f.credit.availableCredit(custId)).outstanding_minor === 1000);
   var txnAfterDup = f.db.prepare("SELECT COUNT(*) AS c FROM credit_transactions WHERE customer_id = ?").all(custId)[0].c;
   check("re-charge same order wrote no new row",           txnAfterDup === 2);
+
+  // Idempotency is status-independent: after the account is suspended, a retry
+  // of the already-charged order still returns the original charge rather than
+  // throwing NOT_ACTIVE — the order-scoped dedup is checked before the
+  // active-account gate.
+  await f.credit.suspendAccount({ customer_id: custId, reason: "test-suspend" });
+  var dupSuspended = await f.credit.chargeOrder({ customer_id: custId, order_id: o1, amount_minor: 400 });
+  check("re-charge after suspend still returns the original charge",
+    dupSuspended.id === r1.id && dupSuspended.idempotent === true);
+  // A NEW order on the suspended account is still refused.
+  var refusedSuspended;
+  try { await f.credit.chargeOrder({ customer_id: custId, order_id: _uuid(), amount_minor: 1 }); }
+  catch (e) { refusedSuspended = e; }
+  check("new charge on suspended account refused", refusedSuspended && refusedSuspended.code === "CREDIT_ACCOUNT_NOT_ACTIVE");
 }
 
 async function _releaseHoldRestoresCredit() {
