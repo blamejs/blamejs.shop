@@ -102,14 +102,15 @@ jobs:
         run: node test/smoke.js
 
   inimage-smoke:
-    # Replicates the container build's in-image smoke: the Dockerfile excludes
-    # worker/ (.dockerignore) then runs `node test/smoke.js`, so a test that
-    # reads or imports a worker/ path without an fs.existsSync guard preceding
-    # it ENOENT-crashes there and fails the Workers Build AFTER merge — which
-    # bricks the deploy (the worker never rolls). The full-tree smoke above
-    # can't catch it because worker/ is present. Running the worker-excluded
-    # smoke here surfaces that class at pull-request time instead. The CI
-    # checkout is ephemeral, so removing worker/ is safe.
+    # Replicates the container build's in-image smoke: the Dockerfile copies
+    # the build context (minus everything .dockerignore strips — worker/,
+    # .github/, the Dockerfile, wrangler.toml) and runs `node test/smoke.js`.
+    # A smoke gate that reads or imports any stripped path without tolerating
+    # its absence crashes there and fails the Workers Build AFTER merge — which
+    # bricks the deploy (the container never rolls). The full-tree smoke above
+    # can't catch it because those paths are present. Removing the same set
+    # here surfaces that class at pull-request time instead. The CI checkout is
+    # ephemeral, so removing them is safe.
     name: In-image smoke (worker-excluded)
     runs-on: ubuntu-latest
     permissions: { contents: read }
@@ -121,11 +122,14 @@ jobs:
       - name: Verify the committed vendored blamejs is present
         run: test -f lib/vendor/blamejs/lib/app.js || { echo "::error::lib/vendor/blamejs missing from checkout"; exit 1; }
         shell: bash
-      - name: Run smoke with worker/ excluded (mirrors the container build context)
+      - name: Run smoke with the container build context (mirrors .dockerignore)
         env:
           NODE_OPTIONS: --max-old-space-size=6144
         run: |
-          rm -rf worker
+          # Strip the same paths .dockerignore removes before the in-image
+          # `node test/smoke.js`, so a gate that reads any of them must
+          # tolerate their absence here or it would brick the Workers Build.
+          rm -rf worker .github Dockerfile wrangler.toml
           node test/smoke.js
 
   e2e-checkout:

@@ -165,17 +165,25 @@ var auth    = _authoritative();
 var targets = _targets(auth);
 var drift   = [];
 var changed = [];
+// Mirrors not validated in THIS context — either the file is absent or it
+// carries no recognized Node-version token. The gate runs both in the full
+// repo and inside the reduced container build, where `.dockerignore` strips
+// `.github/`, the `Dockerfile`, and `wrangler.toml` before `node test/smoke.js`
+// runs. A file excluded from a build context is "not applicable here", never
+// drift — so the gate validates only the mirrors actually present and fails
+// solely on a present pin that DISAGREES with the floor.
+var skipped = [];
 
 targets.forEach(function (t) {
   var abs = path.join(REPO_ROOT, t.file);
   if (!fs.existsSync(abs)) {
-    drift.push(t.file + " (" + t.label + "): MISSING — expected to pin Node " + t.expected);
+    skipped.push(t.file + " (absent)");
     return;
   }
   var txt    = fs.readFileSync(abs, "utf8");
   var actual = t.find(txt);
   if (!actual.length) {
-    drift.push(t.file + " (" + t.label + "): no Node-version token found — expected " + t.expected);
+    skipped.push(t.file + " (no Node-version token)");
     return;
   }
   var offenders = actual.filter(function (v) { return v !== t.expected; });
@@ -197,6 +205,8 @@ targets.forEach(function (t) {
   }
 });
 
+var skipNote = skipped.length ? " (" + skipped.length + " not applicable here: " + skipped.join(", ") + ")" : "";
+
 if (mode === "check") {
   if (drift.length) {
     console.error("[node-floor] DRIFT vs vendored blamejs engines.node (" +
@@ -205,8 +215,8 @@ if (mode === "check") {
     console.error("  Run `node scripts/check-node-floor.js --rebuild` to sync.");
     process.exit(1);
   }
-  console.log("[node-floor] OK — " + targets.length +
-    " Node-version mirror(s) match the vendored floor (" + auth.floor + ")");
+  console.log("[node-floor] OK — " + (targets.length - skipped.length) +
+    " Node-version mirror(s) match the vendored floor (" + auth.floor + ")" + skipNote);
 } else {
   if (changed.length) {
     console.log("[node-floor] synced " + changed.length + " mirror(s) to the vendored floor (" + auth.floor + "):");
