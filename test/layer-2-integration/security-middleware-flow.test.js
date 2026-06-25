@@ -55,6 +55,24 @@ function _hdr(ip, extra) {
   }, extra || {});
 }
 
+// Fire N requests CONCURRENTLY so they all land inside one rate-limit window.
+// A SEQUENTIAL burst spans real wall-clock, and on a slow / contended CI
+// runner a 15-request loop runs long enough to earn token-bucket refills
+// (~1 token / 6s) and under-count the 429s — the classic slow-runner flake.
+// Firing them together pins the rejected count to (N − bucket capacity),
+// independent of how slow each round-trip is.
+function _burst(n, factory) {
+  var reqs = [];
+  for (var i = 0; i < n; i += 1) reqs.push(factory(i));
+  return Promise.all(reqs);
+}
+function _count429(results) {
+  return results.filter(function (r) { return r.status === 429; }).length;
+}
+function _count2xx(results) {
+  return results.filter(function (r) { return r.status >= 200 && r.status < 300; }).length;
+}
+
 async function _run() {
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-secmw-"));
 
@@ -150,17 +168,15 @@ async function _run() {
     // rather than a shared bucket. (Each request carries the same-origin
     // Sec-Fetch-Site so fetch-metadata never interferes.)
     var sprayIp = "198.51.100.7";
-    var spray2xx = 0, spray429 = 0;
-    for (var s = 0; s < 15; s += 1) {
-      var r1 = await httpRequest({ port: port, method: "POST", path: "/account/login", headers: _hdr(sprayIp, nav), form: { u: "a" } });
-      if (r1.status === 429) spray429 += 1;
-      else if (r1.status >= 200 && r1.status < 300) spray2xx += 1;
-    }
-    // The tight bucket refills ~1 token / 6s, so on a slow CI runner a
-    // 15-request sequential spray can earn a few refill tokens mid-loop —
-    // the upper bound allows for that drift. The load-bearing invariants
-    // are that the cap ENGAGES (several 429s) and that it isn't total
-    // (some requests pass).
+    var sprayResults = await _burst(15, function () {
+      return httpRequest({ port: port, method: "POST", path: "/account/login", headers: _hdr(sprayIp, nav), form: { u: "a" } });
+    });
+    var spray2xx = _count2xx(sprayResults), spray429 = _count429(sprayResults);
+    // Fired concurrently, so all 15 land in one window before the bucket
+    // (~1 token / 6s) can refill: ~budget pass and the rest 429. The
+    // load-bearing invariants are that the cap ENGAGES (several 429s) and that
+    // it isn't total (some requests pass); the bounds keep margin for the
+    // exact budget without depending on per-request wall-clock.
     check("(b) spray IP: logins pass before the cap", spray2xx >= 1 && spray2xx <= 13);
     check("(b) spray IP: excess logins are 429", spray429 >= 2);
 
@@ -174,11 +190,9 @@ async function _run() {
     // it a victim-addressed mail cannon. 15 rapid POSTs from one IP: the cap
     // engages (excess 429s).
     var magicIp = "198.51.100.61";
-    var magic429 = 0;
-    for (var m = 0; m < 15; m += 1) {
-      var rM = await httpRequest({ port: port, method: "POST", path: "/account/login/link", headers: _hdr(magicIp, nav), form: { email: "victim@example.com" } });
-      if (rM.status === 429) magic429 += 1;
-    }
+    var magic429 = _count429(await _burst(15, function () {
+      return httpRequest({ port: port, method: "POST", path: "/account/login/link", headers: _hdr(magicIp, nav), form: { email: "victim@example.com" } });
+    }));
     check("(b) magic-link trigger is tight-throttled (excess 429)", magic429 >= 2);
 
     // The anonymous, CSRF-exempt back-in-stock subscribe sends a
@@ -186,11 +200,9 @@ async function _run() {
     // in the tight per-(IP+path) budget or it is a victim-addressed
     // mail cannon on the loose global bucket alone.
     var alertIp = "198.51.100.8";
-    var alert429 = 0;
-    for (var t = 0; t < 15; t += 1) {
-      var rA = await httpRequest({ port: port, method: "POST", path: "/stock-alert/subscribe", headers: _hdr(alertIp, nav), form: { email: "victim@example.com", sku: "X-" + t } });
-      if (rA.status === 429) alert429 += 1;
-    }
+    var alert429 = _count429(await _burst(15, function (t) {
+      return httpRequest({ port: port, method: "POST", path: "/stock-alert/subscribe", headers: _hdr(alertIp, nav), form: { email: "victim@example.com", sku: "X-" + t } });
+    }));
     check("(b) stock-alert subscribe is tight-throttled (excess 429)", alert429 >= 4);
 
     // The cart coupon-apply POST validates a typed code against the
@@ -199,11 +211,9 @@ async function _run() {
     // guessing engine. It MUST sit in the tight per-(IP+path) budget so a
     // sprayer can't grind the namespace for a live code.
     var couponIp = "198.51.100.9";
-    var coupon429 = 0;
-    for (var c = 0; c < 15; c += 1) {
-      var rC = await httpRequest({ port: port, method: "POST", path: "/cart/coupon", headers: _hdr(couponIp, nav), form: { code: "GUESS-" + c } });
-      if (rC.status === 429) coupon429 += 1;
-    }
+    var coupon429 = _count429(await _burst(15, function (c) {
+      return httpRequest({ port: port, method: "POST", path: "/cart/coupon", headers: _hdr(couponIp, nav), form: { code: "GUESS-" + c } });
+    }));
     check("(b) cart coupon-apply is tight-throttled (excess 429)", coupon429 >= 4);
 
     // The global budget is separate + generous: the same sprayer can
