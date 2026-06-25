@@ -42,7 +42,8 @@ function _splitSchema(text) {
   return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
 }
 
-function _makeQuery() {
+function _makeQuery(opts) {
+  opts = opts || {};
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
   // Load giftcards first (the ledger's expiringBalance JOINs against
@@ -64,18 +65,26 @@ function _makeQuery() {
     query: async function (sql, params) {
       var stmt = db.prepare(sql);
       var verb = sql.replace(/^\s+|\s*--[^\n]*\n/g, "").trim().split(/\s+/)[0].toUpperCase();
-      if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
-        var info = stmt.run.apply(stmt, params || []);
-        return { rows: [], rowCount: Number(info.changes), lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
+      try {
+        if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
+          var info = stmt.run.apply(stmt, params || []);
+          return { rows: [], rowCount: Number(info.changes), lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
+        }
+        var rows = stmt.all.apply(stmt, params || []);
+        return { rows: rows, rowCount: rows.length };
+      } catch (e) {
+        // Mimic the production D1 service-binding redacting the SQLite error
+        // text (e.g. "UNIQUE constraint failed: ...") to a generic "HTTP 500"
+        // — so a message-matching collision check would be blind in prod.
+        if (opts.redactErrors) throw new Error("HTTP 500");
+        throw e;
       }
-      var rows = stmt.all.apply(stmt, params || []);
-      return { rows: rows, rowCount: rows.length };
     },
   };
 }
 
-function _factory() {
-  var h = _makeQuery();
+function _factory(opts) {
+  var h = _makeQuery(opts);
   return {
     db:     h.db,
     query:  h.query,
@@ -446,6 +455,7 @@ async function run() {
   await _concurrentDebitAtomic();
   await _concurrentWritesKeepChainUnforked();
   await _allNullChainFailsVerification();
+  await _chainConvergesUnderRedactedErrors();
   await _historyPagination();
   await _bulkBalance();
   await _expiringBalanceWindow();
@@ -526,6 +536,32 @@ async function _allNullChainFailsVerification() {
   check("verifyChain: all-NULL populated chain fails (unanchored)",
         rewritten.ok === false && rewritten.reason === "unanchored chain (no hashed row in a populated ledger)");
   check("verifyChain: unanchored break reports zero rows verified", rewritten.rows_verified === 0);
+}
+
+// Prod parity: the D1 service-binding redacts a UNIQUE-fence violation to a
+// generic "HTTP 500", so the chained-write retry MUST converge state-
+// agnostically (re-read the tip), not by matching the SQLite error text.
+// Under the redacting harness a racing burst still lands every write and the
+// chain still verifies — the guarantee a message-regex collision check would
+// silently lose in production (it only matches under node:sqlite).
+async function _chainConvergesUnderRedactedErrors() {
+  var h = _makeQuery({ redactErrors: true });
+  var ledger = giftCardLedger.create({ query: h.query });
+  var cardId = bShop.framework.uuid.v7();
+
+  await ledger.credit({ gift_card_id: cardId, amount_minor: 10000, source: "manual", source_ref: "seed" });
+  var res = await Promise.allSettled([
+    ledger.credit({ gift_card_id: cardId, amount_minor: 500, source: "manual", source_ref: "race-a" }),
+    ledger.debit({ gift_card_id: cardId, amount_minor: 1500, order_id: bShop.framework.uuid.v7() }),
+    ledger.credit({ gift_card_id: cardId, amount_minor: 700, source: "manual", source_ref: "race-b" }),
+  ]);
+  var failed = res.filter(function (x) { return x.status === "rejected"; });
+  check("redacted-error: every racing write still lands (state-agnostic retry)", failed.length === 0);
+
+  var v = await ledger.verifyChain(cardId);
+  check("redacted-error: chain verifies end to end", v.ok === true && v.rows_verified === 4);
+  check("redacted-error: balance is the net of all writes",
+        (await ledger.balance(cardId)).balance_minor === 10000 + 500 - 1500 + 700);
 }
 
 module.exports = { run: run };

@@ -49,7 +49,8 @@ var TOKEN = "admin-token-0123456789abcdef-custdetail";
 var MIGS = [
   "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql",
   "0004_shop_config.sql", "0006_customers.sql", "0205_customer_oauth_identities.sql",
-  "0094_store_credit.sql", "0134_customer_notes.sql", "0049_customer_segments.sql",
+  "0094_store_credit.sql", "0235_store_credit_ledger_chain.sql", "0236_store_credit_ledger_chain_fence.sql",
+  "0134_customer_notes.sql", "0049_customer_segments.sql",
   "0022_loyalty.sql",
   // Activity-timeline source tables + its memoization cache.
   "0011_reviews.sql", "0012_wishlist.sql", "0047_support_tickets.sql",

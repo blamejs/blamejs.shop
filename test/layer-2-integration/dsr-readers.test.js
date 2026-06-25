@@ -56,6 +56,7 @@ var MIGS = [
   // The feedback / holdover / wallet domains added to the full export +
   // erasure scope.
   "0181_suggestion_box.sql", "0041_save_for_later.sql", "0094_store_credit.sql",
+  "0235_store_credit_ledger_chain.sql", "0236_store_credit_ledger_chain_fence.sql",
   // The remaining customer-keyed domains: guest-order claim audit, stock
   // alerts (plaintext email), quotes, ratings, Q&A, CRM notes, gift
   // cards, referrals.

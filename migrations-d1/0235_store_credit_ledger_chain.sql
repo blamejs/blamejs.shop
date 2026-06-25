@@ -1,0 +1,32 @@
+-- Store-credit ledger hash-chain columns.
+--
+-- The store_credit_ledger (0094) tracks every credit / debit / expire as
+-- an append-only row with a denormalized `balance_after_minor` snapshot.
+-- That snapshot is the only on-row integrity device — and it is a value,
+-- not a proof: a direct D1 row edit that inflates `balance_after_minor`,
+-- or a row deletion that drops a debit, passes `balance()` /
+-- `bulkBalance()` undetected because both read the latest snapshot and
+-- trust it.
+--
+-- These columns add tamper-evidence the same way the gift-card ledger
+-- (0220) and operator_audit_events (0074) do: a per-customer SHA3-512
+-- hash chain.
+--
+--   row_hash = SHA3-512(prev_hash || canonical-json(row-fields))
+--
+-- where `prev_hash` is the prior row's `row_hash` for the SAME customer
+-- (or the ZERO sentinel for a customer's first row), and `row-fields` is
+-- every ledger column except the two hash columns. Each customer wallet
+-- is its own independent chain keyed by `customer_id` — a tamper on one
+-- customer's row breaks only that customer's linkage, which
+-- `verifyChain(customerId)` surfaces with the first divergent row.
+--
+-- Both columns are nullable so the migration applies cleanly over
+-- existing rows (pre-chain history carries NULL hashes). `verifyChain`
+-- treats the ZERO sentinel as the genesis anchor and a NULL/garbage
+-- row_hash as a break, so a legacy row that was never hashed is reported
+-- as unverifiable rather than silently trusted. New writes always
+-- populate both columns.
+
+ALTER TABLE store_credit_ledger ADD COLUMN prev_hash TEXT;
+ALTER TABLE store_credit_ledger ADD COLUMN row_hash  TEXT;

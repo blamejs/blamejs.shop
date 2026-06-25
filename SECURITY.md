@@ -319,15 +319,17 @@ node -e "
   (success / failure / denied) and paginated. Opening the log is itself
   recorded (an `audit.read` row), so reviewing the audit trail leaves
   its own forensic mark.
-- **The gift-card ledger is hash-chained, fork-proof, and verifiable.**
-  Every ledger entry — credits, debits, and expirations alike — links to
-  its predecessor through a per-card SHA3-512 chain, so a direct edit or
-  deletion of a row breaks the linkage. A uniqueness fence (one child per
-  chain tip) makes concurrent writes serialize rather than fork the
-  chain, and `giftCardLedger.verifyChain(cardId)` recomputes a card's
-  chain end to end and reports the first divergence — run it whenever a
-  card's balance is disputed. The overdraft refusal stays inside the same
-  guarded insert, so the integrity device never weakens the balance gate.
+- **The gift-card and store-credit ledgers are hash-chained, fork-proof,
+  and verifiable.** Every ledger entry — credits, debits, and
+  expirations alike — links to its predecessor through a SHA3-512 chain,
+  keyed per card (gift cards) or per customer (store credit), so a direct
+  edit or deletion of a row breaks the linkage. A uniqueness fence (one
+  child per chain tip) makes concurrent writes serialize rather than fork
+  the chain, and `giftCardLedger.verifyChain(cardId)` /
+  `storeCredit.verifyChain(customerId)` recompute a ledger's chain end to
+  end and report the first divergence — run it whenever a balance is
+  disputed. The overdraft refusal stays inside the same guarded insert,
+  so the integrity device never weakens the balance gate.
 - **Privacy exports hold the whole record; erasure states a basis per
   domain.** A subject-access export walks every table that keys a row
   by the customer — identity, orders, subscriptions, addresses, saved

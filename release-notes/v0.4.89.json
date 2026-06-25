@@ -1,0 +1,27 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.89",
+  "date": "2026-06-24",
+  "headline": "Store-credit wallet balances are now tamper-evident, and concurrent gift-card ledger writes retry reliably in production",
+  "summary": "The store-credit ledger gains the same per-customer cryptographic hash chain the gift-card ledger already carries, so a balance can no longer be silently altered by a direct database edit. Each wallet row now links to the prior one with a SHA3-512 hash over its contents, and a new verifyChain check recomputes the chain and reports the first row that doesn't link — a denormalized balance snapshot was previously a value, not a proof, so a row edit that inflated a balance or a deletion that dropped a debit passed a balance read undetected. The same change makes the balance computation safe under concurrency through a chain-parent fence and a re-read-and-retry on contention. Separately, a latent reliability bug in the gift-card ledger's concurrent-write retry is fixed: it detected a write collision by matching the database's error text, but the production data-layer redacts that text to a generic error, so a genuine collision between two writes against the same gift card could surface as a failed request instead of retrying — both ledgers now detect a collision by re-reading the chain tip, which is robust regardless of how the error is reported. No configuration changes; the store-credit schema additions apply automatically on upgrade.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Store-credit ledger is tamper-evident with a per-customer hash chain",
+          "body": "Every store-credit wallet row now carries prev_hash + row_hash columns forming a per-customer SHA3-512 chain: row_hash = SHA3-512(prev_hash || canonical-json(row fields)), anchored at a genesis sentinel for a wallet's first row. A direct database edit that inflates a balance snapshot, or a deletion that drops a debit, breaks the chain at that row. A new storeCredit.verifyChain(customer_id) walks the wallet and returns the first divergence (or confirms the chain is intact); a wallet whose hash columns have all been cleared reads as unanchored rather than trusting the unverifiable rows. The balance and occurred-at values are now computed in the application and protected under concurrency by a chain-parent uniqueness fence — a write derived from a stale view of the wallet collides and is retried against the current tip, so the denormalized balance stays exact under concurrent credits, debits, expirations, and the scheduled expiry sweep."
+        }
+      ]
+    },
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Concurrent gift-card and store-credit ledger writes retry reliably in production",
+          "body": "The ledger retries a write that loses a race against a concurrent write to the same entity. It previously recognized that collision by matching the database engine's constraint-violation text — but the production data-layer redacts that text to a generic error, so in production a genuine collision was not recognized and the write surfaced as a failed request instead of retrying (the path only worked under the in-memory test engine, where the full error text survives). Both the gift-card ledger and the new store-credit chain now detect a collision by re-reading the chain tip after a failed write: if the tip has advanced past the row the write tried to extend, a competing write claimed the slot and the write is retried; otherwise the original error is surfaced. The retry is now robust regardless of how the underlying error is reported."
+        }
+      ]
+    }
+  ]
+}

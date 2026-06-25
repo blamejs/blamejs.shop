@@ -35,35 +35,49 @@ var check       = helpers.check;
 var assert      = helpers.assert;
 
 var MIG_CREDIT = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0094_store_credit.sql");
+var MIG_CHAIN  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0235_store_credit_ledger_chain.sql");
+var MIG_FENCE  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0236_store_credit_ledger_chain_fence.sql");
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
   return noComments.split(/;\s*(?:\n|$)/).map(function (s) { return s.trim(); }).filter(Boolean);
 }
 
-function _makeQuery() {
+function _makeQuery(opts) {
+  opts = opts || {};
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
-  _splitSchema(nodeFs.readFileSync(MIG_CREDIT, "utf8")).forEach(function (s) {
-    db.prepare(s).run();
+  [MIG_CREDIT, MIG_CHAIN, MIG_FENCE].forEach(function (mig) {
+    _splitSchema(nodeFs.readFileSync(mig, "utf8")).forEach(function (s) {
+      db.prepare(s).run();
+    });
   });
   return {
     db:    db,
     query: async function (sql, params) {
       var stmt = db.prepare(sql);
       var verb = sql.replace(/^\s+|\s*--[^\n]*\n/g, "").trim().split(/\s+/)[0].toUpperCase();
-      if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
-        var info = stmt.run.apply(stmt, params || []);
-        return { rows: [], rowCount: Number(info.changes), lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
+      try {
+        if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE" || verb === "REPLACE") {
+          var info = stmt.run.apply(stmt, params || []);
+          return { rows: [], rowCount: Number(info.changes), lastRowId: info.lastInsertRowid != null ? Number(info.lastInsertRowid) : null };
+        }
+        var rows = stmt.all.apply(stmt, params || []);
+        return { rows: rows, rowCount: rows.length };
+      } catch (e) {
+        // Mimic the production D1 service-binding, which redacts the SQLite
+        // error text (e.g. "UNIQUE constraint failed: ...") to a generic
+        // "HTTP 500" — so a message-matching collision check would be blind
+        // in prod. The chained-write retry must converge state-agnostically.
+        if (opts.redactErrors) throw new Error("HTTP 500");
+        throw e;
       }
-      var rows = stmt.all.apply(stmt, params || []);
-      return { rows: rows, rowCount: rows.length };
     },
   };
 }
 
-function _factory() {
-  var h = _makeQuery();
+function _factory(opts) {
+  var h = _makeQuery(opts);
   return {
     db:     h.db,
     query:  h.query,
@@ -594,6 +608,93 @@ async function _concurrentWritesNeverDrift() {
         rows[0].balance_after_minor === 1000 && rows[1].balance_after_minor === 2000);
 }
 
+// Every kind participates in the per-customer SHA3 chain, and concurrent
+// mixed writes can't fork it: the chain-parent fence UNIQUE(customer_id,
+// prev_hash) makes a stale-tip write collide and retry, so after a burst of
+// racing writes the chain re-verifies end to end — no two rows share a
+// parent, debit rows carry hashes, and every balance_after chains off the
+// row it links. A tamper then breaks verification at the edited row.
+async function _chainUnforkedUnderConcurrency() {
+  var f = _factory();
+  var cust = _uuid();
+
+  await f.credit.credit({ customer_id: cust, amount_minor: 10000, source: "manual", source_ref: "seed" });
+  var res = await Promise.allSettled([
+    f.credit.debit({ customer_id: cust, amount_minor: 3000, order_id: _uuid() }),
+    f.credit.credit({ customer_id: cust, amount_minor: 500, source: "manual", source_ref: "race" }),
+    f.credit.debit({ customer_id: cust, amount_minor: 3000, order_id: _uuid() }),
+    f.credit.expire({ customer_id: cust, amount_minor: 200, reason: "race-expire" }),
+  ]);
+  var failed = res.filter(function (x) { return x.status === "rejected"; });
+  check("chain burst: every racing write lands (retries absorb contention)", failed.length === 0);
+
+  var v = await f.credit.verifyChain(cust);
+  check("chain burst: chain verifies end to end", v.ok === true);
+  check("chain burst: all five rows verified", v.rows_verified === 5);
+
+  var rows = f.db.prepare(
+    "SELECT kind, prev_hash, row_hash FROM store_credit_ledger WHERE customer_id = ? ORDER BY occurred_at, id"
+  ).all(cust);
+  var debitRows = rows.filter(function (r) { return r.kind === "debit"; });
+  check("chain burst: debit rows carry chain hashes",
+        debitRows.length === 2 && debitRows.every(function (r) { return r.prev_hash && r.row_hash; }));
+  var parents = rows.map(function (r) { return r.prev_hash; });
+  check("chain burst: no two rows share a parent", new Set(parents).size === parents.length);
+
+  // Tamper: inflate one balance snapshot — the chain breaks at that row.
+  f.db.prepare("UPDATE store_credit_ledger SET balance_after_minor = balance_after_minor + 1 WHERE customer_id = ? AND kind = 'expire'").run(cust);
+  var tampered = await f.credit.verifyChain(cust);
+  check("chain burst: a tampered row breaks verification",
+        tampered.ok === false && tampered.reason === "row_hash mismatch");
+}
+
+// A full-ledger rewrite — clear every hash column, then edit a balance —
+// must NOT read as verified. An all-NULL populated chain is unanchored, not
+// valid; an empty ledger (zero rows) is the only no-anchor pass.
+async function _allNullChainFailsVerification() {
+  var f = _factory();
+  var cust = _uuid();
+
+  var empty = await f.credit.verifyChain(cust);
+  check("verifyChain: empty ledger is ok", empty.ok === true && empty.rows_verified === 0);
+
+  await f.credit.credit({ customer_id: cust, amount_minor: 5000, source: "refund", source_ref: _uuid() });
+  await f.credit.debit({ customer_id: cust, amount_minor: 1200, order_id: _uuid() });
+  var intact = await f.credit.verifyChain(cust);
+  check("verifyChain: intact populated chain is ok", intact.ok === true && intact.rows_verified === 2);
+
+  f.db.prepare("UPDATE store_credit_ledger SET row_hash = NULL, prev_hash = NULL WHERE customer_id = ?").run(cust);
+  f.db.prepare("UPDATE store_credit_ledger SET balance_after_minor = 999999 WHERE customer_id = ? AND kind = 'debit'").run(cust);
+  var rewritten = await f.credit.verifyChain(cust);
+  check("verifyChain: all-NULL populated chain fails (unanchored)",
+        rewritten.ok === false && rewritten.reason === "unanchored chain (no hashed row in a populated ledger)");
+  check("verifyChain: unanchored break reports zero rows verified", rewritten.rows_verified === 0);
+}
+
+// Prod parity: the D1 bridge redacts a UNIQUE-fence violation to "HTTP 500",
+// so the chained-write retry MUST converge state-agnostically (re-read the
+// tip), not by matching the error message. Under the redacting harness a
+// racing burst still lands every write and the chain still verifies — a
+// guarantee a message-regex collision check would lose in production.
+async function _chainConvergesUnderRedactedErrors() {
+  var f = _factory({ redactErrors: true });
+  var cust = _uuid();
+
+  await f.credit.credit({ customer_id: cust, amount_minor: 10000, source: "manual" });
+  var res = await Promise.allSettled([
+    f.credit.credit({ customer_id: cust, amount_minor: 500, source: "goodwill" }),
+    f.credit.debit({ customer_id: cust, amount_minor: 1500, order_id: _uuid() }),
+    f.credit.credit({ customer_id: cust, amount_minor: 700, source: "promotional" }),
+  ]);
+  var failed = res.filter(function (x) { return x.status === "rejected"; });
+  check("redacted-error: every racing write still lands (state-agnostic retry)", failed.length === 0);
+
+  var v = await f.credit.verifyChain(cust);
+  check("redacted-error: chain verifies end to end", v.ok === true && v.rows_verified === 4);
+  check("redacted-error: balance is the net of all writes",
+        (await f.credit.balance(cust)).balance_minor === 10000 + 500 - 1500 + 700);
+}
+
 async function run() {
   await _creditDebitBalanceDerivation();
   await _debitOverdraftRefused();
@@ -606,6 +707,9 @@ async function run() {
   await _cleanupExpiredWalksExpiredRows();
   await _cleanupExpiredIgnoresOperatorExpires();
   await _cleanupExpiredConcurrentSweepNeverOverBurns();
+  await _chainUnforkedUnderConcurrency();
+  await _allNullChainFailsVerification();
+  await _chainConvergesUnderRedactedErrors();
   await _validation();
   await _exportedConstants();
 }
