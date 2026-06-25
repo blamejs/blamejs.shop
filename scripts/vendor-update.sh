@@ -138,8 +138,15 @@ _refresh_blamejs() {
   # unpacked tree.
   node scripts/stamp-vendor-integrity.js
 
+  # Project the freshly-updated MANIFEST into the committed vendored
+  # SBOM so the parent SBOM's component versions can never silently
+  # fall behind the vendored tree. The `vendored-sbom-in-sync` smoke
+  # gate (build-vendored-sbom.js --check) fails the build on drift —
+  # the same protection the CHANGELOG / rollup / asset-manifest carry.
+  node scripts/build-vendored-sbom.js --rebuild
+
   echo "[vendor] blamejs vendored at lib/vendor/blamejs/ ($tag)"
-  echo "[vendor] MANIFEST.json updated + integrity-stamped"
+  echo "[vendor] MANIFEST.json updated + integrity-stamped + SBOM projected"
   echo ""
   echo "Verify the smoke gate:    node test/smoke.js"
   echo "Then commit:              git add lib/vendor/ && git commit -m 'vendor: refresh blamejs to $tag'"

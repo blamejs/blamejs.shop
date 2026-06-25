@@ -54,3 +54,9 @@ themes/**/*.js text eol=lf
 # and fail the diff against the LF rebuild.
 lib/asset-manifest.json text eol=lf
 worker/asset-manifest.json text eol=lf
+
+# The vendored-dependency SBOM is a committed, byte-compared derived
+# artifact (smoke `build-vendored-sbom.js --check` diffs the committed
+# file against the LF-emitting rebuild). Pin LF so a Windows checkout
+# doesn't smudge it to CRLF and trip the drift gate.
+sbom.vendored.cdx.json text eol=lf

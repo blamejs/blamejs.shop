@@ -59,6 +59,14 @@ cosign verify-blob sbom.cdx.json \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 ```
 
+`sbom.vendored.cdx.json` is committed to the repository and generated
+as a deterministic projection of `lib/vendor/MANIFEST.json`. The vendor
+refresh regenerates it, and a build gate (`build-vendored-sbom.js
+--check`) fails if it drifts from the vendored manifest, so the signed
+SBOM you verify is byte-reproducible from the committed source — its
+component versions can never silently fall behind what ships under
+`lib/vendor/`.
+
 ### 4. Byte digests + ML-DSA-65 signature (PQC-first)
 
 The release tarball ships with three digest / signature sidecars
