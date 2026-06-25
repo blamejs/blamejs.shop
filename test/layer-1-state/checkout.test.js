@@ -28,7 +28,8 @@ var check   = helpers.check;
 var assert  = helpers.assert;
 
 var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0206_orders_email_hash.sql",
-  "0218_stripe_webhook_events.sql"].map(function (f) {
+  "0218_stripe_webhook_events.sql",
+  "0067_coupon_stacking.sql", "0107_auto_discount.sql", "0209_auto_discount_unlock_code.sql", "0231_auto_discount_application_unique.sql"].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
 
@@ -469,6 +470,107 @@ async function _stripeRefundMirrorRecordsOwnAmount() {
     (await s.order.refundedTotalMinor(orderId)) === 3000);
 }
 
+// ---- coupon-stacking governs code-gated discounts at checkout ----------
+
+// A checkout that composes the couponStacking governor must not let two
+// code-gated rules stack past a policy that forbids it. The fix wires the
+// governor into checkout.create and narrows the presented codes to the
+// policy-approved subset BEFORE the discount engine sums them.
+async function _couponStackingHonoredAtCheckout() {
+  var query   = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query });
+  var cart    = bShop.cart.create({ query: query, catalog: catalog });
+  var order   = bShop.order.create({ query: query });
+  var tax     = bShop.tax.create({ rules: [] });
+  var shipping = bShop.shipping.create({ services: [
+    { id: "std", label: "Standard", zones: [{ country: "US", flat_amount_minor: 0 }] },
+  ]});
+  var payment        = _fakePayment("whsec_test_cs");
+  var autoDiscount   = bShop.autoDiscount.create({ query: query });
+  var couponStacking = bShop.couponStacking.create({ query: query });
+
+  // Two independent code-gated rules, each a fixed amount off the total.
+  await autoDiscount.defineRule({
+    slug: "save-five", title: "Save 5",
+    trigger: { kind: "cart_total_min", min_minor: 0 },
+    value:   { kind: "amount_off_total", minor: 500 },
+    unlock_code: "SAVEFIVE",
+  });
+  await autoDiscount.defineRule({
+    slug: "save-seven", title: "Save 7",
+    trigger: { kind: "cart_total_min", min_minor: 0 },
+    value:   { kind: "amount_off_total", minor: 700 },
+    unlock_code: "SAVESEVEN",
+  });
+
+  var p = await catalog.products.create({ slug: "cs-test", title: "CS Test", status: "active" });
+  var v = await catalog.variants.create(p.id, { sku: "CS-1", weight_grams: 100, requires_shipping: false });
+  await catalog.prices.set(v.id, { currency: "USD", amount_minor: 5000 });
+  var sid = bShop.framework.uuid.v7();
+  var c = await cart.create(sid, { currency: "USD" });
+  await cart.addLine(c.id, { variant_id: v.id, qty: 1 });
+  var shipTo = { country: "US", state: "TX", postal: "75001" };
+
+  // (a) No governor wired → both code-gated discounts stack (the
+  //     pre-fix behaviour). This proves both codes + rules genuinely
+  //     apply, so the governed case below is a real narrowing, not a
+  //     rule that never fired.
+  var coOpen = bShop.checkout.create({
+    catalog: catalog, cart: cart, pricing: bShop.pricing,
+    tax: tax, shipping: shipping, payment: payment, order: order,
+    autoDiscount: autoDiscount,
+  });
+  var qOpen = await coOpen.quote({
+    cart_id: c.id, ship_to: shipTo, selected_shipping_id: "std",
+    codes: ["SAVEFIVE", "SAVESEVEN"],
+  });
+  check("no governor: both code-gated discounts stack (1200)",
+    qOpen.totals.discount_minor === 1200);
+
+  // (b) Governor WIRED but NO policy defined → governance is opt-in, so
+  //     the codes still pass through unchanged (the cart accepted them;
+  //     checkout doesn't silently drop one without a governing policy).
+  var coGovNoPolicy = bShop.checkout.create({
+    catalog: catalog, cart: cart, pricing: bShop.pricing,
+    tax: tax, shipping: shipping, payment: payment, order: order,
+    autoDiscount: autoDiscount, couponStacking: couponStacking,
+  });
+  var qGovNoPolicy = await coGovNoPolicy.quote({
+    cart_id: c.id, ship_to: shipTo, selected_shipping_id: "std",
+    codes: ["SAVEFIVE", "SAVESEVEN"],
+  });
+  check("governor wired, no policy: codes pass through (1200)",
+    qGovNoPolicy.totals.discount_minor === 1200);
+
+  // (c) Governor wired with a non-combinable policy → only the first
+  //     presented code survives, so only its discount applies.
+  await couponStacking.definePolicy({
+    slug: "no-stack", title: "No stacking",
+    allow_combine: { with_other_codes: false },
+    max_codes_per_order: 1,
+  });
+  var coGoverned = bShop.checkout.create({
+    catalog: catalog, cart: cart, pricing: bShop.pricing,
+    tax: tax, shipping: shipping, payment: payment, order: order,
+    autoDiscount: autoDiscount, couponStacking: couponStacking,
+  });
+  var qGoverned = await coGoverned.quote({
+    cart_id: c.id, ship_to: shipTo, selected_shipping_id: "std",
+    codes: ["SAVEFIVE", "SAVESEVEN"],
+  });
+  check("governor: a non-combinable policy applies only the first code (500)",
+    qGoverned.totals.discount_minor === 500);
+
+  // (d) A single presented code is never narrowed — the governor is
+  //     consulted only when more than one code is offered.
+  var qSingle = await coGoverned.quote({
+    cart_id: c.id, ship_to: shipTo, selected_shipping_id: "std",
+    codes: ["SAVESEVEN"],
+  });
+  check("governor: a single code is unaffected (700)",
+    qSingle.totals.discount_minor === 700);
+}
+
 async function run() {
   await _quote();
   await _confirm();
@@ -481,6 +583,7 @@ async function run() {
   await _webhookBadSig();
   await _webhookReplayDefense();
   await _stripeRefundMirrorRecordsOwnAmount();
+  await _couponStackingHonoredAtCheckout();
 }
 
 module.exports = { run: run };
