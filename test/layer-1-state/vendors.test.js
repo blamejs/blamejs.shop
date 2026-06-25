@@ -580,8 +580,37 @@ async function _bShopHandleNotYetWired() {
     typeof bShop.framework.uuid.v7 === "function");
 }
 
+// Prod-redaction race regression: registerVendor's pre-check can MISS a
+// concurrent registration of the same slug, so the INSERT collides on the slug
+// PRIMARY KEY. Production redacts that to a bare "HTTP 500", so a message regex
+// would be blind — the wrapped INSERT re-reads by slug and surfaces the typed
+// VENDOR_SLUG_TAKEN instead of leaking the 500. Simulate the race: the first
+// slug pre-check returns empty (the competing insert hadn't landed when we
+// probed), the INSERT then collides and is redacted, and the post-error
+// re-read finds the winning row.
+async function _registerVendorRaceUnderRedactedError() {
+  var base = _makeQuery();
+  // The winning concurrent registration (already in the table).
+  await vendors.create({ query: base }).registerVendor(_validRegister());
+
+  var precheckMissed = false;
+  var racing = async function (sql, params) {
+    if (/SELECT[\s\S]*FROM vendors WHERE slug/i.test(sql) && !precheckMissed) {
+      precheckMissed = true;                 // pre-check probes before the race resolves → miss
+      return { rows: [], rowCount: 0 };
+    }
+    try { return await base(sql, params); }
+    catch (_e) { throw new Error("HTTP 500"); }   // redact the slug-PK collision, like prod
+  };
+  var v = vendors.create({ query: racing });
+  await assert.rejects(
+    v.registerVendor(_validRegister({ name: "Acme Two" })),
+    function (e) { return e && e.code === "VENDOR_SLUG_TAKEN"; });
+}
+
 async function run() {
   await _registerHappyAndRefusals();
+  await _registerVendorRaceUnderRedactedError();
   await _assignSkuUniqueAndLookup();
   await _fsmTransitions();
   await _updateAndImmutability();

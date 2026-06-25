@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.98",
+  "date": "2026-06-25",
+  "headline": "A concurrent vendor registration with the same slug now returns a typed duplicate error instead of leaking a raw database error",
+  "summary": "Registering a vendor checks whether the slug is already taken before inserting, then inserts. Two registrations of the same slug racing each other can both pass that pre-check, so the second insert collides on the slug primary key. That insert had no failure handling, so the raw database error surfaced — and in production, where the data layer redacts it to a generic 'HTTP 500', the caller got an opaque error rather than the typed 'slug already registered' it gets from the pre-check. The insert is now wrapped: on any failure it re-reads by slug, and if a row exists it raises the same typed duplicate error the pre-check raises, otherwise it re-throws. No configuration changes.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Racing vendor registrations surface a typed duplicate error, not a raw 500",
+          "body": "vendors.registerVendor pre-checks the slug and then inserts, but a concurrent registration of the same slug can slip past the pre-check and collide on the slug primary key. The insert is now wrapped to detect that state-agnostically — re-reading by slug after a failure and raising the same typed VENDOR_SLUG_TAKEN error the pre-check raises (rather than leaking the raw constraint error, which production redacts to a bare 500). Mirrors the assignSku duplicate handling."
+        }
+      ]
+    }
+  ]
+}
