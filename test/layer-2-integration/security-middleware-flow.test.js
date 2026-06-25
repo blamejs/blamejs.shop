@@ -376,6 +376,23 @@ async function _run() {
       smw.resolveProtocol({ headers: {}, socket: { encrypted: true } }) === "https");
     check("(h) resolveProtocol: malformed forwarded value falls back to the socket scheme",
       smw.resolveProtocol({ headers: { "x-forwarded-proto": "ftp" }, socket: {} }) === "http");
+
+    // (i) clientKey collapses an IPv6 client to its /64 bucket so one
+    // end-site can't rotate the low 64 bits to evade a per-IP limiter; IPv4
+    // is keyed verbatim, and a non-IP value falls back to itself.
+    var ck = function (ip) { return smw.clientKey({ headers: { "cf-connecting-ip": ip } }); };
+    check("(i) clientKey: two IPv6 addresses in one /64 share a bucket",
+      ck("2001:db8:1:2:dead:beef:0:1") === ck("2001:db8:1:2:0:0:0:99"));
+    check("(i) clientKey: IPv6 addresses in different /64s do NOT share a bucket",
+      ck("2001:db8:1:2::1") !== ck("2001:db8:9:9::1"));
+    check("(i) clientKey: an IPv4 client is keyed verbatim (one address = one host)",
+      ck("203.0.113.47") === "203.0.113.47");
+    check("(i) clientKey: an IPv4-mapped IPv6 keys as its dotted host",
+      ck("::ffff:203.0.113.47") === "203.0.113.47");
+    check("(i) clientKey: a non-IP value falls back to itself (own bucket, not the empty bucket)",
+      ck("garbage-header") === "garbage-header");
+    check("(i) clientKey: an unresolved client gets the 'unknown' bucket, never empty",
+      smw.clientKey({ headers: {} }) === "unknown");
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
