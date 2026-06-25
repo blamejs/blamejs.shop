@@ -365,6 +365,42 @@ async function _verifyAndPersistReplay() {
   check("no-idempotency rows do not dedupe",            Number(nNoKey) === 2);
 }
 
+// Prod-redaction regression for the state-agnostic replay detection. The
+// production D1 service-binding rewrites the SQLite "UNIQUE constraint failed"
+// text to a bare "HTTP 500", so the old `e.message.indexOf("UNIQUE")` gate was
+// blind in prod — a duplicate delivery would re-throw the 500 instead of
+// collapsing to a replay. Wrap the query so EVERY error surfaces as a bare
+// "HTTP 500" (exactly what the bridge does) and prove the unconditional
+// re-read still returns the replay.
+async function _verifyAndPersistReplayUnderRedactedError() {
+  var h = _makeQuery();
+  var redacting = async function (sql, params) {
+    try { return await h.query(sql, params); }
+    catch (_e) { throw new Error("HTTP 500"); }   // no "UNIQUE" text, like prod
+  };
+  var wr = webhookReceiver.create({ query: redacting });
+  var src = await wr.defineSource({ slug: "redact-src", active: true });
+  var secret = src.secret_plaintext;
+  var body = '{"event":"order.shipped","id":"evt_redact"}';
+  var ts   = Math.floor(Date.now() / 1000);
+  var sig  = _signThirdParty(secret, ts, body);
+  var input = {
+    source_slug:      "redact-src", secret_plaintext: secret, body: body,
+    signature_header: sig, timestamp_header: String(ts), idempotency_key: "evt_redact",
+  };
+  var first = await wr.verifyAndPersist(input);
+  check("redacted-error: first delivery persists (not a replay)",
+    first.ok === true && first.replay === false);
+  // The duplicate INSERT throws a bare "HTTP 500"; the re-read still finds the
+  // row and returns a replay (the old indexOf path would have re-thrown).
+  var second = await wr.verifyAndPersist(input);
+  check("redacted-error: duplicate collapses to a replay despite the bare HTTP 500",
+    second.ok === true && second.replay === true && second.event_id === first.event_id);
+  var n = h.db.prepare("SELECT COUNT(*) AS n FROM webhook_received_events WHERE source_slug = ?")
+    .get("redact-src").n;
+  check("redacted-error: only one row persisted", Number(n) === 1);
+}
+
 async function _rotateSecretGraceWindow() {
   var nowHolder = { value: 1700000000000 };
   var s = _setup(nowHolder);
@@ -715,6 +751,7 @@ async function run() {
   await _verifyAndPersistBadSignature();
   await _verifyAndPersistExpiredTimestamp();
   await _verifyAndPersistReplay();
+  await _verifyAndPersistReplayUnderRedactedError();
   await _rotateSecretGraceWindow();
   await _markProcessedFsm();
   await _bodySizeEnforcement();
