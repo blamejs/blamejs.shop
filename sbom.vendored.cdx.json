@@ -2,32 +2,32 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.6",
-  "serialNumber": "urn:uuid:a7710306-4c80-5049-b332-d45f6b30e1af",
+  "serialNumber": "urn:uuid:2d26f8f5-0ecb-585a-b1f5-0e64b42250fd",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-06-24T00:00:00Z",
+    "timestamp": "2026-06-25T00:00:00Z",
     "tools": [
       {
         "vendor": "blamejs.shop",
         "name": "build-vendored-sbom.js",
-        "version": "0.4.91"
+        "version": "0.4.92"
       }
     ],
     "component": {
-      "bom-ref": "root/@blamejs/blamejs-shop@0.4.91",
+      "bom-ref": "root/@blamejs/blamejs-shop@0.4.92",
       "type": "application",
       "name": "@blamejs/blamejs-shop",
-      "version": "0.4.91",
+      "version": "0.4.92",
       "description": "Vendored-dependency SBOM for @blamejs/blamejs-shop — describes what's under lib/vendor/ that doesn't appear in `npm sbom`."
     }
   },
   "components": [
     {
-      "bom-ref": "vendored/blamejs@0.15.20",
+      "bom-ref": "vendored/blamejs@0.15.23",
       "type": "library",
       "name": "blamejs",
-      "version": "0.15.20",
-      "purl": "pkg:generic/blamejs@0.15.20?vcs_url=https%3A%2F%2Fgithub.com%2Fblamejs%2Fblamejs",
+      "version": "0.15.23",
+      "purl": "pkg:generic/blamejs@0.15.23?vcs_url=https%3A%2F%2Fgithub.com%2Fblamejs%2Fblamejs",
       "scope": "required",
       "description": "Vendored under lib/vendor/blamejs/ (shallow git clone of release tag from github.com/blamejs/blamejs).",
       "licenses": [
