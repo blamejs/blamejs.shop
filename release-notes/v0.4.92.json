@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.92",
+  "date": "2026-06-25",
+  "headline": "Refresh the vendored framework to 0.15.23 — a state transition whose entry hook throws is now always recorded in the audit trail",
+  "summary": "Updates the vendored blamejs framework from 0.15.20 to 0.15.23. The behavioural change operators will notice is in the order, return, redemption, and dropship state machines, which compose the framework's finite-state-machine primitive: previously, if a destination state's entry hook threw, the state change committed but no audit record was written — leaving a privileged transition unaudited. The framework now always records the transition (stamped with a failure outcome and the hook error) and still re-raises the error, so a state change can never be silently unaudited. The refresh also carries upstream correctness and hardening work in primitives the storefront does not currently reach (a websocket-client reconnect fix, a cross-platform path-containment fix), plus additive primitives the application will adopt in follow-up changes. No configuration changes.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "State transitions are always audited, even when an entry hook fails",
+          "body": "The order, return, redemption, and dropship-forwarding state machines record every transition on the framework's tamper-evident audit chain. A transition whose destination entry hook threw previously committed the state change without emitting that record. The refreshed framework always writes the audit record — stamped with a failure outcome and the entry-hook error — and still re-raises the error to the caller, so a privileged state change is never left unaudited."
+        }
+      ]
+    }
+  ]
+}
