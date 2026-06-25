@@ -136,6 +136,8 @@ async function _runLayer(layerNum, layerName) {
   console.log("  " + _padRight("asset-manifest-in-sync", 40) + " (ok)");
   _gate("vendored-sbom-in-sync", "build-vendored-sbom.js", ["--check"]);
   console.log("  " + _padRight("vendored-sbom-in-sync", 40) + " (ok)");
+  _gate("node-floor-in-sync", "check-node-floor.js", ["--check"]);
+  console.log("  " + _padRight("node-floor-in-sync", 40) + " (ok)");
   _shellGate("vendor-drift", "bash scripts/vendor-update.sh --check");
   console.log("  " + _padRight("vendor-drift", 40) + " (ok)");
   // Vendored-tree integrity — recompute every vendored file's SHA-256 and

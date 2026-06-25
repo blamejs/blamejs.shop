@@ -9,6 +9,13 @@ lib/vendor/** -text binary
 # steps where bash chokes on CRLF with "$'\r': command not found".
 *.sh text eol=lf
 
+# The Node-version floor file is rewritten LF by check-node-floor.js
+# --rebuild (the vendor-refresh / release artifact-regen step that syncs
+# it to the vendored framework's engines.node). Pin LF so a Windows
+# checkout doesn't smudge it to CRLF and show a spurious diff after a
+# real floor bump.
+.nvmrc text eol=lf
+
 # Derived artifacts the release-notes generator owns end-to-end —
 # rebuild emits LF, so pin LF here too. Without this, Windows
 # checkouts get CRLF and the `--check` drift gate in smoke would have
