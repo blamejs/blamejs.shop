@@ -201,10 +201,8 @@ async function _activeSessionUniqueness() {
   await cart.create(sid, { currency: "USD" });
   // Second active cart on the same session is refused by the
   // partial UNIQUE index.
-  var threw = false;
-  try { await cart.create(sid, { currency: "USD" }); }
-  catch (_e) { threw = true; }
-  check("only one active cart per session", threw);
+  await assert.rejects(cart.create(sid, { currency: "USD" }),
+    /UNIQUE constraint failed/);
 }
 
 async function _mergeCart() {

@@ -424,10 +424,10 @@ async function _redeemReCreditsOnOrphanedInsert() {
   // Redeem the FULL balance — the debit zeroes the card and flips it to
   // 'redeemed' before the INSERT faults, so this also exercises the status
   // un-terminate on recovery.
-  var threw = false;
-  try { await gc.redeem({ code: issued.code, amount_minor: 5000 }); }
-  catch (_e) { threw = true; }
-  check("gc-orphan: redeem fails when the redemption row can't be written", threw);
+  await assert.rejects(
+    gc.redeem({ code: issued.code, amount_minor: 5000 }),
+    /redemption-insert failure/,
+  );
 
   var bal = await gc.balance(issued.code);
   check("gc-orphan: balance re-credited to full 5000",  bal && bal.balance_minor === 5000);
@@ -454,10 +454,10 @@ async function _redeemDeletesCommittedRowOnThrow() {
   var gc = bShop.giftcards.create({ query: commitThenThrowQuery });
 
   var issued = await gc.issue({ amount_minor: 5000, currency: "USD" });
-  var threw = false;
-  try { await gc.redeem({ code: issued.code, amount_minor: 5000 }); }
-  catch (_e) { threw = true; }
-  check("gc-committed-throw: redeem surfaces the error",      threw);
+  await assert.rejects(
+    gc.redeem({ code: issued.code, amount_minor: 5000 }),
+    /connection reset after the redemption row committed/,
+  );
 
   var bal = await gc.balance(issued.code);
   check("gc-committed-throw: balance re-credited to 5000",    bal && bal.balance_minor === 5000);

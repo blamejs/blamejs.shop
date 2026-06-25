@@ -672,10 +672,9 @@ async function _orphanedDebitRolledBackOnMintFailure() {
   var cid = _uuid();
   await loy.earn({ customer_id: cid, points: 1000, source: "order-paid" });
 
-  var threw = false;
-  try { await lr.redeemForCustomer({ customer_id: cid, reward_slug: "mint-fail" }); }
-  catch (_e) { threw = true; }
-  check("orphan-debit: mint failure propagates",          threw);
+  await assert.rejects(
+    lr.redeemForCustomer({ customer_id: cid, reward_slug: "mint-fail" }),
+    /coupon mint failed/);
   check("orphan-debit: points fully restored",            (await loy.balance(cid)).balance === 1000);
   var rows = h.db.prepare("SELECT COUNT(*) AS n FROM loyalty_redemptions WHERE customer_id = ?").all(cid);
   check("orphan-debit: no redemption row left behind",    Number(rows[0].n) === 0);
@@ -706,14 +705,60 @@ async function _lostCouponPersistRollsBack() {
   var cid = _uuid();
   await loy.earn({ customer_id: cid, points: 1000, source: "order-paid" });
 
-  var threw = false;
-  try { await lr.redeemForCustomer({ customer_id: cid, reward_slug: "lossy-link" }); }
-  catch (_e) { threw = true; }
-  check("coupon-persist-loss: redemption fails",          threw);
+  await assert.rejects(
+    lr.redeemForCustomer({ customer_id: cid, reward_slug: "lossy-link" }),
+    /persist coupon_code/);
   check("coupon-persist-loss: points restored",           (await loy.balance(cid)).balance === 1000);
   check("coupon-persist-loss: coupon WAS minted",         coupons.mints.length === 1);
   var rows = h.db.prepare("SELECT COUNT(*) AS n FROM loyalty_redemptions WHERE customer_id = ?").all(cid);
   check("coupon-persist-loss: no redemption row left",    Number(rows[0].n) === 0);
+}
+
+// One-shot fault injector sharing a single db across the loyalty +
+// loyalty-redemption instances: throws "HTTP 500" (the prod D1 bridge's
+// redacted error) the first time an ARMED statement matches, then passes
+// through. Arm it after setup so the fault lands on the operation under test.
+function _faultyFactory(matchRe) {
+  var h = _makeQuery();
+  var armed = { on: false };
+  var fq = async function (sql, params) {
+    if (armed.on && matchRe.test(sql)) { armed.on = false; throw new Error("HTTP 500"); }
+    return h.query(sql, params);
+  };
+  var loy = bShop.loyalty.create({ query: fq });
+  var lr = loyaltyRedemption.create({ query: fq, loyalty: loy, coupons: _fakeCoupons() });
+  return { loyalty: loy, lr: lr, arm: function () { armed.on = true; } };
+}
+
+// cancelRedemption flips status active→cancelled then refunds points via a
+// SEPARATE creditBalance statement (D1 has no interactive transactions). A
+// refund failure must REVERT the flip, not leave a 'cancelled' row that
+// refuses retry while the points were never returned. Inject a one-shot
+// failure on the refund's balance UPDATE: cancel throws, the redemption is
+// back to 'active', the balance is unrefunded, and a retry completes the
+// cancel + refund.
+async function _cancelRevertsStatusOnRefundFailure() {
+  var f = _faultyFactory(/UPDATE loyalty_accounts SET balance_points/i);
+  var cid = _uuid();
+  await f.lr.defineReward({ slug: "save-ten", kind: "discount_percent", title: "10% off", point_cost: 500, value_json: { percent: 10 }, active: true });
+  await f.loyalty.earn({ customer_id: cid, points: 1000, source: "order-paid" });
+  var r = await f.lr.redeemForCustomer({ customer_id: cid, reward_slug: "save-ten" });
+  check("cancel-revert: redeem debited to 500", (await f.loyalty.balance(cid)).balance === 500);
+
+  f.arm();
+  // The refund credit hits the injected fault, so cancelRedemption REJECTS
+  // with that exact error — asserted, not swallowed.
+  await assert.rejects(
+    f.lr.cancelRedemption({ redemption_id: r.redemption_id, reason: "operator-rollback" }),
+    /HTTP 500/,
+  );
+  check("cancel-revert: redemption reverted to active (not stranded cancelled)",
+        (await f.lr.getRedemption(r.redemption_id)).status === "active");
+  check("cancel-revert: balance unrefunded after the failed credit", (await f.loyalty.balance(cid)).balance === 500);
+
+  var cancelled = await f.lr.cancelRedemption({ redemption_id: r.redemption_id, reason: "operator-rollback" });
+  check("cancel-revert: retry cancels successfully", cancelled.status === "cancelled");
+  check("cancel-revert: retry refunds the points to 1000", (await f.loyalty.balance(cid)).balance === 1000);
 }
 
 async function run() {
@@ -726,6 +771,7 @@ async function run() {
   await _markConsumedFsm();
   await _cancelRefundsOnlyActive();
   await _cancelDoesNotInflateLifetime();
+  await _cancelRevertsStatusOnRefundFailure();
   await _updateAndArchiveReward();
   await _listAndPaginate();
 }

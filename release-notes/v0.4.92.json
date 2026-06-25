@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.92",
+  "date": "2026-06-24",
+  "headline": "A transient failure mid-loyalty-point-refund no longer strands the points — the operation reverts and can be retried",
+  "summary": "When a loyalty redemption is cancelled, or points a customer tendered are restored after their order is refunded, the operation first marks its progress (flips the redemption to cancelled, or advances a per-row restore fence) and then returns the points to the balance in a separate database write — there are no interactive transactions on the data layer, so these are distinct statements. If the point-credit step hit a transient failure (a dropped connection mid-operation), the progress marker was left advanced while the points were never returned, and because that marker is the idempotency guard, a retry refused or silently no-op'd — the points were stranded with no in-flow recovery. Each of these refund paths now reverts its progress marker when the credit fails, so the points stay where they were, the failure surfaces to the caller, and a retry completes the refund. Crediting before the marker is deliberately not the fix, since the credit step is not idempotent and a retry would double-credit. No configuration changes.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Cancelling a redemption reverts if the point refund fails",
+          "body": "loyaltyRedemption.cancelRedemption flipped the redemption to 'cancelled' and then credited the debited points back in a separate write. A failure on the credit left the redemption cancelled but the points unreturned, and a retry was refused (REDEMPTION_NOT_ACTIVE) — stranding the points. On a credit failure the status now reverts to 'active' so the operator's error surfaces and the cancellation can be retried to completion."
+        },
+        {
+          "title": "Restoring points after a refund reverts if the credit fails",
+          "body": "loyalty.restoreRedemption (the order-refund point restore) and loyalty.reverseRedemptionById (the checkout-died-before-order compensation) advanced their per-row restore fence before crediting the balance. A failure on the credit left the fence advanced while the points never landed, so a later pass computed a zero delta and skipped — permanently stranding the proportional restore (and the refund path invokes this detached, so the error was swallowed). Each now reverts the fence on a credit failure so the restore can be re-attempted and converges exactly on the points spent."
+        }
+      ]
+    }
+  ]
+}

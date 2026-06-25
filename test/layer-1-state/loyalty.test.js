@@ -443,11 +443,77 @@ async function _computeTierEdges() {
   check("default redemptionPointsPerUsd 100",   loy.REDEMPTION_POINTS_PER_USD === 100);
 }
 
+// One-shot fault injector: wraps a real query fn (over its own in-memory db)
+// and throws "HTTP 500" — the prod D1 bridge's redacted error text — the
+// first time an ARMED statement matches, then passes through. Arm it AFTER
+// the setup so the fault lands precisely on the operation under test.
+function _faultyQuery(matchRe) {
+  var q = _makeQuery();
+  var armed = { on: false };
+  var fq = async function (sql, params) {
+    if (armed.on && matchRe.test(sql)) { armed.on = false; throw new Error("HTTP 500"); }
+    return q(sql, params);
+  };
+  fq.arm = function () { armed.on = true; };
+  return fq;
+}
+
+// A claim/fence advanced before the balance credit must REVERT on a credit
+// failure, not strand the points behind the now-advanced fence. Inject a
+// one-shot failure on the balance-credit UPDATE: restoreRedemption throws,
+// the restored_points fence rolls back, the balance is unchanged, and a RETRY
+// (fault cleared) completes the restore instead of no-op'ing on a stuck fence.
+async function _restoreRevertsFenceOnCreditFailure() {
+  var q = _faultyQuery(/UPDATE loyalty_accounts SET balance_points/i);
+  var loy = bShop.loyalty.create({ query: q });
+  var cid = _uuid(), oid = _uuid();
+  await loy.earn({ customer_id: cid, points: 2000, source: "order-paid" });
+  await loy.redeem({ customer_id: cid, points: 2000, order_id: oid });
+  check("restore-revert: redeemed to 0", (await loy.balance(cid)).balance === 0);
+
+  q.arm();
+  // The credit hits the injected fault, so the operation REJECTS with that
+  // exact error — asserted, not swallowed: assert.rejects fails the test if it
+  // doesn't throw OR throws for a different reason.
+  await assert.rejects(
+    loy.restoreRedemption(oid, { refunded_minor: 2000, order_total_minor: 2000 }),
+    /HTTP 500/,
+  );
+  check("restore-revert: balance unchanged after the failed credit (not stranded)",
+        (await loy.balance(cid)).balance === 0);
+
+  var r = await loy.restoreRedemption(oid, { refunded_minor: 2000, order_total_minor: 2000 });
+  check("restore-revert: retry after the transient failure restores the points", r.restored_points === 2000);
+  check("restore-revert: balance restored to 2000", (await loy.balance(cid)).balance === 2000);
+}
+
+// Same fence-revert guarantee for the by-tx-id reversal (the checkout-died-
+// before-order compensation path).
+async function _reverseByIdRevertsFenceOnCreditFailure() {
+  var q = _faultyQuery(/UPDATE loyalty_accounts SET balance_points/i);
+  var loy = bShop.loyalty.create({ query: q });
+  var cid = _uuid();
+  await loy.earn({ customer_id: cid, points: 1000, source: "order-paid" });
+  var red = await loy.redeem({ customer_id: cid, points: 600, order_id: _uuid() });
+  check("reverse-revert: redeemed to 400", (await loy.balance(cid)).balance === 400);
+
+  q.arm();
+  await assert.rejects(loy.reverseRedemptionById(red.tx_id), /HTTP 500/);
+  check("reverse-revert: balance unchanged after the failed credit (not stranded)",
+        (await loy.balance(cid)).balance === 400);
+
+  var r = await loy.reverseRedemptionById(red.tx_id);
+  check("reverse-revert: retry restores the spent points", r.restored_points === 600);
+  check("reverse-revert: balance restored to 1000", (await loy.balance(cid)).balance === 1000);
+}
+
 async function run() {
   await _ensureAccount();
   await _earnAndTierPromotion();
   await _redeemAndInsufficientRefusal();
   await _restoreRedemptionDoesNotOverMintAcrossPasses();
+  await _restoreRevertsFenceOnCreditFailure();
+  await _reverseByIdRevertsFenceOnCreditFailure();
   await _adjustPositiveAndNegative();
   await _concurrentEarnAndAdjustAtomic();
   await _expireCapsAtBalance();
