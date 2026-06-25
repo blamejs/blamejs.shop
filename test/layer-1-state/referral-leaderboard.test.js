@@ -658,11 +658,45 @@ async function _validationSurface() {
   check("instance DEFAULT_THRESHOLDS",                 lb.DEFAULT_THRESHOLDS.platinum === 40);
 }
 
+// Prod-redaction regression for the re-award INSERT/catch path. awardLeaderboardBonus
+// PRE-CHECKS by (customer, period, tier) and returns already-awarded if the row
+// exists — so to reach the INSERT (and its catch) the pre-check must MISS, which
+// is exactly the concurrent-award race: the winner's row isn't observed at probe
+// time, the INSERT then collides on the UNIQUE key, and in production that error
+// is a bare "HTTP 500" (the D1 binding redacts the SQLite "UNIQUE constraint
+// failed" text). The old indexOf("UNIQUE") gate would have re-thrown; the
+// state-agnostic re-read must still return the existing row. Force the SECOND
+// award's pre-check to miss (the 2nd key-select), redact the INSERT error, and
+// let the catch's re-read (the 3rd key-select) find the row.
+async function _awardLeaderboardBonusDedupUnderRedactedError() {
+  var base = _makeQuery();
+  var keySelects = 0;
+  var q = async function (sql, params) {
+    if (/FROM referral_leaderboard_bonuses\s+WHERE customer_id/i.test(sql)) {
+      keySelects += 1;
+      if (keySelects === 2) return { rows: [], rowCount: 0 };   // 2nd award's pre-check → forced race miss
+      return base.query(sql, params);                           // 1st pre-check + the catch re-read run for real
+    }
+    try { return await base.query(sql, params); }
+    catch (_e) { throw new Error("HTTP 500"); }                 // redact the INSERT's UNIQUE collision, like prod
+  };
+  var lb = referralLeaderboard.create({ query: q, loyalty: _loyaltyStub() });
+  var input = { customer_id: _uuid(), tier: "gold", period_label: "2026-07" };
+  var first = await lb.awardLeaderboardBonus(input);
+  check("redacted-dedup: first award succeeds", first.status === "awarded");
+  // Second award: pre-check forced to miss → INSERT collides → bare HTTP 500 →
+  // the catch's re-read still finds the row and returns already-awarded.
+  var dup = await lb.awardLeaderboardBonus(input);
+  check("redacted-dedup: a redacted INSERT collision still resolves to already-awarded",
+    dup.status === "already-awarded" && dup.id === first.id && keySelects === 3);
+}
+
 async function run() {
   await _topReferrersRanksAndWindows();
   await _referralTierMapsThresholds();
   await _tierThresholdsConfig();
   await _awardLeaderboardBonusComposesLoyalty();
+  await _awardLeaderboardBonusDedupUnderRedactedError();
   await _awardRollsBackOnLoyaltyFailure();
   await _monthlyChampionsWindow();
   await _historyAndCleanup();
