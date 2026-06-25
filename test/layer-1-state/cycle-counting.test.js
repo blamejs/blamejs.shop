@@ -664,10 +664,10 @@ async function _finalizeRetryReopensAndReconciles() {
   });
 
   // First finalize aborts on WDG-2; WDG-1 already applied, count RE-OPENS.
-  var threw = false;
-  try { await raceCc.finalizeCount({ slug: "retry-cc", apply_adjustments: true }); }
-  catch (_e) { threw = true; }
-  check("cc retry: first finalize throws mid-loop", threw);
+  await assert.rejects(
+    raceCc.finalizeCount({ slug: "retry-cc", apply_adjustments: true }),
+    /simulated transient adjustStock failure/,
+  );
   var midHeader = await raceCc.getCount("retry-cc");
   check("cc retry: count re-opened to in_progress (NOT stranded finalized)",
     midHeader.status === "in_progress");

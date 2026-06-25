@@ -546,16 +546,14 @@ async function _signatureRoundTrip() {
 
   // Tampered payload — same signature, different body.
   var tampered = JSON.stringify({ id: "evt_1", amount: 999999 });
-  var threw = false;
-  try { await webhooks.verifyIncoming(tampered, header, secret); }
-  catch (_e) { threw = true; }
-  check("verifyIncoming refuses tampered payload", threw === true);
+  await assert.rejects(
+    webhooks.verifyIncoming(tampered, header, secret),
+    function (err) { return err && err.code === "webhook/bad-signature"; });
 
   // Wrong secret refused.
-  var threwSecret = false;
-  try { await webhooks.verifyIncoming(payload, header, "whsec_other"); }
-  catch (_e) { threwSecret = true; }
-  check("verifyIncoming refuses wrong secret", threwSecret === true);
+  await assert.rejects(
+    webhooks.verifyIncoming(payload, header, "whsec_other"),
+    function (err) { return err && err.code === "webhook/bad-signature"; });
 
   // Empty signature header refused at the entry tier.
   await assert.rejects(webhooks.verifyIncoming(payload, "", secret), /signatureHeader/);

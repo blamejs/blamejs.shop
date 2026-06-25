@@ -672,10 +672,9 @@ async function _orphanedDebitRolledBackOnMintFailure() {
   var cid = _uuid();
   await loy.earn({ customer_id: cid, points: 1000, source: "order-paid" });
 
-  var threw = false;
-  try { await lr.redeemForCustomer({ customer_id: cid, reward_slug: "mint-fail" }); }
-  catch (_e) { threw = true; }
-  check("orphan-debit: mint failure propagates",          threw);
+  await assert.rejects(
+    lr.redeemForCustomer({ customer_id: cid, reward_slug: "mint-fail" }),
+    /coupon mint failed/);
   check("orphan-debit: points fully restored",            (await loy.balance(cid)).balance === 1000);
   var rows = h.db.prepare("SELECT COUNT(*) AS n FROM loyalty_redemptions WHERE customer_id = ?").all(cid);
   check("orphan-debit: no redemption row left behind",    Number(rows[0].n) === 0);
@@ -706,10 +705,9 @@ async function _lostCouponPersistRollsBack() {
   var cid = _uuid();
   await loy.earn({ customer_id: cid, points: 1000, source: "order-paid" });
 
-  var threw = false;
-  try { await lr.redeemForCustomer({ customer_id: cid, reward_slug: "lossy-link" }); }
-  catch (_e) { threw = true; }
-  check("coupon-persist-loss: redemption fails",          threw);
+  await assert.rejects(
+    lr.redeemForCustomer({ customer_id: cid, reward_slug: "lossy-link" }),
+    /persist coupon_code/);
   check("coupon-persist-loss: points restored",           (await loy.balance(cid)).balance === 1000);
   check("coupon-persist-loss: coupon WAS minted",         coupons.mints.length === 1);
   var rows = h.db.prepare("SELECT COUNT(*) AS n FROM loyalty_redemptions WHERE customer_id = ?").all(cid);

@@ -368,11 +368,8 @@ async function _reviewsAbsent() {
   check("reviews-absent: reject route not mounted", !router._routes["POST /admin/reviews/:id/reject"]);
 
   var auth = { authorization: "Bearer " + TOKEN };
-  var threw = false;
-  try {
-    await router._call("GET", "/admin/reviews", { headers: auth });
-  } catch (_e) { threw = true; }
-  check("reviews-absent: calling the route throws (unregistered)", threw);
+  await assert.rejects(router._call("GET", "/admin/reviews", { headers: auth }),
+    /no route registered/);
 }
 
 // Seed one order so the return_authorizations.order_id FK has a
@@ -555,11 +552,8 @@ async function _returnsAbsent() {
   check("returns-absent: reject route not mounted",    !router._routes["POST /admin/returns/:id/reject"]);
 
   var auth = { authorization: "Bearer " + TOKEN };
-  var threw = false;
-  try {
-    await router._call("GET", "/admin/returns", { headers: auth });
-  } catch (_e) { threw = true; }
-  check("returns-absent: calling the route throws (unregistered)", threw);
+  await assert.rejects(router._call("GET", "/admin/returns", { headers: auth }),
+    /no route registered/);
 }
 
 // Seed one order from a (price, qty) pair so the reporting + document

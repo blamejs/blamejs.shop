@@ -35,6 +35,7 @@ var bShop        = require("../../lib");
 var autoDiscount = require("../../lib/auto-discount");
 var helpers      = require("../helpers");
 var check        = helpers.check;
+var assert       = helpers.assert;
 var b = bShop.framework;
 
 var MIGS = [
@@ -318,14 +319,12 @@ async function _run() {
   check("unknown code yields only the automatic discount", badCodeQuote.totals.discount_minor === 500);
 
   // A second active rule can't claim the same code (case-insensitive).
-  var dupClaim = false;
-  try {
-    await engine.defineRule({
+  await assert.rejects(
+    engine.defineRule({
       slug: "save7-dupe", title: "Dup", trigger: { kind: "cart_total_min", min_minor: 1 },
       value: { kind: "amount_off_total", minor: 100 }, unlock_code: "save7",
-    });
-  } catch (_e) { dupClaim = true; }
-  check("a second rule can't claim an active code", dupClaim);
+    }),
+    /already claimed by an active rule/);
 
   // ---- (g) a free_shipping rule WAIVES the charged shipping ----------
   // The engine flags free shipping; the checkout layer must zero the

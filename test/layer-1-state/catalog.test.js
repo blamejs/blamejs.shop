@@ -65,10 +65,8 @@ async function _products() {
   var p2 = await catalog.products.create({ slug: "draft-thing", title: "Draft Thing" });
   check("product.create defaults status=draft", p2.status === "draft");
 
-  var threw = false;
-  try { await catalog.products.create({ slug: "widget-pro", title: "Dupe" }); }
-  catch (_e) { threw = true; }
-  check("product.create unique slug enforced", threw);
+  await assert.rejects(catalog.products.create({ slug: "widget-pro", title: "Dupe" }),
+    /UNIQUE constraint failed/);
 
   await assert.rejects(catalog.products.create({ slug: "Has Spaces", title: "X" }),     /slug must match/);
   await assert.rejects(catalog.products.create({ slug: "widget",     title: "" }),       /title must be/);
@@ -181,9 +179,8 @@ async function _variants() {
   var bySku = await catalog.variants.bySku("VT-BLK-L");
   check("variant.bySku matches", bySku.id === v.id);
 
-  var threw = false;
-  try { await catalog.variants.create(p.id, { sku: "VT-BLK-L" }); } catch (_e) { threw = true; }
-  check("variant.create unique sku enforced", threw);
+  await assert.rejects(catalog.variants.create(p.id, { sku: "VT-BLK-L" }),
+    /UNIQUE constraint failed/);
 
   await assert.rejects(catalog.variants.create(p.id, { sku: "spaces in sku" }), /sku must match/);
 
