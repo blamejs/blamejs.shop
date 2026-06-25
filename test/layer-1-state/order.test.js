@@ -790,7 +790,14 @@ async function _historyInsertFailureStillSettles() {
     release:   async function () { return { ok: true }; },
     decrement: async function (sku, qty) { decremented.push({ sku: sku, qty: qty }); return { ok: true }; },
   };
-  var order = bShop.order.create({ query: q, inventory: inventory });
+  // The error feed is the durable recovery store the history-write failure
+  // falls back to (order_transitions is the only local home of a PayPal
+  // capture id, scanned by order.paypalCaptureId).
+  var captured = [];
+  var errorLog = {
+    captureServerError: async function (input) { captured.push(input); return { id: "e1", occurred_at: Date.now() }; },
+  };
+  var order = bShop.order.create({ query: q, inventory: inventory, errorLog: errorLog });
   var seed = await _seed(catalog, cart);
   var oi = _orderInput(seed);
   oi.lines[0].qty = 1;
@@ -799,7 +806,9 @@ async function _historyInsertFailureStillSettles() {
 
   armed = true;
   var settled = null, threw = null;
-  try { settled = await order.transition(o.id, "mark_paid", { reason: "stripe_succeeded" }); }
+  // A PayPal capture id rides in the transition metadata — the row that fails
+  // to write is where order.paypalCaptureId would later recover it from.
+  try { settled = await order.transition(o.id, "mark_paid", { reason: "paypal_captured", metadata: { paypal_capture_id: "PAYID-CAP-XYZ" } }); }
   catch (e) { threw = e; }
   armed = false;
 
@@ -807,6 +816,12 @@ async function _historyInsertFailureStillSettles() {
   check("history-fail: the order still advanced to paid", settled && settled.status === "paid");
   check("history-fail: the hold was STILL settled (decrement ran), not stranded",
     decremented.length === 1 && decremented[0].qty === 1);
+  // The capture metadata must NOT be silently lost — it is persisted to the
+  // durable error feed for reconciliation instead.
+  check("history-fail: the INSERT failure is captured to the error feed (not silent)",
+    captured.length === 1 && captured[0].status === 500);
+  check("history-fail: the captured row preserves the PayPal capture id + order for recovery",
+    captured[0].message.indexOf("PAYID-CAP-XYZ") !== -1 && captured[0].message.indexOf(o.id) !== -1);
 }
 
 async function run() {

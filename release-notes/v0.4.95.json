@@ -14,7 +14,7 @@
         },
         {
           "title": "A transient failure writing an order's history row no longer strands its stock hold",
-          "body": "After an order's status write committed, the order_transitions history row was inserted with no failure handling, ahead of the inventory settlement. A transient error on that insert aborted the call with the order already advanced, so the held stock was never debited or released; a webhook retry then found the order past its starting state, no-opped at the concurrency guard, and skipped settlement — leaving the hold stranded with no automatic recovery. The history row is now written best-effort (the state-machine audit is the authoritative record), so settlement always runs once the state change commits."
+          "body": "After an order's status write committed, the order_transitions history row was inserted with no failure handling, ahead of the inventory settlement. A transient error on that insert aborted the call with the order already advanced, so the held stock was never debited or released; a webhook retry then found the order past its starting state, no-opped at the concurrency guard, and skipped settlement — leaving the hold stranded with no automatic recovery. A history-row write failure no longer aborts settlement, so the hold always settles once the state change commits. Because that row is also where a PayPal capture id is recovered from, a write failure is not silently dropped: the row's full payload — including any capture metadata — is recorded to the durable error feed (and the audit chain) for reconciliation."
         }
       ]
     },
