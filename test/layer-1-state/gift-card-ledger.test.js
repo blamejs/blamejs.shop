@@ -357,12 +357,25 @@ async function _transactionsForOrder() {
   await f.ledger.debit ({ gift_card_id: cardB, amount_minor:  100, order_id: otherOid });
 
   var rows = await f.ledger.transactionsForOrder(orderId);
-  check("transactionsForOrder returns 2",   rows.length === 2);
-  // Credit rows have source_ref set to the order id but order_id
-  // column is NULL — only debits land in this lookup.
-  check("transactionsForOrder kind=debit",  rows.every(function (r) { return r.kind === "debit"; }));
+  check("transactionsForOrder returns the order's 2 debits", rows.length === 2);
+  // The `purchase` credits carry the order id only as the free-text
+  // source_ref, not the structured order_id column, so they stay out of
+  // this lookup — only the debits land.
+  check("transactionsForOrder debits only (purchase credits carry no order_id)",
+        rows.every(function (r) { return r.kind === "debit"; }));
   check("transactionsForOrder ids correct", (rows[0].gift_card_id === cardA && rows[1].gift_card_id === cardB)
                                              || (rows[0].gift_card_id === cardB && rows[1].gift_card_id === cardA));
+
+  // A refund_to_giftcard credit names the order it reverses via the
+  // structured order_id, so the money flowing BACK to the card now joins
+  // that order's settlement view alongside the debits — not just the
+  // source_ref correlation handle.
+  var refundCredit = await f.ledger.credit({ gift_card_id: cardA, amount_minor: 300, source: "refund_to_giftcard", source_ref: orderId, order_id: orderId });
+  check("refund credit carries the structured order link", refundCredit.order_id === orderId);
+  var rows2 = await f.ledger.transactionsForOrder(orderId);
+  check("transactionsForOrder now includes the refund credit", rows2.length === 3);
+  check("transactionsForOrder surfaces the refund_to_giftcard credit row",
+        rows2.some(function (r) { return r.kind === "credit" && r.source === "refund_to_giftcard" && r.amount_minor === 300; }));
 
   // Unknown order id returns empty (not null).
   var none = await f.ledger.transactionsForOrder(_uuid());
@@ -382,6 +395,7 @@ async function _validation() {
   await assert.rejects(f.ledger.credit({ gift_card_id: _uuid(),       amount_minor: -1, source: "manual" }), /amount_minor/);
   await assert.rejects(f.ledger.credit({ gift_card_id: _uuid(),       amount_minor: 1.5, source: "manual" }), /amount_minor/);
   await assert.rejects(f.ledger.credit({ gift_card_id: _uuid(),       amount_minor: 100, source: "bogus" }),  /source/);
+  await assert.rejects(f.ledger.credit({ gift_card_id: _uuid(),       amount_minor: 100, source: "manual", order_id: "not-a-uuid" }), /order_id/);
   await assert.rejects(f.ledger.credit({ gift_card_id: _uuid(),       amount_minor: 100 }),                  /source/);
   await assert.rejects(f.ledger.credit({ gift_card_id: _uuid(),       amount_minor: 100, source: "manual",
                                           source_ref: "" }),                                                  /source_ref/);

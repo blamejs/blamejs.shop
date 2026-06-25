@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.91",
+  "date": "2026-06-24",
+  "headline": "A gift-card refund is now linked to the order it reverses, so an order's gift-card settlement history is complete",
+  "summary": "When a refund returns money to a gift card (a cancelled or refunded order that had been paid with the card), the ledger credit now records the order it reverses in the structured order field, not only as a free-text reference. Previously a query for a given order's gift-card movements returned the debits that spent the card but not the refund credits that returned money to it, so the order's gift-card settlement history read as one-sided. The refund credit now carries the order link, so the order's gift-card history shows both the spend and the matching refund. No configuration changes, and existing gift-card behavior — balances, overdraft refusal, and the per-card tamper-evident hash chain — is unchanged.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Refund-to-gift-card credits carry the order they reverse",
+          "body": "giftCardLedger.credit now accepts an optional order_id, and the order-cancellation/refund path that returns a redeemed amount to a gift card passes the order it reverses. The ledger's transactionsForOrder(order_id) lookup keys on that structured field, so it now returns the refund credits flowing back to a card alongside the debits that drained it for the order — previously the credits were keyed only by a free-text reference and were absent from the lookup. Each refund credit still participates in the per-card hash chain (the order link is covered by the row hash), and credits with no associated order (promotional or manual top-ups) are unaffected."
+        }
+      ]
+    }
+  ]
+}
