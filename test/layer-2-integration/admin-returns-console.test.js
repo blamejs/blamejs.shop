@@ -225,7 +225,10 @@ async function _seedRefundableReturn(query, returns, ccyOpts) {
     order_id: orderId, reason: "defective",
     customer_notes: "Cracked.", lines: [{ sku: "WIDGET-1", qty: 1, order_line_id: lineId }],
   });
-  await returns.approve(rma.id, { refund_amount_minor: 5998, refund_currency: rmaCcy });
+  await returns.approve(rma.id, {
+    refund_amount_minor: ccyOpts.approve_amount_minor != null ? ccyOpts.approve_amount_minor : 5998,
+    refund_currency: rmaCcy,
+  });
   await returns.markReceived(rma.id, {});
   return { orderId: orderId, rmaId: rma.id, rmaCode: rma.rma_code, intent: intent };
 }
@@ -334,6 +337,19 @@ async function _runProviderRefund() {
     check("EUR confirm interstitial then 200",   eurConfirm.status === 200);
     check("interstitial shows the EUR charge currency", eurConfirm.body.indexOf("€59.98") !== -1 || eurConfirm.body.indexOf("€") !== -1);
     check("interstitial does NOT show the RMA's USD currency", eurConfirm.body.indexOf("$59.98") === -1);
+
+    // Over-refund pre-check: an RMA approved for MORE than the order's
+    // remaining refundable balance is refused cleanly (422) BEFORE the
+    // provider is dialed — mirroring the direct console's over-refund guard,
+    // not failing late at the PSP as a 502 provider error.
+    var callsBeforeOver = refundCalls.length;
+    var seededOver = await _seedRefundableReturn(query, returns, { approve_amount_minor: 9999 });
+    var overRefund = await helpers.httpRequest({ port: port, path: "/admin/returns/" + seededOver.rmaId + "/refund", method: "POST", headers: { authorization: "Bearer " + TOKEN }, form: {} });
+    check("over-cap RMA refund → clean 422 (not 502)", overRefund.status === 422);
+    check("over-cap RMA refund names the over-refund code", overRefund.body.indexOf("over-refund") !== -1);
+    check("over-cap RMA refund never dialed the provider", refundCalls.length === callsBeforeOver);
+    check("over-cap RMA ends back in received (claim taken then released)",
+      (await returns.get(seededOver.rmaId)).status === "received");
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
