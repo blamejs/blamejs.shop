@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.93",
+  "date": "2026-06-25",
+  "headline": "Per-IP rate limits now key an IPv6 client by its /64 prefix, closing an address-rotation bypass of the login, checkout, and webhook throttles",
+  "summary": "The request-throttling layer derived its per-client key from the full client IP address. For an IPv4 client that is one host, but an IPv6 end-site is allocated an entire /64 prefix (RFC 6177 / RFC 4291) and can freely rotate the low 64 bits, presenting a fresh address — and therefore a brand-new rate-limit bucket — on every request. That let a single IPv6 site walk straight through every per-IP ceiling: the global request limiter, the tight per-IP limiter on login / register / passkey / checkout, the PayPal webhook verification budget, and the per-IP captcha budget. The client key now collapses an IPv6 address to its routing-significant /64 (an IPv4 address is still keyed verbatim, and an IPv4-mapped IPv6 keys as its dotted host), so one end-site shares one bucket while distinct sites stay distinct. A value that is not a parseable IP falls back to itself, so two unidentifiable clients never collapse into one shared bucket. No configuration changes.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "IPv6 clients can no longer rotate addresses to bypass per-IP rate limits",
+          "body": "Every per-IP throttle — the global request limiter, the tight limiter on authentication and checkout routes, the PayPal webhook verification budget, and the captcha budget — keyed off the full client IP. An IPv6 client controls a whole /64 and could rotate the low 64 bits to mint an unlimited supply of fresh buckets, defeating each ceiling. The per-client key now masks an IPv6 address to its /64 prefix (IPv4 is unchanged), so a single end-site is held to one bucket. The fix lives in the client-key derivation itself, because the framework's rate-limit key mode is bypassed whenever a custom key function is supplied — as every limiter here does."
+        }
+      ]
+    }
+  ]
+}
