@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.94",
+  "date": "2026-06-25",
+  "headline": "A print-on-demand fulfillment status change is now an atomic claim — concurrent updates can no longer clobber each other or record a phantom transition",
+  "summary": "Advancing a print-on-demand fulfillment through its lifecycle (submitted → shipped / failed / cancelled) read the row's current status, validated the move in memory, and then wrote the new status with an UPDATE keyed on the row id alone. Two updates racing the same fulfillment — a worker marking it shipped while an operator marks it failed, or a re-delivered supplier webhook — both read the same starting status, both passed the in-memory check, and both wrote unconditionally, so the later write silently overwrote the earlier one's status and columns (a lost update), and each emitted a 'success' transition into the audit trail even though only one write reflected reality. The status write is now a single-statement atomic claim gated on the row still being in the state it was read in (the same compare-and-swap the dropship-forwarding and returns lifecycles already use): exactly one update wins, the loser changes zero rows and is refused, and the audit record is written only for the update that actually changed the row. No configuration changes.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Concurrent print-on-demand fulfillment transitions no longer clobber each other or log a phantom transition",
+          "body": "The fulfillment status update was keyed on the row id with no guard on the starting state, so two concurrent transitions both wrote unconditionally — last-writer-wins overwrote the other's status and stamped columns, and both emitted a 'success' transition audit. The update is now an atomic compare-and-swap gated on the row still being in the from-state, with the destination resolved side-effect-free and the audit emitted only on the winning write. The losing transition changes zero rows and is refused with a clear concurrency error instead of corrupting the record."
+        }
+      ]
+    }
+  ]
+}
