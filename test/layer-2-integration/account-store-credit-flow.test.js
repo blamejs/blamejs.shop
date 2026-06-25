@@ -35,7 +35,8 @@ var check   = helpers.check;
 
 var b = bShop.framework;
 
-var MIGS = ["0006_customers.sql", "0094_store_credit.sql"]
+var MIGS = ["0006_customers.sql", "0094_store_credit.sql",
+  "0235_store_credit_ledger_chain.sql", "0236_store_credit_ledger_chain_fence.sql"]
   .map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
