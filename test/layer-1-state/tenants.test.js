@@ -431,10 +431,58 @@ async function _listAndStats() {
   check("stats per_tenant globex status reflects FSM", globexRow.status === "paused");
 }
 
+// Prod-redaction regression — addDomain. addDomain does NOT pre-check the
+// domain (only the tenant), so _insertDomain's INSERT/catch IS the dedup. A
+// duplicate-domain collision surfaces in production as a bare "HTTP 500" (the
+// D1 binding redacts the SQLite "UNIQUE constraint failed" text), so the old
+// indexOf("UNIQUE") gate was blind there. Redact every error to "HTTP 500" and
+// prove the re-read still surfaces the typed TENANT_DOMAIN_DUPLICATE.
+async function _addDomainDuplicateUnderRedactedError() {
+  var base = _makeQuery();
+  var redacting = async function (sql, params) {
+    try { return await base(sql, params); }
+    catch (_e) { throw new Error("HTTP 500"); }   // redact the UNIQUE collision, like prod
+  };
+  var t = tenants.create({ query: redacting });
+  await t.defineTenant(_validDefine());
+  await t.addDomain("acme", "store.acme.com");
+  await assert.rejects(
+    t.addDomain("acme", "store.acme.com"),
+    function (e) { return e && e.code === "TENANT_DOMAIN_DUPLICATE"; });
+}
+
+// Prod-redaction regression — defineTenant. defineTenant PRE-CHECKS the slug
+// and throws TENANT_SLUG_DUPLICATE before the INSERT, so to reach the
+// INSERT/catch path (where the fix lives) the pre-check must MISS — the
+// concurrent-define race. Force the SECOND define's slug pre-check to miss (the
+// 2nd tenants-by-slug select), redact the INSERT collision, and let the catch's
+// re-read (the 3rd select) surface the typed slug duplicate.
+async function _defineTenantSlugDuplicateUnderRedactedError() {
+  var base = _makeQuery();
+  var slugSelects = 0;
+  var q = async function (sql, params) {
+    if (/SELECT \* FROM tenants WHERE slug/i.test(sql)) {
+      slugSelects += 1;
+      if (slugSelects === 2) return { rows: [], rowCount: 0 };   // 2nd define's pre-check → forced race miss
+      return base(sql, params);
+    }
+    try { return await base(sql, params); }
+    catch (_e) { throw new Error("HTTP 500"); }                  // redact the slug-UNIQUE collision
+  };
+  var t = tenants.create({ query: q });
+  await t.defineTenant(_validDefine());
+  await assert.rejects(
+    t.defineTenant(_validDefine({ primary_domain: "shop2.acme.com", alt_domains: [] })),
+    function (e) { return e && e.code === "TENANT_SLUG_DUPLICATE"; });
+  check("redacted slug-dup: the pre-check miss + INSERT + catch re-read all ran", slugSelects === 3);
+}
+
 async function run() {
   await _defineTenantHappyPath();
   await _defineTenantRefusals();
   await _addDomainUniqueRefusal();
+  await _addDomainDuplicateUnderRedactedError();
+  await _defineTenantSlugDuplicateUnderRedactedError();
   await _setPrimaryDomainUniqueness();
   await _resolveByHostNearestMatch();
   await _fsmTransitions();

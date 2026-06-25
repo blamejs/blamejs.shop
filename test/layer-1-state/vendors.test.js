@@ -608,10 +608,37 @@ async function _registerVendorRaceUnderRedactedError() {
     function (e) { return e && e.code === "VENDOR_SLUG_TAKEN"; });
 }
 
+// Prod-redaction regression — assignSku. assignSku PRE-CHECKS the sku and
+// throws VENDOR_SKU_TAKEN before the INSERT, so to reach the INSERT/catch path
+// (where the fix lives) the pre-check must MISS — the concurrent-assign race.
+// Force the SECOND assign's sku pre-check to miss, redact the INSERT collision,
+// and let the catch's re-read surface the typed duplicate.
+async function _assignSkuDuplicateUnderRedactedError() {
+  var base = _makeQuery();
+  var skuSelects = 0;
+  var q = async function (sql, params) {
+    if (/SELECT vendor_slug FROM vendor_skus WHERE sku/i.test(sql)) {
+      skuSelects += 1;
+      if (skuSelects === 2) return { rows: [], rowCount: 0 };   // 2nd assign's pre-check → forced race miss
+      return base(sql, params);
+    }
+    try { return await base(sql, params); }
+    catch (_e) { throw new Error("HTTP 500"); }                 // redact the sku-UNIQUE collision, like prod
+  };
+  var v = vendors.create({ query: q });
+  await v.registerVendor(_validRegister({ slug: "alpha", contact_email: "alpha@a.example" }));
+  await v.assignSku({ vendor_slug: "alpha", sku: "SKU-RACE-1" });
+  await assert.rejects(
+    v.assignSku({ vendor_slug: "alpha", sku: "SKU-RACE-1" }),
+    function (e) { return e && e.code === "VENDOR_SKU_TAKEN"; });
+  check("redacted sku-dup: the pre-check miss + INSERT + catch re-read all ran", skuSelects === 3);
+}
+
 async function run() {
   await _registerHappyAndRefusals();
   await _registerVendorRaceUnderRedactedError();
   await _assignSkuUniqueAndLookup();
+  await _assignSkuDuplicateUnderRedactedError();
   await _fsmTransitions();
   await _updateAndImmutability();
   await _recordCommissionMath();
