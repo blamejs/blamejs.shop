@@ -339,16 +339,19 @@ async function _run() {
     // deliveries under the budget all pass.
     var ppBudget = bShop.securityMiddleware.PAYPAL_WEBHOOK_BUDGET_PER_MINUTE;
     var ppHookIp = "198.51.100.210";
-    var ppOk = 0, pp429 = 0;
-    for (var pw = 0; pw < ppBudget + 5; pw += 1) {
-      var pk = await httpRequest({
+    // Fired concurrently (see _burst) so all ppBudget+5 deliveries land in one
+    // window: ~budget pass and the excess is 429'd, independent of how slow
+    // each outbound-dial round-trip is on the runner — a sequential loop here
+    // refilled the per-IP budget (~1 token / 6s) mid-burst and under-counted
+    // the 429s on a slow runner.
+    var ppResults = await _burst(ppBudget + 5, function (pw) {
+      return httpRequest({
         port: port, method: "POST", path: "/api/webhooks/paypal",
         headers: _hdr(ppHookIp, { "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors", "content-type": "application/json" }),
         body: JSON.stringify({ id: "WH-" + pw }),
       });
-      if (pk.status === 429) pp429 += 1;
-      else if (pk.status >= 200 && pk.status < 300) ppOk += 1;
-    }
+    });
+    var ppOk = _count2xx(ppResults), pp429 = _count429(ppResults);
     check("(g) paypal webhook: deliveries under the budget all pass", ppOk >= ppBudget - 5 && ppOk <= ppBudget + 5);
     check("(g) paypal webhook: spam past the budget is 429'd", pp429 >= 1);
     var ppOther = await httpRequest({
