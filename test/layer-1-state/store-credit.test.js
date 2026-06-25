@@ -695,6 +695,62 @@ async function _chainConvergesUnderRedactedErrors() {
         (await f.credit.balance(cust)).balance_minor === 10000 + 500 - 1500 + 700);
 }
 
+// A tail truncation (deleting the most-recent rows) leaves the remaining
+// prefix internally consistent, so a no-anchor verifyChain still reads ok —
+// the inherent blind spot of an append-only chain. A trusted anchor (count +
+// head snapshotted from an earlier verifyChain) closes it: a chain shorter
+// than the anchored count, or whose anchored row no longer carries the
+// snapshot head, is reported as a possible truncation. A later legitimate
+// append must NOT trip the anchor.
+async function _anchorDetectsTailTruncation() {
+  var f = _factory();
+  var cust = _uuid();
+  await f.credit.credit({ customer_id: cust, amount_minor: 5000, source: "refund", source_ref: _uuid() });
+  await f.credit.debit({ customer_id: cust, amount_minor: 1200, order_id: _uuid() });
+  await f.credit.credit({ customer_id: cust, amount_minor: 800, source: "goodwill" });
+  var snap = await f.credit.verifyChain(cust);
+  check("anchor: default verify reports total_rows + anchor_checked:false",
+        snap.ok === true && snap.total_rows === 3 && snap.anchor_checked === false);
+  var anchor = { count: snap.total_rows, head: snap.last_hash };
+
+  // A later legitimate append does not trip the anchor.
+  await f.credit.debit({ customer_id: cust, amount_minor: 600, order_id: _uuid() });
+  var grown = await f.credit.verifyChain(cust, { anchor: anchor });
+  check("anchor: later valid appends still pass", grown.ok === true && grown.anchor_checked === true);
+
+  // Attacker deletes the two most-recent rows — balance reverts and the
+  // chain drops below the anchored count.
+  f.db.prepare("DELETE FROM store_credit_ledger WHERE customer_id = ? AND id IN " +
+               "(SELECT id FROM store_credit_ledger WHERE customer_id = ? ORDER BY occurred_at DESC, id DESC LIMIT 2)").run(cust, cust);
+  check("anchor: truncation reverted the balance (the attack)",
+        (await f.credit.balance(cust)).balance_minor === 3800);
+  check("anchor: a no-anchor verify is blind to the truncation",
+        (await f.credit.verifyChain(cust)).ok === true);
+  var caught = await f.credit.verifyChain(cust, { anchor: anchor });
+  check("anchor: WITH the trusted anchor the truncation is caught",
+        caught.ok === false && caught.anchor_checked === true && /truncation/.test(caught.reason));
+}
+
+// The retry cap must accommodate a same-wallet write burst larger than a
+// handful: each fence round lets exactly one writer win, so N concurrent
+// writes need up to N rounds. Eight concurrent credits all land — none
+// dropped with STORE_CREDIT_CONTENTION — and the chain verifies end to end.
+// (This would lose writers under the old 5-attempt cap.)
+async function _burstBeyondFiveAllLand() {
+  var f = _factory();
+  var cust = _uuid();
+  var thunks = [];
+  for (var i = 0; i < 8; i += 1) {
+    thunks.push(f.credit.credit({ customer_id: cust, amount_minor: 100, source: "manual", source_ref: "burst-" + i }));
+  }
+  var res = await Promise.allSettled(thunks);
+  var failed = res.filter(function (x) { return x.status === "rejected"; });
+  check("burst>5: all eight concurrent credits land (none dropped)", failed.length === 0);
+  check("burst>5: balance sums all eight grants", (await f.credit.balance(cust)).balance_minor === 800);
+  var v = await f.credit.verifyChain(cust);
+  check("burst>5: chain verifies all eight rows", v.ok === true && v.rows_verified === 8);
+}
+
 async function run() {
   await _creditDebitBalanceDerivation();
   await _debitOverdraftRefused();
@@ -710,6 +766,8 @@ async function run() {
   await _chainUnforkedUnderConcurrency();
   await _allNullChainFailsVerification();
   await _chainConvergesUnderRedactedErrors();
+  await _anchorDetectsTailTruncation();
+  await _burstBeyondFiveAllLand();
   await _validation();
   await _exportedConstants();
 }

@@ -456,6 +456,7 @@ async function run() {
   await _concurrentWritesKeepChainUnforked();
   await _allNullChainFailsVerification();
   await _chainConvergesUnderRedactedErrors();
+  await _anchorDetectsTailTruncation();
   await _historyPagination();
   await _bulkBalance();
   await _expiringBalanceWindow();
@@ -562,6 +563,36 @@ async function _chainConvergesUnderRedactedErrors() {
   check("redacted-error: chain verifies end to end", v.ok === true && v.rows_verified === 4);
   check("redacted-error: balance is the net of all writes",
         (await ledger.balance(cardId)).balance_minor === 10000 + 500 - 1500 + 700);
+}
+
+// A tail truncation leaves the remaining prefix internally consistent, so a
+// no-anchor verifyChain still reads ok. A trusted anchor (count + head from
+// an earlier snapshot) catches a chain shorter than the anchored count, or
+// whose anchored row no longer carries the snapshot head — while a later
+// legitimate append does not trip it.
+async function _anchorDetectsTailTruncation() {
+  var h = _makeQuery();
+  var ledger = giftCardLedger.create({ query: h.query });
+  var cardId = bShop.framework.uuid.v7();
+  await ledger.credit({ gift_card_id: cardId, amount_minor: 5000, source: "purchase", source_ref: bShop.framework.uuid.v7() });
+  await ledger.debit({ gift_card_id: cardId, amount_minor: 1200, order_id: bShop.framework.uuid.v7() });
+  await ledger.credit({ gift_card_id: cardId, amount_minor: 800, source: "manual", source_ref: "topup" });
+  var snap = await ledger.verifyChain(cardId);
+  check("gc anchor: default verify reports total_rows + anchor_checked:false",
+        snap.ok === true && snap.total_rows === 3 && snap.anchor_checked === false);
+  var anchor = { count: snap.total_rows, head: snap.last_hash };
+
+  await ledger.debit({ gift_card_id: cardId, amount_minor: 600, order_id: bShop.framework.uuid.v7() });
+  var grown = await ledger.verifyChain(cardId, { anchor: anchor });
+  check("gc anchor: later valid appends still pass", grown.ok === true && grown.anchor_checked === true);
+
+  h.db.prepare("DELETE FROM gift_card_ledger WHERE gift_card_id = ? AND id IN " +
+               "(SELECT id FROM gift_card_ledger WHERE gift_card_id = ? ORDER BY occurred_at DESC, id DESC LIMIT 2)").run(cardId, cardId);
+  check("gc anchor: a no-anchor verify is blind to the truncation",
+        (await ledger.verifyChain(cardId)).ok === true);
+  var caught = await ledger.verifyChain(cardId, { anchor: anchor });
+  check("gc anchor: WITH the trusted anchor the truncation is caught",
+        caught.ok === false && caught.anchor_checked === true && /truncation/.test(caught.reason));
 }
 
 module.exports = { run: run };
