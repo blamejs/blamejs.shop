@@ -4184,6 +4184,11 @@ async function main() {
             giftcards: giftcards, giftCardLedger: giftCardLedger,
             loyalty: loyalty, quantityDiscounts: quantityDiscounts,
             autoDiscount: autoDiscount,
+            // The operator's code-stacking policy governs which presented
+            // codes may combine before the discount engine sums them, so
+            // two code-gated rules can't stack past a non-stackable /
+            // exclusive / over-cap policy on the charged price.
+            couponStacking: couponStacking,
             discountAllocation: discountAllocation,
             // Inbound Stripe webhook replay defense — every verified event
             // id is atomically recorded in D1 so a captured payload can't be
