@@ -145,8 +145,18 @@ _refresh_blamejs() {
   # the same protection the CHANGELOG / rollup / asset-manifest carry.
   node scripts/build-vendored-sbom.js --rebuild
 
+  # Sync every hand-maintained Node-version pin — the shop's own
+  # engines.node, .nvmrc, the Dockerfile base-image arg, the CI workflow
+  # node-version pins, and the "Node.js LTS (>= x.y.z)" line in
+  # README/ARCHITECTURE — to the freshly vendored framework's
+  # engines.node floor. A refresh that raises the framework's floor would
+  # otherwise leave the published engines advertising a Node older than
+  # the framework needs; the `node-floor-in-sync` smoke gate
+  # (check-node-floor.js --check) fails the build on any drift.
+  node scripts/check-node-floor.js --rebuild
+
   echo "[vendor] blamejs vendored at lib/vendor/blamejs/ ($tag)"
-  echo "[vendor] MANIFEST.json updated + integrity-stamped + SBOM projected"
+  echo "[vendor] MANIFEST.json updated + integrity-stamped + SBOM projected + Node-floor synced"
   echo ""
   echo "Verify the smoke gate:    node test/smoke.js"
   echo "Then commit:              git add lib/vendor/ && git commit -m 'vendor: refresh blamejs to $tag'"
