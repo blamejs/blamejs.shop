@@ -500,6 +500,53 @@ async function _factoryRefusals() {
   }
 }
 
+// The fulfillment transition is an atomic compare-and-swap on the row's
+// status: target() validates the edge in memory (per-instance, so two
+// concurrent transitions both pass it), and the guarded UPDATE
+// (... AND status = <from>) is the real serialization point. If a competing
+// writer advances the row between our read and our write, our UPDATE matches
+// zero rows and we REFUSE rather than clobber the winner's state + columns.
+// Simulate the race deterministically by moving the row mid-transition
+// through a one-shot query intercept.
+async function _fulfillmentTransitionClaimRefusesOnConcurrentMove() {
+  var q = _makeQuery();
+  var catalog = await _seedCatalog(q, ["TEE-BLK-L"]);
+  var pod = bShop.printOnDemand.create({ query: q, catalog: catalog });
+  await pod.bindSku(_validBinding());
+
+  var f = await pod.forwardOrder({
+    order_id: _orderId(), shipping_address: { country: "US" },
+    lines: [{ sku: "TEE-BLK-L", qty: 1 }],
+  });
+  var fid = f.fulfillment_ids[0];
+  await pod.markFulfillmentSubmitted({ pod_fulfillment_id: fid, supplier_order_id: "PF-RACE-1" });
+
+  // One-shot intercept: the FIRST time the guarded transition UPDATE is about
+  // to run, a competing writer advances submitted -> shipped, so the guarded
+  // UPDATE (... AND status = 'submitted') now matches zero rows.
+  var armed = true;
+  var racing = bShop.printOnDemand.create({
+    query: async function (sql, params) {
+      if (armed && /UPDATE pod_fulfillments SET status/.test(sql) && /AND status = /.test(sql)) {
+        armed = false;
+        await q("UPDATE pod_fulfillments SET status = 'shipped' WHERE id = ?1 AND status = 'submitted'", [fid]);
+      }
+      return q(sql, params);
+    },
+    catalog: catalog,
+  });
+
+  // markFulfillmentFailed read 'submitted' and resolved submitted -> failed,
+  // but the competing write moved the row to 'shipped' first, so the guarded
+  // claim matches zero rows and the transition is refused — not a clobber.
+  await assert.rejects(
+    racing.markFulfillmentFailed({ pod_fulfillment_id: fid, error: "supplier reject" }),
+    /concurrent|refused/);
+  var after = (await q("SELECT status FROM pod_fulfillments WHERE id = ?1", [fid])).rows[0];
+  check("race: losing transition refused, winner's state preserved (shipped, not failed)",
+    after && after.status === "shipped");
+}
+
 async function run() {
   await _bindSkuHappyPath();
   await _bindSkuRefusals();
@@ -508,6 +555,7 @@ async function run() {
   await _forwardOrderHappyPath();
   await _fulfillmentFsmTransitions();
   await _fulfillmentCancelAndFail();
+  await _fulfillmentTransitionClaimRefusesOnConcurrentMove();
   await _fulfillmentsForOrderOrdering();
   await _listBindingsPagination();
   await _factoryRefusals();
