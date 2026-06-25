@@ -432,8 +432,37 @@ async function _leaderboard() {
   await assert.rejects(refs.leaderboard({ limit: 101 }),  /limit/);
 }
 
+// Prod-redaction regression for the retry-on-collision loop. A code collision
+// surfaces in production as a bare "HTTP 500" (the D1 service-binding redacts
+// the SQLite "UNIQUE constraint failed" text), so the old indexOf("UNIQUE")
+// gate would have re-thrown instead of regenerating. Arm a one-shot redacted
+// failure on the first code INSERT and report that code as taken on the
+// re-read, and prove the loop regenerates and issueCode still resolves.
+async function _issueCodeRetriesUnderRedactedCollision() {
+  var base = _makeQuery();
+  var insertFailed = false;
+  var clashServed  = false;
+  var q = async function (sql, params) {
+    if (!insertFailed && /INSERT INTO referral_codes/.test(sql)) {
+      insertFailed = true;
+      throw new Error("HTTP 500");                 // redacted, no "UNIQUE" text
+    }
+    if (insertFailed && !clashServed && /FROM referral_codes WHERE code = /.test(sql)) {
+      clashServed = true;
+      return { rows: [{ id: "winner", code: params[0], status: "active" }] };   // the clash
+    }
+    return base(sql, params);
+  };
+  var refs = bShop.referrals.create({ query: q });
+  var c = await refs.issueCode({ referrer_customer_id: bShop.framework.uuid.v7() });
+  check("redacted-collision: issueCode still resolves (retry regenerated the code)",
+    typeof c.code === "string" && c.code.length === 8);
+  check("redacted-collision: the redacted insert failure + re-read both fired", insertFailed && clashServed);
+}
+
 async function run() {
   await _issueCode();
+  await _issueCodeRetriesUnderRedactedCollision();
   await _issueCodeValidation();
   await _inviteIdempotent();
   await _funnel();
