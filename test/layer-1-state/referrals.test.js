@@ -432,8 +432,40 @@ async function _leaderboard() {
   await assert.rejects(refs.leaderboard({ limit: 101 }),  /limit/);
 }
 
+// Prod-redaction regression for the retry-on-collision loop. A code collision
+// surfaces in production as a bare "HTTP 500" (the D1 service-binding redacts
+// the SQLite "UNIQUE constraint failed" text), so the old indexOf("UNIQUE")
+// gate would have re-thrown instead of regenerating. The first generated code
+// is held PERMANENTLY taken by a (simulated) concurrent winner: every INSERT
+// of that exact code is redacted-rejected and the re-read confirms it as taken.
+// So the loop can only succeed by REGENERATING a different code — proving both
+// that the redacted error still triggers a retry AND that the retry does not
+// re-use the colliding code (which would re-collide forever in prod).
+async function _issueCodeRetriesUnderRedactedCollision() {
+  var base = _makeQuery();
+  var firstCode = null;
+  var norm = function (s) { return String(s == null ? "" : s).toUpperCase(); };
+  var q = async function (sql, params) {
+    if (/INSERT INTO referral_codes/.test(sql)) {
+      if (firstCode === null) firstCode = params[2];
+      if (norm(params[2]) === norm(firstCode)) {
+        throw new Error("HTTP 500");               // the winner holds it; redacted, no "UNIQUE" text
+      }
+    }
+    if (firstCode !== null && /FROM referral_codes WHERE code = /.test(sql) && norm(params[0]) === norm(firstCode)) {
+      return { rows: [{ id: "winner", code: params[0], status: "active" }] };   // the re-read confirms the clash
+    }
+    return base(sql, params);
+  };
+  var refs = bShop.referrals.create({ query: q });
+  var c = await refs.issueCode({ referrer_customer_id: bShop.framework.uuid.v7() });
+  check("redacted-collision: issueCode resolves with a REGENERATED code (retry fired despite the bare HTTP 500)",
+    typeof c.code === "string" && c.code.length === 8 && norm(c.code) !== norm(firstCode));
+}
+
 async function run() {
   await _issueCode();
+  await _issueCodeRetriesUnderRedactedCollision();
   await _issueCodeValidation();
   await _inviteIdempotent();
   await _funnel();
