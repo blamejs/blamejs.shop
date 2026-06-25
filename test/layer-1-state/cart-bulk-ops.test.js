@@ -523,6 +523,32 @@ async function _factoryRefusals() {
   assert.throws(function () { cartBulkOps.create({ cart: {} }); }, /catalog handle required/);
 }
 
+// The bulk per-line quantity ceiling must match the cart primitive's, so a
+// line legitimately built up to cart.MAX_QTY via cart.addLine stays
+// bulk-addable (a hand-copied ceiling had drifted 10x lower).
+async function _bulkQtyCeilingMatchesCart() {
+  var ctx = _setup();
+  var v = await _seedCatalog(ctx.catalog);
+  var ceiling = bShop.cart.MAX_QTY;
+  check("cart exposes a positive integer per-line ceiling",
+    Number.isInteger(ceiling) && ceiling > 0);
+
+  // A line AT the cart ceiling bulk-adds (would have thrown at the old
+  // 10x-lower bulk cap).
+  var c1 = await ctx.cart.create(_newSessionId(), { currency: "USD" });
+  var r = await ctx.bulk.addLines({ cart_id: c1.id, lines: [{ sku: v.v1.sku, qty: ceiling }] });
+  check("bulk addLines accepts qty up to the cart ceiling", r.written === 1);
+  var lines = await ctx.cart.listLines(c1.id);
+  check("the bulk-added line persists at the cart ceiling", lines[0].qty === ceiling);
+
+  // One past the ceiling is refused, matching cart.addLine.
+  var c2 = await ctx.cart.create(_newSessionId(), { currency: "USD" });
+  await assert.rejects(
+    ctx.bulk.addLines({ cart_id: c2.id, lines: [{ sku: v.v1.sku, qty: ceiling + 1 }] }),
+    /positive integer/,
+  );
+}
+
 async function run() {
   await _addLinesHappyAndAtomic();
   await _replaceLines();
@@ -532,6 +558,7 @@ async function run() {
   await _splitCartByVendor();
   await _quoteForCart();
   await _factoryRefusals();
+  await _bulkQtyCeilingMatchesCart();
 }
 
 module.exports = { run: run };

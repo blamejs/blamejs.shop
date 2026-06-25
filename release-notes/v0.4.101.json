@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.101",
+  "date": "2026-06-25",
+  "headline": "Bulk cart operations now use the same per-line quantity ceiling as a normal add-to-cart, so a large line is no longer un-bulk-addable or silently reduced",
+  "summary": "The cart enforces a per-line quantity ceiling on every add-to-cart. The bulk-operations surface (bulk add and reorder) carried its own copy of that ceiling that had drifted ten times lower than the cart's. The mismatch meant a line legitimately built up to the cart's ceiling through normal add-to-cart could not be added to in bulk (the whole bulk batch was rejected), and a reorder of such a line silently clamped its quantity down instead of preserving it. Bulk operations now source the ceiling directly from the cart primitive, so the two always agree: the same quantity that add-to-cart accepts is accepted in bulk, and a reorder no longer quietly reduces a line. No configuration changes.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Bulk add and reorder share the cart's per-line quantity ceiling",
+          "body": "Bulk cart operations validated and clamped line quantities against their own ceiling, which was ten times lower than the one the cart applies on a normal add-to-cart. As a result a line whose quantity was legitimately built up to the cart's ceiling could not be bulk-added to — the entire batch was refused — and a reorder of that line silently clamped its quantity down rather than keeping it. The bulk surface now reads the ceiling from the cart primitive itself, so bulk add accepts exactly what add-to-cart accepts and a reorder preserves a line's quantity instead of reducing it."
+        }
+      ]
+    }
+  ]
+}
