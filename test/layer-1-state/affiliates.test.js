@@ -779,8 +779,36 @@ async function _updateAndPauseLifecycle() {
   check("reinstateAffiliate unknown -> null",    nullReinstate === null);
 }
 
+// Prod-redaction regression for the registerAffiliate code retry loop. A code
+// collision surfaces in production as a bare "HTTP 500" (the D1 service-binding
+// redacts the SQLite "UNIQUE constraint failed" text), so the old
+// indexOf("UNIQUE") gate would have re-thrown instead of regenerating. The
+// first generated code is held PERMANENTLY taken (every INSERT of it is
+// redacted-rejected and the re-read confirms it), so registration can only
+// succeed by REGENERATING a different code — proving the retry fires AND does
+// not re-use the collided code.
+async function _registerAffiliateRetriesUnderRedactedCollision() {
+  var base = _makeQuery();
+  var firstCode = null;
+  var q = async function (sql, params) {
+    if (/INSERT INTO affiliates /.test(sql)) {
+      if (firstCode === null) firstCode = params[1];               // code column
+      if (params[1] === firstCode) throw new Error("HTTP 500");    // the winner holds it; redacted, no "UNIQUE"
+    }
+    if (firstCode !== null && /SELECT id FROM affiliates WHERE code = /.test(sql) && params[0] === firstCode) {
+      return { rows: [{ id: "winner" }] };                         // the re-read confirms the clash
+    }
+    return base(sql, params);
+  };
+  var aff = affiliates.create({ query: q, cursorSecret: "affiliates-test-secret" });
+  var a = await aff.registerAffiliate(_validRegister());
+  check("redacted-collision: registerAffiliate resolves with a regenerated code (retry fired despite the bare HTTP 500)",
+    typeof a.code === "string" && a.code.length > 0 && a.code !== firstCode);
+}
+
 async function run() {
   await _registerHappyPath();
+  await _registerAffiliateRetriesUnderRedactedCollision();
   await _registerRefusals();
   await _commissionMath();
   await _attributionWindowExpiry();
