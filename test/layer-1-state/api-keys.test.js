@@ -393,8 +393,36 @@ async function _listForOwnerAndCleanup() {
   check("cleanupExpired idempotent",           second.swept === 0);
 }
 
+// Prod-redaction regression for the issueKey token retry loop. A token_hash
+// collision surfaces in production as a bare "HTTP 500" (the D1 service-binding
+// redacts the SQLite "UNIQUE constraint failed" text), so the old
+// indexOf("UNIQUE") gate would have re-thrown instead of regenerating. The
+// first generated token_hash is held PERMANENTLY taken (every INSERT of it is
+// redacted-rejected and the re-read confirms it), so issueKey can only succeed
+// by REGENERATING a different token — proving the retry fires under the
+// redacted error AND does not re-use the collided hash.
+async function _issueKeyRetriesUnderRedactedCollision() {
+  var h = _makeQuery();
+  var firstHash = null;
+  var q = async function (sql, params) {
+    if (/INSERT INTO api_keys/.test(sql)) {
+      if (firstHash === null) firstHash = params[5];               // token_hash column
+      if (params[5] === firstHash) throw new Error("HTTP 500");    // the winner holds it; redacted, no "UNIQUE"
+    }
+    if (firstHash !== null && /SELECT id FROM api_keys WHERE token_hash/.test(sql) && params[0] === firstHash) {
+      return { rows: [{ id: "winner" }] };                         // the re-read confirms the clash
+    }
+    return h.query(sql, params);
+  };
+  var ak = apiKeys.create({ query: q });
+  var issued = await ak.issueKey(_validIssue());
+  check("redacted-collision: issueKey resolves with a regenerated token (retry fired despite the bare HTTP 500)",
+    typeof issued.plaintext_token === "string" && TOKEN_RE.test(issued.plaintext_token));
+}
+
 async function run() {
   await _issueHappyPath();
+  await _issueKeyRetriesUnderRedactedCollision();
   await _issueRefusals();
   await _verifyHappyAndRefusals();
   await _rotateGracePeriod();

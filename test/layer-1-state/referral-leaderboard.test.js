@@ -658,11 +658,35 @@ async function _validationSurface() {
   check("instance DEFAULT_THRESHOLDS",                 lb.DEFAULT_THRESHOLDS.platinum === 40);
 }
 
+// Prod-redaction regression for the re-award dedup. A UNIQUE(customer, period,
+// tier) collision surfaces in production as a bare "HTTP 500" (the D1
+// service-binding redacts the SQLite "UNIQUE constraint failed" text), so the
+// old indexOf("UNIQUE") gate would have re-thrown instead of returning the
+// existing row. Redact EVERY error to "HTTP 500" and prove the second award
+// still collapses to already-awarded via the unconditional re-read.
+async function _awardLeaderboardBonusDedupUnderRedactedError() {
+  var base = _makeQuery();
+  var redacting = async function (sql, params) {
+    try { return await base.query(sql, params); }
+    catch (_e) { throw new Error("HTTP 500"); }   // redact the UNIQUE collision, like prod
+  };
+  var lb = referralLeaderboard.create({ query: redacting, loyalty: _loyaltyStub() });
+  var input = { customer_id: _uuid(), tier: "gold", period_label: "2026-07" };
+  var first = await lb.awardLeaderboardBonus(input);
+  check("redacted-dedup: first award succeeds", first.status === "awarded");
+  // The re-award's INSERT collides on the UNIQUE key; the error is a bare
+  // "HTTP 500", yet the re-read still finds the existing row.
+  var dup = await lb.awardLeaderboardBonus(input);
+  check("redacted-dedup: duplicate collapses to already-awarded despite the bare HTTP 500",
+    dup.status === "already-awarded" && dup.id === first.id);
+}
+
 async function run() {
   await _topReferrersRanksAndWindows();
   await _referralTierMapsThresholds();
   await _tierThresholdsConfig();
   await _awardLeaderboardBonusComposesLoyalty();
+  await _awardLeaderboardBonusDedupUnderRedactedError();
   await _awardRollsBackOnLoyaltyFailure();
   await _monthlyChampionsWindow();
   await _historyAndCleanup();
