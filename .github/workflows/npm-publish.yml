@@ -109,8 +109,11 @@ jobs:
         # check below relies on that filter.
         # Vendored SBOM (sbom.vendored.cdx.json) is the higher-value
         # artifact for downstream scanners — it describes what's
-        # actually shipping under lib/vendor/* read from MANIFEST.json,
-        # generated via `scripts/build-vendored-sbom.js`.
+        # actually shipping under lib/vendor/* read from MANIFEST.json.
+        # It is a COMMITTED, deterministic projection of MANIFEST.json
+        # (kept in sync by the vendor refresh + release artifact regen,
+        # guarded by the `vendored-sbom-in-sync` smoke gate), so here we
+        # only re-verify it matches the vendored manifest before signing.
         run: |
           # `npm sbom` walks the installed dep tree to emit components;
           # without a node_modules it errors with `ESBOMPROBLEMS missing:
@@ -119,7 +122,7 @@ jobs:
           # `--omit=dev` filter on `npm sbom` keeps the SBOM clean.
           npm install --no-audit --no-fund --ignore-scripts
           npm sbom --sbom-format=cyclonedx --sbom-type=application --omit=dev > sbom.cdx.json
-          node scripts/build-vendored-sbom.js > sbom.vendored.cdx.json
+          node scripts/build-vendored-sbom.js --check
           # Refuse the publish if any runtime dep snuck in. The
           # shop's zero-dep contract says lib/vendor/ holds
           # everything; runtime deps in package.json would silently

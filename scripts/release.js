@@ -173,7 +173,8 @@ function _regenArtifacts(opts) {
   }
   _run("node", ["scripts/generate-changelog-entry.js", "--rebuild"]);
   _run("node", ["scripts/generate-asset-manifest.js", "--rebuild"]);
-  _ok("CHANGELOG + asset-manifest regenerated");
+  _run("node", ["scripts/build-vendored-sbom.js", "--rebuild"]);
+  _ok("CHANGELOG + asset-manifest + vendored-SBOM regenerated");
 }
 
 function _verifyCommitSignature(label) {
@@ -262,6 +263,7 @@ function cmdPrepare(opts) {
   _run("node", ["scripts/generate-changelog-entry.js", "--check"]);
   _run("node", ["scripts/consolidate-release-notes.js", "--check"]);
   _run("node", ["scripts/generate-asset-manifest.js", "--check"]);
+  _run("node", ["scripts/build-vendored-sbom.js", "--check"]);
   // Currency gate — a stale pinned GitHub Action or vendored dependency fails
   // the cut with a paste-ready `uses: owner/repo@<sha>  # vX.Y.Z` line and every
   // file:line using it. Conscious deferral: RELEASE_ALLOW_STALE_PINS=1.
