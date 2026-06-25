@@ -901,10 +901,47 @@ async function _claimsRaceReleaseAndIdempotency() {
   check("recordApplication re-delivery counts once", recRule.redemptions_used === 1);
 }
 
+// Prod-redaction regression for the claim-reuse path. claimRedemption PRE-CHECKS
+// (rule_slug, order_id) and reuses the held claim before the INSERT, so to reach
+// the INSERT/catch path (where the fix lives) the pre-check must MISS — the
+// concurrent-claim race whose earlier rollback didn't finish. The conditional
+// INSERT then collides on UNIQUE(rule_slug, order_id), which production redacts
+// to a bare "HTTP 500"; the old regex gate would have re-thrown. Force the
+// SECOND claim's pre-check to miss, redact the collision, and let the catch's
+// re-read still reuse the held claim.
+async function _claimReuseUnderRedactedCollision() {
+  var base = _makeQuery();
+  var keySelects = 0;
+  var q = async function (sql, params) {
+    if (/SELECT id FROM auto_discount_applications WHERE rule_slug = \?1 AND order_id = \?2/i.test(sql)) {
+      keySelects += 1;
+      if (keySelects === 2) return { rows: [], rowCount: 0 };   // 2nd claim's pre-check → forced race miss
+      return base(sql, params);
+    }
+    try { return await base(sql, params); }
+    catch (_e) { throw new Error("HTTP 500"); }                 // redact the (rule_slug, order_id) collision
+  };
+  var ad = autoDiscount.create({ query: q });
+  await ad.defineRule({
+    slug: "reuse-rule", title: "Reuse",
+    trigger: { kind: "cart_total_min", min_minor: 100 },
+    value:   { kind: "amount_off_total", minor: 200 },
+  });
+  var first = await ad.claimRedemption({ rule_slug: "reuse-rule", claim_ref: "claim:race-1", savings_minor: 200 });
+  check("redacted-reuse: first claim succeeds", first.claimed === true && !first.reused);
+  // Retry the SAME claim_ref with the pre-check forced to miss: the conditional
+  // INSERT collides → bare HTTP 500 → the catch's re-read still reuses the held
+  // claim rather than re-reserving or leaking the 500.
+  var reuse = await ad.claimRedemption({ rule_slug: "reuse-rule", claim_ref: "claim:race-1", savings_minor: 200 });
+  check("redacted-reuse: a redacted collision still reuses the held claim",
+    reuse.claimed === true && reuse.reused === true && keySelects === 3);
+}
+
 async function run() {
   await _defineRuleHappy();
   await _defineRuleRefusals();
   await _claimsRaceReleaseAndIdempotency();
+  await _claimReuseUnderRedactedCollision();
   await _evalCartTotalMin();
   await _evalItemCountMin();
   await _evalSkuPurchase();
