@@ -586,8 +586,45 @@ async function _giftsForGiverPagination() {
   void ids;
 }
 
+// Prod-redaction regression for the purchaseGift token retry loop (MONEY). A
+// token_hash collision surfaces in production as a bare "HTTP 500" (the D1
+// service-binding redacts the SQLite "UNIQUE constraint failed" text), so the
+// old indexOf("UNIQUE") gate would have re-thrown instead of regenerating. The
+// first generated token_hash is held PERMANENTLY taken (every INSERT of it is
+// redacted-rejected and the re-read confirms it), so the purchase can only
+// succeed by REGENERATING a different token — proving the retry fires AND does
+// not re-use the collided hash. The money fields never change across retries.
+async function _purchaseGiftRetriesUnderRedactedCollision() {
+  var h = _makeQuery();
+  var firstHash = null;
+  var q = async function (sql, params) {
+    if (/INSERT INTO subscription_gifts/.test(sql)) {
+      if (firstHash === null) firstHash = params[8];               // token_hash column
+      if (params[8] === firstHash) throw new Error("HTTP 500");    // the winner holds it; redacted, no "UNIQUE"
+    }
+    if (firstHash !== null && /FROM subscription_gifts WHERE token_hash/.test(sql) && params[0] === firstHash) {
+      return { rows: [{ id: "winner", token_hash: firstHash, status: "pending" }] };   // re-read confirms the clash
+    }
+    return h.query(sql, params);
+  };
+  var sg = subscriptionGifts.create({ query: q, subscriptions: _fakeSubscriptions() });
+  var purchased = await sg.purchaseGift({
+    giver_customer_id:   _uuid(),
+    plan_id:             _uuid(),
+    recipient_email:     "alice@example.com",
+    cycles_purchased:    12,
+    total_charged_minor: 12000,
+    currency:            "USD",
+  });
+  check("redacted-collision: purchaseGift resolves with a regenerated token (retry fired despite the bare HTTP 500)",
+    typeof purchased.id === "string" && /^[A-Za-z0-9_-]{43}$/.test(purchased.token));
+  check("redacted-collision: the money fields are unchanged by the retry",
+    purchased.total_charged_minor === 12000 && purchased.cycles_purchased === 12 && purchased.currency === "USD");
+}
+
 async function run() {
   await _purchaseGiftShape();
+  await _purchaseGiftRetriesUnderRedactedCollision();
   await _redeemGiftHappy();
   await _redeemTwiceRefuses();
   await _redeemRaceSingleMint();
