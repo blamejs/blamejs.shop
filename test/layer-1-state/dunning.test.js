@@ -421,6 +421,20 @@ async function _attemptCapCancels() {
   check("attempt cap clears next_action_at", third[0].next_action_at == null);
   check("attempt cap end_reason is attempt_cap", third[0].end_reason === "attempt_cap");
 
+  // The cap fired on a send_reminder step, NOT an explicit
+  // cancel_subscription step — yet the enrollment closes 'cancelled'.
+  // The subscription-side cancel must still be composed, or the
+  // subscription keeps billing after dunning gives up. Verify
+  // exitDunning was composed and a cancel_subscription event recorded.
+  check("attempt cap composes subscription cancel (exitDunning)",
+    ctx.billing.calls.some(function (c) { return c.method === "exitDunning"; }));
+  var capEvents = await ctx.query(
+    "SELECT action, outcome FROM dunning_events WHERE enrollment_id = ?1 ORDER BY occurred_at",
+    [third[0].id],
+  );
+  check("attempt cap logs a cancel_subscription event",
+    capEvents.rows.some(function (e) { return e.action === "cancel_subscription"; }));
+
   // Explicit cancel_subscription action also closes the row.
   await ctx.dun.defineDunningPolicy({
     slug: "explicit-cancel",
