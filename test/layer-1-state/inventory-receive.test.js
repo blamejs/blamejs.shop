@@ -322,10 +322,10 @@ async function _reverseNoPhantomStock() {
   };
   failing.__db = q.__db;
   var receive2 = bShop.inventoryReceive.create({ query: failing, catalog: _stubCatalog(failing) });
-  var threw = false;
-  try { await receive2.reverse(d.id, { reason: "mid-loop failure" }); }
-  catch (_e) { threw = true; }
-  check("reverse with a mid-loop decrement failure throws", threw);
+  await assert.rejects(
+    receive2.reverse(d.id, { reason: "mid-loop failure" }),
+    /injected: second decrement failed/,
+  );
 
   var total = (await q("SELECT COALESCE(SUM(stock_on_hand),0) AS t FROM inventory WHERE sku IN ('WDG-PRO-BLK-L','WDG-PRO-RED-L')", [])).rows[0].t;
   check("reverse compensation mints no phantom stock (total unchanged)", Number(total) === preTotal);

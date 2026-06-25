@@ -234,6 +234,14 @@ var KNOWN_ANTIPATTERNS = [
     allowlist:   [],
   },
   {
+    id:          "test-catch-discard-failure-assertion",
+    scanScope:   "test",
+    multiline:   true,
+    description: "A failure-path test that catches the error into a throwaway boolean — a try whose catch binds an unused error and whose body only marks a flag, then checks that flag — discards the error, so the test passes on ANY throw (a setup bug, an early reject) and never asserts WHY it failed. Use assert.rejects(promise, /expected/) for an async rejection, or assert.throws(function () { ... }, /expected/) for a synchronous throw: both assert the operation fails AND for the expected reason, and need no caught variable. A catch that genuinely inspects the error (checks e.code / e.message) is not matched and is fine. Allow a deliberate exception with a per-line `// allow:test-catch-discard-failure-assertion — <reason>` marker.",
+    regex:       /catch\s*\(\s*[\w$]+\s*\)\s*\{\s*[\w$]+\s*=\s*true\s*;?\s*\}/,
+    allowlist:   [],
+  },
+  {
     id:          "console-direct",
     scanScope:   "lib",
     description: "`console.log/error/warn` direct call in lib/ — route through the framework's observability sink so operators can quiet / redirect / structured-log every emission point",

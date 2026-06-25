@@ -711,10 +711,10 @@ async function _finalizeRetryDoesNotDoubleApply() {
   await auditSvc.recordScanLine({ audit_id: audit.id, sku: "RT-B", location_code: "WH-EAST", counted_qty: 31, counter_id: "alice" });
 
   // First finalize aborts on RT-B; RT-A already applied, audit stays open.
-  var threw = false;
-  try { await auditSvc.finalizeAudit({ audit_id: audit.id, apply_adjustments: true }); }
-  catch (_e) { threw = true; }
-  check("retry: first finalize throws mid-loop",                 threw);
+  await assert.rejects(
+    auditSvc.finalizeAudit({ audit_id: audit.id, apply_adjustments: true }),
+    /simulated transient adjustStock failure/,
+  );
   check("retry: audit NOT finalized after mid-loop throw",       (await auditSvc.getAudit(audit.id)).status !== "finalized");
   var aMid = (await locSvc.stockForSku("RT-A")).by_location.find(function (l) { return l.code === "WH-EAST"; }).quantity;
   check("retry: RT-A applied once after first attempt (50->47)", aMid === 47);

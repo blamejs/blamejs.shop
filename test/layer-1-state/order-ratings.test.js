@@ -215,8 +215,7 @@ async function _uniqueOnOrderId() {
   // Verify the schema UNIQUE is actually present — a direct INSERT
   // bypassing the primitive trips the constraint at the driver layer
   // (belt-and-braces over the primitive-layer pre-check).
-  var threw = false;
-  try {
+  assert.throws(function () {
     f.db.prepare(
       "INSERT INTO order_ratings " +
       "(id, order_id, customer_id, shipping_rating, packaging_rating, recommend_rating, " +
@@ -224,10 +223,7 @@ async function _uniqueOnOrderId() {
       " response_text, response_actor, response_at, occurred_at) " +
       "VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, NULL, NULL, ?)",
     ).run(_uuid(), orderId, _uuid(), 3, 3, 3, null, Date.now());
-  } catch (_e) {
-    threw = true;
-  }
-  check("schema UNIQUE on order_id",     threw === true);
+  }, /UNIQUE constraint failed/);
 }
 
 // ---- ratingsForCustomer ordering ---------------------------------------

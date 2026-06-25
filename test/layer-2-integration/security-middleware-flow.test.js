@@ -41,6 +41,7 @@ var bShop   = require("../../lib");
 var b       = bShop.framework;
 var helpers = require("../helpers");
 var check   = helpers.check;
+var assert  = helpers.assert;
 var httpRequest = helpers.httpRequest;
 
 // Browser-shaped header set so bot-guard (a createApp default) passes;
@@ -362,10 +363,7 @@ async function _run() {
     check("(h) securityHeadersOpts owns the proto decision (protocolResolver, not trustProxy)",
       typeof smw.securityHeadersOpts().protocolResolver === "function" &&
       smw.securityHeadersOpts().trustProxy === undefined);
-    var headersCtorThrew = false;
-    try { b.middleware.securityHeaders(smw.securityHeadersOpts()); }
-    catch (_e) { headersCtorThrew = true; }
-    check("(h) securityHeaders constructs under the peer-gated contract (no throw)", !headersCtorThrew);
+    assert.doesNotThrow(function () { b.middleware.securityHeaders(smw.securityHeadersOpts()); });
     check("(h) resolveProtocol: forwarded https → https",
       smw.resolveProtocol({ headers: { "x-forwarded-proto": "https" }, socket: {} }) === "https");
     check("(h) resolveProtocol: forwarded http → http",

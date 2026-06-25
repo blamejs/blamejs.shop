@@ -215,18 +215,14 @@ async function _lawfulBasisTagging() {
 
   // The migration's CHECK rejects an out-of-set basis at the DB layer
   // for a row written after the ALTER.
-  var checkRejected = false;
-  try {
-    await ctx.query(
+  await assert.rejects(
+    ctx.query(
       "INSERT INTO consent_ledger " +
       "(id, customer_id, consent_kind, state, source, lawful_basis, occurred_at) " +
       "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
       [_uuid(), cust, "marketing_email", "granted", "system_default", "garbage", 1001],
-    );
-  } catch (_e) {
-    checkRejected = true;
-  }
-  check("DB CHECK rejects an out-of-set lawful_basis", checkRejected);
+    ),
+    /CHECK constraint failed/);
 }
 
 async function _currentStateReflectsLatest() {
