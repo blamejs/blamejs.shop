@@ -764,6 +764,51 @@ async function _reconciliationMissingTableDegrades() {
   check("missing-table scrub degrades to 0", wet.deleted === 0);
 }
 
+// The order_transitions history INSERT is a SEPARATE statement from the
+// status claim UPDATE (D1 has no interactive transactions). It is a
+// denormalized record — the fsm-namespace audit is the authoritative trail —
+// so a transient failure writing it must NOT abort the inventory settlement
+// that follows. Otherwise the hold strands: the status already committed to
+// paid, a webhook retry no-ops at the claim guard (status no longer pending),
+// and the shelf is never debited. Inject a one-shot failure on the
+// order_transitions INSERT and prove the order still advances AND the hold is
+// still settled.
+async function _historyInsertFailureStillSettles() {
+  var base = _makeQuery();
+  var armed = false;
+  var q = async function (sql, params) {
+    if (armed && /INSERT INTO order_transitions/i.test(sql)) {
+      armed = false;
+      throw new Error("HTTP 500");   // the prod D1 bridge's redacted transient error
+    }
+    return base(sql, params);
+  };
+  var catalog = bShop.catalog.create({ query: q });
+  var cart    = bShop.cart.create({ query: q, catalog: catalog });
+  var decremented = [];
+  var inventory = {
+    release:   async function () { return { ok: true }; },
+    decrement: async function (sku, qty) { decremented.push({ sku: sku, qty: qty }); return { ok: true }; },
+  };
+  var order = bShop.order.create({ query: q, inventory: inventory });
+  var seed = await _seed(catalog, cart);
+  var oi = _orderInput(seed);
+  oi.lines[0].qty = 1;
+  oi.lines[0].stock_held_qty = 1;
+  var o = await order.createFromCart(oi);
+
+  armed = true;
+  var settled = null, threw = null;
+  try { settled = await order.transition(o.id, "mark_paid", { reason: "stripe_succeeded" }); }
+  catch (e) { threw = e; }
+  armed = false;
+
+  check("history-fail: transition does NOT throw when the order_transitions INSERT fails", threw === null);
+  check("history-fail: the order still advanced to paid", settled && settled.status === "paid");
+  check("history-fail: the hold was STILL settled (decrement ran), not stranded",
+    decremented.length === 1 && decremented[0].qty === 1);
+}
+
 async function run() {
   await _create();
   await _happyPath();
@@ -775,6 +820,7 @@ async function run() {
   await _validation();
   await _settlementFailureIsCrashSafe();
   await _claimGuardLostRace();
+  await _historyInsertFailureStillSettles();
   await _newOrderObserver();
   await _guestOrderReconciliation();
   await _reconciliationMissingTableDegrades();
