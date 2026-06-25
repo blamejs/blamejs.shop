@@ -720,11 +720,44 @@ async function _concurrentReleaseHoldExactlyOnce() {
   check("concurrent releaseHold: balance is 0, not negative", (await f.credit.outstandingBalance(custId)).outstanding_minor === 0);
 }
 
+// An order with MORE THAN ONE charge/hold row (a hold + a later capture, or
+// an injected duplicate) must have its unpaid exposure computed PER ROW —
+// identically to agingReport's row-level payment FIFO — not by collapsing
+// the order into one slice at its first-charge time. Here a payment lands,
+// in time order, BETWEEN order A's two rows: a row-level FIFO pays A's first
+// row, then B, leaving A's second row unpaid (A unpaid = 100); an
+// order-collapsed model would mis-attribute and yield 50.
+async function _releaseHoldRowLevelMultiRowOrder() {
+  var f = _factory();
+  var custId = _uuid();
+  await f.credit.defineAccount({ customer_id: custId, credit_limit_minor: 100000, currency: "USD", payment_terms_days: 30, billing_cycle: "monthly" });
+  var a = _uuid(), bOrd = _uuid();
+  await f.credit.chargeOrder({ customer_id: custId, order_id: a,    amount_minor: 100, occurred_at: 1000 });
+  await f.credit.chargeOrder({ customer_id: custId, order_id: bOrd, amount_minor: 100, occurred_at: 2000 });
+  // A SECOND row for order A — a 'hold' the API does not currently emit;
+  // inserted directly to exercise the multi-row-per-order invariant.
+  f.db.prepare(
+    "INSERT INTO credit_transactions (id, customer_id, kind, order_id, amount_minor, balance_after_minor, payment_ref, occurred_at) " +
+    "VALUES (?, ?, 'hold', ?, 100, 300, NULL, 3000)"
+  ).run(_uuid(), custId, a);
+  check("multi-row setup: outstanding is 300", (await f.credit.outstandingBalance(custId)).outstanding_minor === 300);
+
+  await f.credit.recordPayment({ customer_id: custId, amount_minor: 150, payment_ref: "WIRE", occurred_at: 4000 });
+  check("multi-row: aging total equals balance (money conserved)",
+        (await f.credit.agingReport({ customer_id: custId, now: 5000 })).total_outstanding_minor === 150);
+
+  // releaseHold(A) must release A's ROW-LEVEL unpaid (its first row paid, its
+  // second row unpaid -> 100), NOT the order-collapsed 50.
+  var relA = await f.credit.releaseHold({ customer_id: custId, order_id: a });
+  check("multi-row: releaseHold caps at the order's row-level unpaid (100, not collapsed 50)", relA.amount_minor === 100);
+}
+
 async function run() {
   await _defineAccountBasics();
   await _chargeOrderUpToLimit();
   await _releaseHoldRestoresCredit();
   await _releaseHoldRespectsPaidExposure();
+  await _releaseHoldRowLevelMultiRowOrder();
   await _agingReportSeparatesReleaseFromPayment();
   await _concurrentReleaseHoldExactlyOnce();
   await _recordPaymentReducesBalance();
