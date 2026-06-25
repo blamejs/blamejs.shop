@@ -626,10 +626,140 @@ async function _monotonicOccurredAt() {
   check("backdated write still monotonic",  r4.occurred_at === stamp + 3);
 }
 
+// BUG-1 (HIGH money-loss): releaseHold must cap the release at the order's
+// UNPAID exposure, not its gross charge. Payments are revolving (order_id
+// NULL) and apply global-FIFO oldest-order-first; a release used to ignore
+// them, so in a multi-order account releasing a conceptually-paid order
+// consumed balance that belonged to OTHER orders' genuine unpaid charges.
+async function _releaseHoldRespectsPaidExposure() {
+  var f = _factory();
+  var custId = _uuid();
+  await f.credit.defineAccount({
+    customer_id: custId, credit_limit_minor: 100000, currency: "USD",
+    payment_terms_days: 30, billing_cycle: "monthly",
+  });
+  var a = _uuid(), bOrd = _uuid();
+  await f.credit.chargeOrder({ customer_id: custId, order_id: a,    amount_minor: 400, occurred_at: 1000 });
+  await f.credit.chargeOrder({ customer_id: custId, order_id: bOrd, amount_minor: 400, occurred_at: 2000 });
+  check("two-order outstanding is 800", (await f.credit.outstandingBalance(custId)).outstanding_minor === 800);
+  await f.credit.recordPayment({ customer_id: custId, amount_minor: 400, payment_ref: "WIRE-1", occurred_at: 3000 });
+  check("after payment outstanding is 400", (await f.credit.outstandingBalance(custId)).outstanding_minor === 400);
+
+  // The payment FIFO-covered the OLDER order A, so A's unpaid exposure is 0:
+  // releaseHold(A) must REFUSE and leave order B's genuine 400 debt intact.
+  // (The bug released 400, driving outstanding to 0 and erasing B's debt.)
+  var refused;
+  try { await f.credit.releaseHold({ customer_id: custId, order_id: a }); }
+  catch (e) { refused = e; }
+  check("releaseHold on a FIFO-paid order refuses", refused && refused.code === "CREDIT_RELEASE_NOT_FOUND");
+  check("order B's 400 debt is preserved", (await f.credit.outstandingBalance(custId)).outstanding_minor === 400);
+
+  // The genuinely-unpaid order B releases its full 400 exposure.
+  var relB = await f.credit.releaseHold({ customer_id: custId, order_id: bOrd });
+  check("the unpaid order releases its full exposure", relB.amount_minor === 400 && relB.balance_after_minor === 0);
+
+  // Partial payment: a payment smaller than the older order leaves a
+  // remainder; releaseHold releases only the unpaid part.
+  var f2 = _factory();
+  var c2 = _uuid();
+  await f2.credit.defineAccount({ customer_id: c2, credit_limit_minor: 100000, currency: "USD", payment_terms_days: 30, billing_cycle: "monthly" });
+  var x = _uuid(), y = _uuid();
+  await f2.credit.chargeOrder({ customer_id: c2, order_id: x, amount_minor: 400, occurred_at: 1000 });
+  await f2.credit.chargeOrder({ customer_id: c2, order_id: y, amount_minor: 400, occurred_at: 2000 });
+  await f2.credit.recordPayment({ customer_id: c2, amount_minor: 100, payment_ref: "WIRE-2", occurred_at: 3000 });
+  var relX = await f2.credit.releaseHold({ customer_id: c2, order_id: x });
+  check("partial-paid order releases only its unpaid remainder (300)", relX.amount_minor === 300);
+  check("after partial release, outstanding equals the still-unpaid order (400)",
+        (await f2.credit.outstandingBalance(c2)).outstanding_minor === 400);
+}
+
+// BUG-2 (MED): agingReport must net an order-scoped release against THAT
+// order's own charges, not pool it with order-agnostic payments into one
+// global FIFO drain — pooling let a release of a recent order settle the
+// oldest charge and mask a past-due balance as current.
+async function _agingReportSeparatesReleaseFromPayment() {
+  var MS_PER_DAY = 24 * 60 * 60 * 1000;
+  var f = _factory();
+  var custId = _uuid();
+  await f.credit.defineAccount({
+    customer_id: custId, credit_limit_minor: 100000, currency: "USD",
+    payment_terms_days: 30, billing_cycle: "monthly",
+  });
+  var now = 100 * MS_PER_DAY;
+  var oldOrd = _uuid(), recentOrd = _uuid();
+  await f.credit.chargeOrder({ customer_id: custId, order_id: oldOrd,    amount_minor: 400, occurred_at: now - 95 * MS_PER_DAY });
+  await f.credit.chargeOrder({ customer_id: custId, order_id: recentOrd, amount_minor: 400, occurred_at: now - 5 * MS_PER_DAY });
+  // Cancel the RECENT order — its release must net against its OWN charge,
+  // leaving the OLD delinquent charge in its past-due bucket.
+  await f.credit.releaseHold({ customer_id: custId, order_id: recentOrd });
+
+  var report = await f.credit.agingReport({ customer_id: custId, now: now });
+  check("aging: the delinquent old charge stays past-due, not masked as current",
+        report.buckets.d90_plus === 400 && report.buckets.current === 0);
+  check("aging: total equals the real outstanding balance (money conserved)",
+        report.total_outstanding_minor === (await f.credit.outstandingBalance(custId)).outstanding_minor);
+}
+
+// releaseHold stays a single atomic statement, so two concurrent releases of
+// the same order can't both write: exactly one releases its exposure, the
+// other re-evaluates against the committed row and refuses.
+async function _concurrentReleaseHoldExactlyOnce() {
+  var f = _factory();
+  var custId = _uuid();
+  await f.credit.defineAccount({ customer_id: custId, credit_limit_minor: 100000, currency: "USD", payment_terms_days: 30, billing_cycle: "monthly" });
+  var o = _uuid();
+  await f.credit.chargeOrder({ customer_id: custId, order_id: o, amount_minor: 500 });
+  var res = await Promise.allSettled([
+    f.credit.releaseHold({ customer_id: custId, order_id: o }),
+    f.credit.releaseHold({ customer_id: custId, order_id: o }),
+  ]);
+  var okRes = res.filter(function (x) { return x.status === "fulfilled"; });
+  var noRes = res.filter(function (x) { return x.status === "rejected"; });
+  check("concurrent releaseHold: exactly one releases", okRes.length === 1 && okRes[0].value.amount_minor === 500);
+  check("concurrent releaseHold: the other refuses", noRes.length === 1 && noRes[0].reason.code === "CREDIT_RELEASE_NOT_FOUND");
+  check("concurrent releaseHold: balance is 0, not negative", (await f.credit.outstandingBalance(custId)).outstanding_minor === 0);
+}
+
+// An order with MORE THAN ONE charge/hold row (a hold + a later capture, or
+// an injected duplicate) must have its unpaid exposure computed PER ROW —
+// identically to agingReport's row-level payment FIFO — not by collapsing
+// the order into one slice at its first-charge time. Here a payment lands,
+// in time order, BETWEEN order A's two rows: a row-level FIFO pays A's first
+// row, then B, leaving A's second row unpaid (A unpaid = 100); an
+// order-collapsed model would mis-attribute and yield 50.
+async function _releaseHoldRowLevelMultiRowOrder() {
+  var f = _factory();
+  var custId = _uuid();
+  await f.credit.defineAccount({ customer_id: custId, credit_limit_minor: 100000, currency: "USD", payment_terms_days: 30, billing_cycle: "monthly" });
+  var a = _uuid(), bOrd = _uuid();
+  await f.credit.chargeOrder({ customer_id: custId, order_id: a,    amount_minor: 100, occurred_at: 1000 });
+  await f.credit.chargeOrder({ customer_id: custId, order_id: bOrd, amount_minor: 100, occurred_at: 2000 });
+  // A SECOND row for order A — a 'hold' the API does not currently emit;
+  // inserted directly to exercise the multi-row-per-order invariant.
+  f.db.prepare(
+    "INSERT INTO credit_transactions (id, customer_id, kind, order_id, amount_minor, balance_after_minor, payment_ref, occurred_at) " +
+    "VALUES (?, ?, 'hold', ?, 100, 300, NULL, 3000)"
+  ).run(_uuid(), custId, a);
+  check("multi-row setup: outstanding is 300", (await f.credit.outstandingBalance(custId)).outstanding_minor === 300);
+
+  await f.credit.recordPayment({ customer_id: custId, amount_minor: 150, payment_ref: "WIRE", occurred_at: 4000 });
+  check("multi-row: aging total equals balance (money conserved)",
+        (await f.credit.agingReport({ customer_id: custId, now: 5000 })).total_outstanding_minor === 150);
+
+  // releaseHold(A) must release A's ROW-LEVEL unpaid (its first row paid, its
+  // second row unpaid -> 100), NOT the order-collapsed 50.
+  var relA = await f.credit.releaseHold({ customer_id: custId, order_id: a });
+  check("multi-row: releaseHold caps at the order's row-level unpaid (100, not collapsed 50)", relA.amount_minor === 100);
+}
+
 async function run() {
   await _defineAccountBasics();
   await _chargeOrderUpToLimit();
   await _releaseHoldRestoresCredit();
+  await _releaseHoldRespectsPaidExposure();
+  await _releaseHoldRowLevelMultiRowOrder();
+  await _agingReportSeparatesReleaseFromPayment();
+  await _concurrentReleaseHoldExactlyOnce();
   await _recordPaymentReducesBalance();
   await _agingReportBucketing();
   await _fsmTransitions();
