@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.114",
+  "date": "2026-06-26",
+  "headline": "A mid-cycle subscription downgrade now issues the proration credit the customer is owed instead of dropping it",
+  "summary": "When a subscription plan changed mid-billing-period to a cheaper plan, the credit for the outgoing plan's unused time exceeded the incoming plan's partial-period charge — and that net credit was silently discarded. The proration adjustment is recorded as a single invoice whose amount is the net of charge minus credit, and a negative net (the downgrade case) was clamped to zero with no mechanism to apply the remainder, so the customer lost the money they were owed. A mid-cycle downgrade now issues that owed credit to the customer's store-credit ledger. The plan-change component takes an optional storeCredit handle for this; when a downgrade owes a credit and no handle is wired, the change is refused (an immediate change throws before any state changes) or left pending (a scheduled change is skipped and retried on a later sweep) rather than applied with the credit lost. Upgrades and same-price changes are unchanged.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Mid-cycle plan downgrade credit is issued to store credit, not dropped",
+          "body": "A subscription plan change splits the proration into a charge (billed through the invoice ledger) and a credit (the unused remainder of the outgoing plan). For a downgrade the credit exceeds the charge, and the invoice — which can only carry a charge — clamped the negative net to zero, so the owed remainder was silently lost. The plan-change component now issues that remainder (proration credit minus the partial-period charge) to the customer's hash-chained store-credit ledger, correlated to the change that produced it and gated on the same atomic transition claim that prevents double application. The proration invoice still records the (zero) charge, so a downgrade never overcharges."
+        },
+        {
+          "title": "A downgrade with no credit vehicle is refused, not applied with the credit lost",
+          "body": "The plan-change component accepts an optional storeCredit handle. When a downgrade owes a credit but no handle is wired, an immediate change is refused before any row is written or plan transition is applied (the call throws), and a scheduled change is left pending and retried on a later sweep once a handle is available — never transitioned with the credit dropped. Operators composing the plan-change component should wire the store-credit handle to enable mid-cycle downgrades."
+        }
+      ]
+    }
+  ]
+}

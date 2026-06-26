@@ -150,6 +150,20 @@ function _subscriptionsHandle(query) {
   };
 }
 
+// Minimal store-credit capture handle (same injected-handle posture as
+// _subscriptionsHandle). Records every credit() call so a downgrade test
+// can assert the owed credit was issued with the right amount + source.
+function _storeCreditHandle() {
+  var calls = [];
+  return {
+    calls: calls,
+    credit: async function (input) {
+      calls.push(input);
+      return { id: "sc_" + calls.length, amount_minor: input.amount_minor };
+    },
+  };
+}
+
 function _setup(opts) {
   opts = opts || {};
   var q = _makeQuery();
@@ -161,12 +175,14 @@ function _setup(opts) {
       subscriptions: subs,
     });
   }
+  var sc = opts.with_store_credit ? _storeCreditHandle() : null;
   var pc = planChanges.create({
     query:               q,
     subscriptions:       subs,
     subscriptionBilling: bill,
+    storeCredit:         sc,
   });
-  return { query: q, pc: pc, bill: bill };
+  return { query: q, pc: pc, bill: bill, sc: sc };
 }
 
 // ---- 1. proration math --------------------------------------------------
@@ -319,6 +335,127 @@ async function _executeImmediateFsm() {
     subscription_id: seed.subscription_id,
     new_plan_id:     seed.plan_b_id,
   }), /pending change/);
+}
+
+// ---- 3b. mid-cycle downgrade issues the owed credit as store credit -----
+
+async function _downgradeIssuesStoreCredit() {
+  var ctx = _setup({ with_billing: true, with_store_credit: true });
+  var now = Date.now();
+  var customerId = _validUUID();
+  // Plan A (current) = 3000, plan B (target) = 1000 — a downgrade. Period
+  // [now-1000, now+9000] (10000ms); change_at = now → 9000ms (90%) remains.
+  //   credit = floor(3000 * 9000/10000) = 2700
+  //   charge = floor(1000 * 9000/10000) =  900
+  //   owed credit (credit - charge) = 1800; net charge clamps to 0.
+  var seed = await _seed(ctx.query, {
+    plan_a_amount: 3000,
+    plan_b_amount: 1000,
+    period_start:  now - 1000,
+    period_end:    now + 9000,
+    customer_id:   customerId,
+  });
+
+  var row = await ctx.pc.executeChange({
+    subscription_id: seed.subscription_id,
+    new_plan_id:     seed.plan_b_id,
+    change_at:       now,
+  });
+  check("downgrade status executed",       row.status === "executed");
+  check("downgrade proration credit 2700", row.proration_credit_minor === 2700);
+  check("downgrade proration charge 900",  row.first_charge_minor === 900);
+  check("downgrade flipped plan_id",
+    (await ctx.query("SELECT plan_id FROM subscriptions WHERE id = ?1", [seed.subscription_id])).rows[0].plan_id === seed.plan_b_id);
+
+  // The owed credit (2700 - 900 = 1800) was issued to store credit.
+  check("downgrade issued exactly one store credit",       ctx.sc.calls.length === 1);
+  check("downgrade store credit amount = credit - charge", ctx.sc.calls[0].amount_minor === 1800);
+  check("downgrade store credit customer",                 ctx.sc.calls[0].customer_id === customerId);
+  check("downgrade store credit source refund",            ctx.sc.calls[0].source === "refund");
+  check("downgrade store credit correlates the change",    ctx.sc.calls[0].source_ref === "subscription-downgrade:" + row.id);
+
+  // The proration invoice carries the clamped charge (0 here) — no overcharge.
+  var invoices = await ctx.bill.invoicesForSubscription(seed.subscription_id);
+  check("downgrade queued one proration invoice", invoices.length === 1);
+  check("downgrade invoice charge clamped to 0",  invoices[0].amount_minor === 0);
+}
+
+async function _downgradeWithoutStoreCreditThrows() {
+  var ctx = _setup({ with_billing: true });   // NO store-credit handle wired
+  var now = Date.now();
+  var seed = await _seed(ctx.query, {
+    plan_a_amount: 3000,
+    plan_b_amount: 1000,
+    period_start:  now - 1000,
+    period_end:    now + 9000,
+  });
+  // An immediate downgrade owes a credit but there is no vehicle to pay it
+  // — refuse BEFORE any state changes rather than drop the credit.
+  await assert.rejects(ctx.pc.executeChange({
+    subscription_id: seed.subscription_id,
+    new_plan_id:     seed.plan_b_id,
+    change_at:       now,
+  }), /downgrade owes/);
+  check("refused downgrade left subscription on plan A",
+    (await ctx.query("SELECT plan_id FROM subscriptions WHERE id = ?1", [seed.subscription_id])).rows[0].plan_id === seed.plan_a_id);
+  check("refused downgrade wrote no plan-change row",
+    Number((await ctx.query("SELECT COUNT(*) AS n FROM subscription_plan_changes WHERE subscription_id = ?1", [seed.subscription_id])).rows[0].n) === 0);
+}
+
+async function _scheduledDowngradeIssuesStoreCredit() {
+  var ctx = _setup({ with_billing: true, with_store_credit: true });
+  var now = Date.now();
+  var seed = await _seed(ctx.query, {
+    plan_a_amount: 3000,
+    plan_b_amount: 1000,
+    period_start:  now - 1000,
+    period_end:    now + 9000,
+    customer_id:   _validUUID(),
+  });
+  // Queue a FUTURE downgrade (within the period) → pending; no credit yet.
+  // effective_at = now+2000 → remaining 7000ms (70%):
+  //   credit = floor(3000*7000/10000)=2100, charge=floor(1000*7000/10000)=700
+  //   owed = 2100 - 700 = 1400
+  var pending = await ctx.pc.executeChange({
+    subscription_id: seed.subscription_id,
+    new_plan_id:     seed.plan_b_id,
+    change_at:       now + 2000,
+  });
+  check("scheduled downgrade pending",            pending.status === "pending");
+  check("scheduled downgrade no credit issued yet", ctx.sc.calls.length === 0);
+  // The scheduler clock catches up → the change executes + issues the credit.
+  var executed = await ctx.pc.applyScheduledChanges({ now: now + 3000 });
+  check("scheduler executed the downgrade",     executed.length === 1 && executed[0].status === "executed");
+  check("scheduler issued one store credit",    ctx.sc.calls.length === 1);
+  check("scheduler store credit amount = 1400", ctx.sc.calls[0].amount_minor === 1400);
+  check("scheduler store credit correlates the change", ctx.sc.calls[0].source_ref === "subscription-downgrade:" + pending.id);
+}
+
+async function _scheduledDowngradeWithoutStoreCreditStaysPending() {
+  var ctx = _setup({ with_billing: true });   // NO store-credit handle wired
+  var now = Date.now();
+  var seed = await _seed(ctx.query, {
+    plan_a_amount: 3000,
+    plan_b_amount: 1000,
+    period_start:  now - 1000,
+    period_end:    now + 9000,
+  });
+  // A future downgrade may QUEUE without a credit vehicle (the check fires
+  // at execution time, not proposal time).
+  var pending = await ctx.pc.executeChange({
+    subscription_id: seed.subscription_id,
+    new_plan_id:     seed.plan_b_id,
+    change_at:       now + 2000,
+  });
+  check("uncreditable scheduled downgrade queued pending", pending.status === "pending");
+  // The scheduler refuses to transition it (no vehicle) — leaves it pending
+  // rather than dropping the credit. It applies on a later sweep once wired.
+  var executed = await ctx.pc.applyScheduledChanges({ now: now + 3000 });
+  check("scheduler skipped the uncreditable downgrade", executed.length === 0);
+  check("uncreditable downgrade left pending",
+    (await ctx.query("SELECT status FROM subscription_plan_changes WHERE id = ?1", [pending.id])).rows[0].status === "pending");
+  check("uncreditable downgrade did not transition",
+    (await ctx.query("SELECT plan_id FROM subscriptions WHERE id = ?1", [seed.subscription_id])).rows[0].plan_id === seed.plan_a_id);
 }
 
 // ---- 4. cancelPendingChange refusal once executed -----------------------
@@ -597,6 +734,10 @@ async function run() {
   await _proposeImmediate();
   await _proposeNextCycle();
   await _executeImmediateFsm();
+  await _downgradeIssuesStoreCredit();
+  await _downgradeWithoutStoreCreditThrows();
+  await _scheduledDowngradeIssuesStoreCredit();
+  await _scheduledDowngradeWithoutStoreCreditStaysPending();
   await _concurrentImmediateNoDoubleProration();
   await _cancelPendingFsm();
   await _applyScheduledWindow();
