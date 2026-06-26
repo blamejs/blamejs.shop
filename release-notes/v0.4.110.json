@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.110",
+  "date": "2026-06-26",
+  "headline": "Inbound webhook bodies and external API responses are parsed through the size-bounded, prototype-pollution-stripping JSON primitive instead of a raw parse",
+  "summary": "The remaining places that parsed externally-supplied JSON with a raw JSON.parse — the Stripe and PayPal inbound webhook bodies, the captcha provider's verification response, and the Stripe / PayPal / R2 API responses — now route through the framework's safe-JSON parser, which strips prototype-pollution keys (\"__proto__\") and bounds parse depth, key count, and byte size. This matters most for the PayPal webhook body, which is parsed up front before its signature is verified, and for every inbound or provider response that previously had no size bound. An audit confirmed the rest of the app's JSON parsing already reads only values it wrote itself to the database (validated at write time) or already used the safe parser, so those are unchanged. Valid payloads parse identically; a malformed, prototype-pollution-laden, or oversized body is now defused. No configuration changes.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Externally-supplied JSON (webhook bodies, provider responses) is parsed with the safe-JSON primitive",
+          "body": "The inbound Stripe and PayPal webhook bodies, the captcha siteverify response, and the Stripe / PayPal / R2 API responses were parsed with a raw JSON.parse, which keeps a \"__proto__\" member as an own key and imposes no size bound. These now route through the framework's safe-JSON parser (prototype-pollution-key strip + depth / key / size caps), so an inbound or external payload can no longer carry a prototype-pollution gadget or force an unbounded parse — notably the PayPal webhook body, which is decoded before its signature is verified. The change is parse-only: valid payloads decode exactly as before, each call keeps its existing error fallback, and the rest of the app's JSON parsing (values it serialized to its own database, validated at write time) is left as-is."
+        }
+      ]
+    }
+  ]
+}
