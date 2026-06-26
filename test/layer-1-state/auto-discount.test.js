@@ -937,11 +937,43 @@ async function _claimReuseUnderRedactedCollision() {
     reuse.claimed === true && reuse.reused === true && keySelects === 3);
 }
 
+// #43: a NON-collision INSERT failure (a transient D1 error, not a UNIQUE
+// collision) must RETURN the total-cap reservation, never leak it. The catch's
+// re-read by (rule_slug, order_id) is definitive — no held row means the INSERT
+// did not land — so the increment taken before the INSERT is safely reversed
+// before the error re-throws, and a capped rule's redemptions_used never drifts
+// upward (which would make it hit its limit prematurely).
+async function _claimReservationReturnedOnNonCollisionThrow() {
+  var base = _makeQuery();
+  var q = async function (sql, params) {
+    if (/INSERT INTO auto_discount_applications/i.test(sql)) {
+      throw new Error("transient D1 failure (not a UNIQUE collision)");
+    }
+    return base(sql, params);
+  };
+  var ad = autoDiscount.create({ query: q });
+  await ad.defineRule({
+    slug: "cap-leak", title: "Cap leak",
+    trigger: { kind: "cart_total_min", min_minor: 0 },
+    value:   { kind: "amount_off_total", minor: 100 },
+    max_redemptions_total: 5,
+  });
+  await assert.rejects(
+    ad.claimRedemption({ rule_slug: "cap-leak", claim_ref: "claim:err-1", savings_minor: 100 }),
+    /transient/,
+  );
+  var used = Number((await base(
+    "SELECT redemptions_used FROM auto_discount_rules WHERE slug = ?1", ["cap-leak"],
+  )).rows[0].redemptions_used);
+  check("non-collision claim throw returns the reservation (redemptions_used stays 0)", used === 0);
+}
+
 async function run() {
   await _defineRuleHappy();
   await _defineRuleRefusals();
   await _claimsRaceReleaseAndIdempotency();
   await _claimReuseUnderRedactedCollision();
+  await _claimReservationReturnedOnNonCollisionThrow();
   await _evalCartTotalMin();
   await _evalItemCountMin();
   await _evalSkuPurchase();
