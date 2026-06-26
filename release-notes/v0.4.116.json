@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.116",
+  "date": "2026-06-26",
+  "headline": "Sales-tax filings net partial refunds and derive owed tax from the jurisdiction's default rate",
+  "summary": "Two correctness fixes to the sales-tax filing computation. A partial refund leaves its order in a paid / fulfilling / shipped / delivered status (there is no partially-refunded state), so the order still counts toward the filing for the period it sold in — but the filing counted the order's FULL tax and subtotal, ignoring the refunded portion, which over-stated collected tax and the amount remitted to the authority. A partial refund recorded inside the filing window now reduces that order's contribution to net taxable sales and net collected tax, apportioned across tax and subtotal by the order's own grand-total structure. Separately, the owed re-derivation attributed every order to the first rate row covering its date regardless of category, so a reduced category rate (e.g. food) defined alongside the jurisdiction's default rate in the same window could be applied to all revenue — and which rate won depended on the database's row order, making the owed figure wrong and non-deterministic. The owed re-derivation now models the jurisdiction's default (category-less) rate only; the collected figure still reflects the actual per-order tax each order was charged at its own rate.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Partial refunds are netted out of a sales-tax filing instead of counting full tax",
+          "body": "A partial refund is recorded as a same-status order transition that does not change the order's status, subtotal, or tax columns, so the order remained in the filing with its pre-refund tax and subtotal counted in full — over-stating collected tax and over-remitting. computeFiling now sums the partial refunds recorded inside the filing window per order and nets each order's taxable subtotal and collected tax by the refunded share, apportioned across tax and subtotal by the order's grand total (half-even, integer minor units). Refunds are attributed to the period they occur in; an order with no in-window refund is unaffected, and recomputing a filing is idempotent."
+        },
+        {
+          "title": "Owed tax is re-derived from the jurisdiction's default rate, deterministically",
+          "body": "The owed re-derivation took the first tax-rate row covering an order's date with no regard for category. Because a category-specific rate (such as a reduced food rate) can legally coexist with the jurisdiction's default rate in the same window, whichever row the database returned first claimed all revenue — yielding a wrong owed figure that flipped with the database's row order. The re-derivation now selects only the jurisdiction's default (category-less) rate, so the owed figure is deterministic and modelled on the jurisdiction's primary rate. The collected figure is unchanged: it remains the sum of the actual tax each order was charged at its own category-aware rate at order time."
+        }
+      ]
+    }
+  ]
+}
