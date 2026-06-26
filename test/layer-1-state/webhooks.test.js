@@ -398,6 +398,41 @@ async function _retryBackoff() {
   check("attempts=4 after fourth failure", batch4[0].attempts === 4);
 }
 
+// An injected query runner may report the affected-row count under a D1-style
+// nested meta.changes with no top-level rowCount. casWon inspects only
+// top-level count fields, so processRetries must normalize meta.changes before
+// the claim verdict — otherwise a won claim reads as indeterminate, casWon
+// throws, and the retry is leased-but-never-attempted.
+async function _processRetriesWithD1MetaChangesRunner() {
+  var base = _makeQuery();
+  var clock = _mockClock(1700000000000);
+  // Reshape ONLY the retry-claim UPDATE's result to the nested meta.changes
+  // shape (drop top-level rowCount); everything else passes through.
+  var q = async function (sql, params) {
+    var r = await base(sql, params);
+    if (/UPDATE webhook_deliveries SET next_retry_at/i.test(sql) && /next_retry_at IS NOT NULL/i.test(sql)) {
+      return { rows: r.rows, meta: { changes: r.rowCount } };
+    }
+    return r;
+  };
+  var transport = _captureTransport([{ statusCode: 500 }]);
+  var webhooks = bShop.webhooks.create({
+    query: q, transport: transport, now: clock.now,
+    retry: { maxAttempts: 1, baseDelayMs: 1, maxDelayMs: 2 },
+  });
+  await webhooks.endpoints.create({ url: "https://example.com/", events: "*" });
+
+  var d = await webhooks.send("order.mark_paid", { x: 1 });
+  check("meta.changes runner: first failure schedules a retry", d[0].next_retry_at != null);
+
+  // The due retry's claim UPDATE returns only meta.changes:1 — the module must
+  // read that as a won claim and ATTEMPT the delivery, not abort the tick.
+  clock.advance(60 * 1000);
+  var batch2 = await webhooks.processRetries({ now: clock.now() });
+  check("meta.changes runner: claim won + retry attempted (not left leased)",
+    batch2.length === 1 && batch2[0].attempts === 2);
+}
+
 async function _dlqAfterFiveAttempts() {
   var q = _makeQuery();
   var clock = _mockClock(1700000000000);
@@ -789,6 +824,7 @@ async function run() {
   await _manualRetry();
   await _orderTransitionFanout();
   await _retryBackoff();
+  await _processRetriesWithD1MetaChangesRunner();
   await _processRetriesClaimPreventsDoubleAttempt();
   await _processRetriesSkipsPausedEndpoint();
   await _dlqAfterFiveAttempts();

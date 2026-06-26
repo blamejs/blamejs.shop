@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.104",
+  "date": "2026-06-25",
+  "headline": "Compare-and-swap atomic claims across the framework now decide won/lost through the shared row-count primitive instead of hand-rolled checks",
+  "summary": "Throughout the framework, an atomic claim on a single-statement-per-request backend is a guarded write — UPDATE ... WHERE the row is still in its expected state, or a conditional INSERT — whose affected-row count decides whether this caller won the race (exactly one row) or lost and must no-op. That won/lost decision was hand-rolled at each site as a Number(result.rowCount || 0) === 1 check, which silently treats a result carrying no recognizable row-count as a lost race. Every such site (104 across commissions, redemption caps, inventory and stock-transfer claims, fulfillment and replenishment leases, gift-card and loyalty ledger writes, webhook delivery leases, and more) now routes that decision through the framework's shared row-count primitive, which owns the exactly-one-row check and the cross-adapter row-count field naming, and surfaces an indeterminate result instead of silently counting it as lost. On the production database path the affected-row count is always reported, so there is no behavior change; the change centralizes the interpretation and makes an otherwise-silent indeterminate result observable. No configuration changes and no schema changes.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Atomic compare-and-swap claims use the shared row-count primitive for their won/lost decision",
+          "body": "Compare-and-swap atomic claims — the guarded UPDATE / conditional INSERT pattern used wherever two requests can race the same row on a backend without interactive transactions — previously decided won-versus-lost with a hand-written row-count comparison at each call site, and a result that carried no recognizable row-count was silently taken as a lost race. These claims now make that decision through the framework's shared row-count primitive, which centralizes the exactly-one-row check and the adapter-specific row-count field naming and raises an error on an indeterminate result rather than treating it as a loss. Because the production database always reports the affected-row count, the won/lost outcome is unchanged on every real path; the benefit is one consistent, audited interpretation and a previously-silent indeterminate result now surfacing. A hand-rolled cross-adapter row-count extraction in the webhook delivery-retry lease is removed in favor of the same primitive."
+        }
+      ]
+    }
+  ]
+}
