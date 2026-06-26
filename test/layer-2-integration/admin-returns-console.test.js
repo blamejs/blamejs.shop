@@ -245,6 +245,16 @@ async function _runProviderRefund() {
   var config  = bShop.config.create({ query: query });
   var returns = bShop.returns.create({ query: query, cursorSecret: "ret-prov-rma" });
 
+  // One-shot fault injection for the post-claim balance read: when toggled
+  // on, the next order.refundedTotalMinor call throws (a transient D1 read
+  // failure) so the test can prove the RMA claim is RELEASED, not stranded.
+  var realRefundedTotal = order.refundedTotalMinor.bind(order);
+  var failRefundedRead  = { on: false };
+  order.refundedTotalMinor = async function (id) {
+    if (failRefundedRead.on) { failRefundedRead.on = false; throw new Error("transient D1 read failure (test)"); }
+    return realRefundedTotal(id);
+  };
+
   var refundCalls = [];
   var payment = {
     refund: async function (input, idem) {
@@ -350,6 +360,18 @@ async function _runProviderRefund() {
     check("over-cap RMA refund never dialed the provider", refundCalls.length === callsBeforeOver);
     check("over-cap RMA ends back in received (claim taken then released)",
       (await returns.get(seededOver.rmaId)).status === "received");
+
+    // A transient failure of the post-claim balance read must RELEASE the
+    // claim (back to received), not strand the RMA in 'refunded' with no
+    // money moved — the provider is never reached on this path.
+    var callsBeforeRead = refundCalls.length;
+    var seededRead = await _seedRefundableReturn(query, returns);
+    failRefundedRead.on = true;
+    var readFail = await helpers.httpRequest({ port: port, path: "/admin/returns/" + seededRead.rmaId + "/refund", method: "POST", headers: { authorization: "Bearer " + TOKEN }, form: {} });
+    check("balance-read failure is a non-2xx", readFail.status >= 400);
+    check("balance-read failure never dialed the provider", refundCalls.length === callsBeforeRead);
+    check("balance-read failure releases the claim (RMA back to received)",
+      (await returns.get(seededRead.rmaId)).status === "received");
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
