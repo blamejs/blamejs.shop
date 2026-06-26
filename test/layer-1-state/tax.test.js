@@ -323,6 +323,22 @@ async function _validateVatId() {
   check("validateVatId ES keeps the alnum lead of the number",
     tax.validateVatId("ESA1234567Z", "ES").vat_number === "A1234567Z");
 
+  // Custom VAT_FORMATS extension whose filed prefix differs from its
+  // 2-letter key (the documented operator extension point). The bare
+  // number must strip the actual filed prefix, not the key — a custom
+  // 3-letter alias prefix resolves cleanly via the leading-alpha rule.
+  var hadXy = Object.prototype.hasOwnProperty.call(tax.VAT_FORMATS, "XY");
+  var priorXy = tax.VAT_FORMATS.XY;
+  tax.VAT_FORMATS.XY = /^ABC[0-9]{3}$/;            // filed prefix "ABC", key "XY"
+  try {
+    var custom = tax.validateVatId("ABC123", "XY");
+    check("validateVatId custom alias-prefix format accepts", custom.ok === true);
+    check("validateVatId custom alias-prefix strips the filed prefix", custom.vat_number === "123");
+  } finally {
+    if (hadXy) tax.VAT_FORMATS.XY = priorXy;
+    else delete tax.VAT_FORMATS.XY;
+  }
+
   // Whitespace + casing tolerance.
   var loose = tax.validateVatId("de 123 456 789", "DE");
   check("validateVatId tolerates whitespace + lowercase", loose.ok === true && loose.vat_number === "123456789");
