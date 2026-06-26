@@ -747,6 +747,29 @@ async function _updateAndPauseLifecycle() {
   check("updateAffiliate switches kind",         asPct.commission_kind === "percent_bps");
   check("updateAffiliate switches value",        Number(asPct.commission_value) === 500);
 
+  // A kind-ONLY switch (no commission_value resupplied) must ALSO re-validate
+  // the stored value against the new kind's caps. A flat amount legal under
+  // the 1e11 flat cap (50000 = $500/order) is rejected when switched to
+  // percent_bps, where it is 5x over the 10000-bps (100%) cap — rather than
+  // silently persisting a value that would mint a runaway commission.
+  var flatAff = await ctx.affiliates.registerAffiliate(_validRegister({
+    email:            "flatkind@example.com",
+    commission_kind:  "amount_per_order_minor",
+    commission_value: 50000,
+  }));
+  await assert.rejects(ctx.affiliates.updateAffiliate(flatAff.id, {
+    commission_kind: "percent_bps",   // no value resupplied -> stored 50000 now over the bps cap
+  }), /commission_value/);
+  var stillFlat = await ctx.affiliates.getAffiliate(flatAff.id);
+  check("kind-only over-cap switch left kind unchanged",  stillFlat.commission_kind === "amount_per_order_minor");
+  check("kind-only over-cap switch left value unchanged", Number(stillFlat.commission_value) === 50000);
+  // A kind-only switch to a kind the stored value IS legal for succeeds.
+  var legalSwitch = await ctx.affiliates.updateAffiliate(flatAff.id, {
+    commission_kind: "amount_per_signup_minor",   // 50000 still <= the 1e11 flat cap
+  });
+  check("kind-only legal switch updates kind",     legalSwitch.commission_kind === "amount_per_signup_minor");
+  check("kind-only legal switch preserves value",  Number(legalSwitch.commission_value) === 50000);
+
   // Unknown columns refused.
   await assert.rejects(ctx.affiliates.updateAffiliate(aff.id, { code: "newcode!" }),       /not updatable/);
   await assert.rejects(ctx.affiliates.updateAffiliate(aff.id, { email_hash: "xxx" }),      /not updatable/);
