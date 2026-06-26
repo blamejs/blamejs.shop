@@ -273,6 +273,37 @@ async function _recordInvoiceUniqueDuplicate() {
 
 // ---- FSM transitions ----------------------------------------------------
 
+async function _recordInvoiceCurrencyMismatch() {
+  var vendors = _stubVendors();
+  vendors.add("cur-vendor", "active");
+  var f = _factory({ vendors: vendors });
+  await f.inv.recordInvoice({
+    vendor_slug: "cur-vendor", invoice_number: "USD-1",
+    invoice_date: 1700000000000, due_date: 1700000000000,
+    amount_minor: 1000, currency: "USD",
+    line_items: [{ sku: "A", description: "x", quantity: 1, unit_cost_minor: 1000, total_minor: 1000 }],
+  });
+  // A second invoice for the SAME vendor in a DIFFERENT currency is refused,
+  // so the per-vendor AP-aging + scorecard sums stay within one currency.
+  await assert.rejects(
+    f.inv.recordInvoice({
+      vendor_slug: "cur-vendor", invoice_number: "EUR-1",
+      invoice_date: 1700000000000, due_date: 1700000000000,
+      amount_minor: 1000, currency: "EUR",
+      line_items: [{ sku: "A", description: "x", quantity: 1, unit_cost_minor: 1000, total_minor: 1000 }],
+    }),
+    function (err) { return err && err.code === "VENDOR_INVOICE_CURRENCY_MISMATCH"; },
+  );
+  // Another invoice for the same vendor in the SAME currency is accepted.
+  var ok = await f.inv.recordInvoice({
+    vendor_slug: "cur-vendor", invoice_number: "USD-2",
+    invoice_date: 1700000000000, due_date: 1700000000000,
+    amount_minor: 2000, currency: "USD",
+    line_items: [{ sku: "B", description: "y", quantity: 1, unit_cost_minor: 2000, total_minor: 2000 }],
+  });
+  check("same-currency second invoice accepted", ok && ok.currency === "USD");
+}
+
 async function _fsmTransitions() {
   var vendors = _stubVendors();
   vendors.add("alpha-vendor", "active");
@@ -521,6 +552,41 @@ async function _reconcileAgainstPOsVariance() {
     fNoPo.inv.reconcileAgainstPOs({ invoice_id: invoice.id }),
     function (err) { return err && err.code === "VENDOR_INVOICE_NO_PO_HANDLE"; },
   );
+}
+
+// ---- reconcile: same SKU across POs at different costs ------------------
+
+async function _reconcileSameSkuAcrossPOs() {
+  var vendors = _stubVendors();
+  vendors.add("dup-vendor", "active");
+  var pos = _stubPurchaseOrders();
+  var f = _factory({ vendors: vendors, purchaseOrders: pos });
+
+  // The same SKU "A" appears on two POs at DIFFERENT unit costs (a vendor
+  // price change across orders — a supported, documented workflow).
+  var po1 = _uuid();
+  pos.add({ id: po1, vendor_slug: "dup-vendor",
+    lines: [{ sku: "A", quantity_ordered: 10, quantity_received: 10, unit_cost_minor: 1000, currency: "USD" }] });
+  var po2 = _uuid();
+  pos.add({ id: po2, vendor_slug: "dup-vendor",
+    lines: [{ sku: "A", quantity_ordered: 10, quantity_received: 10, unit_cost_minor: 2000, currency: "USD" }] });
+
+  var inv = await f.inv.recordInvoice({
+    vendor_slug: "dup-vendor", invoice_number: "DUP-001",
+    invoice_date: 1700000000000, due_date: 1700000000000,
+    amount_minor: 30000, currency: "USD",
+    line_items: [{ sku: "A", description: "Widget A", quantity: 20, unit_cost_minor: 1500, total_minor: 30000 }],
+    related_po_ids: [po1, po2],
+  });
+
+  var recon = await f.inv.reconcileAgainstPOs({ invoice_id: inv.id });
+  // TRUE received value = 10*1000 + 10*2000 = 30000 (NOT 20 * last-cost 2000 = 40000).
+  check("dup-sku po_received_value == 30000", recon.po_received_value_minor === 30000);
+  check("dup-sku variance == 0",              recon.variance_minor === 0);
+  // The displayed per-unit cost is the true weighted mean (30000 / 20 = 1500).
+  var aVar = recon.line_variances.filter(function (l) { return l.sku === "A"; })[0];
+  check("dup-sku weighted-mean unit cost 1500", aVar && aVar.po_unit_cost === 1500);
+  check("dup-sku line total_variance == 0",     aVar && aVar.total_variance === 0);
 }
 
 // ---- agingReport buckets ------------------------------------------------
@@ -867,7 +933,9 @@ async function run() {
   await _recordInvoiceHappyPath();
   await _recordInvoiceUniqueDuplicate();
   await _fsmTransitions();
+  await _recordInvoiceCurrencyMismatch();
   await _reconcileAgainstPOsVariance();
+  await _reconcileSameSkuAcrossPOs();
   await _agingReportBuckets();
   await _unpaidInvoicesFilter();
   await _metricsForVendorOnTime();
