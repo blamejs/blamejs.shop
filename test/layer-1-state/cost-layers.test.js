@@ -198,6 +198,33 @@ async function _weightedAverageConsumption() {
   check("wavg total on-hand after sale",        totalRemaining === 16);
 }
 
+// 3b) weighted_average: a residual attribution row whose quantity does not
+//     evenly divide its cost must still reconstruct the sale's COGS exactly
+//     in the reports (no per-attribution penny drift).
+async function _weightedAverageNoCogsDrift() {
+  var w = _wire();
+  await w.svc.setMethod({ sku: "WDG-DRIFT", method: "weighted_average" });
+  await w.svc.recordReceipt({ sku: "WDG-DRIFT", quantity: 10, unit_cost_minor: 7, currency: "USD", source: "receipt", occurred_at: 1000 });
+  await w.svc.recordReceipt({ sku: "WDG-DRIFT", quantity: 10, unit_cost_minor: 7, currency: "USD", source: "receipt", occurred_at: 2000 });
+  await w.svc.recordReceipt({ sku: "WDG-DRIFT", quantity: 10, unit_cost_minor: 8, currency: "USD", source: "receipt", occurred_at: 3000 });
+  // sumValue 220, sumQty 30; consume 7 -> lineCogs floor(220*7/30) = 51,
+  // debits [2,2,3]. The residual row (qty 3, cogs 23) does not divide
+  // evenly: a single rounded per-unit (round(23/3) = 8) would reconstruct
+  // 3*8 = 24 and drift the persisted report total to 52.
+  var res = await w.svc.consumeForSale({ sku: "WDG-DRIFT", quantity: 7, order_id: "ORD-DRIFT", line_id: "LN-1", occurred_at: 5000 });
+  check("wavg drift sale cogs = 51", res.total_cogs_minor === 51);
+  var reSum = 0;
+  res.consumed_layers.forEach(function (c) { reSum += c.qty * c.unit_cost_minor; });
+  check("consumed_layers reconstruct to the sale cogs (51)", reSum === 51);
+  var roll = await w.svc.cogsForOrder("ORD-DRIFT");
+  check("cogsForOrder reconstructs the sale cogs exactly", roll.total_cogs_minor === res.total_cogs_minor);
+  check("cogsForOrder reconstructs to 51 (not the 52 drift)", roll.total_cogs_minor === 51);
+  var period = await w.svc.cogsForPeriod({ from: 0, to: 10000 });
+  var bySku = {};
+  period.by_sku.forEach(function (r) { bySku[r.sku] = r; });
+  check("cogsForPeriod reconstructs WDG-DRIFT to 51", !!bySku["WDG-DRIFT"] && bySku["WDG-DRIFT"].total_cogs_minor === 51);
+}
+
 // 4) Overdraft refusal: requested qty > on-hand throws and writes
 //    no rows.
 async function _overdraftRefusal() {
@@ -497,6 +524,7 @@ async function run() {
   await _fifoConsumption();
   await _lifoConsumption();
   await _weightedAverageConsumption();
+  await _weightedAverageNoCogsDrift();
   await _overdraftRefusal();
   await _cogsAggregations();
   await _reversalRestores();

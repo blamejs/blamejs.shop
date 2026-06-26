@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.117",
+  "date": "2026-06-26",
+  "headline": "Weighted-average COGS reports reconstruct each sale's cost exactly, with no penny drift",
+  "summary": "The weighted-average cost-of-goods-sold attribution stored a per-unit cost rounded to the nearest minor unit on each attribution row. The COGS reports (per-order and per-period) recover each line's cost as quantity times that per-unit price — there is no stored line total — so the residual attribution row, whose quantity does not always divide its cost evenly, reconstructed a total that differed from the cost the sale itself recorded, by up to one minor unit per multi-unit residual row. The drift could be a gain or a loss and accumulated across every weighted-average sale into the per-order profit figure and the period COGS report. Each attribution now splits a debit whose cost does not divide evenly into a floor-priced remainder and a ceil-priced sliver, so quantity times unit price summed over the rows reproduces the sale's cost exactly. FIFO and LIFO costing, and weighted-average debits that divide evenly, are unchanged.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Weighted-average COGS attribution no longer drifts from the sale's recorded cost",
+          "body": "A weighted-average sale records the cost it consumes, then writes per-layer attribution rows the COGS reports sum back up. The attribution stored a single integer per-unit price, rounded — and because the reports reconstruct each row as quantity times that price (there is no stored line-total column), the residual-bearing row reconstructed quantity-times-rounded-unit, which differs from the attributed cost whenever the quantity does not divide it evenly (for example three units carrying a cost of 23 stored 8 per unit and reconstructed 24). A debit whose cost does not divide evenly across its units is now split into a floor-priced remainder and a ceil-priced sliver — (quantity minus r) units at the floor price and r units at the floor-plus-one price, where r is the leftover — so the rows reconstruct the attributed cost exactly. The per-order and per-period COGS reports now equal the cost each sale recorded; layer reversal restores the same quantity and value."
+        }
+      ]
+    }
+  ]
+}
