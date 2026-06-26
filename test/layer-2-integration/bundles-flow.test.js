@@ -138,6 +138,23 @@ async function _run() {
     ],
   });
 
+  // A single multi-quantity member whose discounted price is NOT divisible
+  // by the member quantity — exercises the bundle-allocation residual path
+  // that has no quantity-1 line to absorb the shortfall exactly.
+  //   socks 1000 x5 = 5000 list; 12.34% off -> discount floor(5000*1234/10000)
+  //   = 617; quoted bundle price = 5000 - 617 = 4383. floor(4383/5) = 876, so
+  //   a uniform integer per-unit price realizes 5*876 = 4380 (<= 4383) or, by
+  //   rounding the last unit up, 5*877 = 4385 (> 4383 — an overcharge above
+  //   the quote). The allocator must take 4380, never 4385.
+  await bundles.defineBundle({
+    bundle_sku: "BNDL-SOX5",
+    title:      "Sock Five-Pack",
+    bundle_discount_bps: 1234,
+    components: [
+      { sku: "OPR-SOCK-M", quantity: 5 },
+    ],
+  });
+
   // Quantity breaks on the tee: 5+ -> 10% off, 10+ -> 20% off.
   await qd.defineTier({
     scope:    "sku",
@@ -187,6 +204,22 @@ async function _run() {
     for (var i = 0; i < lines.length; i += 1) subtotal += lines[i].qty * lines[i].unit_amount_minor;
     check("bundle cart subtotal == $45",   subtotal === 4500);
     check("cart subtotal renders $45.00",  cart1.body.indexOf("$45.00") !== -1);
+
+    // ---- multi-quantity member: realized subtotal never exceeds the quote
+    // The Sock Five-Pack quotes 4383 but a single integer per-unit price on a
+    // qty-5 line can only realize a multiple of 5 (4380 or 4385). The allocator
+    // must round the realized subtotal DOWN to 4380 (a 3-cent undercharge in
+    // the customer's favour), never UP to 4385, which would charge above the
+    // advertised bundle price.
+    var jarSox = helpers.cookieJar();
+    var addSox = await helpers.httpRequest({ port: handle.port, path: "/cart/bundle", method: "POST", form: { bundle_sku: "BNDL-SOX5" }, jar: jarSox });
+    check("add sock-pack 303 -> /cart",    addSox.status === 303);
+    var cSox = await cart.bySession(jarSox.get("shop_sid"));
+    var linesSox = await cart.listLines(cSox.id);
+    var subtotalSox = 0;
+    for (var sx = 0; sx < linesSox.length; sx += 1) subtotalSox += linesSox[sx].qty * linesSox[sx].unit_amount_minor;
+    check("sock-pack realized subtotal never exceeds the 4383 quote", subtotalSox <= 4383);
+    check("sock-pack realized subtotal is the floored 4380 (not the 4385 overcharge)", subtotalSox === 4380);
 
     // ---- bundle add over a pre-existing member: keep qty, honor bundle price
     // A member already in the cart standalone (one tee at its $30 list price)
