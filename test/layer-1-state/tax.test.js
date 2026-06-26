@@ -301,6 +301,44 @@ async function _validateVatId() {
   var ch = tax.validateVatId("CHE123456789MWST", "CH");
   check("validateVatId CH with MWST suffix passes", ch.ok === true);
 
+  // Exact bare-number stripping for the registries whose filed prefix
+  // differs from the ISO code. Greece files under "EL" (ISO "GR") and
+  // Switzerland under "CHE" (3 chars, ISO "CH") — guessing the prefix
+  // length drops the leading GR digit and leaves the stray CH "E".
+  // The generic happy-path loop above (length >= 2) would not catch
+  // either corruption, so assert the exact remainder here.
+  check("validateVatId GR (EL-prefixed id) strips to the exact number",
+    tax.validateVatId("EL123456789", "GR").vat_number === "123456789");
+  check("validateVatId EL strips to the exact number",
+    tax.validateVatId("EL123456789", "EL").vat_number === "123456789");
+  check("validateVatId CH strips the full CHE prefix (no stray E)",
+    tax.validateVatId("CHE123456789MWST", "CH").vat_number === "123456789MWST");
+  // Controls: a 2-letter-ISO registry whose number itself starts with
+  // letters (AT's U, FR's 2 alnum, ES's alnum) must keep those — the
+  // fix must not over-strip.
+  check("validateVatId AT keeps the U of the registered number",
+    tax.validateVatId("ATU12345678", "AT").vat_number === "U12345678");
+  check("validateVatId FR keeps the 2 alnum lead of the number",
+    tax.validateVatId("FRAB123456789", "FR").vat_number === "AB123456789");
+  check("validateVatId ES keeps the alnum lead of the number",
+    tax.validateVatId("ESA1234567Z", "ES").vat_number === "A1234567Z");
+
+  // Custom VAT_FORMATS extension whose filed prefix differs from its
+  // 2-letter key (the documented operator extension point). The bare
+  // number must strip the actual filed prefix, not the key — a custom
+  // 3-letter alias prefix resolves cleanly via the leading-alpha rule.
+  var hadXy = Object.prototype.hasOwnProperty.call(tax.VAT_FORMATS, "XY");
+  var priorXy = tax.VAT_FORMATS.XY;
+  tax.VAT_FORMATS.XY = /^ABC[0-9]{3}$/;            // filed prefix "ABC", key "XY"
+  try {
+    var custom = tax.validateVatId("ABC123", "XY");
+    check("validateVatId custom alias-prefix format accepts", custom.ok === true);
+    check("validateVatId custom alias-prefix strips the filed prefix", custom.vat_number === "123");
+  } finally {
+    if (hadXy) tax.VAT_FORMATS.XY = priorXy;
+    else delete tax.VAT_FORMATS.XY;
+  }
+
   // Whitespace + casing tolerance.
   var loose = tax.validateVatId("de 123 456 789", "DE");
   check("validateVatId tolerates whitespace + lowercase", loose.ok === true && loose.vat_number === "123456789");
@@ -326,6 +364,45 @@ async function _applyReverseCharge() {
   check("applyReverseCharge DE→FR carries seller",    rc.seller.country === "DE");
   check("applyReverseCharge DE→FR carries buyer",     rc.buyer.country === "FR");
   check("applyReverseCharge DE→FR VIES timestamp",    rc.vies_validated_at === "2026-05-01T00:00:00Z");
+
+  // Greece files EU VAT IDs under the "EL" prefix while its ISO code
+  // is "GR". A Greek B2B party (as buyer or seller) must obtain the
+  // reverse charge whether the operator passes the ISO "GR" or the
+  // VAT-prefix "EL" as the country — the EL/GR alias is canonicalised.
+  var elBuyerGr = tax.applyReverseCharge({
+    seller_vat_id: "DE123456789",
+    buyer_vat_id:  "EL123456789",
+    buyer_country: "GR",
+  });
+  check("applyReverseCharge DE→GR(EL buyer, ISO country) triggers",
+    elBuyerGr.reverse_charge === true && elBuyerGr.reason === "eu-b2b");
+  check("applyReverseCharge DE→GR canonicalises buyer to GR with exact number",
+    elBuyerGr.buyer.country === "GR" && elBuyerGr.buyer.vat_number === "123456789");
+  var elBuyerEl = tax.applyReverseCharge({
+    seller_vat_id: "DE123456789",
+    buyer_vat_id:  "EL123456789",
+    buyer_country: "EL",                 // operator passes the VAT prefix as the country
+  });
+  check("applyReverseCharge DE→GR (operator passes EL as country) triggers",
+    elBuyerEl.reverse_charge === true && elBuyerEl.buyer.country === "GR");
+  var elSeller = tax.applyReverseCharge({
+    seller_vat_id: "EL123456789",
+    buyer_vat_id:  "FRAB123456789",
+    buyer_country: "FR",
+  });
+  check("applyReverseCharge GR→FR (Greek seller) triggers",
+    elSeller.reverse_charge === true && elSeller.reason === "eu-b2b");
+  check("applyReverseCharge GR seller canonicalises to GR with exact number",
+    elSeller.seller.country === "GR" && elSeller.seller.vat_number === "123456789");
+  // A genuine country mismatch (non-Greek VAT ID vs a GR declaration)
+  // must still be refused — the alias normalisation must not mask it.
+  var grRealMismatch = tax.applyReverseCharge({
+    seller_vat_id: "DE123456789",
+    buyer_vat_id:  "DE987654321",
+    buyer_country: "GR",
+  });
+  check("applyReverseCharge GR country with DE VAT id is still a mismatch",
+    grRealMismatch.reverse_charge === false && grRealMismatch.reason === "buyer-vat-id-country-mismatch");
 
   // Buyer is not in the EU → no reverse charge (e.g. US buyer).
   var us = tax.applyReverseCharge({
