@@ -18,6 +18,11 @@
 //   b.safeUrl     — build / parse / validate
 //   b.safeSql     — validateIdentifier / quoteIdentifier
 //   b.fsm         — define / transition
+//   b.webhook     — verify (Stripe HMAC-SHA256 inbound signature).
+//                   The webhook module resolves its outbound HTTP
+//                   client + delivery dispatcher lazily (send path
+//                   only), so importing it for inbound verification
+//                   pulls no Node networking at load — Worker-safe.
 //
 // This file is the single point of validation: if a vendor refresh
 // breaks a leaf-module's Worker compatibility, the worker-b-loadable
@@ -41,6 +46,11 @@ import bRedact     from "../lib/vendor/blamejs/lib/redact.js";
 import bCookies    from "../lib/vendor/blamejs/lib/cookies.js";
 import bConstants  from "../lib/vendor/blamejs/lib/constants.js";
 import bValidateOpts from "../lib/vendor/blamejs/lib/validate-opts.js";
+// webhook: inbound Stripe-signature verification only. The module's
+// outbound HTTP client + delivery dispatcher are lazyRequire'd (send
+// path), so this import loads no node:net / node:tls / node:http at
+// module init — verified Worker-safe by the worker-b-loadable smoke.
+import bWebhook    from "../lib/vendor/blamejs/lib/webhook.js";
 
 // `b.crypto.hmacSha256` extension. Composes node:crypto's
 // `createHmac` — the same primitive `b.crypto.hmac` (private)
@@ -70,6 +80,7 @@ var b = {
   cookies:    bCookies,
   constants:  bConstants,
   validateOpts: bValidateOpts,
+  webhook:    bWebhook,
 };
 
 export default b;
