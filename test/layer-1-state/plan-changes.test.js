@@ -153,11 +153,20 @@ function _subscriptionsHandle(query) {
 // Minimal store-credit capture handle (same injected-handle posture as
 // _subscriptionsHandle). Records every credit() call so a downgrade test
 // can assert the owed credit was issued with the right amount + source.
-function _storeCreditHandle() {
+// `failTimes` makes the first N credit() calls reject (a transient write
+// error) so the revert-on-throw path can be exercised.
+function _storeCreditHandle(failTimes) {
   var calls = [];
+  var remainingFailures = failTimes || 0;
   return {
     calls: calls,
     credit: async function (input) {
+      if (remainingFailures > 0) {
+        remainingFailures -= 1;
+        var err = new Error("store-credit: transient write failure");
+        err.code = "STORE_CREDIT_WRITE_FAILED";
+        throw err;
+      }
       calls.push(input);
       return { id: "sc_" + calls.length, amount_minor: input.amount_minor };
     },
@@ -175,7 +184,7 @@ function _setup(opts) {
       subscriptions: subs,
     });
   }
-  var sc = opts.with_store_credit ? _storeCreditHandle() : null;
+  var sc = opts.store_credit_handle || (opts.with_store_credit ? _storeCreditHandle() : null);
   var pc = planChanges.create({
     query:               q,
     subscriptions:       subs,
@@ -429,6 +438,81 @@ async function _scheduledDowngradeIssuesStoreCredit() {
   check("scheduler issued one store credit",    ctx.sc.calls.length === 1);
   check("scheduler store credit amount = 1400", ctx.sc.calls[0].amount_minor === 1400);
   check("scheduler store credit correlates the change", ctx.sc.calls[0].source_ref === "subscription-downgrade:" + pending.id);
+}
+
+async function _downgradeCreditFailureRevertsAndRetries() {
+  // A transient store-credit write failure must NOT finalize the downgrade
+  // with the credit lost: the transition reverts and the change is retryable.
+  var sc = _storeCreditHandle(1);   // first credit() call rejects, then succeeds
+  var ctx = _setup({ with_billing: true, store_credit_handle: sc });
+  var now = Date.now();
+  var seed = await _seed(ctx.query, {
+    plan_a_amount: 3000,
+    plan_b_amount: 1000,
+    period_start:  now - 1000,
+    period_end:    now + 9000,
+    customer_id:   _validUUID(),
+  });
+
+  // First attempt: credit() rejects → executeChange rejects.
+  await assert.rejects(ctx.pc.executeChange({
+    subscription_id: seed.subscription_id,
+    new_plan_id:     seed.plan_b_id,
+    change_at:       now,
+  }), /transient write failure/);
+  // The transition was rolled back: subscription still on plan A, no credit.
+  check("credit failure left subscription on plan A",
+    (await ctx.query("SELECT plan_id FROM subscriptions WHERE id = ?1", [seed.subscription_id])).rows[0].plan_id === seed.plan_a_id);
+  check("credit failure issued no store credit", sc.calls.length === 0);
+  // The failed change row is voided (cancelled), so the pending-change guard
+  // does not block the retry.
+  var rows = await ctx.query("SELECT status FROM subscription_plan_changes WHERE subscription_id = ?1", [seed.subscription_id]);
+  check("credit failure voided the change row", rows.rows.length === 1 && rows.rows[0].status === "cancelled");
+
+  // Retry: credit() now succeeds → downgrade settles cleanly.
+  var retry = await ctx.pc.executeChange({
+    subscription_id: seed.subscription_id,
+    new_plan_id:     seed.plan_b_id,
+    change_at:       now,
+  });
+  check("retry executed the downgrade",    retry.status === "executed");
+  check("retry flipped to plan B",
+    (await ctx.query("SELECT plan_id FROM subscriptions WHERE id = ?1", [seed.subscription_id])).rows[0].plan_id === seed.plan_b_id);
+  check("retry issued the owed credit once", sc.calls.length === 1 && sc.calls[0].amount_minor === 1800);
+}
+
+async function _scheduledDowngradeCreditFailureRevertsToPending() {
+  var sc = _storeCreditHandle(1);   // first credit() call rejects
+  var ctx = _setup({ with_billing: true, store_credit_handle: sc });
+  var now = Date.now();
+  var seed = await _seed(ctx.query, {
+    plan_a_amount: 3000,
+    plan_b_amount: 1000,
+    period_start:  now - 1000,
+    period_end:    now + 9000,
+    customer_id:   _validUUID(),
+  });
+  var pending = await ctx.pc.executeChange({
+    subscription_id: seed.subscription_id,
+    new_plan_id:     seed.plan_b_id,
+    change_at:       now + 2000,
+  });
+  check("scheduled downgrade pending", pending.status === "pending");
+
+  // Sweep 1: credit fails → row reverts to pending, sweep does not abort.
+  var run1 = await ctx.pc.applyScheduledChanges({ now: now + 3000 });
+  check("sweep with failing credit executed nothing", run1.length === 0);
+  check("failing credit reverted the row to pending",
+    (await ctx.query("SELECT status FROM subscription_plan_changes WHERE id = ?1", [pending.id])).rows[0].status === "pending");
+  check("failing credit left subscription on plan A",
+    (await ctx.query("SELECT plan_id FROM subscriptions WHERE id = ?1", [seed.subscription_id])).rows[0].plan_id === seed.plan_a_id);
+
+  // Sweep 2: credit now succeeds → the downgrade settles.
+  var run2 = await ctx.pc.applyScheduledChanges({ now: now + 4000 });
+  check("retry sweep executed the downgrade", run2.length === 1 && run2[0].status === "executed");
+  check("retry sweep issued the credit once", sc.calls.length === 1 && sc.calls[0].amount_minor === 1400);
+  check("retry sweep flipped to plan B",
+    (await ctx.query("SELECT plan_id FROM subscriptions WHERE id = ?1", [seed.subscription_id])).rows[0].plan_id === seed.plan_b_id);
 }
 
 async function _scheduledDowngradeWithoutStoreCreditStaysPending() {
@@ -737,6 +821,8 @@ async function run() {
   await _downgradeIssuesStoreCredit();
   await _downgradeWithoutStoreCreditThrows();
   await _scheduledDowngradeIssuesStoreCredit();
+  await _downgradeCreditFailureRevertsAndRetries();
+  await _scheduledDowngradeCreditFailureRevertsToPending();
   await _scheduledDowngradeWithoutStoreCreditStaysPending();
   await _concurrentImmediateNoDoubleProration();
   await _cancelPendingFsm();
