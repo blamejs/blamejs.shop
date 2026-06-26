@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.107",
+  "date": "2026-06-25",
+  "headline": "Vendored framework refreshed to 0.15.27",
+  "summary": "Updates the vendored blamejs framework to 0.15.27. The 0.15.27 release is an upstream test-harness reliability change only — its published library is byte-for-byte identical to 0.15.26, with no runtime API or behavior change. No operator action required.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Vendored framework refreshed to 0.15.27",
+          "body": "Refreshes the vendored blamejs framework to 0.15.27, an upstream release whose shipped library is byte-for-byte identical to 0.15.26 (the change is to the framework's own test harness). There are no runtime API changes and no operator-visible behavior change; no action is required."
+        }
+      ]
+    }
+  ]
+}
