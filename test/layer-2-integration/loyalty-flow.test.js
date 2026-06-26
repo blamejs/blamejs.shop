@@ -92,6 +92,31 @@ async function _seedPendingOrder(query, customerId, variantId, sku) {
   return orderId;
 }
 
+// Same as above but with $20 of (non-refundable) shipping on top of the
+// $50 goods — subtotal 5000, shipping 2000, grand total 7000. Points are
+// still earned on the 5000 subtotal.
+async function _seedPendingOrderWithShipping(query, customerId, variantId, sku) {
+  var now = Date.now();
+  var cartId = b.uuid.v7(); var orderId = b.uuid.v7(); var lineId = b.uuid.v7();
+  await query(
+    "INSERT INTO carts (id, session_id, customer_id, currency, status, created_at, updated_at, expires_at) " +
+    "VALUES (?1, ?2, ?3, 'USD', 'converted', ?4, ?4, ?5)",
+    [cartId, b.uuid.v7(), customerId, now, now + 86400000],
+  );
+  await query(
+    "INSERT INTO orders (id, cart_id, customer_id, session_id, status, currency, subtotal_minor, " +
+    "discount_minor, tax_minor, shipping_minor, grand_total_minor, payment_intent_id, ship_to_json, created_at, updated_at) " +
+    "VALUES (?1, ?2, ?3, ?4, 'pending', 'USD', 5000, 0, 0, 2000, 7000, NULL, '{}', ?5, ?5)",
+    [orderId, cartId, customerId, b.uuid.v7(), now],
+  );
+  await query(
+    "INSERT INTO order_lines (id, order_id, variant_id, sku, qty, unit_amount_minor, unit_currency, line_total_minor) " +
+    "VALUES (?1, ?2, ?3, ?4, 1, 5000, 'USD', 5000)",
+    [lineId, orderId, variantId, sku],
+  );
+  return orderId;
+}
+
 async function _bootApp(deps) {
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-shop-loy-"));
   var app = await b.createApp({
@@ -263,6 +288,24 @@ async function _run() {
     });
     check("re-reverse is a no-op", reRev.reversed_points === 0 && reRev.clawed_points === 0);
     check("balance unchanged after re-reverse", (await loyalty.balance(buyer)).balance === 525);
+
+    // --- partial goods refund keeps non-refundable shipping -> 100% claw ---
+    // Points are earned on the SUBTOTAL (goods). Refunding the full $50 goods
+    // value must claw ALL earned points even though the $20 shipping is kept,
+    // because the claw ratios against the subtotal, not the grand total.
+    // Against the grand total this would claw only floor(525*5000/7000)=375,
+    // leaving the customer 150 free points on fully-returned goods.
+    var shipOrderId = await _seedPendingOrderWithShipping(query, buyer, variant.id, variant.sku);
+    await order.transition(shipOrderId, "mark_paid", { reason: "test" });
+    await helpers.waitUntil(async function () {
+      return (await loyalty.balance(buyer)).balance >= 1050;
+    }, { timeoutMs: 5000, label: "loyalty: shipping order earned 525 on subtotal" });
+    check("shipping order earned 525 on subtotal", (await loyalty.balance(buyer)).balance === 1050);
+    await order.recordPartialRefund(shipOrderId, { amount_minor: 5000, metadata: { stripe_refund_id: "re_ship_goods_1" } });
+    await helpers.waitUntil(async function () {
+      return (await loyalty.balance(buyer)).balance <= 525;
+    }, { timeoutMs: 5000, label: "loyalty: full goods refund claws all earned points (shipping kept)" });
+    check("full goods refund clawed all 525 (shipping kept)", (await loyalty.balance(buyer)).balance === 525);
 
     // --- redeem a reward ----------------------------------------------
     var redeem = await helpers.httpRequest({
