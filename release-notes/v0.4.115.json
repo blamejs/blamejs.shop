@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.115",
+  "date": "2026-06-26",
+  "headline": "Adding a bundle with a multi-quantity member no longer charges above the advertised bundle price",
+  "summary": "A bundle's discounted price is split across its members and stored as a single integer per-unit price on each cart line, so a member's realized cost is its quantity times that per-unit price. When a member's quantity is greater than one and its allocated share is not divisible by that quantity, the leftover cents could not be returned without raising the per-unit price by a whole quantity-step — and the allocator did exactly that, pushing the realized cart subtotal a few cents ABOVE the bundle price the customer saw on the product page. The allocation now returns leftover cents only in whole quantity-steps and leaves any final sub-step residual off, so the realized subtotal is at most the advertised bundle price, never above it (a residual of fewer than the member's quantity in cents is dropped in the customer's favour in the cases a single integer per-unit price cannot represent exactly). Bundles whose members are all single-unit, and bundles whose discounted allocation divides evenly, are unaffected.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Bundle with a quantity-greater-than-one member never charges above the quoted price",
+          "body": "The bundle-to-cart allocation converts each member's share of the discounted bundle price into a single integer per-unit price (floor) and returns the cents lost to that floor. A single-unit member absorbs the shortfall exactly; otherwise the cents are returned in whole quantity-sized steps. The final sub-step residual — strictly fewer cents than any remaining member's quantity — was being recovered by bumping a multi-unit member's per-unit price up by one, which raised that line's total by a whole quantity-step and pushed the realized subtotal above the quoted bundle price. That residual is now left off instead: the realized subtotal is at most the advertised price (a sub-quantity-cent undercharge in the customer's favour when an integer per-unit price cannot land on the quote exactly), and never exceeds it."
+        }
+      ]
+    }
+  ]
+}
