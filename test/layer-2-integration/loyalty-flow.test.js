@@ -92,9 +92,10 @@ async function _seedPendingOrder(query, customerId, variantId, sku) {
   return orderId;
 }
 
-// Same as above but with $20 of (non-refundable) shipping on top of the
-// $50 goods — subtotal 5000, shipping 2000, grand total 7000. Points are
-// still earned on the 5000 subtotal.
+// Same as above but with a $10 discount and $20 of (non-refundable) shipping
+// on the $50 goods — subtotal 5000, discount 1000, shipping 2000, grand total
+// 6000. Points are earned on the 5000 subtotal; the refundable goods cash is
+// subtotal - discount = 4000.
 async function _seedPendingOrderWithShipping(query, customerId, variantId, sku) {
   var now = Date.now();
   var cartId = b.uuid.v7(); var orderId = b.uuid.v7(); var lineId = b.uuid.v7();
@@ -106,7 +107,7 @@ async function _seedPendingOrderWithShipping(query, customerId, variantId, sku) 
   await query(
     "INSERT INTO orders (id, cart_id, customer_id, session_id, status, currency, subtotal_minor, " +
     "discount_minor, tax_minor, shipping_minor, grand_total_minor, payment_intent_id, ship_to_json, created_at, updated_at) " +
-    "VALUES (?1, ?2, ?3, ?4, 'pending', 'USD', 5000, 0, 0, 2000, 7000, NULL, '{}', ?5, ?5)",
+    "VALUES (?1, ?2, ?3, ?4, 'pending', 'USD', 5000, 1000, 0, 2000, 6000, NULL, '{}', ?5, ?5)",
     [orderId, cartId, customerId, b.uuid.v7(), now],
   );
   await query(
@@ -289,23 +290,25 @@ async function _run() {
     check("re-reverse is a no-op", reRev.reversed_points === 0 && reRev.clawed_points === 0);
     check("balance unchanged after re-reverse", (await loyalty.balance(buyer)).balance === 525);
 
-    // --- partial goods refund keeps non-refundable shipping -> 100% claw ---
-    // Points are earned on the SUBTOTAL (goods). Refunding the full $50 goods
-    // value must claw ALL earned points even though the $20 shipping is kept,
-    // because the claw ratios against the subtotal, not the grand total.
-    // Against the grand total this would claw only floor(525*5000/7000)=375,
-    // leaving the customer 150 free points on fully-returned goods.
+    // --- full goods refund (discount + kept shipping) -> 100% claw ---
+    // Order: subtotal 5000, discount 1000, shipping 2000, grand 6000. Points
+    // are earned on the 5000 subtotal; the refundable goods cash is
+    // subtotal-discount = 4000. Refunding that full 4000 must claw ALL earned
+    // points, because the claw ratios against the discounted goods value, not
+    // the grand total (6000 -> would claw floor(525*4000/6000)=350) and not
+    // the raw subtotal (5000 -> would claw floor(525*4000/5000)=420) — either
+    // would leave the customer free points on fully-returned goods.
     var shipOrderId = await _seedPendingOrderWithShipping(query, buyer, variant.id, variant.sku);
     await order.transition(shipOrderId, "mark_paid", { reason: "test" });
     await helpers.waitUntil(async function () {
       return (await loyalty.balance(buyer)).balance >= 1050;
-    }, { timeoutMs: 5000, label: "loyalty: shipping order earned 525 on subtotal" });
-    check("shipping order earned 525 on subtotal", (await loyalty.balance(buyer)).balance === 1050);
-    await order.recordPartialRefund(shipOrderId, { amount_minor: 5000, metadata: { stripe_refund_id: "re_ship_goods_1" } });
+    }, { timeoutMs: 5000, label: "loyalty: discounted order earned 525 on subtotal" });
+    check("discounted order earned 525 on subtotal", (await loyalty.balance(buyer)).balance === 1050);
+    await order.recordPartialRefund(shipOrderId, { amount_minor: 4000, metadata: { stripe_refund_id: "re_ship_goods_1" } });
     await helpers.waitUntil(async function () {
       return (await loyalty.balance(buyer)).balance <= 525;
-    }, { timeoutMs: 5000, label: "loyalty: full goods refund claws all earned points (shipping kept)" });
-    check("full goods refund clawed all 525 (shipping kept)", (await loyalty.balance(buyer)).balance === 525);
+    }, { timeoutMs: 5000, label: "loyalty: full goods refund claws all earned points (discount + shipping)" });
+    check("full goods refund clawed all 525 (discount + shipping kept)", (await loyalty.balance(buyer)).balance === 525);
 
     // --- redeem a reward ----------------------------------------------
     var redeem = await helpers.httpRequest({
