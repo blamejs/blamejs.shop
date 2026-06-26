@@ -130,6 +130,23 @@ function _insertRate(db, j, rateBps, from, until) {
   ).run(_uuid(), j, rateBps, from, until == null ? null : until);
 }
 
+function _insertCategoryRate(db, j, category, rateBps, from, until) {
+  db.prepare(
+    "INSERT INTO tax_rates (id, jurisdiction, category, rate_bps, " +
+    "effective_from, effective_until, archived_at) " +
+    "VALUES (?, ?, ?, ?, ?, ?, NULL)"
+  ).run(_uuid(), j, category, rateBps, from, until == null ? null : until);
+}
+
+// Append a partial-refund self-loop transition (on_event = 'refund') with
+// the refunded cash in metadata — mirrors lib/order.js recordPartialRefund.
+function _insertRefund(db, orderId, amountMinor, occurredAt) {
+  db.prepare(
+    "INSERT INTO order_transitions (id, order_id, from_state, to_state, on_event, reason, metadata_json, occurred_at) " +
+    "VALUES (?, ?, 'paid', 'paid', 'refund', NULL, ?, ?)"
+  ).run(_uuid(), orderId, JSON.stringify({ amount_minor: amountMinor }), occurredAt);
+}
+
 function _factory(taxExemptApi) {
   var h = _makeQuery();
   var stf = salesTaxFilings.create({
@@ -270,6 +287,76 @@ async function _computeFilingAggregates() {
   var recomputed = await f.stf.computeFiling({ filing_id: filing.id });
   check("computeFiling recompute keeps status", recomputed.status === "computed");
   check("computeFiling recompute same gross",   recomputed.gross_revenue_minor === 60000);
+}
+
+// ---- 2b. computeFiling nets in-window partial refunds -------------------
+
+async function _computeFilingNetsPartialRefunds() {
+  var f = _factory();
+  var jan = Date.UTC(2026, 0, 1);
+  var feb = Date.UTC(2026, 1, 1);
+  var due = Date.UTC(2026, 1, 20);
+  _insertRate(f.db, "US-CA", 725, jan - 1000, null);
+
+  var inWin = jan + (5 * 24 * 60 * 60 * 1000);
+  // o1: subtotal 10000, tax 725, grand_total 10725. A 2145-minor partial
+  // refund (exactly 1/5 of grand total) in-window nets 1/5 off each side:
+  //   refunded tax = 2145*725/10725 = 145; refunded subtotal = 2000
+  //   -> net tax 580, net taxable 8000.
+  var o1 = _insertOrder(f.db, { subtotal_minor: 10000, tax_minor: 725, created_at: inWin });
+  _insertRefund(f.db, o1, 2145, inWin + 1000);
+
+  // o2: no refund -> full tax/subtotal still count.
+  _insertOrder(f.db, { subtotal_minor: 20000, tax_minor: 1450, created_at: inWin });
+
+  // o3: refunded but the refund occurs AFTER the window -> not netted here
+  // (refunds are attributed to the period they occur in).
+  var o3 = _insertOrder(f.db, { subtotal_minor: 10000, tax_minor: 725, created_at: inWin });
+  _insertRefund(f.db, o3, 2145, feb + 1000);
+
+  var filing = await f.stf.defineFilingPeriod({ jurisdiction: "US-CA", kind: "monthly", period_start: jan, period_end: feb, due_date: due });
+  var c = await f.stf.computeFiling({ filing_id: filing.id });
+  // collected = 580 (o1 net) + 1450 (o2 full) + 725 (o3 full, refund out-of-window) = 2755
+  check("partial-refund nets collected tax",     c.tax_collected_minor === 2755);
+  // taxable = 8000 + 20000 + 10000 = 38000
+  check("partial-refund nets taxable revenue",   c.taxable_revenue_minor === 38000);
+  check("partial-refund nets gross revenue",     c.gross_revenue_minor === 38000);
+  // owed re-derived on net taxable at 725 bps = round(38000*725/10000) = 2755
+  check("partial-refund owed on net taxable",    c.tax_owed_minor === 2755);
+  check("partial-refund bucket reflects net",
+    c.by_rate_breakdown["725"].taxable_minor === 38000 && c.by_rate_breakdown["725"].tax_minor === 2755);
+
+  // A second compute is idempotent (refunds aren't double-counted).
+  var c2 = await f.stf.computeFiling({ filing_id: filing.id });
+  check("partial-refund recompute is stable", c2.tax_collected_minor === 2755 && c2.taxable_revenue_minor === 38000);
+}
+
+// ---- 2c. computeFiling owed uses the jurisdiction fallback rate ----------
+
+async function _computeFilingFallbackRateDeterministic() {
+  var f = _factory();
+  var jan = Date.UTC(2026, 0, 1);
+  var feb = Date.UTC(2026, 1, 1);
+  var due = Date.UTC(2026, 1, 20);
+  // A reduced category rate (food, 2%) coexists with the jurisdiction's
+  // 7.25% default in the same window — both legal (rates are keyed per
+  // (jurisdiction, category)). The owed re-derivation must model the
+  // FALLBACK rate deterministically; an order carries no category here, so
+  // attributing revenue to the food rate (or letting row order decide)
+  // would be wrong and non-deterministic.
+  _insertCategoryRate(f.db, "US-CA", "food", 200, jan - 1000, null);
+  _insertRate(f.db, "US-CA", 725, jan - 1000, null);
+
+  _insertOrder(f.db, { subtotal_minor: 20000, tax_minor: 1450, created_at: jan + 1000 });
+  _insertOrder(f.db, { subtotal_minor: 20000, tax_minor: 1450, created_at: jan + 2000 });
+
+  var filing = await f.stf.defineFilingPeriod({ jurisdiction: "US-CA", kind: "monthly", period_start: jan, period_end: feb, due_date: due });
+  var c = await f.stf.computeFiling({ filing_id: filing.id });
+  // taxable 40000; owed at the 725 fallback = 2900, NOT the food 200-bps (800).
+  check("fallback-rate owed uses 725 not the food category", c.tax_owed_minor === 2900);
+  check("fallback-rate bucket keyed 725",  !!c.by_rate_breakdown["725"]);
+  check("fallback-rate has no 200 bucket", !c.by_rate_breakdown["200"]);
+  check("fallback-rate collected matches", c.tax_collected_minor === 2900);
 }
 
 // ---- 3. computeFiling honors tax exemptions -----------------------------
@@ -664,6 +751,8 @@ async function _exportedConstants() {
 async function run() {
   await _defineFilingPeriodShape();
   await _computeFilingAggregates();
+  await _computeFilingNetsPartialRefunds();
+  await _computeFilingFallbackRateDeterministic();
   await _computeFilingExempt();
   await _fsmTransitions();
   await _upcomingDueWindow();
