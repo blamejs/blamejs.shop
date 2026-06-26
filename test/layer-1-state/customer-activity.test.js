@@ -39,7 +39,7 @@ var MIGS = [
   "0006_customers.sql",
   "0011_reviews.sql",
   "0012_wishlist.sql",
-  "0022_loyalty.sql",
+  "0022_loyalty.sql", "0237_loyalty_txn_running_balance.sql",
   "0047_support_tickets.sql",
   "0153_customer_activity_cache.sql",
 ].map(function (f) {

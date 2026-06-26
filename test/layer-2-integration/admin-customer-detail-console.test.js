@@ -51,7 +51,7 @@ var MIGS = [
   "0004_shop_config.sql", "0006_customers.sql", "0205_customer_oauth_identities.sql",
   "0094_store_credit.sql", "0235_store_credit_ledger_chain.sql", "0236_store_credit_ledger_chain_fence.sql",
   "0134_customer_notes.sql", "0049_customer_segments.sql",
-  "0022_loyalty.sql",
+  "0022_loyalty.sql", "0237_loyalty_txn_running_balance.sql",
   // Activity-timeline source tables + its memoization cache.
   "0011_reviews.sql", "0012_wishlist.sql", "0047_support_tickets.sql",
   "0153_customer_activity_cache.sql",

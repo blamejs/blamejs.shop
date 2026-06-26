@@ -44,7 +44,7 @@ var TOKEN = "admin-token-0123456789abcdef-loyalty";
 var MIGS = [
   "0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0004_shop_config.sql",
   "0206_orders_email_hash.sql", "0006_customers.sql",
-  "0022_loyalty.sql", "0085_loyalty_redemptions.sql", "0163_loyalty_earn_rules.sql",
+  "0022_loyalty.sql", "0237_loyalty_txn_running_balance.sql", "0085_loyalty_redemptions.sql", "0163_loyalty_earn_rules.sql",
   "0141_tier_benefits.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 

@@ -35,6 +35,7 @@ var assert     = helpers.assert;
 var MIG_RULES    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0163_loyalty_earn_rules.sql");
 var MIG_REVERSAL = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0217_loyalty_earn_reversal.sql");
 var MIG_LOYALTY  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0022_loyalty.sql");
+var MIG_CHAIN    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0237_loyalty_txn_running_balance.sql");
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -110,6 +111,9 @@ function _factory(loyaltyHandle) {
 function _realLoyaltyFactory() {
   var h = _makeQuery();
   _splitSchema(nodeFs.readFileSync(MIG_LOYALTY, "utf8")).forEach(function (s) {
+    h.db.prepare(s).run();
+  });
+  _splitSchema(nodeFs.readFileSync(MIG_CHAIN, "utf8")).forEach(function (s) {
     h.db.prepare(s).run();
   });
   var loyalty = bShop.loyalty.create({ query: h.query });

@@ -39,6 +39,7 @@ var MIG_LOYALTY     = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "
 // Adds loyalty_transactions.restored_points — the column reverseRedemptionById
 // claims against when a redemption is rolled back (lost cap claim / mint failure).
 var MIG_RESTORED    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0223_loyalty_txn_restored_points.sql");
+var MIG_CHAIN       = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0237_loyalty_txn_running_balance.sql");
 var MIG_REDEMPTIONS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0085_loyalty_redemptions.sql");
 
 function _splitSchema(text) {
@@ -53,6 +54,9 @@ function _makeQuery() {
     db.prepare(s).run();
   });
   _splitSchema(nodeFs.readFileSync(MIG_RESTORED, "utf8")).forEach(function (s) {
+    db.prepare(s).run();
+  });
+  _splitSchema(nodeFs.readFileSync(MIG_CHAIN, "utf8")).forEach(function (s) {
     db.prepare(s).run();
   });
   _splitSchema(nodeFs.readFileSync(MIG_REDEMPTIONS, "utf8")).forEach(function (s) {

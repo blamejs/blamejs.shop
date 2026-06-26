@@ -29,6 +29,7 @@ var assert  = helpers.assert;
 
 var MIG_LOYALTY  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0022_loyalty.sql");
 var MIG_RESTORED = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0223_loyalty_txn_restored_points.sql");
+var MIG_CHAIN    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0237_loyalty_txn_running_balance.sql");
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -42,6 +43,9 @@ function _makeQuery() {
     db.prepare(s).run();
   });
   _splitSchema(nodeFs.readFileSync(MIG_RESTORED, "utf8")).forEach(function (s) {
+    db.prepare(s).run();
+  });
+  _splitSchema(nodeFs.readFileSync(MIG_CHAIN, "utf8")).forEach(function (s) {
     db.prepare(s).run();
   });
   return async function (sql, params) {
@@ -443,6 +447,127 @@ async function _computeTierEdges() {
   check("default redemptionPointsPerUsd 100",   loy.REDEMPTION_POINTS_PER_USD === 100);
 }
 
+// ---- #28 ledger-derived running-balance chain ----
+
+// verifyChain stays clean across a linked redemption (stamps order_id) and a
+// restore (advances restored_points) — both columns EXCLUDED from the hash — and
+// a tampered balance snapshot is detected.
+async function _chainVerifyAndTamper() {
+  var q = _makeQuery();
+  var loy = bShop.loyalty.create({ query: q });
+  var cid = _uuid();
+  var oid = _uuid();
+  await loy.earn({ customer_id: cid, points: 1000, source: "order-paid" });
+  var red = await loy.redeem({ customer_id: cid, points: 400 });   // order_id NULL
+  await loy.linkRedemptionToOrder(red.tx_id, oid);                  // stamps order_id (excluded)
+  await loy.redeem({ customer_id: cid, points: 300, order_id: oid });
+  await loy.restoreRedemption(oid, { refunded_minor: 150, order_total_minor: 300 });   // advances restored_points (excluded)
+  var v = await loy.verifyChain(cid);
+  check("verifyChain ok after link + restore (excluded cols don't false-tamper)", v.ok === true);
+  check("verifyChain counted the chain rows", v.rows_verified >= 4);
+
+  await q("UPDATE loyalty_transactions SET balance_after_points = balance_after_points + 1 " +
+          "WHERE customer_id = ?1 AND transaction_type = 'earn'", [cid]);
+  var bad = await loy.verifyChain(cid);
+  check("verifyChain detects a tampered balance snapshot",
+    bad.ok === false && bad.reason === "row_hash mismatch");
+}
+
+// Two concurrent redeems that together exceed the balance: exactly one wins
+// (the chain-parent fence serializes them), the balance never goes negative,
+// the loser is refused with the structured code.
+async function _concurrentRedeemNeverNegative() {
+  var loy = bShop.loyalty.create({ query: _makeQuery() });
+  var cid = _uuid();
+  await loy.earn({ customer_id: cid, points: 100, source: "order-paid" });
+  var settled = await Promise.allSettled([
+    loy.redeem({ customer_id: cid, points: 80 }),
+    loy.redeem({ customer_id: cid, points: 80 }),
+  ]);
+  var ok = settled.filter(function (s) { return s.status === "fulfilled"; });
+  var no = settled.filter(function (s) { return s.status === "rejected"; });
+  check("concurrent redeem: exactly one wins", ok.length === 1);
+  check("concurrent redeem: one refused insufficient",
+    no.length === 1 && no[0].reason && no[0].reason.code === "LOYALTY_INSUFFICIENT_BALANCE");
+  check("concurrent redeem: balance never negative", (await loy.balance(cid)).balance === 20);
+  check("concurrent redeem: chain stays clean", (await loy.verifyChain(cid)).ok === true);
+}
+
+// reverseRedemptionById credits the balance back exactly once even fired twice
+// (the restored_points claim is the serialization point — forward-only, no
+// revert, so the withdrawn-PR-#409 double-credit hazard cannot recur).
+async function _reverseRedemptionIdempotent() {
+  var loy = bShop.loyalty.create({ query: _makeQuery() });
+  var cid = _uuid();
+  await loy.earn({ customer_id: cid, points: 500, source: "order-paid" });
+  var red = await loy.redeem({ customer_id: cid, points: 200 });   // pre-charge debit, order_id NULL
+  check("reverse: post-redeem balance 300", (await loy.balance(cid)).balance === 300);
+  var settled = await Promise.allSettled([
+    loy.reverseRedemptionById(red.tx_id),
+    loy.reverseRedemptionById(red.tx_id),
+  ]);
+  var credited = settled.filter(function (s) { return s.status === "fulfilled" && s.value.restored_points === 200; });
+  check("reverse: exactly one fire credits the 200", credited.length === 1);
+  check("reverse: balance restored exactly once (500, not 700)", (await loy.balance(cid)).balance === 500);
+}
+
+// The mirror is advisory: balance() reads the chain tip, so a crash that skips
+// the mirror refresh still returns the correct balance; the next advancing
+// write re-syncs the mirror.
+async function _mirrorIsAdvisory() {
+  var q = _makeQuery();
+  var loy = bShop.loyalty.create({ query: q });
+  var cid = _uuid();
+  await loy.earn({ customer_id: cid, points: 600, source: "order-paid" });
+  // Simulate a crash after the chained write but before the mirror refresh.
+  await q("UPDATE loyalty_accounts SET balance_points = 0, lifetime_points = 0 WHERE customer_id = ?1", [cid]);
+  check("balance() reads the chain tip, not the stale mirror", (await loy.balance(cid)).balance === 600);
+  await loy.earn({ customer_id: cid, points: 10, source: "order-paid" });
+  var acct = (await q("SELECT balance_points FROM loyalty_accounts WHERE customer_id = ?1", [cid])).rows[0];
+  check("next advancing write re-syncs the mirror", Number(acct.balance_points) === 610);
+}
+
+// The migration genesis anchor copies the trusted stored balance verbatim
+// (points 0) — NOT a SUM-replay that would corrupt a balance diverging from its
+// history — so a pre-existing customer's derived balance equals the trusted one.
+async function _migrationGenesisAnchorsToTrustedBalance() {
+  var db = new DatabaseSync(":memory:");
+  db.prepare("PRAGMA foreign_keys = ON").run();
+  _splitSchema(nodeFs.readFileSync(MIG_LOYALTY, "utf8")).forEach(function (s) { db.prepare(s).run(); });
+  _splitSchema(nodeFs.readFileSync(MIG_RESTORED, "utf8")).forEach(function (s) { db.prepare(s).run(); });
+  var cid = _uuid();
+  var now = Date.now();
+  // Trusted live balance 1234 — but a legacy history row of 9999 that does NOT
+  // sum to it (an out-of-band operator adjust). A replay would corrupt; the
+  // anchor copies the trusted balance verbatim.
+  db.prepare("INSERT INTO loyalty_accounts (customer_id, balance_points, lifetime_points, tier, tier_expires_at, created_at, updated_at) VALUES (?, 1234, 5000, 'platinum', NULL, ?, ?)").run(cid, now, now);
+  db.prepare("INSERT INTO loyalty_transactions (id, customer_id, transaction_type, points, source, order_id, notes, occurred_at) VALUES (?, ?, 'earn', 9999, 'legacy', NULL, '', ?)").run(_uuid(), cid, now - 1000);
+  var chainStmts = _splitSchema(nodeFs.readFileSync(MIG_CHAIN, "utf8"));
+  chainStmts.forEach(function (s) { db.prepare(s).run(); });
+  var q = function (sql, params) {
+    var stmt = db.prepare(sql);
+    var verb = sql.trim().split(/\s+/)[0].toUpperCase();
+    if (verb === "INSERT" || verb === "UPDATE" || verb === "DELETE") {
+      var info = stmt.run.apply(stmt, params || []);
+      return Promise.resolve({ rows: [], rowCount: Number(info.changes) });
+    }
+    return Promise.resolve({ rows: stmt.all.apply(stmt, params || []) });
+  };
+  var loy = bShop.loyalty.create({ query: q });
+  var bal = await loy.balance(cid);
+  check("migration: derived balance == trusted stored balance (no SUM-replay)", bal.balance === 1234);
+  check("migration: derived lifetime == trusted", bal.lifetime === 5000);
+  check("migration: derived tier == trusted", bal.tier === "platinum");
+  // Re-run ONLY the genesis INSERT (the ALTERs aren't re-runnable) → idempotent.
+  chainStmts.filter(function (s) { return /^INSERT\s+INTO\s+loyalty_transactions/i.test(s); })
+    .forEach(function (s) { db.prepare(s).run(); });
+  var genCount = db.prepare("SELECT COUNT(*) AS n FROM loyalty_transactions WHERE customer_id = ? AND source = 'chain-genesis'").get(cid).n;
+  check("migration: re-running the genesis INSERT is idempotent (one anchor)", Number(genCount) === 1);
+  await loy.earn({ customer_id: cid, points: 100, source: "order-paid" });
+  check("migration: balance after a genesis-anchored earn = trusted + 100", (await loy.balance(cid)).balance === 1334);
+  check("migration: chain verifies after the genesis-anchored earn", (await loy.verifyChain(cid)).ok === true);
+}
+
 async function run() {
   await _ensureAccount();
   await _earnAndTierPromotion();
@@ -455,6 +580,11 @@ async function run() {
   await _historyPagination();
   await _tierLeaderboard();
   await _computeTierEdges();
+  await _chainVerifyAndTamper();
+  await _concurrentRedeemNeverNegative();
+  await _reverseRedemptionIdempotent();
+  await _mirrorIsAdvisory();
+  await _migrationGenesisAnchorsToTrustedBalance();
 }
 
 module.exports = { run: run };
