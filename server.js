@@ -1411,7 +1411,7 @@ async function main() {
               body:    form,
             });
             var text = resp && resp.body ? resp.body.toString("utf8") : "{}";
-            return JSON.parse(text);   // { success, score?, action?, ... }
+            return b.safeJson.parse(text);   // { success, score?, action?, ... }
           },
         };
       }
