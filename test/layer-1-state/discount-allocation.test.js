@@ -120,8 +120,9 @@ async function _equal() {
   }
   check("equal sum invariant",             _sumAllocated(even) === 1000);
 
-  // $10 off, 3 lines: 1000 / 3 = 333 + remainder 1 lands on
-  // highest-subtotal line (L2 at 3000).
+  // $10 off, 3 lines, equal weights: floor(1000/3) = 333 each, and the single
+  // leftover unit lands on the largest fractional remainder. All three tie, so
+  // the lowest index wins (L1). Sum stays 1000, every share non-negative.
   var rem = da.allocate({
     lines: [
       { line_id: "L1", subtotal_minor: 2000, quantity: 1 },
@@ -131,10 +132,10 @@ async function _equal() {
     discount_minor: 1000,
     kind:           "equal",
   });
-  check("equal remainder L1",              rem[0].allocated_minor === 333);
-  check("equal remainder L2 (highest)",    rem[1].allocated_minor === 334);
-  check("equal remainder L3",              rem[2].allocated_minor === 333);
-  check("equal remainder sum",             _sumAllocated(rem) === 1000);
+  check("equal remainder L1 (idx tie wins)", rem[0].allocated_minor === 334);
+  check("equal remainder L2",                rem[1].allocated_minor === 333);
+  check("equal remainder L3",                rem[2].allocated_minor === 333);
+  check("equal remainder sum",               _sumAllocated(rem) === 1000);
 }
 
 // ---- allocate by_subtotal alias ----------------------------------------
@@ -209,19 +210,14 @@ async function _sumInvariantSweep() {
   }
 }
 
-// ---- half-even remainder on highest-subtotal line ----------------------
+// ---- leftover lands on the largest fractional remainder ----------------
 
-async function _remainderOnHighest() {
+async function _remainderLargestRemainder() {
   var da = discountAllocation.create({ query: _makeQuery() });
 
-  // $1 off (100 minor) over three equal-quantity lines with distinct
-  // subtotals. Proportional weights [333, 666, 1] (sum=1000): floor
-  // half-even shares are 33 / 67 / 0 (computed by b.money). Sum = 100,
-  // no remainder. Use a payload that DOES produce a remainder:
-  //
-  // Weights [1, 1, 1] equal kind with total=1 across 3 lines:
-  //   each line gets floor(1/3) = 0; remainder 1 lands on highest
-  //   subtotal (L2).
+  // Equal weights [1, 1, 1], total 1 across 3 lines: each gets floor(1/3) = 0,
+  // and the single leftover unit goes to the largest fractional remainder. All
+  // three tie, so the lowest index ("small") wins. Sum = 1, no negative share.
   var br = da.allocate({
     lines: [
       { line_id: "small",  subtotal_minor: 100,  quantity: 1 },
@@ -231,13 +227,13 @@ async function _remainderOnHighest() {
     discount_minor: 1,
     kind:           "equal",
   });
-  check("remainder small=0",               br[0].allocated_minor === 0);
-  check("remainder huge=1 (highest)",      br[1].allocated_minor === 1);
-  check("remainder mid=0",                 br[2].allocated_minor === 0);
-  check("remainder sum",                   _sumAllocated(br) === 1);
+  check("remainder small=1 (idx tie wins)", br[0].allocated_minor === 1);
+  check("remainder huge=0",                 br[1].allocated_minor === 0);
+  check("remainder mid=0",                  br[2].allocated_minor === 0);
+  check("remainder sum",                    _sumAllocated(br) === 1);
 
-  // Verify the "highest subtotal" picks the correct line when the
-  // input order differs from the subtotal order.
+  // 10 / 3 = 3 each, leftover 1; all remainders tie, so the lowest index (X)
+  // takes the leftover unit.
   var br2 = da.allocate({
     lines: [
       { line_id: "X", subtotal_minor: 3333, quantity: 1 },
@@ -247,11 +243,49 @@ async function _remainderOnHighest() {
     discount_minor: 10,
     kind:           "equal",
   });
-  // 10 / 3 = 3 each, remainder 1. Highest subtotal is X (3333).
-  check("remainder picks X (highest)",     br2[0].allocated_minor === 4);
-  check("remainder Y normal",              br2[1].allocated_minor === 3);
-  check("remainder Z normal",              br2[2].allocated_minor === 3);
-  check("remainder sum 10",                _sumAllocated(br2) === 10);
+  check("remainder picks X (idx tie wins)", br2[0].allocated_minor === 4);
+  check("remainder Y normal",               br2[1].allocated_minor === 3);
+  check("remainder Z normal",               br2[2].allocated_minor === 3);
+  check("remainder sum 10",                 _sumAllocated(br2) === 10);
+}
+
+// ---- regression: rounding must never produce a negative share ----------
+
+async function _noNegativeOvershoot() {
+  var da = discountAllocation.create({ query: _makeQuery() });
+
+  // 5 equal lines, a tiny 3-minor proportional discount. Each exact share is
+  // 0.6; the prior half-even round bumped every share to 1 (sum 5 > 3), drove
+  // the remainder to -2 and dumped it on one line as allocated_minor = -1.
+  // The largest-remainder allocator floors to 0 and hands out the 3 leftover
+  // units, so every share is in [0, subtotal] and the sum is exactly 3.
+  var lines = [];
+  for (var i = 0; i < 5; i += 1) lines.push({ line_id: "ov-" + i, subtotal_minor: 2500, quantity: 1 });
+  var ov = da.allocate({ lines: lines, discount_minor: 3, kind: "proportional" });
+  var ovSum = 0;
+  ov.forEach(function (r) {
+    check("overshoot allocated >= 0",     r.allocated_minor >= 0);
+    check("overshoot remaining in range", r.remaining_minor >= 0 && r.remaining_minor <= 2500);
+    ovSum += r.allocated_minor;
+  });
+  check("overshoot sum == discount",      ovSum === 3);
+
+  // The reverse split has the same guarantee: an 8-line allocation refunded by
+  // 5 spreads the refund non-negatively (the prior code persisted a negative
+  // per-line refund — a charge-back on that line).
+  var q = _makeQuery();
+  var da2 = discountAllocation.create({ query: q });
+  var revLines = [];
+  for (var j = 0; j < 8; j += 1) revLines.push({ line_id: "rv-" + j, subtotal_minor: 100, quantity: 1 });
+  var alloc = da2.allocate({ lines: revLines, discount_minor: 8, kind: "equal" });
+  await da2.recordAllocation({ order_id: "ov-order", discount_source: "auto_discount:x", kind: "equal", breakdown: alloc, total_minor: 8 });
+  var rev = await da2.reverseAllocation({ order_id: "ov-order", source: "auto_discount:x", refund_minor: 5 });
+  var revSum = 0;
+  rev.reverse_breakdown.forEach(function (r) {
+    check("reverse refund_minor >= 0",    r.refund_minor >= 0);
+    revSum += r.refund_minor;
+  });
+  check("reverse split sums to refund",   revSum === 5);
 }
 
 // ---- recordAllocation + allocationsForOrder round-trip -----------------
@@ -538,7 +572,8 @@ async function run() {
   await _bySubtotalAlias();
   await _byQuantity();
   await _sumInvariantSweep();
-  await _remainderOnHighest();
+  await _remainderLargestRemainder();
+  await _noNegativeOvershoot();
   await _recordAndRetrieve();
   await _reverse();
   await _metrics();
