@@ -155,6 +155,22 @@ async function _run() {
     ],
   });
 
+  // Two multi-quantity members (no quantity-1 line) whose floor residual IS
+  // recoverable by a non-overshooting bump on the larger-quantity member —
+  // a greedy smallest-first pass would strand it and undercharge, and the
+  // pre-fix overshoot would have overcharged. cap 2000 x3 + sock 1000 x4 =
+  // 10000 list; 10.03% off -> quote 8997. The floor leaves 4 cents, exactly
+  // recoverable by +1 on the qty-4 sock line (4 cents), landing on 8997.
+  await bundles.defineBundle({
+    bundle_sku: "BNDL-RECOV",
+    title:      "Cap & Socks Combo",
+    bundle_discount_bps: 1003,
+    components: [
+      { sku: "OPR-CAP-OS",  quantity: 3 },
+      { sku: "OPR-SOCK-M",  quantity: 4 },
+    ],
+  });
+
   // Quantity breaks on the tee: 5+ -> 10% off, 10+ -> 20% off.
   await qd.defineTier({
     scope:    "sku",
@@ -220,6 +236,21 @@ async function _run() {
     for (var sx = 0; sx < linesSox.length; sx += 1) subtotalSox += linesSox[sx].qty * linesSox[sx].unit_amount_minor;
     check("sock-pack realized subtotal never exceeds the 4383 quote", subtotalSox <= 4383);
     check("sock-pack realized subtotal is the floored 4380 (not the 4385 overcharge)", subtotalSox === 4380);
+
+    // ---- recoverable residual across multi-quantity members lands exactly
+    // Cap & Socks Combo quotes 8997; the floor strands 4 cents recoverable by
+    // a single +1 on the qty-4 sock line (4 cents). The allocator must take
+    // that exact recovery (8997), not strand it (greedy undercharge 8993) nor
+    // overshoot (pre-fix 8999).
+    var jarRec = helpers.cookieJar();
+    var addRec = await helpers.httpRequest({ port: handle.port, path: "/cart/bundle", method: "POST", form: { bundle_sku: "BNDL-RECOV" }, jar: jarRec });
+    check("combo add 303 -> /cart",        addRec.status === 303);
+    var cRec = await cart.bySession(jarRec.get("shop_sid"));
+    var linesRec = await cart.listLines(cRec.id);
+    var subtotalRec = 0;
+    for (var rc = 0; rc < linesRec.length; rc += 1) subtotalRec += linesRec[rc].qty * linesRec[rc].unit_amount_minor;
+    check("combo realized subtotal never exceeds the 8997 quote", subtotalRec <= 8997);
+    check("combo recovers the residual exactly to the 8997 quote", subtotalRec === 8997);
 
     // ---- bundle add over a pre-existing member: keep qty, honor bundle price
     // A member already in the cart standalone (one tee at its $30 list price)
