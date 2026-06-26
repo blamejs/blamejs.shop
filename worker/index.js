@@ -171,32 +171,33 @@ function _timingSafeEqual(x, y) {
 }
 
 // Stripe webhook signature: `t=<unix>,v1=<hex-hmac-sha256(timestamp + "." + body)>`
-// Tolerance window defaults to 5 minutes; outside that window the
-// delivery is refused (replay defense). The body is read once and
-// reused — Request bodies are single-shot.
+// Composes the framework's hardened Stripe verifier (`b.webhook.verify`,
+// alg "hmac-sha256-stripe") rather than re-parsing the header here: it
+// applies the header-size + v1-hex anti-DoS caps, a tolerance floor
+// (refuses < 30 s), constant-time hex compare, and matches across
+// every v1 signature in the header. The tolerance window defaults to
+// 5 minutes; outside it the delivery is refused (replay defense).
+// `b.webhook.verify` throws a `WebhookError` on any failure; the edge
+// only needs ok/reason for its log line, so the throw is mapped to a
+// `{ ok: false, reason }` shape — the container re-verifies
+// authoritatively (defense in depth). The body is read once and reused
+// — Request bodies are single-shot.
 async function _verifyStripeSignature(rawBody, header, secret, toleranceSeconds) {
   if (!header || !secret) return { ok: false, reason: "missing-signature-or-secret" };
-  const parts = header.split(",").map((p) => p.trim());
-  let ts = null;
-  const sigs = [];
-  for (const p of parts) {
-    const eq = p.indexOf("=");
-    if (eq <= 0) continue;
-    const k = p.slice(0, eq);
-    const v = p.slice(eq + 1);
-    if (k === "t") ts = parseInt(v, 10);
-    else if (k === "v1") sigs.push(v);
+  try {
+    await b.webhook.verify({
+      alg:         "hmac-sha256-stripe",
+      secret:      secret,
+      header:      header,
+      body:        rawBody,
+      toleranceMs: b.constants.TIME.seconds(toleranceSeconds || 300),
+    });
+    return { ok: true };
+  } catch (e) {
+    // WebhookError carries a stable `code` (e.g. webhook/stale-timestamp,
+    // webhook/bad-signature); fall back to a generic reason otherwise.
+    return { ok: false, reason: (e && e.code) || "signature-invalid" };
   }
-  if (!ts || !isFinite(ts)) return { ok: false, reason: "no-timestamp" };
-  const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - ts) > (toleranceSeconds || 300)) return { ok: false, reason: "timestamp-outside-tolerance" };
-  if (sigs.length === 0) return { ok: false, reason: "no-v1-signature" };
-
-  const expected = await b.crypto.hmacSha256(secret, ts + "." + rawBody);
-  for (const got of sigs) {
-    if (_timingSafeEqual(got, expected)) return { ok: true };
-  }
-  return { ok: false, reason: "signature-mismatch" };
 }
 
 // ---- Durable Object: InventoryLock ----------------------------------------
