@@ -319,15 +319,18 @@ node -e "
   (success / failure / denied) and paginated. Opening the log is itself
   recorded (an `audit.read` row), so reviewing the audit trail leaves
   its own forensic mark.
-- **The gift-card and store-credit ledgers are hash-chained, fork-proof,
-  and verifiable.** Every ledger entry — credits, debits, and
+- **The gift-card, store-credit, and loyalty ledgers are hash-chained,
+  fork-proof, and verifiable.** Every ledger entry — credits, debits, and
   expirations alike — links to its predecessor through a SHA3-512 chain,
-  keyed per card (gift cards) or per customer (store credit), so editing a
-  row or deleting one from the middle breaks the linkage. A uniqueness
-  fence (one child per chain tip) makes concurrent writes serialize rather
-  than fork the chain. `giftCardLedger.verifyChain(cardId)` /
-  `storeCredit.verifyChain(customerId)` recompute a ledger's chain end to
-  end and report the first divergence — run them whenever a balance is
+  keyed per card (gift cards) or per customer (store credit, loyalty), so
+  editing a row or deleting one from the middle breaks the linkage. A
+  uniqueness fence (one child per chain tip) makes concurrent writes
+  serialize rather than fork the chain, and each loyalty / gift-card /
+  store-credit balance change is written in that same single guarded row,
+  so a points or balance mutation is exactly-once even on a backend without
+  interactive transactions. `giftCardLedger.verifyChain(cardId)` /
+  `storeCredit.verifyChain(customerId)` / `loyalty.verifyChain(customerId)`
+  recompute a ledger's chain end to end and report the first divergence — run them whenever a balance is
   disputed; pass a trusted anchor (a row count + head hash from an earlier
   snapshot) to also catch a truncation that deletes the most-recent rows,
   which an append-only chain can't detect on its own. The overdraft

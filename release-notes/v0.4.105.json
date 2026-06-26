@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.105",
+  "date": "2026-06-25",
+  "headline": "A loyalty points balance is now an exactly-once, tamper-evident running ledger instead of a stored counter updated alongside its history",
+  "summary": "A customer's loyalty balance, lifetime points, and tier were held in a stored account row and updated in a statement separate from the transaction-history insert. On a backend without interactive transactions, a failure between those two writes could leave the balance and the history disagreeing, and there was no way to make a points credit exactly-once with a stored counter. Every loyalty mutation — earn, redeem, expire, adjust, credit, and the refund-time reverse/restore credits — is now a single guarded insert into the transaction ledger that also carries the new running balance, lifetime, and tier, so the balance change and its audit row are one write with no window to half-apply. The running balance is read from the ledger tip rather than a separate counter, redemptions refuse an overdraft inside that one statement, and concurrent writes to the same customer are serialized by a per-customer chain so two redemptions can never both spend the same points. Each ledger row is linked into a per-customer SHA3-512 hash chain, so the history is tamper-evident and can be verified end to end (the loyalty addition to the store-credit and gift-card ledger tamper-evidence). Balances, tiers, the points ratios, and the entire loyalty API are unchanged; the running-balance columns are added by a migration that anchors each existing customer to their current trusted balance without replaying history. The account row is kept as a denormalized mirror for the tier leaderboard and tier-expiry, refreshed after each write and never on a balance decision path.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Loyalty balance, lifetime, and tier are computed from a single guarded ledger write",
+          "body": "The loyalty balance, lifetime points, and tier are no longer a stored counter mutated next to a separate history insert. Each earn / redeem / expire / adjust / credit and each refund-time reverse or restore is now one guarded insert into the loyalty transaction ledger that records the event and carries the resulting running balance, lifetime, and tier in the same row — so a balance change and its audit entry are a single write that cannot half-apply, and a points credit is exactly-once and crash-safe. The current balance is read from the latest ledger row; a redemption's overdraft refusal lives inside that insert; and concurrent writes to one customer are serialized so two redemptions can't both spend the same balance. The customer's balances, tier, the points-per-dollar and redemption ratios, and the public loyalty API are all unchanged."
+        },
+        {
+          "title": "Loyalty history is now a tamper-evident hash chain with a verifyChain audit",
+          "body": "Each loyalty transaction row is linked to the previous one for the same customer by a SHA3-512 hash chain, the same tamper-evidence the store-credit and gift-card ledgers already carry. A new verifyChain audit recomputes the chain to prove no past row was edited or re-ordered. A schema migration adds the running-balance and chain columns and anchors every existing customer to their current trusted balance — it copies the live balance verbatim rather than replaying history, so a balance is never recomputed (and never corrupted) during the upgrade. The migration applies automatically on deploy; no operator action is required."
+        }
+      ]
+    }
+  ]
+}
