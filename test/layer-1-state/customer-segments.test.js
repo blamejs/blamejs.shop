@@ -249,6 +249,14 @@ async function _recomputeAndEvaluateVIP() {
   var vipEval2 = await seg.evaluate("vip");
   check("evaluate: rerun same id list",          vipEval2.customer_ids.length === 1 && vipEval2.customer_ids[0] === vip);
 
+  // Membership predicate — the handle shape the autoDiscount engine's
+  // customer_segment_in gate composes (isMember(customer_id, slug)).
+  check("isMember: a recomputed member is in the segment",    (await seg.isMember(vip, "vip")) === true);
+  check("isMember: a non-member customer is not",             (await seg.isMember(oneOff, "vip")) === false);
+  check("isMember: a lapsed-only customer is not in vip",     (await seg.isMember(lapsed, "vip")) === false);
+  check("isMember: an unknown segment slug is not a member",  (await seg.isMember(vip, "no-such-segment")) === false);
+  await assert.rejects(seg.isMember("not-a-uuid", "vip"), /customer_id/);
+
   // Unknown slug refused.
   await assert.rejects(seg.evaluate("does-not-exist"), /unknown slug/);
 }

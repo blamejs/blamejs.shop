@@ -3324,7 +3324,7 @@ async function main() {
       // list / notice), never at boot.
       var taxRates       = (catalog && cart) ? bShop.taxRates.create({})       : null;
       var shippingZones  = (catalog && cart) ? bShop.shippingZones.create({})  : null;
-      var autoDiscount   = (catalog && cart) ? bShop.autoDiscount.create({})   : null;
+      var autoDiscount   = (catalog && cart) ? bShop.autoDiscount.create({ customerSegments: customerSegments }) : null;
 
       // Win-back lapsed-customer campaigns — escalating re-engagement
       // sequences for customers whose last paid order is N days old. The
