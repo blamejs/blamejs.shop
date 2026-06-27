@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.1",
+  "date": "2026-06-27",
+  "headline": "Vendored framework refreshed to 0.15.35 — Prometheus label-injection fix in the metrics shadow registry",
+  "summary": "Updates the vendored blamejs framework to 0.15.35. The upstream release fixes a label-injection in the framework's metrics shadow registry: it built a metric's cardinality key by joining label pairs with commas and re-split that string when rendering the Prometheus exposition, so a comma (or `=`) inside a label VALUE forged additional label pairs in the scrape output — which downstream tenant-scoping filters, authorization selectors, recording rules, and alerting trust as a boundary — and two distinct label sets could collide into one cardinality bucket. The key now uses canonical-JSON of the label set and the render emits the structured labels instead of re-splitting, so a value's commas/equals stay inside the value and a label named `constructor` / `prototype` / `__proto__` is preserved. This storefront does not compose the metrics shadow registry, so there is no runtime change for it; the fix ships in the vendored framework regardless and no operator action is required.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Vendored framework refreshed to 0.15.35 (Prometheus label-injection fix)",
+          "body": "Refreshes the vendored blamejs framework to 0.15.35. The upstream fix stops a comma or `=` in a metric label value from forging extra Prometheus label pairs in the shadow registry's scrape output — the cardinality key is now canonical-JSON of the label set and the render emits the structured labels rather than splitting a joined string, so distinct label sets stay distinct and reserved-name labels survive. The shipped storefront does not expose the metrics shadow registry, so its runtime, public API, and wire format are unchanged; the hardened framework simply rides along."
+        }
+      ]
+    }
+  ]
+}
