@@ -375,6 +375,51 @@ async function _run() {
   check("free_shipping: confirmed grand total excludes shipping", fsPlaced && fsPlaced.grand_total_minor === SUBTOTAL + TAX);
   check("free_shipping: charged amount excludes shipping",
     fsConfirm.payment_intent && _chargeByPi[fsConfirm.payment_intent.id] === SUBTOTAL + TAX);
+
+  // ---- (h) a customer_segment_in rule gates on the wired customerSegments
+  //      handle. The checkout's autoDiscount MUST be created with a
+  //      customerSegments handle — without it, evaluate THROWS for any
+  //      logged-in customer the instant a segment-gated rule exists
+  //      (auto-discount.js), breaking the whole quote for authenticated
+  //      shoppers (guests are skipped before the throw). This locks the
+  //      composition: in-segment customer gets the discount, out-of-segment
+  //      and guest are skipped (never thrown). Isolated store.
+  var segQuery   = _makeQuery();
+  var segCatalog = bShop.catalog.create({ query: segQuery });
+  var segCart    = bShop.cart.create({ query: segQuery, catalog: segCatalog });
+  var segOrder   = bShop.order.create({ query: segQuery, cursorSecret: "auto-disc-seg" });
+  var VIP_ID   = b.uuid.v7();
+  var PLAIN_ID = b.uuid.v7();
+  var segEngine = autoDiscount.create({
+    query: segQuery,
+    customerSegments: { isMember: async function (cid, slug) { return cid === VIP_ID && slug === "vip"; } },
+  });
+  var sp = await segCatalog.products.create({ slug: "swidget", title: "S Widget", status: "active" });
+  var sv = await segCatalog.variants.create(sp.id, { sku: "SWID-1", weight_grams: 100 });
+  await segCatalog.prices.set(sv.id, { currency: "USD", amount_minor: 5000 });
+  await segCatalog.inventory.create("SWID-1", { stock_on_hand: 100 });
+  await segEngine.defineRule({
+    slug:    "vip-five-off",
+    title:   "VIP five off",
+    trigger: { kind: "cart_total_min", min_minor: 1 },
+    value:   { kind: "amount_off_total", minor: 500 },
+    customer_segment_in: ["vip"],
+  });
+  var segDeps = _checkoutDeps(segQuery, segCatalog, segCart, segOrder);
+  segDeps.autoDiscount = segEngine;
+  var segCheckout = bShop.checkout.create(segDeps);
+  async function _segCart(customerId) {
+    var c = await segCart.create(b.uuid.v7(), { currency: "USD" });
+    await segCart.addLine(c.id, { variant_id: sv.id, qty: 1 });
+    if (customerId) await segCart.setCustomer(c.id, customerId);
+    return c.id;
+  }
+  var vipQuote = await segCheckout.quote({ cart_id: await _segCart(VIP_ID), ship_to: SHIP_TO, selected_shipping_id: "std" });
+  check("segment rule applies for an in-segment customer (handle wired)",      vipQuote.totals.discount_minor === 500);
+  var plainQuote = await segCheckout.quote({ cart_id: await _segCart(PLAIN_ID), ship_to: SHIP_TO, selected_shipping_id: "std" });
+  check("segment rule skipped (not thrown) for an out-of-segment customer",    plainQuote.totals.discount_minor === 0);
+  var guestQuote = await segCheckout.quote({ cart_id: await _segCart(null), ship_to: SHIP_TO, selected_shipping_id: "std" });
+  check("segment rule skipped (not thrown) for a guest",                       guestQuote.totals.discount_minor === 0);
 }
 
 async function run() { await _run(); }

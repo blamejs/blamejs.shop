@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.127",
+  "date": "2026-06-27",
+  "headline": "Customer-segment-restricted automatic discounts now work instead of breaking the discount quote for signed-in shoppers",
+  "summary": "An automatic-discount rule limited to a customer segment (for example a members-only offer) never functioned: the discount engine was constructed without the customer-segments handle it needs to test membership, so the moment any segment-restricted rule existed, computing the cart and checkout discount threw an error for every signed-in shopper — breaking the discount quote for authenticated customers — while the discount applied to no one. Guests were unaffected because a segment rule is skipped for a shopper with no account. The engine is now wired with the segments handle, so a segment-restricted rule correctly applies to shoppers who are in the segment, is skipped for shoppers who are not, and is skipped for guests; rules that are not segment-restricted are entirely unaffected.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Customer-segment-restricted automatic discounts apply correctly and no longer break the quote",
+          "body": "The automatic-discount engine is now created with the customer-segments handle. Previously the storefront and checkout wired the engine without it, so evaluating a rule carrying a customer-segment restriction threw the moment a signed-in shopper reached the cart or checkout — the discount engine requires the handle to answer \"is this customer in the segment?\" and had none. The result was that a segment-restricted offer applied to nobody and broke the discount calculation for every authenticated shopper whenever such a rule was active. With the handle wired, a segment-restricted rule applies to shoppers in the segment, is cleanly skipped for shoppers outside it and for guests, and rules without a segment restriction behave exactly as before."
+        }
+      ]
+    }
+  ]
+}
