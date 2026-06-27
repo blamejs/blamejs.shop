@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.0",
+  "date": "2026-06-27",
+  "headline": "Affiliate commissions gain a tamper-evident hash chain, joining the gift-card, store-credit, and loyalty ledgers",
+  "summary": "The affiliate-commission ledger was the last money ledger without tamper-evidence. Each commission is now linked into a per-affiliate SHA3-512 hash chain: a row names its predecessor, a uniqueness fence allows exactly one child per chain tip (so concurrent commissions for the same affiliate serialize instead of forking), and editing a commission's money fields or deleting a row from the middle breaks the linkage. Unlike the append-only gift-card / store-credit / loyalty ledgers, an affiliate commission walks a pending → paid → voided payout lifecycle in place, so the chain hashes only the immutable money facts — order, affiliate, order total, commission, currency, and time — and leaves the lifecycle columns out, meaning a legitimate payout or void never breaks the chain while an inflated amount or a removed row still does. A new `affiliates.verifyChain(affiliateId)` recomputes an affiliate's chain end to end and reports the first divergence, and accepts a trusted anchor (row count + head hash from an earlier snapshot) to also catch a truncation that deletes the most-recent commissions. Migration 0238 adds the chain columns + fence; commissions recorded before it are tolerated as an unverifiable legacy prefix, and the chain anchors fresh from the first commission recorded afterward.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Affiliate commissions are a verifiable, fork-proof per-affiliate hash chain",
+          "body": "Recording a commission now links it into the affiliate's SHA3-512 hash chain — `row_hash = SHA3-512(prev_hash || canonical-json(immutable fields))` — under a `UNIQUE(affiliate_id, prev_hash)` parent fence, so a commission derived from a stale tip collides and retries instead of forking the chain, and concurrent commissions for one affiliate serialize. Because a commission's status, paid-at, payout reference, and void reason are stamped in place over its lifetime, only the immutable money facts are hashed, so a `pending → paid → voided` transition leaves the chain valid while tampering with the order total or commission amount, or deleting a commission, is detected. `affiliates.verifyChain(affiliateId)` walks the chain and reports the first break; pass `{ anchor: { count, head } }` to also rule out a tail truncation. Commissions written before this release are tolerated as an unverifiable legacy prefix and the chain anchors fresh from the next one — no backfill required. Migration 0238 adds the columns and the fence."
+        }
+      ]
+    }
+  ]
+}
