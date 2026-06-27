@@ -270,6 +270,41 @@ async function _validation() {
   await assert.rejects(cart.setStatus(c.id, "junk"), /status must be/);
 }
 
+// The qty-bump write paths (addLine / setBundleLine) are single atomic upserts
+// (ON CONFLICT ... DO UPDATE), so concurrent adds of the same (cart, variant)
+// sum exactly instead of losing an increment to a read-then-write race. This
+// pins the arithmetic the upsert now performs in-DB — the setBundleLine blend
+// is the SQL form of the old `Math.ceil(combinedValue / combinedQty)`.
+async function _atomicQtyBumpAndBlend() {
+  var query = _makeQuery();
+  var catalog = bShop.catalog.create({ query: query });
+  var cart    = bShop.cart.create({ query: query, catalog: catalog });
+  var { v1, v2 } = await _setupCatalog(catalog);
+  var c = await cart.create(_newSessionId(), { currency: "USD" });
+
+  // Standalone units first, then a bundle's units onto the SAME line: the
+  // per-unit price re-blends to the COMBINED value, rounded UP so a
+  // non-divisible blend never charges below the combined value.
+  await cart.addLine(c.id, { variant_id: v1.id, qty: 2 });            // 2 @ 2999
+  var blended = await cart.setBundleLine(c.id, {
+    variant_id: v1.id, qty: 1, unit_amount_minor: 1000, unit_currency: "USD",
+  });
+  // (2*2999 + 1*1000) / 3 = 6998/3 = 2332.67 -> ceil 2333
+  check("setBundleLine blends existing line to combined value (ceil)", blended.unit_amount_minor === 2333);
+  check("setBundleLine sums qty onto the existing line",               blended.qty === 3);
+
+  // A fresh line carries the bundle's allocated price verbatim.
+  var fresh = await cart.setBundleLine(c.id, {
+    variant_id: v2.id, qty: 2, unit_amount_minor: 500, unit_currency: "USD",
+  });
+  check("setBundleLine fresh line uses the bundle price", fresh.unit_amount_minor === 500 && fresh.qty === 2);
+
+  // addLine NEVER re-prices: it bumps qty and keeps the blended price (the
+  // catalog price it resolves is discarded on the ON CONFLICT path).
+  var bumped = await cart.addLine(c.id, { variant_id: v1.id, qty: 1 });
+  check("addLine keeps the blended price on a bundle line", bumped.unit_amount_minor === 2333 && bumped.qty === 4);
+}
+
 async function run() {
   await _crud();
   await _lineMutationCartScope();
@@ -279,6 +314,7 @@ async function run() {
   await _mergeCart();
   await _customerAndStatus();
   await _validation();
+  await _atomicQtyBumpAndBlend();
 }
 
 module.exports = { run: run };
