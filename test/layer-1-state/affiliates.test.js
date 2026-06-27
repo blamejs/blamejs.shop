@@ -35,9 +35,10 @@ var helpers    = require("../helpers");
 var check      = helpers.check;
 var assert     = helpers.assert;
 
-var MIG_PATH = nodePath.resolve(
-  __dirname, "..", "..", "migrations-d1", "0057_affiliates.sql"
-);
+var MIG_PATHS = [
+  nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0057_affiliates.sql"),
+  nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0238_affiliate_commission_chain.sql"),
+];
 
 function _splitSchema(text) {
   var noComments = text.replace(/--[^\n]*\n/g, "\n");
@@ -47,8 +48,10 @@ function _splitSchema(text) {
 function _makeQuery() {
   var db = new DatabaseSync(":memory:");
   db.prepare("PRAGMA foreign_keys = ON").run();
-  _splitSchema(nodeFs.readFileSync(MIG_PATH, "utf8")).forEach(function (s) {
-    db.prepare(s).run();
+  MIG_PATHS.forEach(function (p) {
+    _splitSchema(nodeFs.readFileSync(p, "utf8")).forEach(function (s) {
+      db.prepare(s).run();
+    });
   });
   return async function (sql, params) {
     var stmt = db.prepare(sql);
@@ -829,7 +832,68 @@ async function _registerAffiliateRetriesUnderRedactedCollision() {
     typeof a.code === "string" && a.code.length > 0 && a.code !== firstCode);
 }
 
+// Per-affiliate commission tamper-evidence hash chain (migration 0238).
+async function _commissionChain() {
+  var ctx = _setup();
+  var ZERO = "0".repeat(128);
+  var a = await ctx.affiliates.registerAffiliate(_validRegister({ email: "chain@example.com" }));
+
+  var k1 = await ctx.affiliates.recordCommissionEvent({ order_id: _validUUID(), affiliate_id: a.id, order_total_minor: 10000, currency: "USD" });
+  var k2 = await ctx.affiliates.recordCommissionEvent({ order_id: _validUUID(), affiliate_id: a.id, order_total_minor: 20000, currency: "USD" });
+  var k3 = await ctx.affiliates.recordCommissionEvent({ order_id: _validUUID(), affiliate_id: a.id, order_total_minor: 30000, currency: "USD" });
+
+  check("commission carries prev_hash + 128-hex row_hash",
+    typeof k1.prev_hash === "string" && typeof k1.row_hash === "string" && k1.row_hash.length === 128);
+  check("first commission anchors off the all-zero genesis", k1.prev_hash === ZERO);
+  check("second commission links off the first",  k2.prev_hash === k1.row_hash);
+  check("third commission links off the second",   k3.prev_hash === k2.row_hash);
+
+  var v = await ctx.affiliates.verifyChain(a.id);
+  check("verifyChain ok on an untampered chain", v.ok === true && v.rows_verified === 3 && v.legacy_prefix === 0);
+  check("verifyChain head is the latest row_hash", v.head === k3.row_hash);
+
+  // A lifecycle transition (status/paid_at/payout_reference are NOT hashed) must
+  // not break the chain.
+  await ctx.affiliates.markCommissionPaid({ commission_event_id: k2.id, paid_at: Date.now(), payout_reference: "PO-1" });
+  var vPaid = await ctx.affiliates.verifyChain(a.id);
+  check("verifyChain still ok after a paid transition", vPaid.ok === true && vPaid.rows_verified === 3);
+
+  // Tampering with an IMMUTABLE money field is detected.
+  await ctx.query("UPDATE affiliate_commissions SET commission_minor = commission_minor + 1 WHERE id = ?1", [k2.id]);
+  var vTamper = await ctx.affiliates.verifyChain(a.id);
+  check("verifyChain detects a tampered commission_minor",
+    vTamper.ok === false && vTamper.reason === "row_hash mismatch" && vTamper.break_row_id === k2.id);
+
+  // A trusted anchor { count, head } rules out a tail truncation.
+  var bAff = await ctx.affiliates.registerAffiliate(_validRegister({ email: "anchor@example.com" }));
+  await ctx.affiliates.recordCommissionEvent({ order_id: _validUUID(), affiliate_id: bAff.id, order_total_minor: 5000, currency: "USD" });
+  var m2 = await ctx.affiliates.recordCommissionEvent({ order_id: _validUUID(), affiliate_id: bAff.id, order_total_minor: 6000, currency: "USD" });
+  var anchor = { count: 2, head: m2.row_hash };
+  check("verifyChain ok with a matching anchor", (await ctx.affiliates.verifyChain(bAff.id, { anchor: anchor })).ok === true);
+  await ctx.query("DELETE FROM affiliate_commissions WHERE id = ?1", [m2.id]);
+  var vTrunc = await ctx.affiliates.verifyChain(bAff.id, { anchor: anchor });
+  check("verifyChain anchor detects a tail truncation", vTrunc.ok === false && vTrunc.anchor_checked === true);
+
+  // A legacy pre-chain row (NULL prev_hash/row_hash) is tolerated as an
+  // unverifiable prefix; the next commission anchors the chain fresh.
+  var cAff = await ctx.affiliates.registerAffiliate(_validRegister({ email: "legacy@example.com" }));
+  await ctx.query(
+    "INSERT INTO affiliate_commissions (id, order_id, affiliate_id, order_total_minor, commission_minor, currency, status, occurred_at, paid_at, voided_at, payout_reference, void_reason, prev_hash, row_hash) " +
+    "VALUES (?1, ?2, ?3, 1000, 50, 'USD', 'pending', 1000, NULL, NULL, NULL, NULL, NULL, NULL)",
+    [_validUUID(), _validUUID(), cAff.id]);
+  var n1 = await ctx.affiliates.recordCommissionEvent({ order_id: _validUUID(), affiliate_id: cAff.id, order_total_minor: 2000, currency: "USD" });
+  var vLegacy = await ctx.affiliates.verifyChain(cAff.id);
+  check("verifyChain tolerates a legacy NULL-hash prefix",
+    vLegacy.ok === true && vLegacy.legacy_prefix === 1 && vLegacy.rows_verified === 1);
+  check("the post-legacy commission anchors off genesis", n1.prev_hash === ZERO);
+
+  // verifyChain refuses a bad affiliate id + a malformed anchor.
+  await assert.rejects(ctx.affiliates.verifyChain("not-a-uuid"), /affiliate_id/);
+  await assert.rejects(ctx.affiliates.verifyChain(a.id, { anchor: { count: 0, head: ZERO } }), /anchor/);
+}
+
 async function run() {
+  await _commissionChain();
   await _registerHappyPath();
   await _registerAffiliateRetriesUnderRedactedCollision();
   await _registerRefusals();

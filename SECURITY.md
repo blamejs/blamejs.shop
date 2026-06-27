@@ -319,17 +319,22 @@ node -e "
   (success / failure / denied) and paginated. Opening the log is itself
   recorded (an `audit.read` row), so reviewing the audit trail leaves
   its own forensic mark.
-- **The gift-card, store-credit, and loyalty ledgers are hash-chained,
-  fork-proof, and verifiable.** Every ledger entry — credits, debits, and
-  expirations alike — links to its predecessor through a SHA3-512 chain,
-  keyed per card (gift cards) or per customer (store credit, loyalty), so
-  editing a row or deleting one from the middle breaks the linkage. A
-  uniqueness fence (one child per chain tip) makes concurrent writes
-  serialize rather than fork the chain, and each loyalty / gift-card /
-  store-credit balance change is written in that same single guarded row,
-  so a points or balance mutation is exactly-once even on a backend without
-  interactive transactions. `giftCardLedger.verifyChain(cardId)` /
-  `storeCredit.verifyChain(customerId)` / `loyalty.verifyChain(customerId)`
+- **The gift-card, store-credit, loyalty, and affiliate-commission ledgers
+  are hash-chained, fork-proof, and verifiable.** Every ledger entry — credits,
+  debits, and expirations alike — links to its predecessor through a SHA3-512
+  chain, keyed per card (gift cards), per customer (store credit, loyalty), or
+  per affiliate (commissions), so editing a row or deleting one from the middle
+  breaks the linkage. A uniqueness fence (one child per chain tip) makes
+  concurrent writes serialize rather than fork the chain, and each loyalty /
+  gift-card / store-credit balance change is written in that same single guarded
+  row, so a points or balance mutation is exactly-once even on a backend without
+  interactive transactions. The affiliate-commission chain hashes only the
+  immutable money facts (order, affiliate, totals, currency, time), so a
+  commission walking its pending → paid → voided payout lifecycle never breaks
+  the chain while inflating an amount or deleting a row still does.
+  `giftCardLedger.verifyChain(cardId)` /
+  `storeCredit.verifyChain(customerId)` / `loyalty.verifyChain(customerId)` /
+  `affiliates.verifyChain(affiliateId)`
   recompute a ledger's chain end to end and report the first divergence — run them whenever a balance is
   disputed; pass a trusted anchor (a row count + head hash from an earlier
   snapshot) to also catch a truncation that deletes the most-recent rows,
