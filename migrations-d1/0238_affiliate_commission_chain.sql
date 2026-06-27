@@ -13,6 +13,15 @@
 ALTER TABLE affiliate_commissions ADD COLUMN prev_hash TEXT;
 ALTER TABLE affiliate_commissions ADD COLUMN row_hash  TEXT;
 
+-- Per-affiliate, strictly-increasing chain position (genesis = 0, each child =
+-- parent + 1). It orders the chain for the tip read and verifyChain WITHOUT
+-- depending on occurred_at, so the operator-supplied commission timestamp is
+-- stored verbatim (a backdated / out-of-order / backfilled commission keeps its
+-- real business-event time for payout and reporting windows) while the chain
+-- read order still matches the prev_hash linkage exactly. Legacy pre-chain rows
+-- carry NULL chain_index and sort into the unverifiable legacy prefix.
+ALTER TABLE affiliate_commissions ADD COLUMN chain_index INTEGER;
+
 -- Chain-parent fence: at most one child per (affiliate_id, parent row_hash), so
 -- a commission derived from a STALE tip collides at the constraint instead of
 -- forking the affiliate's chain — the writer re-reads the tip and retries.

@@ -887,6 +887,18 @@ async function _commissionChain() {
     vLegacy.ok === true && vLegacy.legacy_prefix === 1 && vLegacy.rows_verified === 1);
   check("the post-legacy commission anchors off genesis", n1.prev_hash === ZERO);
 
+  // The caller's occurred_at is stored verbatim, even when an OLDER commission
+  // is recorded after a newer one (backfill / retry / out-of-order queue): the
+  // chain orders by chain_index, not occurred_at, so the real business-event
+  // time is preserved for payout + reporting windows and the chain still links.
+  var dAff = await ctx.affiliates.registerAffiliate(_validRegister({ email: "backdate@example.com" }));
+  var newer = await ctx.affiliates.recordCommissionEvent({ order_id: _validUUID(), affiliate_id: dAff.id, order_total_minor: 4000, currency: "USD", occurred_at: 5000 });
+  var older = await ctx.affiliates.recordCommissionEvent({ order_id: _validUUID(), affiliate_id: dAff.id, order_total_minor: 4000, currency: "USD", occurred_at: 1000 });
+  check("forward commission keeps its exact occurred_at", Number(newer.occurred_at) === 5000);
+  check("backdated commission keeps its exact occurred_at (no bump)", Number(older.occurred_at) === 1000);
+  check("later-recorded older commission links off the newer one", older.prev_hash === newer.row_hash);
+  check("chain verifies despite out-of-order timestamps", (await ctx.affiliates.verifyChain(dAff.id)).ok === true);
+
   // verifyChain refuses a bad affiliate id + a malformed anchor.
   await assert.rejects(ctx.affiliates.verifyChain("not-a-uuid"), /affiliate_id/);
   await assert.rejects(ctx.affiliates.verifyChain(a.id, { anchor: { count: 0, head: ZERO } }), /anchor/);
