@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.2",
+  "date": "2026-06-27",
+  "headline": "Vendored framework refreshed to 0.15.36",
+  "summary": "Updates the vendored blamejs framework to 0.15.36. The upstream release is internal test-suite tooling only: it re-verifies the guard-suite class that allows a bare comma/semicolon split on token-only RFC header grammars (RRULE, RFC 9421 signature components, TLS-RPT rua, SCIM attribute paths), renames its marker to a descriptive token, and prunes five inert marker comments. No runtime code, public API, or wire format changed upstream, so there is no runtime or behavior change for this storefront and no operator action is required.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Vendored framework refreshed to 0.15.36",
+          "body": "Refreshes the vendored blamejs framework to 0.15.36, an upstream release scoped to test-suite tooling — a guard-suite class re-verified and its marker renamed, plus five inert marker comments removed. The shipped framework runtime, public API, and wire format are unchanged, so no operator action is required."
+        }
+      ]
+    }
+  ]
+}
