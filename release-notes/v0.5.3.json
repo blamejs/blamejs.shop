@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.3",
+  "date": "2026-06-27",
+  "headline": "Vendored framework refreshed to 0.15.37 — non-finite numeric options can no longer silently disable a security check",
+  "summary": "Updates the vendored blamejs framework to 0.15.37. The upstream release closes a class of fail-open configuration bugs: several numeric options validated a value only as `typeof === number && >= 0`, which accepts `Infinity`. Where the value is a clock-skew tolerance or a resource cap, an `Infinity` (or `NaN`) silently turned off the very protection it tunes — an `Infinity` CWT / OCSP-staple / ARC clock-skew made the expiry and freshness comparisons unsatisfiable (so an expired token, a replayed pre-revocation OCSP `good` response, or an expired ARC seal would be accepted), and an `Infinity` WebSocket message/frame cap, inbox/flag-cache size cap, or audit-chain fan-out cap disabled the bound. These options now route through the framework's finite-bounds validator, refusing a non-finite value at the entry point (or falling back to the safe default), while options where unbounded is deliberate (reconnect-indefinitely, retain-indefinitely) still accept it. This storefront configures these options with finite values, so there is no runtime or behavior change for it; the hardened framework rides along and no operator action is required.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Vendored framework refreshed to 0.15.37 (non-finite option values rejected)",
+          "body": "Refreshes the vendored blamejs framework to 0.15.37. The upstream fix makes a clock-skew tolerance or resource cap of `Infinity` / `NaN` a rejected value rather than one that silently disables the check it configures — covering the CWT / OCSP-staple / ARC time checks, the WebSocket-client inbound size and handshake caps, and the inbox / flag-cache / audit-chain size and count caps, with deliberately-unbounded options (reconnect/retain indefinitely) unaffected. The shipped storefront passes finite values to these options, so its runtime, public API, and wire format are unchanged; the hardened framework simply rides along."
+        }
+      ]
+    }
+  ]
+}
