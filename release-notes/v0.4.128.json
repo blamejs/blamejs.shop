@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.128",
+  "date": "2026-06-27",
+  "headline": "Email sign-in links are now rate-limited per recipient, bounding inbox-flood and token-minting abuse",
+  "summary": "The email magic-link sign-in — the no-passkey backup on the login screen — minted a new single-use sign-in token and sent an email on every POST for a registered address, bounded only by the per-IP request limiter. An attacker submitting a victim's address from many IP addresses could therefore flood that inbox with sign-in links and mint an unbounded number of valid single-use tokens. The route now applies a per-recipient cooldown: at most one sign-in link (and one minted token) per registered address per minute. The cooldown runs after the unchanged, enumeration-safe confirmation response, so a registered and an unregistered address stay indistinguishable by the reply; a transient lookup failure falls through to sending, keeping availability ahead of the rate cap.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Email sign-in links are rate-limited per recipient",
+          "body": "Requesting an email sign-in link minted a single-use portal token and sent a message every time it was submitted for a registered address, with only the per-IP limiter in front of it — which a distributed sender (many IPs, one victim address) sails past. The request now checks whether a sign-in link was already minted for that account within the last minute and, if so, sends nothing further. The check runs on the request's background path, after the identical confirmation response is returned, so it does not reintroduce an account-existence oracle (a registered and an unregistered address still get the same reply at the same speed); an address with no account still triggers no mint or send at all. A transient failure of the cooldown lookup falls through to sending, so a degraded datastore can't lock legitimate shoppers out of signing in."
+        }
+      ]
+    }
+  ]
+}
