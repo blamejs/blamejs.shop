@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.4.124",
+  "date": "2026-06-27",
+  "headline": "Adding the same item to a cart from two requests at once always sums the quantity, and the manager role can configure delivery cutoffs and postal zones",
+  "summary": "Two correctness fixes. First, adding the same product to a cart from two requests at once — a double-click, or two open tabs — could drop one of the quantity increases: the cart line's quantity was read and then written back as an absolute value, so the second write overwrote the first instead of adding to it. Adding to the cart now sums the quantity in a single atomic database statement, so simultaneous adds of the same item always total correctly; the same atomic write covers applying a bundle's units onto an existing line and merging a guest cart into a signed-in cart at login. Second, an operator with the manager role was wrongly denied the delivery-estimate cutoff-time and postal-zone screens — those two actions were not mapped to the catalog-write permission and fell through to the owner-only fallback, so only the owner could reach them; managers can now manage them alongside the other delivery-estimate settings.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Simultaneous add-to-cart requests for the same item sum the quantity instead of losing one",
+          "body": "Adding a line to a cart read the existing quantity and then wrote back the absolute sum, so two requests adding the same item to the same cart at the same time (a rapid double-click, or two tabs) could each read the same starting quantity and overwrite each other — one increase was lost. The add is now a single atomic upsert that increments the stored quantity in the database (`qty = qty + added`), so concurrent adds of the same item always total correctly and a concurrent first-add no longer fails on the cart's unique-line constraint. A plain re-add still keeps the line's existing price. The same atomic write applies to placing a bundle's units onto an existing line (the per-unit price re-blends to the combined value, rounded up so it never charges below it) and to merging a guest cart into a signed-in cart at login."
+        },
+        {
+          "title": "The manager role can configure delivery cutoff times and postal zones",
+          "body": "The delivery-estimate cutoff-time and postal-zone actions were not mapped to the catalog-write permission, so they fell through to the owner-only fallback and an operator with the manager role was denied access to those two screens while being allowed the adjacent transit-time and holiday screens. Both actions now require catalog-write, matching the rest of the delivery-estimate settings, so managers can configure them."
+        }
+      ]
+    }
+  ]
+}
