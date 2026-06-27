@@ -171,6 +171,30 @@ async function _unifiedFlow() {
     check("mail carries a single-use portal token", !!tokenMatch);
     var plaintext = tokenMatch ? tokenMatch[1] : "";
 
+    // ---- per-recipient cooldown: a SECOND link request for the same
+    //      registered address within the window mints + sends nothing more
+    //      (bounds a distributed inbox-flood / token-mint of a real address
+    //      that the per-IP limiter can't). The response stays the identical
+    //      enumeration-safe 303.
+    var sentAfterFirst     = stub.sent.length;
+    var sessionsAfterFirst = (await customerPortal.listForCustomer(customerId, {})).length;
+    var repeatPost = await helpers.httpRequest({
+      port: sf.port, path: "/account/login/link", method: "POST", jar: helpers.cookieJar(),
+      form: { email: "shopper@example.com" },
+    });
+    check("cooldown: repeat POST → identical 303",
+      repeatPost.status === 303 &&
+      (repeatPost.headers["location"] || "") === "/account/login/link?sent=1");
+    // The suppressed second attempt sends no mail: the count never climbs
+    // (waitUntil deliberately times out), and no new token is minted.
+    await helpers.assert.rejects(
+      helpers.waitUntil(function () { return stub.sent.length > sentAfterFirst; },
+        { timeoutMs: 750, label: "cooldown: second magic-link send suppressed" }),
+      /waitUntil timeout/);
+    check("cooldown: no second mail dispatched",  stub.sent.length === sentAfterFirst);
+    check("cooldown: no second token minted",
+      (await customerPortal.listForCustomer(customerId, {})).length === sessionsAfterFirst);
+
     // ---- enumeration parity: unknown email is byte-identical -----------
     var sentBefore2 = stub.sent.length;
     var unknownPost = await helpers.httpRequest({

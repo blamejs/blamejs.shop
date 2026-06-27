@@ -460,9 +460,41 @@ async function _revokeAllForCustomer() {
   await assert.rejects(cp.revokeAllForCustomer(victim, ""),        /reason/);
 }
 
+// createSession({ min_interval_seconds }) is an ATOMIC per-customer mint
+// throttle (one conditional INSERT ... WHERE NOT EXISTS), used by the public
+// email sign-in-link route to bound inbox-flood / token-mint abuse. A second
+// mint inside the window inserts nothing and returns `{ throttled: true }`.
+async function _createMinIntervalThrottle() {
+  var cp  = customerPortal.create({ query: _makeQuery() });
+  var cid = _newCustomerId();
+
+  var first = await cp.createSession({ customer_id: cid, scope: "full", min_interval_seconds: 60 });
+  check("min_interval first mint returns a token",       !!(first && first.plaintext_token));
+  check("min_interval first mint not throttled",         !first.throttled);
+
+  var second = await cp.createSession({ customer_id: cid, scope: "full", min_interval_seconds: 60 });
+  check("min_interval second mint is throttled",         second && second.throttled === true);
+  check("min_interval throttled mint yields no token",   !second.plaintext_token);
+
+  var rows = await cp.listForCustomer(cid, {});
+  check("min_interval mints exactly one session in the window", rows.length === 1);
+
+  var other = await cp.createSession({ customer_id: _newCustomerId(), scope: "full", min_interval_seconds: 60 });
+  check("min_interval is per-customer (other customer mints)",  !!(other && other.plaintext_token));
+
+  // Omitting the option mints unconditionally (back-compat).
+  var plain = await cp.createSession({ customer_id: cid, scope: "full" });
+  check("min_interval omitted → unconditional mint (back-compat)", !!(plain && plain.plaintext_token));
+
+  await assert.rejects(
+    cp.createSession({ customer_id: _newCustomerId(), scope: "full", min_interval_seconds: -1 }),
+    /min_interval_seconds/);
+}
+
 async function run() {
   await _createHappyPath();
   await _createBadInput();
+  await _createMinIntervalThrottle();
   await _verifyHappyPathAndSingleUse();
   await _verifyExpiredReturnsNull();
   await _verifyUnknownAndBadInput();
