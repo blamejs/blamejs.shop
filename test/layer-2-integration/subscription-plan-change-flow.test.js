@@ -117,6 +117,14 @@ async function _seedSubscription(query, customerId, planId, periodStart, periodE
 }
 
 async function _bootApp(deps, sweepSecret) {
+  // Validate the bridge secret once at init (fail-closed) so the tick
+  // handler below carries only request-dependent checks — no provably-
+  // constant `!want` fragment in the hot path. (The production handler in
+  // server.js keeps its `!wantPC` because process.env.D1_BRIDGE_SECRET can
+  // legitimately be empty; here the secret is a fixed test constant.)
+  if (typeof sweepSecret !== "string" || !sweepSecret.length) {
+    throw new TypeError("_bootApp: sweepSecret must be a non-empty string");
+  }
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-shop-plan-change-"));
   var app = await b.createApp({
     dataDir:    dataDir,
@@ -132,7 +140,7 @@ async function _bootApp(deps, sweepSecret) {
       r.post("/_/subscription-plan-changes-tick", async function (req, res) {
         var got  = req.headers && req.headers["x-d1-bridge-secret"];
         var want = sweepSecret;
-        if (!want || typeof got !== "string" || got.length !== want.length || !b.crypto.timingSafeEqual(got, want)) {
+        if (typeof got !== "string" || got.length !== want.length || !b.crypto.timingSafeEqual(got, want)) {
           res.status(401); res.setHeader && res.setHeader("content-type", "application/json");
           return res.end ? res.end(JSON.stringify({ ok: false, error: "UNAUTHORIZED" })) : res.send("");
         }
