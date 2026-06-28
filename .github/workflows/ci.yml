@@ -157,3 +157,37 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=6144
         run: node test/e2e/drive-checkout.js
+
+  e2e-account-subscriptions:
+    # End-to-end AUTHED subscription plan-change through the LIVE security
+    # stack, in a REAL browser. test/e2e/serve-account.js boots the full
+    # production middleware composition (bot-guard, global rate-limit,
+    # fetch-metadata, scoped double-submit CSRF, sealed cookies — nothing
+    # disabled) AND serves the real theme assets so the islands load with
+    # their real bytes + SRI; it prints the sealed shop_auth cookie the
+    # framework itself mints. The driver injects that cookie into a Playwright
+    # browser context (the storefront's auth is passwordless, so a browser
+    # can't reach an authed page unaided) and drives /account/subscriptions →
+    # the change page → submitting an immediate plan change, asserting the
+    # plan flips to premium and that NO console error (CSP / Trusted-Types /
+    # broken island / failed fetch) fires on the authed pages. Playwright is a
+    # dev/test-only tool, installed on demand here — never an npm runtime dep.
+    name: E2E account subscriptions (authed, real browser)
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with: { node-version: '24.16.0' }
+      - name: Verify the committed vendored blamejs is present
+        run: test -f lib/vendor/blamejs/lib/app.js || { echo "::error::lib/vendor/blamejs missing from checkout"; exit 1; }
+        shell: bash
+      - name: Install Playwright + Chromium (test-only, not a runtime dep)
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1.61.1
+          npx playwright install --with-deps chromium
+      - name: Drive the authed subscription plan-change in a real browser
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node test/e2e/drive-account-subscriptions.js

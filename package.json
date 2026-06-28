@@ -6,6 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "test": "node test/smoke.js",
+    "e2e": "node test/e2e/drive-checkout.js && node test/e2e/drive-account-subscriptions.js",
+    "e2e:checkout": "node test/e2e/drive-checkout.js",
+    "e2e:account": "node test/e2e/drive-account-subscriptions.js",
     "vendor": "bash scripts/vendor-update.sh",
     "sync-assets": "node scripts/sync-r2-assets.js",
     "d1-export": "node scripts/d1-export.js",
