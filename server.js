@@ -3358,10 +3358,15 @@ async function main() {
       // billing ledger (the proration charge an upgrade owes), and store
       // credit (the vehicle a mid-cycle downgrade's owed credit pays into —
       // without it the primitive refuses an immediate downgrade rather than
-      // dropping the credit). Mounts the customer /account/subscriptions/:id/
-      // change surface + the scheduler tick only when both are composed.
+      // dropping the credit). The payment handle is passed so a change on a
+      // Stripe-backed subscription swaps the subscription item's price at
+      // Stripe BEFORE the local plan_id is touched — Stripe owns the
+      // proration for those rows (the local store-credit / invoice model is
+      // for non-Stripe subscriptions), so the customer is never settled
+      // twice. Mounts the customer /account/subscriptions/:id/change surface
+      // + the scheduler tick only when both are composed.
       var planChanges = (subscriptions && storeCredit)
-        ? bShop.planChanges.create({ subscriptions: subscriptions.subscriptions, subscriptionBilling: subscriptionBilling, storeCredit: storeCredit })
+        ? bShop.planChanges.create({ subscriptions: subscriptions.subscriptions, subscriptionBilling: subscriptionBilling, storeCredit: storeCredit, payment: payment })
         : null;
 
       // Tax + shipping default tables — kick in when the operator

@@ -78,12 +78,35 @@ function _makeQuery() {
   };
 }
 
-// Offline Stripe stand-in — the plan-change surface never reaches Stripe
-// (it writes local rows + the store-credit / invoice ledgers), but the
-// shared `subscriptions` instance wants a payment handle. A no-op cancel
-// keeps the shape parity with the production composition.
+// Offline Stripe stand-in for the NON-Stripe path — exposes only
+// `cancel` (no retrieve/update), so planChanges + subscriptionControls
+// treat every row as shop-local and exercise the local store-credit /
+// invoice settlement model. The shared `subscriptions` instance wants a
+// payment handle; this keeps shape parity with the production composition.
 function _stubPayment() {
   return { subscriptions: { cancel: async function (id) { return { id: id, status: "canceled" }; } } };
+}
+
+// Stripe-CAPABLE stand-in for the Stripe-backed path — exposes
+// retrieve + update so planChanges treats a row carrying a
+// stripe_subscription_id as genuinely Stripe-backed and pushes the price
+// swap to Stripe before the local write. Every `update` call is recorded
+// so the test can assert the exact arg + idempotency-key shape. retrieve
+// returns a single billable item ("si_<subId>") matching the one-price
+// composition the shop creates.
+function _stripeStubPayment(recordedCalls) {
+  return {
+    subscriptions: {
+      retrieve: async function (id) {
+        return { id: id, items: { data: [{ id: "si_" + id }] } };
+      },
+      update: async function (id, body, opts) {
+        recordedCalls.push({ id: id, body: body, opts: opts });
+        return { id: id, status: "active" };
+      },
+      cancel: async function (id) { return { id: id, status: "canceled" }; },
+    },
+  };
 }
 
 // Seed a plan with an explicit amount + currency so up/downgrade math is
@@ -378,6 +401,21 @@ async function _run() {
     });
     check("missing plan id bounces ?error=plan",   noPlan.status === 303 && (noPlan.headers["location"] || "").indexOf("error=plan") !== -1);
 
+    // Inactive subscription — a paused row that still carries period columns
+    // is refused a plan change, backend-validated against the same active-state
+    // gate the display + GET enforce, so a forged POST can't re-plan a
+    // wound-down subscription.
+    var pausedSub = await _seedSubscription(query, buyer, planCurrent, periodStart, periodEnd);
+    await query("UPDATE subscriptions SET paused_at = ?1 WHERE id = ?2", [Date.now(), pausedSub.subId]);
+    var pausedChange = await helpers.httpRequest({
+      port: handle.port, path: "/account/subscriptions/" + pausedSub.subId + "/change",
+      method: "POST", jar: jar, form: { new_plan_id: planPremium, timing: "immediate" },
+    });
+    check("paused-sub change bounces ?error=state", pausedChange.status === 303 && (pausedChange.headers["location"] || "").indexOf("error=state") !== -1);
+    check("paused-sub plan unchanged",             (await subscriptions.subscriptions.get(pausedSub.subId)).plan_id === planCurrent);
+    var pausedGet = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + pausedSub.subId + "/change", jar: jar });
+    check("paused-sub change page 303 to list",    pausedGet.status === 303 && (pausedGet.headers["location"] || "").indexOf("/account/subscriptions") === 0);
+
     // IDOR — a stranger's subscription 404s before any read.
     var stranger = b.uuid.v7();
     var foreign = await _seedSubscription(query, stranger, planCurrent, periodStart, periodEnd);
@@ -396,4 +434,183 @@ async function _run() {
   }
 }
 
-module.exports = { run: _run };
+// ---------------------------------------------------------------------------
+// Stripe-backed path — a separate app/DB wired with a Stripe-CAPABLE stub
+// payment (retrieve + update), so planChanges treats every row carrying a
+// stripe_subscription_id as genuinely Stripe-backed. Stripe owns the
+// proration for these rows: a change swaps the subscription item's price at
+// Stripe and the local store-credit / invoice settlement is skipped (the
+// customer must never be settled twice). Isolated DB so the "no store-credit
+// row / no invoice row" assertions are unambiguous.
+// ---------------------------------------------------------------------------
+async function _runStripeBacked() {
+  var query     = _makeQuery();
+  var catalog   = bShop.catalog.create({ query: query });
+  var cart      = bShop.cart.create({ query: query, catalog: catalog });
+  var order     = bShop.order.create({ query: query, cursorSecret: "plan-change-order-stripe" });
+  var customers = bShop.customers.create({ query: query });
+
+  var recordedCalls = [];
+  var payment   = _stripeStubPayment(recordedCalls);
+  var subscriptions = bShop.subscriptions.create({ query: query, payment: payment });
+  var subscriptionBilling = bShop.subscriptionBilling.create({ query: query, subscriptions: subscriptions.subscriptions });
+  var storeCredit = bShop.storeCredit.create({ query: query });
+  var planChanges = bShop.planChanges.create({
+    query:               query,
+    subscriptions:       subscriptions.subscriptions,
+    subscriptionBilling: subscriptionBilling,
+    storeCredit:         storeCredit,
+    payment:             payment,
+  });
+  check("planChanges reports stripe-capable",     planChanges != null);
+
+  var product = await catalog.products.create({ slug: "tea-box", title: "Tea Box", description: "x", status: "active" });
+  var variant = await catalog.variants.create(product.id, { sku: "TEA-BOX", options: { size: "M" } });
+
+  var planCheap   = await _seedPlan(query, variant.id, 1000, "usd");   // $10.00
+  var planCurrent = await _seedPlan(query, variant.id, 2000, "usd");   // $20.00
+  var planPremium = await _seedPlan(query, variant.id, 4000, "usd");   // $40.00
+
+  // A plan with no usable stripe_price_id (the column is TEXT NOT NULL, so
+  // an unconfigured plan carries an empty string) — a Stripe-backed change
+  // targeting it must be refused (PLAN_CHANGE_STRIPE_PRICE_MISSING), never
+  // silently diverge the local plan from Stripe.
+  var planNoPrice = b.uuid.v7();
+  var nowSeed = Date.now();
+  await query(
+    "INSERT INTO subscription_plans (id, variant_id, stripe_price_id, interval, interval_count, " +
+    "currency, amount_minor, trial_days, active, created_at, updated_at) " +
+    "VALUES (?1, ?2, '', 'month', 1, 'usd', 3000, 0, 1, ?3, ?3)",
+    [planNoPrice, variant.id, nowSeed],
+  );
+
+  var buyer = b.uuid.v7();
+  var now = Date.now();
+  var DAY = 86400000;
+  var periodStart = now - 15 * DAY;
+  var periodEnd   = now + 15 * DAY;
+
+  var SWEEP_SECRET = "plan-change-tick-secret-padpadpadpadpad";
+
+  var handle = await _bootApp({
+    catalog:             catalog,
+    cart:                cart,
+    order:               order,
+    customers:           customers,
+    subscriptions:       subscriptions,
+    subscriptionBilling: subscriptionBilling,
+    storeCredit:         storeCredit,
+    planChanges:         planChanges,
+    payment:             payment,
+    config:              { shop_name: "blamejs.shop" },
+  }, SWEEP_SECRET);
+
+  try {
+    var jar = helpers.cookieJar();
+    jar.capture({ "set-cookie": [helpers.authCookie(b, buyer)] });
+
+    // ---- (a) immediate Stripe-backed UPGRADE pushes to Stripe ------------
+    // always_invoice + items:[{ id, price:<premium stripe_price_id> }];
+    // flips local plan_id; writes NO store-credit row + NO invoice row.
+    var upSub = await _seedSubscription(query, buyer, planCurrent, periodStart, periodEnd);
+    // GET the change page first — it renders + seeds the per-session `csrf`
+    // cookie into the jar so the helper can stamp X-CSRF-Token on the POSTs
+    // below (a container POST is csrf-guarded; without a prior GET the jar
+    // carries no token and the POST 403s).
+    var upPage = await helpers.httpRequest({ port: handle.port, path: "/account/subscriptions/" + upSub.subId + "/change", jar: jar });
+    check("stripe change page 200",                  upPage.status === 200);
+    recordedCalls.length = 0;
+    var up = await helpers.httpRequest({
+      port: handle.port, path: "/account/subscriptions/" + upSub.subId + "/change",
+      method: "POST", jar: jar, form: { new_plan_id: planPremium, timing: "immediate" },
+    });
+    check("stripe immediate upgrade 303 ?ok=plan_changed", up.status === 303 && (up.headers["location"] || "").indexOf("?ok=plan_changed") !== -1);
+    check("stripe immediate upgrade pushed exactly one update", recordedCalls.length === 1);
+    var premiumPrice = (await query("SELECT stripe_price_id FROM subscription_plans WHERE id = ?1", [planPremium])).rows[0].stripe_price_id;
+    var upCall = recordedCalls[0] || { body: { items: [{}] } };
+    check("stripe update targeted the live subscription",  upCall.id === upSub.stripeId);
+    check("stripe update swaps to the premium price",      Array.isArray(upCall.body.items) && upCall.body.items.length === 1 &&
+                                                           upCall.body.items[0].price === premiumPrice && upCall.body.items[0].id === "si_" + upSub.stripeId);
+    check("stripe update used always_invoice proration",   upCall.body.proration_behavior === "always_invoice");
+    check("stripe update carried the plan-change idem key", typeof upCall.opts === "string" && upCall.opts.indexOf("planchange:") === 0);
+    check("stripe upgrade flipped local plan_id",          (await subscriptions.subscriptions.get(upSub.subId)).plan_id === planPremium);
+    var upInv = await query("SELECT * FROM subscription_invoices WHERE subscription_id = ?1", [upSub.subId]);
+    check("stripe upgrade wrote NO local invoice",         upInv.rows.length === 0);
+    var upCredit = await query("SELECT * FROM store_credit_ledger WHERE customer_id = ?1", [buyer]);
+    check("stripe upgrade wrote NO store credit",          upCredit.rows.length === 0);
+
+    // ---- (b) immediate Stripe-backed DOWNGRADE needs no store-credit -----
+    // The local path would owe (and refuse without) a store-credit handle;
+    // the Stripe path must NOT touch store credit and must NOT throw.
+    var downSub = await _seedSubscription(query, buyer, planPremium, periodStart, periodEnd);
+    recordedCalls.length = 0;
+    var down = await helpers.httpRequest({
+      port: handle.port, path: "/account/subscriptions/" + downSub.subId + "/change",
+      method: "POST", jar: jar, form: { new_plan_id: planCheap, timing: "immediate" },
+    });
+    check("stripe immediate downgrade 303 ?ok=plan_changed", down.status === 303 && (down.headers["location"] || "").indexOf("?ok=plan_changed") !== -1);
+    check("stripe downgrade flipped local plan_id",        (await subscriptions.subscriptions.get(downSub.subId)).plan_id === planCheap);
+    var cheapPrice = (await query("SELECT stripe_price_id FROM subscription_plans WHERE id = ?1", [planCheap])).rows[0].stripe_price_id;
+    check("stripe downgrade pushed the price swap",        recordedCalls.length === 1 && recordedCalls[0].body.items[0].price === cheapPrice);
+    var downCredit = await query("SELECT * FROM store_credit_ledger WHERE customer_id = ?1 AND kind = 'credit'", [buyer]);
+    check("stripe downgrade wrote NO store credit",        downCredit.rows.length === 0);
+
+    // ---- (c) next_cycle Stripe-backed change leaves a pending row --------
+    // No Stripe push until the tick.
+    var nextSub = await _seedSubscription(query, buyer, planCurrent, periodStart, periodEnd);
+    recordedCalls.length = 0;
+    var next = await helpers.httpRequest({
+      port: handle.port, path: "/account/subscriptions/" + nextSub.subId + "/change",
+      method: "POST", jar: jar, form: { new_plan_id: planPremium, timing: "next_cycle" },
+    });
+    check("stripe next_cycle 303 ?ok=plan_changed",        next.status === 303 && (next.headers["location"] || "").indexOf("?ok=plan_changed") !== -1);
+    var pendingRow = await planChanges.pendingChangeFor(nextSub.subId);
+    check("stripe next_cycle left a pending row",          pendingRow && pendingRow.status === "pending" && pendingRow.change_kind === "next_billing_cycle");
+    check("stripe next_cycle did NOT call Stripe yet",     recordedCalls.length === 0);
+    check("stripe next_cycle did NOT flip plan yet",       (await subscriptions.subscriptions.get(nextSub.subId)).plan_id === planCurrent);
+
+    // ---- (d) tick applies the due Stripe-backed change ------------------
+    // Force the pending row due (effective_at in the past) and run the tick:
+    // update called with proration_behavior "none"; plan flips.
+    await query("UPDATE subscription_plan_changes SET effective_at = ?1 WHERE id = ?2", [now - DAY, pendingRow.id]);
+    recordedCalls.length = 0;
+    var tick = await helpers.httpRequest({
+      port: handle.port, path: "/_/subscription-plan-changes-tick", method: "POST",
+      headers: { "x-d1-bridge-secret": SWEEP_SECRET, "content-type": "application/json" }, body: "{}",
+    });
+    var tickJson = JSON.parse(tick.body);
+    check("stripe tick ok + applied >= 1",                 tickJson.ok === true && tickJson.enabled === true && tickJson.applied >= 1);
+    await helpers.waitUntil(async function () {
+      var r = await query("SELECT status FROM subscription_plan_changes WHERE id = ?1", [pendingRow.id]);
+      return r.rows.length && r.rows[0].status === "executed";
+    }, { timeoutMs: 3000, label: "due stripe plan change executed" });
+    check("stripe tick flipped plan to premium",           (await subscriptions.subscriptions.get(nextSub.subId)).plan_id === planPremium);
+    var tickCall = recordedCalls.find(function (c) { return c.id === nextSub.stripeId; });
+    check("stripe tick pushed the price swap",             tickCall && tickCall.body.items[0].price === premiumPrice);
+    check("stripe tick used 'none' proration",             tickCall && tickCall.body.proration_behavior === "none");
+    var tickInv = await query("SELECT * FROM subscription_invoices WHERE subscription_id = ?1", [nextSub.subId]);
+    check("stripe tick wrote NO local invoice",            tickInv.rows.length === 0);
+
+    // ---- (e) target plan with no stripe_price_id is refused (no 500) ----
+    var badSub = await _seedSubscription(query, buyer, planCurrent, periodStart, periodEnd);
+    recordedCalls.length = 0;
+    var bad = await helpers.httpRequest({
+      port: handle.port, path: "/account/subscriptions/" + badSub.subId + "/change",
+      method: "POST", jar: jar, form: { new_plan_id: planNoPrice, timing: "immediate" },
+    });
+    check("stripe no-price target bounces ?error (no 500)", bad.status === 303 && (bad.headers["location"] || "").indexOf("error=plan") !== -1);
+    check("stripe no-price target did NOT call Stripe",     recordedCalls.length === 0);
+    check("stripe no-price target left plan unchanged",     (await subscriptions.subscriptions.get(badSub.subId)).plan_id === planCurrent);
+    var badRow = await query("SELECT * FROM subscription_plan_changes WHERE subscription_id = ?1", [badSub.subId]);
+    check("stripe no-price target wrote no change row",     badRow.rows.length === 0);
+  } finally {
+    await _teardown(handle);
+  }
+}
+
+async function _runAll() {
+  await _run();
+  await _runStripeBacked();
+}
+
+module.exports = { run: _runAll };

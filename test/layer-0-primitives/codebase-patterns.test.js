@@ -306,6 +306,14 @@ var KNOWN_ANTIPATTERNS = [
     allowlist:   [],
   },
   {
+    id:          "subscription-mutator-create-without-payment",
+    scanScope:   "server",
+    multiline:   true,
+    description: "The production wiring of `planChanges.create({...})` / `subscriptionControls.create({...})` in server.js omits the `payment` handle — so a plan / quantity change on a STRIPE-BACKED subscription updates the local plan but never pushes the price/quantity swap to Stripe, and the customer keeps being billed the old plan while the shop shows the new one (a silent local-vs-processor divergence). Pass the shared `payment` handle into the factory so the change syncs to Stripe (Stripe-first, before the local write). Scope is server.js only; integration tests that deliberately exercise the shop-local settlement path construct the factory without `payment` and are out of scope. Deliberate exceptions take a per-line `// allow:subscription-mutator-create-without-payment — <reason>` marker.",
+    regex:       /\b(?:planChanges|subscriptionControls)\.create\(\s*\{(?:(?!payment)[\s\S])*?\}\s*\)/,
+    allowlist:   [],
+  },
+  {
     id:          "fs-existssync-then-read-toctou",
     scanScope:   "lib",
     description: "`fs.existsSync(p)` followed by `fs.readFile`/`fs.readFileSync` against the same path is symlink-swap-vulnerable. The canonical defense is `try { fs.readFileSync(p) } catch (e) { if (e.code === \"ENOENT\") ... }` — single syscall, no TOCTOU window",
