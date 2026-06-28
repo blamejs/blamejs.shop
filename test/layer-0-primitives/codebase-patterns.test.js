@@ -298,6 +298,22 @@ var KNOWN_ANTIPATTERNS = [
     allowlist:   [],
   },
   {
+    id:          "error-discarded-return-failure-string",
+    scanScope:   "shop",
+    multiline:   true,
+    description: "A catch that binds the error to a discarded (`_`-prefixed) name and whose only action is to `return` a hard-coded failure string (e.g. `catch (_e) { return \"failed\"; }`) — it SIGNALS that something failed while throwing away WHY, so the cause (a DB error, a provider error, a validation throw) is lost and resurfaces only as a later patch. eslint already forces a discarded caught error to be `_`-prefixed, so this shape is provably a swallow. If a step legitimately reports a failure status, OBSERVE the cause first: bind the error (`catch (e)`) and log it through the framework sink (`var _log = b.log.create({}); _log.error(\"<step> failed\", { err: (e && e.message) || String(e) })`) before returning the status, or re-throw / map it to a typed code. A catch that returns a NEUTRAL default (`\"\"`, `\"USD\"`, a fallback label) for a missing/garbage VALUE is the legitimate defensive-reader tier and is not matched (its returned string carries no failure word). Deliberate exceptions take a per-line `// allow:error-discarded-return-failure-string — <reason>` marker.",
+    regex:       /catch\s*\(\s*_\w+\s*\)\s*\{\s*return\s+["'][^"']*(?:fail|unable|could ?not)[^"']*["']\s*;?\s*\}/i,
+    allowlist:   [],
+  },
+  {
+    id:          "subscription-mutator-create-without-payment",
+    scanScope:   "server",
+    multiline:   true,
+    description: "The production wiring of `planChanges.create({...})` / `subscriptionControls.create({...})` in server.js omits the `payment` handle — so a plan / quantity change on a STRIPE-BACKED subscription updates the local plan but never pushes the price/quantity swap to Stripe, and the customer keeps being billed the old plan while the shop shows the new one (a silent local-vs-processor divergence). Pass the shared `payment` handle into the factory so the change syncs to Stripe (Stripe-first, before the local write). Scope is server.js only; integration tests that deliberately exercise the shop-local settlement path construct the factory without `payment` and are out of scope. Deliberate exceptions take a per-line `// allow:subscription-mutator-create-without-payment — <reason>` marker.",
+    regex:       /\b(?:planChanges|subscriptionControls)\.create\(\s*\{(?:(?!payment)[\s\S])*?\}\s*\)/,
+    allowlist:   [],
+  },
+  {
     id:          "fs-existssync-then-read-toctou",
     scanScope:   "lib",
     description: "`fs.existsSync(p)` followed by `fs.readFile`/`fs.readFileSync` against the same path is symlink-swap-vulnerable. The canonical defense is `try { fs.readFileSync(p) } catch (e) { if (e.code === \"ENOENT\") ... }` — single syscall, no TOCTOU window",
