@@ -1,0 +1,31 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.5",
+  "date": "2026-06-27",
+  "headline": "Customers can change their subscription plan — proration-aware upgrades and downgrades from the account portal",
+  "summary": "Adds a self-serve plan-change surface to the customer subscription portal. From /account/subscriptions a customer can switch an active subscription to any other plan in the same currency: the page previews the proration for each candidate plan and offers two timings. An immediate change applies now and prorates the rest of the current period — an upgrade is charged the prorated difference (recorded on the subscription invoice ledger), and a downgrade is issued the unused remainder as store credit. A next-billing-cycle change is queued and applied automatically when the period rolls over, with the new plan starting clean and no proration. The transition is exactly-once: the immediate path claims the plan switch atomically before recording the charge or credit, and the scheduled path claims each due change with a single guarded update, so a retry or an overlapping scheduler run cannot double-charge or double-credit. A downgrade that owes a credit is never applied without paying it — if the credit write fails the change rolls back and retries. The surface mounts automatically when subscriptions and store credit are composed (the default for a configured storefront); the scheduler runs on the existing cron, and the tables it uses already shipped, so there are no schema changes and no operator action is required.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "Self-serve subscription plan changes with proration",
+          "body": "Customers can change the plan on an active subscription from /account/subscriptions/:id/change. The page lists every plan in the subscription's currency (excluding the current and archived plans) with a proration preview, and offers an immediate switch or a switch at the next billing date. An immediate upgrade charges the prorated difference for the rest of the period and records it on the subscription invoice ledger; an immediate downgrade issues the unused remainder of the outgoing plan as store credit. A still-pending change is shown on the subscription with a one-click cancel. Cross-currency, same-plan, and archived-plan requests are refused server-side, and the surface enforces subscription ownership before any read or write."
+        },
+        {
+          "title": "Scheduler applies next-billing-cycle changes automatically",
+          "body": "A change queued for the next billing cycle is applied without operator involvement: a minute-cadence tick flips every due change to its new plan, records the proration, and issues any owed credit. Each due change is claimed with a single guarded update so an overlapping or retried run cannot apply it twice, and a change that owes a credit is left queued rather than applied if no credit can be issued — the credit is never dropped. The scheduler is inert on a deploy without subscriptions or store credit composed."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Dunning step failures are logged with their cause",
+          "body": "When a dunning step (reminder send, retry-charge record, pause, or cancel) fails, the schedule still advances and the step is recorded as failed — but the underlying error is now written to the server log instead of being discarded, so an operator can see why a step failed rather than only that it did."
+        }
+      ]
+    }
+  ]
+}

@@ -3282,6 +3282,48 @@ async function main() {
         }
       });
 
+      // Subscription plan-change scheduler — flips every pending plan change
+      // whose `effective_at <= now` to executed: it replaces the parent
+      // subscription's plan_id, queues the proration charge through the
+      // billing ledger, and issues the owed credit for a due downgrade. This
+      // is the surface that lands a customer's queued next-billing-cycle
+      // change (the immediate path applies inline in the route). Same
+      // D1_BRIDGE_SECRET timing-safe gate + never-5xx JSON-summary shape as
+      // the other ticks; each pass is bounded + idempotent (the primitive's
+      // per-row CAS claim means an overlapping tick can't double-apply a
+      // change). Driven once a minute by the Worker's scheduled() POST. The
+      // `planChanges` handle is assigned below (after the subscriptions
+      // instantiation); the async handler reads it at request time.
+      r.post("/_/subscription-plan-changes-tick", async function (req, res) {
+        var gotPC = req.headers && req.headers["x-d1-bridge-secret"];
+        var wantPC = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !wantPC ||
+          typeof gotPC !== "string" ||
+          gotPC.length !== wantPC.length ||
+          !b.crypto.timingSafeEqual(gotPC, wantPC)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!planChanges) {
+          res.json({ ok: true, enabled: false, reason: "subscriptions/store-credit not composed" });
+          return;
+        }
+        try {
+          var applied = await planChanges.applyScheduledChanges({ now: Date.now() });
+          res.json({ ok: true, enabled: true, applied: applied.length });
+        } catch (e) {
+          // Never 5xx — a thrown sweep would mark the cron run failed. The
+          // error message rides back in the JSON summary the Worker fires
+          // (same shape as the sibling ticks) so the failure is observable,
+          // not swallowed. The owed credit on any due downgrade is never
+          // lost: the primitive leaves an unsettleable row pending for a
+          // subsequent sweep rather than applying it credit-less.
+          res.json({ ok: false, enabled: true, error: (e && e.message) || String(e) });
+        }
+      });
+
       // Subscriptions — the recurring-offer catalog (/admin/subscription-
       // plans) plus the customer self-management surface
       // (/account/subscriptions). One instance shared by both: plan CRUD
@@ -3302,6 +3344,24 @@ async function main() {
       // controls degrade to local-only writes for non-Stripe rows.
       var subscriptionControls = subscriptions
         ? bShop.subscriptionControls.create({ subscriptions: subscriptions.subscriptions, payment: payment })
+        : null;
+      // Subscription billing ledger (invoices / payment attempts / dunning).
+      // planChanges composes it to queue the proration charge a mid-cycle
+      // upgrade owes through the same invoice ledger the recurring-billing
+      // webhook writes to. The payment handle is passed for parity with the
+      // billing surface (reserved for processor refund hooks).
+      var subscriptionBilling = subscriptions
+        ? bShop.subscriptionBilling.create({ subscriptions: subscriptions.subscriptions, payment: payment })
+        : null;
+      // Proration-aware plan upgrade / downgrade. Composes the shared
+      // `subscriptions` handle (the live period it prorates against), the
+      // billing ledger (the proration charge an upgrade owes), and store
+      // credit (the vehicle a mid-cycle downgrade's owed credit pays into —
+      // without it the primitive refuses an immediate downgrade rather than
+      // dropping the credit). Mounts the customer /account/subscriptions/:id/
+      // change surface + the scheduler tick only when both are composed.
+      var planChanges = (subscriptions && storeCredit)
+        ? bShop.planChanges.create({ subscriptions: subscriptions.subscriptions, subscriptionBilling: subscriptionBilling, storeCredit: storeCredit })
         : null;
 
       // Tax + shipping default tables — kick in when the operator
@@ -4097,6 +4157,14 @@ async function main() {
         // The customer surface writes nothing; granting/deducting stays
         // operator-only on the admin console.
         if (storeCredit) sfDeps.storeCredit = storeCredit;
+        // Plan changes — the /account/subscriptions/:id/change self-serve
+        // upgrade/downgrade surface (proration preview + immediate vs
+        // next-cycle timing + cancel-pending). The SAME instance the
+        // scheduler tick drives, so a pending change a customer queues is the
+        // row the cron later applies. subscriptionBilling rides along so the
+        // change page can read the proration charge the ledger will carry.
+        if (planChanges) sfDeps.planChanges = planChanges;
+        if (subscriptionBilling) sfDeps.subscriptionBilling = subscriptionBilling;
         // Referrals — the /account/referrals page (the customer's code +
         // shareable link, the friends they've referred + status, and the
         // rewards funnel), the /r/<code> attribution landing, and the

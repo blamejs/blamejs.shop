@@ -1000,6 +1000,32 @@ export default {
         }
       })());
 
+      // Subscription plan-change scheduler — lands every pending plan change
+      // whose effective clock has arrived (a customer's queued next-billing-
+      // cycle upgrade/downgrade). POSTs the container's /_/subscription-plan-
+      // changes-tick over the SHOP service binding with the shared
+      // D1_BRIDGE_SECRET header. One bounded, idempotent pass per fire (the
+      // container's per-row CAS claim means an overlapping tick can't double-
+      // apply); inert (enabled:false) on a deploy without subscriptions/store-
+      // credit composed. SEPARATE ctx.waitUntil so a slow sweep never blocks
+      // the other ticks; a quiet table is a cheap read.
+      ctx.waitUntil((async function () {
+        try {
+          var pcUrl = new URL("/_/subscription-plan-changes-tick", "http://shop.container");
+          var pcReq = new Request(pcUrl.toString(), {
+            method:  "POST",
+            headers: {
+              "content-type":       "application/json; charset=utf-8",
+              "x-d1-bridge-secret": env.D1_BRIDGE_SECRET || "",
+            },
+            body: "{}",
+          });
+          await _shopContainer(env).fetch(pcReq);
+        } catch (e) {
+          console.error("subscription-plan-changes-tick failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        }
+      })());
+
       // Customer-portal magic-link expiry — flips stale issued tokens to
       // expired so the FSM audit column stays durable. Cheap bounded
       // UPDATE; SEPARATE ctx.waitUntil.
