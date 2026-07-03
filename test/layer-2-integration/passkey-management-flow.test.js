@@ -92,12 +92,16 @@ async function _run() {
 
   // Two customers: A has two passkeys, B has one + a linked OAuth identity.
   var custA = await customers.register({ email: "alice@example.com", display_name: "Alice" });
-  var custB = await customers.register({ email: "bob@example.com",   display_name: "Bob" });
+  // Bob's account is created by a VERIFIED federated sign-in, so it carries a
+  // verified OAuth identity; he then adds a passkey. Revoking his last passkey
+  // stays safe because the federated identity remains a sign-in method. (The
+  // account must be created via the verified sign-in — the OIDC email-hash
+  // merge no longer folds a federated identity into a register()-only account,
+  // which would be account pre-hijacking.)
+  var custB = (await customers.signInWithOIDC({ provider: "google", subject: "bob-sub", email: "bob@example.com", email_verified: true })).customer;
   var pkA1 = await customers.addPasskey(custA.id, { credential_id: "alice-cred-1", public_key: "k1", transports: "internal" });
   var pkA2 = await customers.addPasskey(custA.id, { credential_id: "alice-cred-2", public_key: "k2", transports: "usb" });
   var pkB1 = await customers.addPasskey(custB.id, { credential_id: "bob-cred-1",   public_key: "k3", transports: "hybrid" });
-  // Bob also has a federated identity, so revoking his last passkey is safe.
-  await customers.signInWithOIDC({ provider: "google", subject: "bob-sub", email: "bob@example.com", email_verified: true });
 
   var handle = await _bootApp({ catalog: catalog, cart: cart, customers: customers });
 

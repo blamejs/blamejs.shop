@@ -273,11 +273,32 @@ async function _oidcNewAccount() {
 
 async function _oidcLinksVerifiedEmail() {
   var customers = bShop.customers.create({ query: _makeQuery() });
-  // A passwordless customer already exists for this email.
-  var existing = await customers.register({ email: "buyer@example.com", display_name: "Buyer" });
-  // Google sign-in with the SAME, VERIFIED email links to that account.
-  var rv = await customers.signInWithOIDC({ provider: "google", subject: "g-sub-2", email: "buyer@example.com", email_verified: true });
-  check("oidc verified email links existing", rv.customer.id === existing.id && rv.created === false && rv.linked_via === "verified-email");
+  // The account was itself created by a VERIFIED federated sign-in (Google),
+  // so it carries a verified OAuth identity — proof it controls the email.
+  var first = await customers.signInWithOIDC({ provider: "google", subject: "g-sub-2", email: "buyer@example.com", email_verified: true });
+  check("first verified OIDC creates account", first.created === true && first.linked_via === "new");
+  // A SECOND provider (Apple) with the SAME verified email merges into that
+  // account, because the account's email is already proven.
+  var rv = await customers.signInWithOIDC({ provider: "apple", subject: "a-sub-2", email: "buyer@example.com", email_verified: true });
+  check("oidc verified email links proven account", rv.customer.id === first.customer.id && rv.created === false && rv.linked_via === "verified-email");
+}
+
+// Account pre-hijacking guard: a verified federated sign-in must NOT auto-
+// merge into a pre-existing account whose email was never proven (a passkey /
+// register()-created account stores whatever address was typed). Otherwise an
+// attacker who pre-seeds an account under the victim's email captures the
+// victim's later federated sign-in.
+async function _oidcRefusesMergeIntoUnverifiedAccount() {
+  var customers = bShop.customers.create({ query: _makeQuery() });
+  // register() stands in for the passkey-registered (unverified-email)
+  // account an attacker could seed under the victim's address.
+  await customers.register({ email: "victim@example.com", display_name: "Seeded" });
+  // The victim's later VERIFIED Google sign-in is refused, not merged.
+  await assert.rejects(
+    customers.signInWithOIDC({ provider: "google", subject: "victim-google", email: "victim@example.com", email_verified: true }),
+    /not verified it|OAUTH_EMAIL_UNVERIFIED_CONFLICT/i,
+  );
+  check("unverified account gains no oauth link", (await customers.byOAuthIdentity("google", "victim-google")) === null);
 }
 
 async function _oidcRefusesUnverifiedEmailConflict() {
@@ -451,6 +472,7 @@ async function run() {
   await _addPasskeyValidation();
   await _oidcNewAccount();
   await _oidcLinksVerifiedEmail();
+  await _oidcRefusesMergeIntoUnverifiedAccount();
   await _oidcRefusesUnverifiedEmailConflict();
   await _oidcUnverifiedNoCollisionCreates();
   await _oidcValidation();

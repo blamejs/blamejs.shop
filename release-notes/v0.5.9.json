@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.9",
+  "date": "2026-07-03",
+  "headline": "A federated sign-in no longer auto-merges into a pre-existing account whose email was never proven, closing an account pre-hijacking path",
+  "summary": "Closes an account pre-hijacking weakness in federated (Google / Apple) sign-in. When a verified OIDC sign-in found a pre-existing account with the same email, it linked the federated identity into that account on the strength of the incoming email being verified alone — without requiring the pre-existing account to have ever proven control of that email. Because a passkey (or otherwise passwordless) account is created with whatever email address was typed at registration and no ownership check, an attacker could register an account under a victim's email before the victim's first federated sign-in, and the victim's later Google/Apple sign-in would then be folded into the attacker's account — pulling the victim's guest orders in and leaving the attacker's credential enrolled. The merge now requires the pre-existing account to already carry a verified federated identity (the only account-creation path that proves the email); an account whose email was never proven falls through to the existing duplicate-email refusal, so the customer signs in with their existing method and links the provider from account settings. A first federated sign-in still creates a fresh account, and a second provider still links to an account whose email is already proven, so legitimate multi-provider sign-in is unchanged.",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Federated sign-in refuses to merge into an unverified pre-existing account",
+          "body": "A verified Google/Apple sign-in that matched a pre-existing account by email hash previously linked the federated identity into that account whenever the incoming identity-provider email was verified — even if the pre-existing account had never proven control of the email. A passkey/passwordless account stores the email typed at registration with no verification, so an attacker could pre-seed an account under a victim's email and capture the victim's later federated sign-in (account pre-hijacking, CWE-287). The merge now proceeds only when the pre-existing account already holds a verified federated identity — the one account-creation path that proves the email. An unverified match is refused with the existing duplicate-email conflict, directing the customer to sign in with their existing method and link the provider from account settings. First-time federated sign-in (new account) and second-provider linking into an already-proven account are unchanged."
+        }
+      ]
+    }
+  ]
+}
