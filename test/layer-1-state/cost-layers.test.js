@@ -510,6 +510,44 @@ async function _monotonicClockForReceipts() {
   check("monotonic FIFO 3rd = 300",           r3.total_cogs_minor === 300);
 }
 
+// 10) Concurrent consumption of the same SKU never double-debits a layer.
+//     Two overlapping sales plan against the same snapshot, but each layer
+//     debit is an ATOMIC guarded claim (`... AND quantity_remaining >= take`),
+//     so the losing claim reverts and re-plans instead of driving a layer
+//     negative. The pre-fix unguarded decrement let both sales draw the same
+//     front layer, stranding the second and understating COGS.
+async function _concurrentConsumeNoOversell() {
+  var w = _wire();
+  await w.svc.setMethod({ sku: "RACE-1", method: "fifo" });
+  // L1 @ 100 (older) + L2 @ 200 (newer), 5 units each — on-hand 10.
+  await w.svc.recordReceipt({ sku: "RACE-1", quantity: 5, unit_cost_minor: 100, currency: "USD", source: "receipt", occurred_at: 1000 });
+  await w.svc.recordReceipt({ sku: "RACE-1", quantity: 5, unit_cost_minor: 200, currency: "USD", source: "receipt", occurred_at: 2000 });
+
+  // Two concurrent sales of 5 each — together exactly the on-hand. Correctly
+  // serialized, one draws L1 (COGS 500) and the other L2 (COGS 1000).
+  var results = await Promise.all([
+    w.svc.consumeForSale({ sku: "RACE-1", quantity: 5, order_id: "race-a", line_id: "L" }),
+    w.svc.consumeForSale({ sku: "RACE-1", quantity: 5, order_id: "race-b", line_id: "L" }),
+  ]);
+  var combinedCogs = results[0].total_cogs_minor + results[1].total_cogs_minor;
+  check("concurrent: combined COGS = 500 + 1000",  combinedCogs === 1500);
+
+  // No layer left negative; both fully drained (invariant under every
+  // interleaving once the debit is a guarded claim).
+  var raw = await w.q("SELECT quantity_remaining AS qr FROM cost_layers WHERE sku = ?1", ["RACE-1"]);
+  var remaining = raw.rows.map(function (r) { return Number(r.qr); });
+  check("concurrent: no layer went negative",      Math.min.apply(Math, remaining) >= 0);
+  check("concurrent: both layers fully drained",   remaining.reduce(function (a, n) { return a + n; }, 0) === 0);
+
+  // Exactly the on-hand attributed across the two orders — no double-debit.
+  var attr = await w.q("SELECT qty FROM cogs_attributions WHERE sku = ?1", ["RACE-1"]);
+  var attributedQty = attr.rows.reduce(function (a, r) { return a + Number(r.qty); }, 0);
+  check("concurrent: exactly on-hand attributed",  attributedQty === 10);
+
+  var active = await w.svc.currentLayers({ sku: "RACE-1" });
+  check("concurrent: no active layers remain",     active.length === 0);
+}
+
 // 9) Factory refusals
 async function _factoryRefusals() {
   // Bad catalog handle
@@ -530,6 +568,7 @@ async function run() {
   await _reversalRestores();
   await _methodRoundtripAndCurrencyCoherence();
   await _monotonicClockForReceipts();
+  await _concurrentConsumeNoOversell();
   await _factoryRefusals();
 }
 
