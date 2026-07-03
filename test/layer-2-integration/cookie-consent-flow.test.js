@@ -210,6 +210,16 @@ async function _run() {
       form: { choice: "reject", return_to: "https://evil.example/phish" },
     });
     check("absolute-url return_to refused",    absRedir.status === 303 && (absRedir.headers["location"] || "") === "/");
+    // A leading-slash path whose SECOND byte is a horizontal TAB (0x09) that a
+    // user agent strips before URL parsing — "/\t/evil.example" would collapse
+    // to the protocol-relative "//evil.example". The old `/^\/[^/]/` guard
+    // accepted it (char1 is a TAB, not a slash); the safe-redirect primitive
+    // rejects every control char including TAB, so it falls back to "/".
+    var tabRedir = await helpers.httpRequest({
+      port: handle.port, path: "/consent", method: "POST", jar: helpers.cookieJar(),
+      form: { choice: "reject", return_to: "/\t/evil.example" },
+    });
+    check("TAB-injection return_to refused",    tabRedir.status === 303 && (tabRedir.headers["location"] || "") === "/");
 
     // ---- tampered choice cookie reads as "no choice" -------------------
     var tamperJar = helpers.cookieJar();

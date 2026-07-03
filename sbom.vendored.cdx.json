@@ -2,7 +2,7 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.6",
-  "serialNumber": "urn:uuid:32e05f7d-ab3d-5144-bb70-d848c27f70e0",
+  "serialNumber": "urn:uuid:aaf0c33b-2b58-536c-8fc0-499c4a0c64ef",
   "version": 1,
   "metadata": {
     "timestamp": "2026-07-03T00:00:00Z",
@@ -10,14 +10,14 @@
       {
         "vendor": "blamejs.shop",
         "name": "build-vendored-sbom.js",
-        "version": "0.5.6"
+        "version": "0.5.7"
       }
     ],
     "component": {
-      "bom-ref": "root/@blamejs/blamejs-shop@0.5.6",
+      "bom-ref": "root/@blamejs/blamejs-shop@0.5.7",
       "type": "application",
       "name": "@blamejs/blamejs-shop",
-      "version": "0.5.6",
+      "version": "0.5.7",
       "description": "Vendored-dependency SBOM for @blamejs/blamejs-shop — describes what's under lib/vendor/ that doesn't appear in `npm sbom`."
     }
   },

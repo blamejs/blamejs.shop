@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.7",
+  "date": "2026-07-03",
+  "headline": "Storefront redirect targets route through the framework open-redirect guard, closing a TAB-injection open redirect on return_to / redirect_to",
+  "summary": "Closes an open-redirect (CWE-601) in the storefront's post-action redirects. The cookie-consent submit, currency and locale switchers, and the wishlist and compare toggles validated their return_to / redirect_to target with a hand-rolled leading-slash regex that accepted a horizontal TAB (0x09) at the second byte. A user agent strips ASCII TAB, CR, and LF from a URL before resolving it, so a target like /<TAB>/evil.example collapsed to the protocol-relative //evil.example and navigated the shopper off-origin under the shop's trust — a phishing bounce. Every request-derived redirect target now routes through the framework's b.safeRedirect.resolve primitive (exposed once as a shared same-origin helper), which rejects every control character including TAB, protocol-relative //host and \\\\host forms, and full URLs — only genuine same-origin relative paths survive; anything else falls back to a safe default. The two guards that already rejected control characters are consolidated onto the same primitive so there is one redirect-safety path to reason about, and a codebase check refuses any future hand-rolled leading-slash redirect guard. No operator action and no configuration change.",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Open-redirect on storefront return_to / redirect_to closed",
+          "body": "The post-action redirect guards (cookie consent, currency switch, locale switch, wishlist toggle, compare toggle, announcement dismiss) accepted a leading-slash target whose second byte was a control character. A horizontal TAB there is stripped by the browser before URL parsing, turning /<TAB>/evil.example into the protocol-relative //evil.example — an off-origin redirect an attacker could use to launder a phishing link through the shop's origin. All these targets now resolve through b.safeRedirect.resolve, which rejects control characters (TAB, CR, LF, NUL), protocol-relative and backslash forms, and off-origin absolute URLs; an invalid target falls back to a same-origin default. A codebase-patterns check prevents a hand-rolled leading-slash redirect guard from reappearing."
+        }
+      ]
+    }
+  ]
+}
