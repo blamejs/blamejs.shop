@@ -223,10 +223,19 @@ async function _run() {
     });
     check("t8 bad email 400 not 500",             xss.status === 400);
     check("t8 error page escapes the payload",    xss.body.indexOf("<script>alert(1)</script>") === -1);
-    // The confirm page on a bad-shape token escapes / never 500s.
-    var badConfirm = await helpers.httpRequest({ port: port, path: "/stock-alert/confirm/" + encodeURIComponent("<script>x</script>") });
+    // A token carrying an encoded path separator (the `/` in `</script>`) is
+    // refused by the router's encoded-separator hardening with a 400 — BEFORE
+    // the confirm handler — and the generic refusal never reflects the payload.
+    // Real tokens are base64url [A-Za-z0-9_-]{32}, so no legitimate confirm is
+    // affected; only a hostile path segment is rejected this early.
+    var sepConfirm = await helpers.httpRequest({ port: port, path: "/stock-alert/confirm/" + encodeURIComponent("<script>x</script>") });
+    check("t8 encoded-separator token refused 400", sepConfirm.status === 400);
+    check("t8 separator refusal omits payload",      sepConfirm.body.indexOf("<script>") === -1);
+    // A hostile but separator-free token reaches the confirm handler, which
+    // renders the invalid-token page (200) with the payload escaped, never 500.
+    var badConfirm = await helpers.httpRequest({ port: port, path: "/stock-alert/confirm/" + encodeURIComponent("<script>x") });
     check("t8 bad token confirm 200 (invalid)",   badConfirm.status === 200);
-    check("t8 bad token confirm escapes payload", badConfirm.body.indexOf("<script>x</script>") === -1);
+    check("t8 bad token confirm escapes payload", badConfirm.body.indexOf("<script>x") === -1);
 
     // t9 — token-based unsubscribe round-trip → the row is gone.
     var beforeUnsub = (await query("SELECT COUNT(*) AS c FROM stock_alerts WHERE email_hash = ?1", [stockAlerts.hashEmail("another@example.com")])).rows[0];

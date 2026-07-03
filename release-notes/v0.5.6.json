@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.6",
+  "date": "2026-07-03",
+  "headline": "Minimum Node is now 24.18.0; the vendored framework refresh brings a broad batch of request-path and mail-authentication security hardening",
+  "summary": "Refreshes the vendored framework to 0.16.2 and raises the minimum supported Node.js to 24.18.0 — operators must run Node 24.18.0 or newer before upgrading. The floor moves with the framework, which requires 24.18.0 for its bundled SQLite 3.53.1, a backup-path fix, and the native OpenSSL 3.5 SLH-DSA surface. The refresh carries a large batch of security and correctness fixes that harden the request lifecycle the storefront and account portal already run on, at no code cost to the shop: the router refuses an encoded path separator or null byte and decodes the request path once, so a path-scoped security gate and the resource it guards can no longer disagree; res.redirect rejects a horizontal TAB that user agents strip before URL parsing, closing an open-redirect bypass; OAuth refresh-token and step-up replay gates treat any truthy store result as seen and bind grants to the authenticated principal; SAML Single-Logout fails closed when a verification key arrives without its algorithm; the mail-authentication builders (Authentication-Results, delivery-status, ARC) refuse CR/LF/NUL header injection and SPF evaluation fails closed on a malformed ip4 CIDR; file uploads enforce per-upload ownership and reject path-traversal ids; recursive parsers refuse pathologically deep input instead of overflowing the stack; and shared-cache counters (lockout, byte quotas, rate caps) accumulate with an atomic compare-and-set so distributed requests cannot lose increments. Every Node-version pin — engines, .nvmrc, the container base image, CI, and the docs — is synced to the new floor from the framework's own engines constraint.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Minimum Node.js raised to 24.18.0",
+          "body": "engines.node is now >=24.18.0 (was >=24.16.0). Operators must run Node 24.18.0 or newer. The floor is dictated by the vendored framework, which requires 24.18.0 for its bundled SQLite 3.53.1, a database backup-path fix, and the native OpenSSL 3.5 SLH-DSA sign/verify surface. The .nvmrc, the container base image, the CI runner pins, and the README/architecture docs are all synced to the new floor."
+        },
+        {
+          "title": "Vendored framework refreshed to 0.16.2",
+          "body": "The framework the shop builds on is refreshed from 0.15.38 to 0.16.2. Beyond the request-path and mail hardening in this release's summary, the refresh includes: the router rejects percent-encoded path separators so a security middleware and the route it guards agree on the path; ARC and DKIM verification reject forged or body-length-truncated signatures; OCSP validation binds the response to the certificate's issuer; status-list verification binds the token type against replay; and OAuth authorization-URL builders refuse operator parameters that collide with framework-managed ones. These land in the request lifecycle the storefront and account portal already compose, with no shop code change required."
+        }
+      ]
+    }
+  ]
+}
