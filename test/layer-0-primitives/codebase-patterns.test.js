@@ -385,6 +385,22 @@ var KNOWN_ANTIPATTERNS = [
     reason:    "Hand-rolled per-character escape misses an attack-relevant character about half the time (the four-char variants skip the apostrophe → single-quoted attribute injection) and drifts away from the canonical surface over time. `b.template.escapeHtml` is the one-call composition; the codebase-patterns sweep keeps any future copy from getting committed without an `allow:` marker citing the substrate constraint.",
   },
   {
+    // A same-origin redirect guard that anchors a leading slash and then
+    // permits ANY non-slash byte at the second position ([^/]) — or merely
+    // asserts the second byte is not a slash ((?!/)) — accepts a control
+    // character there. A horizontal TAB (0x09) is the live hazard: a user
+    // agent strips ASCII TAB/CR/LF from a URL before resolving it, so a
+    // "/\t/evil.example" written to Location collapses to the protocol-
+    // relative "//evil.example" and navigates off-origin. The "[^/]" /
+    // "(?!/)" immediately after the "^\/" anchor is the tell.
+    id:        "hand-rolled-same-origin-redirect-guard",
+    primitive: "b.safeRedirect.resolve(rawTarget, { fallback }) — open-redirect (CWE-601) guard that rejects protocol-relative targets, full URLs, and every control char including horizontal TAB (storefront wraps it as _sameOriginRedirect)",
+    regex:     new RegExp("\\^\\\\/(?:\\[\\^/\\]|\\(\\?!\\\\/\\))"),
+    scanScope: "shop",
+    allowlist: [],
+    reason:    "A leading-slash path regex that accepts any non-slash byte (or merely a non-slash) at the second position lets a stripped-TAB target become a protocol-relative open redirect. Route every request-derived redirect target through b.safeRedirect.resolve, which rejects TAB / CR / LF / NUL and protocol-relative forms; the storefront exposes it as the _sameOriginRedirect helper.",
+  },
+  {
     id:        "manual-html-escape-map",
     primitive: "b.template.escapeHtml(value) — the canonical five-character HTML-entity escape (`&`, `<`, `>`, `\"`, `'`); compose it instead of a local escape map + `.replace(/[&<>\"']/g, fn)`",
     regex:     /\.replace\s*\(\s*\/\[&<>["']/,
