@@ -811,6 +811,22 @@ async function _concurrentImmediateNoDoubleProration() {
 
   var invoices = await ctx.bill.invoicesForSubscription(seed.subscription_id);
   check("concurrent immediate change charged proration exactly once", invoices.length === 1);
+
+  // The losing claim must VOID its row rather than leave a phantom 'executed'
+  // change: both calls INSERT 'executed' before the plan_id CAS, only one wins.
+  // Exactly one executed row survives; the loser is cancelled with the
+  // transition-lost reason (so a SUM(first_charge_minor) WHERE status='executed'
+  // revenue rollup can't double-count a change that moved no money).
+  var executedRows = await ctx.query(
+    "SELECT COUNT(*) AS n FROM subscription_plan_changes WHERE subscription_id = ?1 AND status = 'executed'",
+    [seed.subscription_id]);
+  check("exactly one executed change survives (no phantom)", Number(executedRows.rows[0].n) === 1);
+  var statuses = both.map(function (r) { return r.status; }).sort();
+  check("concurrent execute: one executed, one cancelled",
+    statuses[0] === "cancelled" && statuses[1] === "executed");
+  var loser = both.filter(function (r) { return r.status === "cancelled"; })[0];
+  check("concurrent execute: loser voided with transition-lost reason",
+    loser && loser.cancel_reason === "transition-lost");
 }
 
 async function run() {
