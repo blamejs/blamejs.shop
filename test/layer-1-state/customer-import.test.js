@@ -367,7 +367,28 @@ async function _factoryValidation() {
 
 // ---- runner -----------------------------------------------------------
 
+// Two overlapping imports on one factory: the first reserves the single
+// in-flight slot synchronously, so the second is refused (IMPORT_IN_PROGRESS)
+// rather than clobbering the first's run handle and mis-targeting cancel.
+async function _concurrentImportRefused() {
+  var ctx = _build(_makeQuery());
+  var settled = await Promise.allSettled([
+    ctx.imp.importRows({ rows: [{ email: "a@example.com", display_name: "A" }], on_conflict: "skip" }),
+    ctx.imp.importRows({ rows: [{ email: "b@example.com", display_name: "B" }], on_conflict: "skip" }),
+  ]);
+  var fulfilled = settled.filter(function (s) { return s.status === "fulfilled"; });
+  var rejected  = settled.filter(function (s) { return s.status === "rejected"; });
+  check("concurrent import: exactly one ran",         fulfilled.length === 1);
+  check("concurrent import: exactly one refused",     rejected.length === 1);
+  check("concurrent import: refusal is IMPORT_IN_PROGRESS",
+    rejected[0] && rejected[0].reason && rejected[0].reason.code === "IMPORT_IN_PROGRESS");
+  // The slot released after the winner closed — the factory runs again.
+  var after = await ctx.imp.importRows({ rows: [{ email: "c@example.com", display_name: "C" }], on_conflict: "skip" });
+  check("concurrent import: factory runnable after",  after.status === "complete");
+}
+
 async function run() {
+  await _concurrentImportRefused();
   await _dryRunOutcomes();
   await _importRowsOnConflictUpdate();
   await _importRowsOnConflictSkip();

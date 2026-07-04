@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.11",
+  "date": "2026-07-03",
+  "headline": "A second customer or product import started while one is already running is refused instead of clobbering the first run's cancel handle",
+  "summary": "Fixes a small concurrency defect in the customer and product CSV/row import runners. Each runner tracks a single in-flight run so the operator console's cancel action knows which run to stop. The run opener set that handle after writing the run row, so two runs started at nearly the same moment — an operator double-submitting the form or opening two tabs — could both open, and the second would overwrite the first's in-flight handle. A subsequent cancel would then target the wrong run, leaving the other running. The opener now reserves the single in-flight slot synchronously, before any await, so a second run is refused with a clear \"an import is already in progress\" error while the first proceeds; the reservation is released if the run fails to open, and the console can start a fresh import as soon as the running one finishes.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Overlapping import runs no longer clobber the in-flight run handle",
+          "body": "The customer and product import runners keep one in-flight run handle so cancel targets the right run. Because the opener set that handle only after inserting the run row, two imports started concurrently could both open and the second would overwrite the first's handle, so a later cancel stopped the wrong run. The opener now claims the in-flight slot synchronously (before the first await, so the check-and-set can't interleave) and refuses a second concurrent run with an \"import already in progress\" error; the slot is released if the open fails, and a new import can start once the running one completes."
+        }
+      ]
+    }
+  ]
+}
