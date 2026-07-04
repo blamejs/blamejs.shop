@@ -642,12 +642,21 @@ async function _lockoutPerAccountAndClear() {
   var ipOnly = await os.lockoutCheck("ip-0");
   check("no operator_id: per-IP only, not locked", ipOnly.locked === false && ipOnly.account_count === 0);
 
-  // A successful sign-in clears the account's failures.
-  var cleared = await os.clearFailures({ operator_id: oid });
-  check("clearFailures removed the account's rows", cleared.cleared === 3);
+  // Cross-account isolation: a SECOND account (victim) also has a failure from
+  // ip-0. Clearing the FIRST account (attacker signing in as themselves) must
+  // NOT erase the victim's row — otherwise a shared-IP attacker could reset a
+  // victim's lockout by signing in. clearFailures is scoped to operator_id.
+  var victim = "019f2a48-2d81-72eb-8431-abe026ccc999";
+  await os.recordFailedVerify({ ip_hash: "ip-0", operator_id: victim, reason: "bad-password" });
+  check("clearFailures by IP alone is a no-op (needs operator_id)", (await os.clearFailures({ ip_hash: "ip-0" })).cleared === 0);
+  var cleared = await os.clearFailures({ operator_id: oid });   // attacker's own account only
+  check("clearFailures removed only the caller's account rows", cleared.cleared === 3);
+  var victimState = await os.lockoutCheck("ip-victim", { operator_id: victim, account_threshold: 1 });
+  check("victim's failure survives the attacker's clear",       victimState.account_count === 1 && victimState.locked === true);
+
   var after = await os.lockoutCheck("ip-0", { operator_id: oid, account_threshold: 3 });
-  check("after clear: account count back to 0",     after.account_count === 0 && after.locked === false);
-  check("clearFailures no-op with no keys",         (await os.clearFailures({})).cleared === 0);
+  check("after clear: caller's account count back to 0", after.account_count === 0 && after.locked === false);
+  check("clearFailures no-op with no keys",              (await os.clearFailures({})).cleared === 0);
 }
 
 async function run() {
