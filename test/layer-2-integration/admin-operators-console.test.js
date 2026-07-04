@@ -40,7 +40,7 @@ var TOKEN = "admin-token-0123456789abcdef-test"; // >= 16 chars
 // (0213) + operator_audit_log (0074) back the new console.
 var MIGS = [
   "0001_catalog.sql", "0003_order.sql", "0228_orders_payment_provider.sql", "0229_orders_paypal_capture_id.sql", "0004_shop_config.sql",
-  "0074_operator_audit_log.sql", "0213_operator_accounts.sql",
+  "0074_operator_audit_log.sql", "0213_operator_accounts.sql", "0165_operator_sessions.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {
@@ -123,6 +123,7 @@ async function _run() {
   var order    = bShop.order.create({ query: mem.query, cursorSecret: "ops-ord" });
   var operatorAuditLog = bShop.operatorAuditLog.create({ query: mem.query });
   var operatorAccounts = bShop.operatorAccounts.create({ query: mem.query, operatorAuditLog: operatorAuditLog });
+  var operatorSessions = bShop.operatorSessions.create({ query: mem.query });
 
   var dataDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "blamejs-operators-"));
   var app = await b.createApp({
@@ -135,6 +136,7 @@ async function _run() {
         token: TOKEN, catalog: catalog, config: config, order: order,
         shop_name: "Test Shop",
         operatorAccounts: operatorAccounts, operatorAuditLog: operatorAuditLog,
+        operatorSessions: operatorSessions,
       });
     },
   });
@@ -194,6 +196,20 @@ async function _run() {
       form: { email: "manager@example.com", password: "totally-wrong-pass" },
     });
     check("wrong-password sign-in 401", badSignin.status === 401);
+
+    // --- Brute-force lockout: repeated wrong-password sign-ins from one IP
+    // trip the lockout, which refuses with 429 BEFORE the password is checked.
+    var lockStatuses = [];
+    for (var attempt = 0; attempt < 10; attempt += 1) {
+      var lr = await helpers.httpRequest({
+        port: port, path: "/admin/operators/signin", method: "POST",
+        form: { email: "manager@example.com", password: "still-the-wrong-pass" },
+      });
+      lockStatuses.push(lr.status);
+      if (lr.status === 429) { check("lockout response carries Retry-After", !!lr.headers["retry-after"]); break; }
+    }
+    check("repeated wrong-password sign-ins eventually lock out (429)", lockStatuses.indexOf(429) !== -1);
+    check("lockout is not immediate — early attempts still 401",        lockStatuses[0] === 401);
 
     // --- Role matrix: MANAGER ALLOWED catalog write ----------------------
     var mgrBearer = { authorization: "Bearer " + managerKey };

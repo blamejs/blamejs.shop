@@ -1229,6 +1229,7 @@ async function main() {
   var errorLog = null;
   var operatorAccounts = null;
   var operatorAuditLog = null;
+  var operatorSessions = null;
   if (process.env.D1_BRIDGE_URL && process.env.D1_BRIDGE_SECRET) {
     // Entropy floor on the bridge secret. The Worker route POST
     // /_/db/query is a single-statement SQL oracle on the live D1, and
@@ -1268,6 +1269,10 @@ async function main() {
     // break-glass owner credential regardless of these.
     operatorAuditLog = bShop.operatorAuditLog.create({});
     operatorAccounts = bShop.operatorAccounts.create({ operatorAuditLog: operatorAuditLog });
+    // Brute-force lockout for the operator password sign-in — records failed
+    // attempts and refuses once the per-IP or (higher) per-account threshold
+    // trips within the rolling window. Defaults to the externalDb query handle.
+    operatorSessions = bShop.operatorSessions.create({});
     // Cursor HMAC key — derived from the deployment-scoped bridge
     // secret via b.crypto.namespaceHash, which domain-separates the
     // derived value by the "catalog-cursor" prefix so a leak in one
@@ -3692,6 +3697,7 @@ async function main() {
           // Present whenever D1 is wired.
           operatorAccounts: operatorAccounts,
           operatorAuditLog: operatorAuditLog,
+          operatorSessions: operatorSessions,
           orderTracking: orderTracking,
           pickLists:      pickLists,
           shippingLabels: shippingLabels,

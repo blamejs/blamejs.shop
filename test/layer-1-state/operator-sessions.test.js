@@ -617,6 +617,48 @@ async function _listForOperatorAndExpire() {
   await assert.rejects(os.expireOlderThan("60"),   /seconds/);
 }
 
+// Per-account lockout catches a DISTRIBUTED brute force (one account, many
+// IPs) that the per-IP count can't, and clearFailures resets on success.
+async function _lockoutPerAccountAndClear() {
+  var q   = _makeQuery();
+  var os  = operatorSessions.create({ query: q });
+  var oid = "019f2a48-2d81-72eb-8431-abe026ccb55a";   // valid UUID (no FK on the column)
+
+  var l0 = await os.lockoutCheck("ip-x", { operator_id: oid });
+  check("per-account default threshold = 20",     l0.account_threshold === 20);
+  check("per-account empty: not locked, count 0", l0.locked === false && l0.account_count === 0);
+
+  // 3 failures for ONE account, each from a DIFFERENT IP — no single IP nears
+  // the per-IP threshold (5), but the account count aggregates across them.
+  for (var i = 0; i < 3; i += 1) {
+    await os.recordFailedVerify({ ip_hash: "ip-" + i, operator_id: oid, reason: "bad-password" });
+  }
+  var st = await os.lockoutCheck("ip-0", { operator_id: oid, account_threshold: 3 });
+  check("distributed: single-IP count below per-IP threshold", st.count === 1 && st.count < st.threshold);
+  check("distributed: account count aggregates across IPs",    st.account_count === 3);
+  check("distributed: account threshold trips the lock",       st.locked === true && st.locked_by === "account");
+
+  // Without the account key the same rows don't lock (each IP has one failure).
+  var ipOnly = await os.lockoutCheck("ip-0");
+  check("no operator_id: per-IP only, not locked", ipOnly.locked === false && ipOnly.account_count === 0);
+
+  // Cross-account isolation: a SECOND account (victim) also has a failure from
+  // ip-0. Clearing the FIRST account (attacker signing in as themselves) must
+  // NOT erase the victim's row — otherwise a shared-IP attacker could reset a
+  // victim's lockout by signing in. clearFailures is scoped to operator_id.
+  var victim = "019f2a48-2d81-72eb-8431-abe026ccc999";
+  await os.recordFailedVerify({ ip_hash: "ip-0", operator_id: victim, reason: "bad-password" });
+  check("clearFailures by IP alone is a no-op (needs operator_id)", (await os.clearFailures({ ip_hash: "ip-0" })).cleared === 0);
+  var cleared = await os.clearFailures({ operator_id: oid });   // attacker's own account only
+  check("clearFailures removed only the caller's account rows", cleared.cleared === 3);
+  var victimState = await os.lockoutCheck("ip-victim", { operator_id: victim, account_threshold: 1 });
+  check("victim's failure survives the attacker's clear",       victimState.account_count === 1 && victimState.locked === true);
+
+  var after = await os.lockoutCheck("ip-0", { operator_id: oid, account_threshold: 3 });
+  check("after clear: caller's account count back to 0", after.account_count === 0 && after.locked === false);
+  check("clearFailures no-op with no keys",              (await os.clearFailures({})).cleared === 0);
+}
+
 async function run() {
   await _createHappyPathAndAudit();
   await _createBadInput();
@@ -626,6 +668,7 @@ async function run() {
   await _verifyExpiredReturnsNull();
   await _revokeBlocksVerify();
   await _lockoutThresholdTrip();
+  await _lockoutPerAccountAndClear();
   await _listForOperatorAndExpire();
 }
 

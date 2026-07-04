@@ -130,7 +130,12 @@ node -e "
   bootstrap / break-glass owner credential; once staff accounts exist,
   treat it like a recovery key — store it offline and use the
   per-operator credentials day to day. Every operator-management action
-  and every role-denied attempt lands in the audit chain.
+  and every role-denied attempt lands in the audit chain. The password
+  sign-in throttles brute force: repeated failures from one IP, or a
+  distributed guess against one account, are refused with a temporary
+  lockout (keyed on both the IP and the account, higher threshold on the
+  account, auto-expiring on a rolling window) on top of the global
+  rate limit and Argon2id.
 - **Guest order pages are access-gated, not capability URLs.** A guest
   order's confirmation page (name, address, items) requires the placing
   browser's sealed device cookie, the signed `?k=` token carried by the
