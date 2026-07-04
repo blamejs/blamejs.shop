@@ -221,6 +221,30 @@ async function _regexMatch() {
     slug: "bad-neg-lookahead", source_path: "/foo(?!bar)", target_url: "/x",
     code: 301, match_kind: "regex", active: true,
   }), /lookahead/);
+
+  // Nested unbounded quantifier ((a+)+, (a*)*, (?:a+)+ …): catastrophic
+  // backtracking that the backref/lookaround walker doesn't catch. The pattern
+  // runs against the request path in resolveForPath, so a super-linear match
+  // is a per-request DoS; it is refused at define time.
+  var redosShapes = ["(a+)+", "(a*)*$", "(?:a+)+", "(.+)+", "((ab)+)+"];
+  for (var ri = 0; ri < redosShapes.length; ri += 1) {
+    await assert.rejects(s.sr.defineRedirect({
+      slug: "bad-redos-" + ri, source_path: redosShapes[ri], target_url: "/x",
+      code: 301, match_kind: "regex", active: true,
+    }), /nested unbounded quantifier|catastrophic-backtracking|ReDoS/);
+  }
+
+  // Regression guard: a LINEAR pattern using a quantified non-capturing group
+  // ((?:…)? / (?:…)*) or an optional quantified group ((…+)?) is safe and MUST
+  // be accepted — the ReDoS screen only rejects a nested UNBOUNDED quantifier.
+  var linearShapes = ["/blog(?:/page/\\d+)?", "/foo(?:bar)*", "/foo(?:bar)?", "/p/(?:\\d+)?/edit", "/a(?:b|c)+"];
+  for (var li = 0; li < linearShapes.length; li += 1) {
+    var okRow = await s.sr.defineRedirect({
+      slug: "ok-nc-" + li, source_path: linearShapes[li], target_url: "/dest-" + li,
+      code: 301, match_kind: "regex", active: true,
+    });
+    check("linear non-capturing group accepted: " + linearShapes[li], okRow && okRow.slug === "ok-nc-" + li);
+  }
 }
 
 // ---- resolveForPath precedence: exact > prefix > regex --------------

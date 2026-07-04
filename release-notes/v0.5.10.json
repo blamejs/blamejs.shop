@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.10",
+  "date": "2026-07-03",
+  "headline": "Redirect rules with a regex source are screened for nested-quantifier catastrophic backtracking before they run on the request path",
+  "summary": "Closes the last catastrophic-backtracking (ReDoS) gap in operator-authored redirect rules. A site-redirect of kind \"regex\" compiles the operator's source into a pattern that resolveForPath runs against the request path on every request. The define-time screen already refused backreferences and lookahead/lookbehind, but not a nested unbounded quantifier — a group whose body carries an unbounded quantifier that is itself repeated by one, such as (a+)+, (a*)*, (?:a+)+ or (.+)+ — so an operator could register a rule whose match time is super-linear in the path length, turning every matching request into a denial of service. The screen now also refuses that shape at define time, at any group depth, while continuing to accept linear patterns that merely use a quantified non-capturing group ((?:/page/[0-9]+)?, (?:section)*) or an optional quantified group. The match is exact — only a nested UNBOUNDED quantifier is refused; a single quantifier, an optional group, and bounded repetition are all allowed — so no well-formed redirect regex that worked before is rejected.",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Redirect regex sources refuse nested unbounded quantifiers at define time",
+          "body": "A redirect rule of kind \"regex\" runs its compiled pattern against the request path in resolveForPath. The define-time screen rejected backreferences and lookaround but not a nested unbounded quantifier ((a+)+, (a*)*, (?:a+)+, (.+)+, ((ab)+)+ at any depth) — the canonical ReDoS shape — so an operator could land a rule whose match is super-linear in the path length, letting a crafted request path stall the redirect resolver. The screen now refuses that shape when the rule is defined, with an error pointing the operator at a prefix/exact rule or splitting into multiple rows. Linear patterns are unaffected: a quantified non-capturing group, an optional quantified group, a single quantifier, and bounded repetition are all still accepted, so no redirect regex that worked before is rejected."
+        }
+      ]
+    }
+  ]
+}
