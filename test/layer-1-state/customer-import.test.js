@@ -387,8 +387,33 @@ async function _concurrentImportRefused() {
   check("concurrent import: factory runnable after",  after.status === "complete");
 }
 
+// A cancel that lands in the reservation→INSERT window must still finalize the
+// run as cancelled. `cancelInflight` runs an UPDATE that matches no row yet
+// (the run row isn't inserted), so `_closeRun` must honor the in-memory
+// cancelled flag rather than reading the DB status alone (which would show
+// `running` and finalize `complete` — losing the operator's cancel).
+async function _cancelDuringRunCreation() {
+  var mq = _makeQuery();
+  var imp;
+  var firedCancel = false;
+  var wrapped = async function (sql, params) {
+    if (!firedCancel && /INSERT INTO customer_imports/.test(sql)) {
+      firedCancel = true;
+      await imp.cancelInflight();   // reserved, but the run row isn't inserted yet
+    }
+    return mq(sql, params);
+  };
+  var customers = bShop.customers.create({ query: wrapped });
+  imp = customerImport.create({ query: wrapped, customers: customers });
+  var rv = await imp.importRows({ rows: [{ email: "z@example.com", display_name: "Z" }], on_conflict: "skip" });
+  check("cancel-in-window: run finalizes cancelled", rv.status === "cancelled");
+  var row = (await mq("SELECT status FROM customer_imports WHERE id = ?1", [rv.run_id])).rows[0];
+  check("cancel-in-window: row persisted cancelled",  row && row.status === "cancelled");
+}
+
 async function run() {
   await _concurrentImportRefused();
+  await _cancelDuringRunCreation();
   await _dryRunOutcomes();
   await _importRowsOnConflictUpdate();
   await _importRowsOnConflictSkip();
