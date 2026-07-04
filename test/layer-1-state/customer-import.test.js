@@ -367,7 +367,53 @@ async function _factoryValidation() {
 
 // ---- runner -----------------------------------------------------------
 
+// Two overlapping imports on one factory: the first reserves the single
+// in-flight slot synchronously, so the second is refused (IMPORT_IN_PROGRESS)
+// rather than clobbering the first's run handle and mis-targeting cancel.
+async function _concurrentImportRefused() {
+  var ctx = _build(_makeQuery());
+  var settled = await Promise.allSettled([
+    ctx.imp.importRows({ rows: [{ email: "a@example.com", display_name: "A" }], on_conflict: "skip" }),
+    ctx.imp.importRows({ rows: [{ email: "b@example.com", display_name: "B" }], on_conflict: "skip" }),
+  ]);
+  var fulfilled = settled.filter(function (s) { return s.status === "fulfilled"; });
+  var rejected  = settled.filter(function (s) { return s.status === "rejected"; });
+  check("concurrent import: exactly one ran",         fulfilled.length === 1);
+  check("concurrent import: exactly one refused",     rejected.length === 1);
+  check("concurrent import: refusal is IMPORT_IN_PROGRESS",
+    rejected[0] && rejected[0].reason && rejected[0].reason.code === "IMPORT_IN_PROGRESS");
+  // The slot released after the winner closed — the factory runs again.
+  var after = await ctx.imp.importRows({ rows: [{ email: "c@example.com", display_name: "C" }], on_conflict: "skip" });
+  check("concurrent import: factory runnable after",  after.status === "complete");
+}
+
+// A cancel that lands in the reservation→INSERT window must still finalize the
+// run as cancelled. `cancelInflight` runs an UPDATE that matches no row yet
+// (the run row isn't inserted), so `_closeRun` must honor the in-memory
+// cancelled flag rather than reading the DB status alone (which would show
+// `running` and finalize `complete` — losing the operator's cancel).
+async function _cancelDuringRunCreation() {
+  var mq = _makeQuery();
+  var imp;
+  var firedCancel = false;
+  var wrapped = async function (sql, params) {
+    if (!firedCancel && /INSERT INTO customer_imports/.test(sql)) {
+      firedCancel = true;
+      await imp.cancelInflight();   // reserved, but the run row isn't inserted yet
+    }
+    return mq(sql, params);
+  };
+  var customers = bShop.customers.create({ query: wrapped });
+  imp = customerImport.create({ query: wrapped, customers: customers });
+  var rv = await imp.importRows({ rows: [{ email: "z@example.com", display_name: "Z" }], on_conflict: "skip" });
+  check("cancel-in-window: run finalizes cancelled", rv.status === "cancelled");
+  var row = (await mq("SELECT status FROM customer_imports WHERE id = ?1", [rv.run_id])).rows[0];
+  check("cancel-in-window: row persisted cancelled",  row && row.status === "cancelled");
+}
+
 async function run() {
+  await _concurrentImportRefused();
+  await _cancelDuringRunCreation();
   await _dryRunOutcomes();
   await _importRowsOnConflictUpdate();
   await _importRowsOnConflictSkip();
