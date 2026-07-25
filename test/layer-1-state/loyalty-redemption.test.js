@@ -594,6 +594,21 @@ async function _listAndPaginate() {
   check("redemptionsForCustomer page2 returns tail",   page2.rows.length === 1);
   check("redemptionsForCustomer page2 no cursor",      page2.next_cursor === null);
 
+  // Boundary: EXACTLY `limit` redemptions with nothing older must NOT emit a
+  // phantom next cursor (pre-peek, next_cursor was keyed off rows.length === limit).
+  var cidExact = _uuid();
+  await f.loyalty.earn({ customer_id: cidExact, points: 1000, source: "order-paid" });
+  for (var ei = 0; ei < 2; ei += 1) {
+    var beforeEx = Date.now();
+    await helpers.waitUntil(function () { return Date.now() > beforeEx; }, {
+      timeoutMs: 2000, label: "clock advance",
+    });
+    await f.lr.redeemForCustomer({ customer_id: cidExact, reward_slug: "a-perk" });
+  }
+  var exactPage = await f.lr.redemptionsForCustomer(cidExact, { limit: 2 });
+  check("redemptionsForCustomer exact-multiple returns 2", exactPage.rows.length === 2);
+  check("redemptionsForCustomer exact-multiple NO cursor", exactPage.next_cursor === null);
+
   // Without coupons handle, redemption proceeds without coupon_code.
   var noCouponF = _factory({ withCoupons: false });
   await noCouponF.lr.defineReward({

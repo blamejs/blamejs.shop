@@ -2902,6 +2902,31 @@ var KNOWN_ANTIPATTERNS = [
     reason: "storeCredit.history paginates the customer's store-credit ledger (newest first, cursor on occurred_at) and its `next_cursor` drives the storefront \"Older activity\" link on /account/credit. Emitting the cursor whenever the page came back full (`rows.length === limit`) advertises a next page that does not exist when the ledger length is an exact multiple of the page size — following the cursor queries `occurred_at < <oldest>` and renders an empty page. The method fetches `limit + 1` rows, sets `hasMore = r.rows.length > limit`, slices the page back to `limit`, and emits the cursor only when `hasMore`. The detector anchors on the file-unique storeCredit.history input-validation throw and is exonerated by the whole-file peek token `hasMore = <rows>.length > limit`; a regression that drops the peek removes that token and trips this.",
   },
   {
+    id: "gift-card-ledger-history-cursor-without-peek",
+    bugClassDeclared: true,
+    primitive: "giftCardLedger.history paginates a gift card's ledger, so its `next_cursor` must be emitted only after peeking one row past the page (fetch `limit + 1`, `hasMore = <rows>.length > limit`) — keying it off `rows.length === limit` advertises a phantom next page when the ledger length is an exact multiple of the limit, and the follow-up query renders empty",
+    // Anchored on the file-unique giftCardLedger.history limit-validation throw
+    // (only lib/gift-card-ledger.js carries it) so the detector targets exactly
+    // the ledger-history method.
+    regex: /giftCardLedger\.history:\s*limit must be/,
+    scanScope: "lib",
+    requires: /hasMore\s*=\s*[\w.]+\.length\s*>\s*limit/,
+    allowlist: [],
+    reason: "giftCardLedger.history paginates a gift card's ledger (newest first, cursor on occurred_at). Emitting the cursor whenever the page came back full (`rows.length === limit`) advertises a next page that does not exist when the ledger length is an exact multiple of the page size — following the cursor queries `occurred_at < <oldest>` and renders an empty page. The method fetches `limit + 1` rows, sets `hasMore = r.rows.length > limit`, slices the page back to `limit`, and emits the cursor only when `hasMore`. The detector anchors on the file-unique giftCardLedger.history limit-validation throw and is exonerated by the whole-file peek token `hasMore = <rows>.length > limit`; a regression that drops the peek removes that token and trips this.",
+  },
+  {
+    id: "loyalty-redemption-cursor-without-peek",
+    bugClassDeclared: true,
+    primitive: "loyaltyRedemption.redemptionsForCustomer emits `next_cursor` for a customer's redemption history, so it must peek one row past the page (fetch `limit + 1`, `hasMore = <rows>.length > limit`) — keying it off `rows.length === limit` advertises a phantom next page when the redemption count is an exact multiple of the limit",
+    // Anchored on the file-unique redemptionsForCustomer limit-validation throw
+    // (only lib/loyalty-redemption.js carries it).
+    regex: /loyaltyRedemption\.redemptionsForCustomer:\s*limit must be/,
+    scanScope: "lib",
+    requires: /hasMore\s*=\s*[\w.]+\.length\s*>\s*limit/,
+    allowlist: [],
+    reason: "loyaltyRedemption.redemptionsForCustomer paginates a customer's loyalty redemptions (newest first, cursor on redeemed_at). Emitting the cursor whenever the page came back full (`rows.length === limit`) advertises a next page that does not exist when the redemption count is an exact multiple of the page size — following the cursor queries `redeemed_at < <oldest>` and renders an empty page. The method fetches `limit + 1` rows, sets `hasMore = fetched.length > limit`, slices the page back to `limit` before hydrating, and emits the cursor only when `hasMore`. The detector anchors on the file-unique redemptionsForCustomer limit-validation throw and is exonerated by the whole-file peek token `hasMore = <rows>.length > limit`; a regression that drops the peek removes that token and trips this.",
+  },
+  {
     // The admin return-label issuance route records an operator-funded prepaid
     // return label against an approved return. The return-labels primitive
     // (returnLabels.issueLabel) owns ALL of the validation that keeps the

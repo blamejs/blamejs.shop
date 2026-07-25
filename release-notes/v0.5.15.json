@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.15",
+  "date": "2026-07-25",
+  "headline": "Gift-card and loyalty-redemption history no longer advertise an empty \"Older activity\" page when the record count is an exact multiple of the page size",
+  "summary": "Fixes a pagination defect in two account-facing history lists. giftCardLedger.history and loyaltyRedemption.redemptionsForCustomer emitted a next-page cursor whenever a page came back full (its row count equalled the requested limit) instead of first peeking one row past the page. When the ledger or redemption count is an exact multiple of the page size, the final full page still advertised a next page; following that cursor queried for strictly older rows and returned an empty page, so the customer's \"Older activity\" link dead-ended on a blank list. Both methods now fetch one extra row, set the cursor only when a genuinely older row exists, and slice the page back to the requested size — matching the store-credit and loyalty-transaction history that already peaked. A codebase check covers each method so the peek can't be dropped again.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Gift-card and loyalty-redemption history stop showing a phantom empty next page",
+          "body": "giftCardLedger.history and loyaltyRedemption.redemptionsForCustomer keyed their next-page cursor off \"the page came back full\" (row count === limit) rather than peeking one row beyond the page. A history whose length is an exact multiple of the page size therefore handed the customer a next-page cursor on its last full page, and following it rendered an empty \"Older activity\" list. Both now fetch limit + 1 rows, emit the cursor only when an older row actually exists, and return the page trimmed to the requested limit — the same peek the store-credit and loyalty-transaction history use. A codebase-patterns check now guards each method against a regression that drops the peek."
+        }
+      ]
+    }
+  ]
+}
