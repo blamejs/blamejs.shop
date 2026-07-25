@@ -392,6 +392,56 @@ async function _computeFilingNetsCrossPeriodRefund() {
   check("net-credit window floors collected at 0", creditC.tax_collected_minor === 0);
   check("net-credit window floors taxable at 0",   creditC.taxable_revenue_minor === 0);
   check("net-credit window floors owed at 0",      creditC.tax_owed_minor === 0);
+
+  // --- Full refund: a prior-period order moved to the terminal `refunded`
+  // status must still be credited (the by-id lookup must not filter it out on
+  // sale status). ---
+  var f4 = _factory();
+  _insertRate(f4.db, "US-CA", 725, jan - 1000, null);
+  var oFull = _insertOrder(f4.db, { subtotal_minor: 10000, tax_minor: 725, created_at: jan + 1000, status: "refunded" });
+  _insertRefund(f4.db, oFull, 10725, feb + 1000);   // full grand-total refund, recorded in Feb
+  _insertOrder(f4.db, { subtotal_minor: 20000, tax_minor: 1450, created_at: feb + 2000 });   // Feb sale
+  var fullFiling = await f4.stf.defineFilingPeriod({ jurisdiction: "US-CA", kind: "monthly", period_start: feb, period_end: mar, due_date: febDue });
+  var fullC = await f4.stf.computeFiling({ filing_id: fullFiling.id });
+  check("full-refund (refunded status) credited: collected", fullC.tax_collected_minor === 725);   // 1450 - 725
+  check("full-refund (refunded status) credited: taxable",   fullC.taxable_revenue_minor === 10000);// 20000 - 10000
+
+  // --- Historical rate: a refund of an order sold under a since-expired rate
+  // reduces THAT rate's bucket (kept negative through the owed total), so
+  // tax_owed nets the credit — not the current rate, and not __none__. ---
+  var f5 = _factory();
+  var apr    = Date.UTC(2026, 3, 1);
+  var may    = Date.UTC(2026, 4, 1);
+  var mayDue = Date.UTC(2026, 4, 20);
+  _insertRate(f5.db, "US-CA", 700, jan - 1000, mar);   // 7.00% until March
+  _insertRate(f5.db, "US-CA", 725, mar, null);          // 7.25% from March on
+  var oOld = _insertOrder(f5.db, { subtotal_minor: 10000, tax_minor: 700, created_at: jan + 1000 });  // grand 10700 @ 7.00%
+  _insertRefund(f5.db, oOld, 2140, apr + 1000);          // 1/5 refunded in April: 2000 sub / 140 tax
+  _insertOrder(f5.db, { subtotal_minor: 20000, tax_minor: 1450, created_at: apr + 2000 });            // April sale @ 7.25%
+  var aprFiling = await f5.stf.defineFilingPeriod({ jurisdiction: "US-CA", kind: "monthly", period_start: apr, period_end: may, due_date: mayDue });
+  var aprC = await f5.stf.computeFiling({ filing_id: aprFiling.id });
+  check("historical-rate: collected nets old-rate refund", aprC.tax_collected_minor === 1310);   // 1450 - 140
+  check("historical-rate: taxable nets refund",            aprC.taxable_revenue_minor === 18000); // 20000 - 2000
+  check("historical-rate: owed nets old-rate credit",      aprC.tax_owed_minor === 1310);         // 1450 - 140
+  check("historical-rate: old-rate bucket kept negative",
+    aprC.by_rate_breakdown["700"].taxable_minor === -2000 && aprC.by_rate_breakdown["700"].tax_minor === -140);
+
+  // --- Classification reconciliation: a taxable refund exceeding taxable
+  // sales, alongside exempt sales that keep gross positive, keeps
+  // taxable + exempt == gross (flooring is reconciled, not per-classification). ---
+  var exemptCust = _uuid();
+  var f6 = _factory({ isExempt: async function (i) { return i.customer_id === exemptCust && i.jurisdiction === "US-CA"; } });
+  _insertRate(f6.db, "US-CA", 725, jan - 1000, null);
+  var oTaxRef = _insertOrder(f6.db, { subtotal_minor: 10000, tax_minor: 725, created_at: jan + 1000, customer_id: _uuid() });
+  _insertRefund(f6.db, oTaxRef, 10725, feb + 1000);   // full taxable refund in Feb: -10000 taxable
+  _insertOrder(f6.db, { subtotal_minor: 20000, tax_minor: 0, created_at: feb + 2000, customer_id: exemptCust });   // Feb exempt sale +20000
+  var reconFiling = await f6.stf.defineFilingPeriod({ jurisdiction: "US-CA", kind: "monthly", period_start: feb, period_end: mar, due_date: febDue });
+  var reconC = await f6.stf.computeFiling({ filing_id: reconFiling.id });
+  check("reconcile: taxable + exempt == gross",
+    reconC.taxable_revenue_minor + reconC.exempt_revenue_minor === reconC.gross_revenue_minor);
+  check("reconcile: gross is the net (20000 exempt − 10000 taxable refund)", reconC.gross_revenue_minor === 10000);
+  check("reconcile: taxable floored at 0",  reconC.taxable_revenue_minor === 0);
+  check("reconcile: owed floored at 0",     reconC.tax_owed_minor === 0);
 }
 
 // ---- 2c. computeFiling owed uses the jurisdiction fallback rate ----------
