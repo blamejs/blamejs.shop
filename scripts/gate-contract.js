@@ -326,16 +326,16 @@ var COVERAGE = [
     note:     "fetch limit + 1, set hasMore = r.rows.length > limit, slice the page back to limit, and emit next_cursor only when hasMore — the cursor drives the /account/credit \"Older activity\" link, so a phantom page is shopper-visible",
   },
   {
-    bugClass: "giftCardLedger.history emits next_cursor keyed off rows.length === limit without peeking one row past the page — the account gift-card \"Older activity\" link then advertises a next page that renders empty when the ledger length is an exact multiple of the limit",
+    bugClass: "giftCardLedger.history emits next_cursor keyed off rows.length === limit without peeking one row past the page — a consumer paginating the ledger follows the cursor onto an empty page when the ledger length is an exact multiple of the limit",
     detector: "gift-card-ledger-history-cursor-without-peek",
     gate:     "codebase-patterns",
-    note:     "fetch limit + 1, set hasMore = r.rows.length > limit, slice the page back to limit, and emit next_cursor only when hasMore — the cursor drives the account gift-card \"Older activity\" link, so a phantom page is shopper-visible",
+    note:     "fetch limit + 1, set hasMore = r.rows.length > limit, slice the page back to limit, and emit next_cursor only when hasMore — an API-contract fix; the cursor must not resolve to a phantom empty page for a paginating consumer",
   },
   {
-    bugClass: "loyaltyRedemption.redemptionsForCustomer emits next_cursor keyed off rows.length === limit without peeking one row past the page — a redemption count that is an exact multiple of the limit advertises a next page that renders empty",
+    bugClass: "loyaltyRedemption.redemptionsForCustomer emits next_cursor keyed off rows.length === limit without peeking one row past the page — a redemption count that is an exact multiple of the limit advertises a next page that resolves to nothing",
     detector: "loyalty-redemption-cursor-without-peek",
     gate:     "codebase-patterns",
-    note:     "fetch limit + 1, set hasMore = fetched.length > limit, slice the page back to limit before hydrating, and emit next_cursor only when hasMore — the cursor drives the account loyalty-redemptions history list",
+    note:     "fetch limit + 1, set hasMore = fetched.length > limit, slice the page back to limit before hydrating, and emit next_cursor only when hasMore — an API-contract fix; a consumer reading only rows is unaffected, a paginating consumer no longer hits a phantom page",
   },
   {
     bugClass: "admin return-label issuance route hand-rolls an INSERT INTO return_labels instead of composing returnLabels.issueLabel — bypassing the primitive's HTTPS-only label_url gate (b.safeUrl) + approved-only RMA-status refusal, so an unvalidated label_url lands in the column the customer download redirects at (scheme-injection / open-redirect) and a label can be funded against an un-triaged claim",
