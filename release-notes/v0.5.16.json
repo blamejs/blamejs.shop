@@ -1,0 +1,31 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.16",
+  "date": "2026-07-25",
+  "headline": "Vendored framework refreshed to 0.17.23: session refresh paths enforce the idle/absolute timeout floor and two verifier fail-closed contracts are hardened",
+  "summary": "Refreshes the vendored framework from 0.17.22 to 0.17.23, a security patch to primitives the store composes; all of the following are inherited without shop code changes. The encrypted-session primitive now enforces its idle and absolute timeout floors on the refresh paths, not just on read: rotating a session or writing session data previously reset the activity clock without re-checking the idle floor, so a session already past its idle timeout — one a normal verify would expire and delete — could be revived with a fresh idle window; both refresh paths now fail closed on a breach. A strict device-fingerprint policy configured without a request to compute the fingerprint now fails closed instead of silently admitting the session from any device. The audit-signature verifier now returns false on a malformed public key instead of throwing, honoring its never-throw contract for callers that branch on the boolean. The bundled Public Suffix List is refreshed to the current snapshot. The minimum Node.js engine is unchanged at 24.18.0.",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Session refresh paths can no longer resurrect an idle-expired session",
+          "body": "The encrypted-session primitive enforces two floors independent of the configured TTL — an idle timeout and an absolute timeout. Read paths already enforced them, but rotating a session (on a privilege change) or writing session data reset the activity clock without re-checking the idle floor, so a session already past its idle timeout — which a normal verify would expire and delete — could be revived with a fresh window by rotating or writing to it. Both refresh paths now route through the same floor check and fail closed on a breach, and the idle/absolute-expiry audit signal is emitted consistently. Inherited from the framework refresh; the store's sessions gain the tighter enforcement with no configuration change."
+        },
+        {
+          "title": "A strict device-fingerprint policy with no request now fails closed; audit-signature verify no longer throws on a malformed key",
+          "body": "Two verifier fail-closed fixes ride in with the refresh. A strict device-binding policy (require-fingerprint-match / max-anomaly-score) that was configured without a request to compute the current fingerprint previously skipped the binding check and admitted the session from any device; it now fails closed. And the audit-signature verifier, documented never to throw so callers can branch on its boolean, threw on a malformed / non-PEM public key (an untrusted key can reach it from a signature block); it now catches that and returns false, so a verifier-only consumer cleanly rejects instead of crashing. Inherited from the framework refresh."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Vendored framework refreshed to 0.17.23",
+          "body": "Advances the vendored framework from 0.17.22 to 0.17.23. Beyond the session and verifier fixes above, the bundled Public Suffix List is refreshed to the current upstream snapshot so registrable-domain and public-suffix checks across URL, cookie, and SSRF handling reflect the latest registry delegations. The minimum Node.js engine is unchanged at 24.18.0."
+        }
+      ]
+    }
+  ]
+}
