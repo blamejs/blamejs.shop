@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.19",
+  "date": "2026-07-25",
+  "headline": "A concurrent immediate subscription plan change no longer double-charges the card, and a lost race no longer leaves a phantom executed change",
+  "summary": "Fixes a double-charge in immediate subscription plan changes on Stripe-backed subscriptions. executeChange pushed the proration to Stripe (proration_behavior always_invoice, which invoices the delta immediately) BEFORE claiming the plan transition locally, and used an idempotency key derived from the per-call plan-change row id. Two concurrent immediate changes for the same subscription therefore each read the current plan, each pushed to Stripe with a distinct idempotency key, and Stripe cut TWO always_invoice proration invoices against the customer's card — double-billing the upgrade delta — while the losing change also left a phantom executed history row carrying charge and credit amounts for a transition that did not settle. executeChange now claims the plan transition FIRST — a conditional update gated on the current plan id — so two concurrent changes serialize and only the winner pushes to Stripe; the loser is voided (transition-lost) with no charge, matching the non-Stripe path and the scheduled-change path. The Stripe push now derives its idempotency key from the transition identity (subscription, from and to price, current period) instead of the per-call id, so a retry of the same transition dedupes at Stripe rather than cutting a second proration. A Stripe failure after winning the claim rolls the plan back and voids the row.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Concurrent immediate plan changes no longer cut two Stripe proration invoices",
+          "body": "For a Stripe-backed subscription, an immediate plan change repriced the subscription at Stripe with always_invoice (billing the proration delta now) before it claimed the plan transition in the local database, and keyed the Stripe request's idempotency on the per-call change row id. Two overlapping immediate changes — a double-submitted upgrade, or a retry racing the original — each observed the pre-change plan, each pushed to Stripe under a different idempotency key, and Stripe issued two proration invoices, charging the customer twice for the same upgrade; the change that lost the local transition also left an executed history row for a transition that never settled. executeChange now claims the transition first with a conditional update on the current plan id and only pushes to Stripe when it wins, voiding the losing change (transition-lost) without any charge. The Stripe idempotency key is now the transition identity (subscription + from/to price + current period), so a retry of the same transition is a Stripe no-op instead of a second invoice, and a Stripe failure after the claim rolls the plan back and voids the row."
+        }
+      ]
+    }
+  ]
+}

@@ -190,6 +190,7 @@ function _setup(opts) {
     subscriptions:       subs,
     subscriptionBilling: bill,
     storeCredit:         sc,
+    payment:             opts.payment || null,
   });
   return { query: q, pc: pc, bill: bill, sc: sc };
 }
@@ -829,11 +830,70 @@ async function _concurrentImmediateNoDoubleProration() {
     loser && loser.cancel_reason === "transition-lost");
 }
 
+// Records every Stripe subscriptions.update (repricing) call + its
+// idempotency key so a plan-change test can assert single-push + stable key.
+function _stripePaymentStub() {
+  var updates = [];
+  return {
+    updates: updates,
+    subscriptions: {
+      retrieve: async function (subId) { return { id: subId, items: { data: [{ id: "si_" + subId }] } }; },
+      update:   async function (subId, params, idemKey) { updates.push({ subId: subId, idemKey: idemKey }); return { id: subId }; },
+    },
+  };
+}
+
+// ---- 3b. executeChange Stripe branch: claim-first + stable idempotency ----
+async function _executeImmediateStripeClaimFirst() {
+  var now = Date.now();
+
+  // Normal stripe-backed immediate change: exactly one Stripe push, with an
+  // idempotency key derived from the TRANSITION identity (not the per-row id).
+  var payment = _stripePaymentStub();
+  var ctx = _setup({ payment: payment });
+  var seed = await _seed(ctx.query, { plan_a_amount: 1000, plan_b_amount: 3000, period_start: now - 1000, period_end: now + 9000 });
+  var subRow0 = (await ctx.query("SELECT stripe_subscription_id FROM subscriptions WHERE id = ?1", [seed.subscription_id])).rows[0];
+
+  var row = await ctx.pc.executeChange({ subscription_id: seed.subscription_id, new_plan_id: seed.plan_b_id });
+  check("stripe immediate executed",                 row.status === "executed");
+  check("stripe push called exactly once",           payment.updates.length === 1);
+  check("stripe idem key is transition identity, not row id",
+    payment.updates[0].idemKey.indexOf("planchange:" + subRow0.stripe_subscription_id + ":" + seed.plan_a_id + ":") === 0 &&
+    payment.updates[0].idemKey.indexOf(row.id) === -1);
+  var sAfter = (await ctx.query("SELECT plan_id FROM subscriptions WHERE id = ?1", [seed.subscription_id])).rows[0];
+  check("stripe immediate flips plan_id",            sAfter.plan_id === seed.plan_b_id);
+
+  // Concurrency: a change that LOSES the plan_id claim (a concurrent change
+  // already moved the plan between our read and our claim) is voided
+  // (transition-lost) and does NOT push to Stripe a second time — the fix that
+  // prevents a double always_invoice proration. Inject the competing plan move
+  // right before the claim UPDATE.
+  var payment2 = _stripePaymentStub();
+  var baseQ = _makeQuery();
+  var raceArmed = false;
+  var raceQ = async function (sql, params) {
+    if (raceArmed && /UPDATE subscriptions SET plan_id = \?1, updated_at = \?2 WHERE id = \?3 AND plan_id = \?4/.test(sql)) {
+      raceArmed = false;
+      await baseQ("UPDATE subscriptions SET plan_id = ?1 WHERE id = ?2", [params[0], params[2]]);   // concurrent transition A -> B
+    }
+    return baseQ(sql, params);
+  };
+  var seed2 = await _seed(raceQ, { plan_a_amount: 1000, plan_b_amount: 3000, period_start: now - 1000, period_end: now + 9000 });
+  var pc2 = planChanges.create({ query: raceQ, subscriptions: _subscriptionsHandle(raceQ), payment: payment2 });
+  raceArmed = true;
+  var lost = await pc2.executeChange({ subscription_id: seed2.subscription_id, new_plan_id: seed2.plan_b_id });
+  check("race loser voided (transition-lost)",       lost.status === "cancelled" && lost.cancel_reason === "transition-lost");
+  check("race loser did NOT push to Stripe",         payment2.updates.length === 0);
+  var s2 = (await baseQ("SELECT plan_id FROM subscriptions WHERE id = ?1", [seed2.subscription_id])).rows[0];
+  check("race: plan transitioned exactly once (B)",  s2.plan_id === seed2.plan_b_id);
+}
+
 async function run() {
   await _prorationMidPeriod();
   await _proposeImmediate();
   await _proposeNextCycle();
   await _executeImmediateFsm();
+  await _executeImmediateStripeClaimFirst();
   await _downgradeIssuesStoreCredit();
   await _downgradeWithoutStoreCreditThrows();
   await _scheduledDowngradeIssuesStoreCredit();
