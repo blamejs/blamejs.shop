@@ -209,7 +209,9 @@ async function _recordBackorderCounterAndCap() {
   var rq = _makeQuery();
   var raceArmed = false;
   var raceQuery = async function (sql, params) {
-    if (raceArmed && /INSERT INTO backorder_lines/i.test(sql)) {
+    // Fire the competing increment right BEFORE the cap-claim UPDATE (after
+    // the stale early read), so only the guarded claim decides the outcome.
+    if (raceArmed && /UPDATE backorder_skus SET pending_quantity = pending_quantity \+ /i.test(sql)) {
       raceArmed = false;
       await rq("UPDATE backorder_skus SET pending_quantity = 10 WHERE sku = ?1", ["WDG-RACE"]);
     }
