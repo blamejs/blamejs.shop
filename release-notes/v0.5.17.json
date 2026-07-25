@@ -1,0 +1,22 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.17",
+  "date": "2026-07-25",
+  "headline": "Backorder capacity is enforced atomically under concurrent requests, and a stock-transfer over-receipt no longer mints net inventory",
+  "summary": "Two inventory-quantity integrity fixes. recordBackorder checked the per-SKU supplier cap (max_backorder_quantity) against a snapshot read and then incremented the pending counter unconditionally, so two concurrent backorders of the same SKU could both pass the check on the same starting value and both apply their increment, pushing the pending total past the cap and over-committing to the supplier. The increment now folds the cap into a single guarded update — only an increment that keeps the pending total within the cap applies — and is gated on the row count: a losing claim removes the line it had inserted and refuses, so the counter can never exceed the cap regardless of interleaving. Separately, stock-transfer reconcile credited the destination location with the full received quantity, so a mis-scan that received MORE than was shipped credited the destination beyond what the origin was debited at ship time — minting net sellable inventory the transfer created nowhere. The destination credit is now clamped to the shipped (debited) quantity, and the over-count is recorded as a negative discrepancy for the operator; a normal or short receipt is unchanged.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Backorder supplier cap holds under concurrent requests",
+          "body": "recordBackorder enforced max_backorder_quantity by reading the current pending total, checking pending + requested <= cap, and then unconditionally incrementing the counter. Two concurrent backorders of the same SKU could each read the same pending value, each pass the check, and each apply its increment, leaving the pending total above the cap — over-committing beyond supplier capacity. The counter increment now carries the cap in its WHERE clause so only an increment that keeps the total within the cap applies, and the call checks that exactly one row changed; a losing claim (a concurrent line took the remaining capacity, or the SKU was deactivated) removes the line it inserted and refuses with the current reason. The early snapshot check is kept as a fast-fail for the common case."
+        },
+        {
+          "title": "Stock-transfer over-receipt no longer mints net inventory",
+          "body": "When a transfer was reconciled, the destination location was credited with the full received quantity. A mis-scan (or a genuinely found unit) that recorded more received than was shipped therefore credited the destination beyond what the origin had been debited when the transfer opened — creating net sellable stock the transfer never moved. The destination credit is now clamped to the shipped quantity (what the origin was debited), so an over-receipt can no longer mint inventory; the discrepancy column records the true shipped-minus-received delta (negative for an over-receipt) so the operator still sees the mis-count. Exact and short receipts are unaffected."
+        }
+      ]
+    }
+  ]
+}

@@ -201,6 +201,33 @@ async function _recordBackorderCounterAndCap() {
   var c4 = await bo.getStatus("WDG-CAP");
   check("dedup does not double-count",        c4.pending_quantity === 8);
 
+  // Atomic cap under a race: a concurrent recordBackorder that takes the
+  // remaining capacity between our stale cap read and our counter increment
+  // must NOT let pending exceed the cap. A query wrapper injects the competing
+  // increment right before this call's line INSERT (i.e. after the early cap
+  // read), so only the cap-guarded claim decides the outcome.
+  var rq = _makeQuery();
+  var raceArmed = false;
+  var raceQuery = async function (sql, params) {
+    if (raceArmed && /INSERT INTO backorder_lines/i.test(sql)) {
+      raceArmed = false;
+      await rq("UPDATE backorder_skus SET pending_quantity = 10 WHERE sku = ?1", ["WDG-RACE"]);
+    }
+    return rq(sql, params);
+  };
+  var boRace = backorder.create({ query: raceQuery, catalog: _stubCatalog(raceQuery) });
+  await boRace.markBackorderable({ sku: "WDG-RACE", max_backorder_quantity: 10, expected_ship_date: ship });
+  await boRace.recordBackorder({ order_id: bShop.framework.uuid.v7(), customer_id: customer, sku: "WDG-RACE", quantity: 8 });
+  var raceOrder = bShop.framework.uuid.v7();
+  raceArmed = true;
+  await assert.rejects(boRace.recordBackorder({
+    order_id: raceOrder, customer_id: customer, sku: "WDG-RACE", quantity: 2,
+  }), /max_backorder_quantity/);
+  var raceCfg = await boRace.getStatus("WDG-RACE");
+  check("atomic cap: counter not pushed past cap by a race", raceCfg.pending_quantity === 10);
+  var orphan = await rq("SELECT id FROM backorder_lines WHERE order_id = ?1 AND sku = ?2", [raceOrder, "WDG-RACE"]);
+  check("atomic cap: refused line reverted (no orphan)",     orphan.rows.length === 0);
+
   // Refusal: sku not backorderable
   await assert.rejects(bo.recordBackorder({
     order_id:    bShop.framework.uuid.v7(),
