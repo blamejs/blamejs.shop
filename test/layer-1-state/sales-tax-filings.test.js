@@ -331,6 +331,69 @@ async function _computeFilingNetsPartialRefunds() {
   check("partial-refund recompute is stable", c2.tax_collected_minor === 2755 && c2.taxable_revenue_minor === 38000);
 }
 
+// ---- 2b2. computeFiling nets a CROSS-PERIOD refund -----------------------
+// A refund recorded inside the filing window against an order created in an
+// EARLIER period must reduce THIS filing (returns-reduce-the-current-period).
+// Before the fix, computeFiling only consulted refunds for orders created in
+// the window, so a refund of a prior-period order was dropped from every
+// period and the operator over-remitted the refunded tax.
+
+async function _computeFilingNetsCrossPeriodRefund() {
+  var jan    = Date.UTC(2026, 0, 1);
+  var feb    = Date.UTC(2026, 1, 1);
+  var mar    = Date.UTC(2026, 2, 1);
+  var febDue = Date.UTC(2026, 2, 20);
+
+  // --- Core: a Jan order refunded in Feb reduces the FEB filing. ---
+  var f = _factory();
+  _insertRate(f.db, "US-CA", 725, jan - 1000, null);
+  // oJan: subtotal 10000, tax 725, grand_total 10725. A 2145-minor refund
+  // (exactly 1/5) recorded in FEB apportions to 2000 subtotal / 145 tax.
+  var oJan = _insertOrder(f.db, { subtotal_minor: 10000, tax_minor: 725, created_at: jan + 1000 });
+  _insertRefund(f.db, oJan, 2145, feb + 1000);
+  // A plain Feb sale so the reduction is visible against real in-window revenue.
+  _insertOrder(f.db, { subtotal_minor: 20000, tax_minor: 1450, created_at: feb + 2000 });
+
+  var febFiling = await f.stf.defineFilingPeriod({ jurisdiction: "US-CA", kind: "monthly", period_start: feb, period_end: mar, due_date: febDue });
+  var febC = await f.stf.computeFiling({ filing_id: febFiling.id });
+  // Feb sale 20000/1450 minus the cross-period refund 2000/145.
+  check("cross-period refund reduces collected", febC.tax_collected_minor === 1305);
+  check("cross-period refund reduces taxable",   febC.taxable_revenue_minor === 18000);
+  check("cross-period refund reduces gross",     febC.gross_revenue_minor === 18000);
+  check("cross-period refund reduces owed",      febC.tax_owed_minor === 1305);
+  check("cross-period refund reduces bucket",
+    febC.by_rate_breakdown["725"].taxable_minor === 18000 && febC.by_rate_breakdown["725"].tax_minor === 1305);
+  var febC2 = await f.stf.computeFiling({ filing_id: febFiling.id });
+  check("cross-period refund recompute stable", febC2.tax_collected_minor === 1305);
+
+  // --- Jurisdiction isolation: a refund of an out-of-state order is ignored. ---
+  var f2 = _factory();
+  _insertRate(f2.db, "US-CA", 725, jan - 1000, null);
+  var oNY = _insertOrder(f2.db, { subtotal_minor: 10000, tax_minor: 800, created_at: jan + 1000, ship_to: { country: "US", region: "NY" } });
+  _insertRefund(f2.db, oNY, 2160, feb + 1000);
+  _insertOrder(f2.db, { subtotal_minor: 20000, tax_minor: 1450, created_at: feb + 2000 });   // CA Feb sale
+  var caFiling = await f2.stf.defineFilingPeriod({ jurisdiction: "US-CA", kind: "monthly", period_start: feb, period_end: mar, due_date: febDue });
+  var caC = await f2.stf.computeFiling({ filing_id: caFiling.id });
+  check("cross-period refund of other-jurisdiction order ignored",
+    caC.tax_collected_minor === 1450 && caC.taxable_revenue_minor === 20000);
+
+  // --- Net-credit window: a window whose only activity is a cross-period
+  // refund (no in-window sales) would net negative; the schema stores
+  // non-negative totals, so the accumulators floor at zero rather than
+  // crash the CHECK constraint. (True carry-forward of the residual credit
+  // is a separate enhancement; the important guarantee here is that the fix
+  // never over-remits and never violates the schema.) ---
+  var f3 = _factory();
+  _insertRate(f3.db, "US-CA", 725, jan - 1000, null);
+  var oOnly = _insertOrder(f3.db, { subtotal_minor: 10000, tax_minor: 725, created_at: jan + 1000 });
+  _insertRefund(f3.db, oOnly, 2145, feb + 1000);
+  var creditFiling = await f3.stf.defineFilingPeriod({ jurisdiction: "US-CA", kind: "monthly", period_start: feb, period_end: mar, due_date: febDue });
+  var creditC = await f3.stf.computeFiling({ filing_id: creditFiling.id });
+  check("net-credit window floors collected at 0", creditC.tax_collected_minor === 0);
+  check("net-credit window floors taxable at 0",   creditC.taxable_revenue_minor === 0);
+  check("net-credit window floors owed at 0",      creditC.tax_owed_minor === 0);
+}
+
 // ---- 2c. computeFiling owed uses the jurisdiction fallback rate ----------
 
 async function _computeFilingFallbackRateDeterministic() {
@@ -752,6 +815,7 @@ async function run() {
   await _defineFilingPeriodShape();
   await _computeFilingAggregates();
   await _computeFilingNetsPartialRefunds();
+  await _computeFilingNetsCrossPeriodRefund();
   await _computeFilingFallbackRateDeterministic();
   await _computeFilingExempt();
   await _fsmTransitions();
