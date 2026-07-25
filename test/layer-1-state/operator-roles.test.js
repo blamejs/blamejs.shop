@@ -113,7 +113,7 @@ async function _defineRoleAndAllowlist() {
   // PERMISSIONS is exported on the surface for UI rendering.
   check("listPermissions returns frozen array",
     Array.isArray(ctx.roles.listPermissions()) && Object.isFrozen(ctx.roles.listPermissions()));
-  check("listPermissions has all 15 tokens",       ctx.roles.listPermissions().length === 15);
+  check("listPermissions has all 16 tokens",       ctx.roles.listPermissions().length === 16);
   check("listPermissions covers orders.refund",
     ctx.roles.listPermissions().indexOf("orders.refund") !== -1);
   check("listPermissions covers users.manage",
@@ -226,6 +226,30 @@ async function _assignAndPermissionGate() {
     operator_id: "op-alice", permission: "customers.export",
   });
   check("hasPermission not-in-any-role -> false",     canExport === false);
+
+  // Unknown permission token (outside the closed allow-list) is DENIED, not
+  // thrown — hasPermission is a hot-path authorization check that fails closed,
+  // so a caller gating on a capability the allow-list doesn't carry gets a
+  // clean deny instead of a crash.
+  var unknownPerm = await ctx.roles.hasPermission({
+    operator_id: "op-alice", permission: "not.a.real.permission",
+  });
+  check("hasPermission unknown token -> false (no throw)", unknownPerm === false);
+
+  // The newly-added customers.impersonate token is grantable through the RBAC
+  // system and resolves — this is the capability customer-impersonation
+  // defaults to, so it must be assignable and checkable, not an unknown token.
+  check("customers.impersonate in allow-list", ctx.roles.listPermissions().indexOf("customers.impersonate") !== -1);
+  await ctx.roles.defineRole({
+    slug: "cx-support", title: "CX Support", permissions: ["customers.impersonate"],
+  });
+  await ctx.roles.assignRoleToOperator({
+    operator_id: "op-cx", role_slug: "cx-support", assigned_by: "op-root",
+  });
+  var canImpersonate = await ctx.roles.hasPermission({
+    operator_id: "op-cx", permission: "customers.impersonate",
+  });
+  check("hasPermission customers.impersonate (granted) -> true", canImpersonate === true);
 
   // Unassigned operator -> false.
   var ghost = await ctx.roles.hasPermission({
@@ -561,8 +585,8 @@ async function _factoryAndInputValidation() {
   check("operatorRoles.MAX_TITLE_LEN exported",       operatorRoles.MAX_TITLE_LEN === 200);
   check("operatorRoles.PERMISSIONS is frozen array",
     Array.isArray(operatorRoles.PERMISSIONS) && Object.isFrozen(operatorRoles.PERMISSIONS));
-  check("operatorRoles.PERMISSIONS has all 15 tokens",
-    operatorRoles.PERMISSIONS.length === 15);
+  check("operatorRoles.PERMISSIONS has all 16 tokens",
+    operatorRoles.PERMISSIONS.length === 16);
 
   var ctx = _setup();
 
@@ -642,12 +666,13 @@ async function _factoryAndInputValidation() {
   // ---- hasPermission refusal classes ----
   await assert.rejects(ctx.roles.hasPermission(),
     /input object required/);
-  await assert.rejects(ctx.roles.hasPermission({
-    operator_id: "op-x", permission: "",
-  }), /allow-list/);
-  await assert.rejects(ctx.roles.hasPermission({
-    operator_id: "op-x", permission: "summon.demon",
-  }), /allow-list/);
+  // A garbage or unknown permission token is DENIED (false), not thrown —
+  // hasPermission fails closed as a hot-path authorization check (config-time
+  // surfaces like defineRole still throw on an unknown token).
+  check("hasPermission empty permission -> false",
+    (await ctx.roles.hasPermission({ operator_id: "op-x", permission: "" })) === false);
+  check("hasPermission unknown permission -> false",
+    (await ctx.roles.hasPermission({ operator_id: "op-x", permission: "summon.demon" })) === false);
 
   // ---- rolesForOperator / operatorsWithRole ----
   await assert.rejects(ctx.roles.rolesForOperator(""),

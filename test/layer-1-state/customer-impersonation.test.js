@@ -164,12 +164,12 @@ async function _startImpersonationAndCapabilityGate() {
     }),
     function (e) {
       return e.code === "IMPERSONATION_CAPABILITY_REFUSED" &&
-             /lacks capability can_impersonate_customer/.test(e.message);
+             /lacks capability customers.impersonate/.test(e.message);
     },
   );
   check("roles peer invoked with default capability",
     rolesDeny.calls.length === 1 &&
-    rolesDeny.calls[0].permission === "can_impersonate_customer");
+    rolesDeny.calls[0].permission === "customers.impersonate");
 
   // With operatorRoles wired + allow=true — passes
   var rolesAllow = _rolesStub({ allow: true });
