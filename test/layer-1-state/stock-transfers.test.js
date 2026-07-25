@@ -309,6 +309,24 @@ async function _markReceivedShortShip() {
   var w2 = await locSvc.stockForSku("WDG-2");
   check("clean-ship total preserved",         w2.total === 30);
 
+  // Over-receipt: a mis-scan receives MORE than was shipped. The destination
+  // credit is clamped to what origin was debited at open (quantity_shipped),
+  // so no net inventory is minted; the discrepancy records the negative
+  // over-count for the operator.
+  await locSvc.setStock({ sku: "WDG-OVER", location_code: "WH-EAST", quantity: 20 });
+  var over = await stSvc.openTransfer({
+    from_location: "WH-EAST", to_location: "WH-WEST",
+    lines: [{ sku: "WDG-OVER", quantity: 5 }],
+  });
+  await stSvc.markShipped({ transfer_id: over.id });
+  await stSvc.markReceived({ transfer_id: over.id, received_lines: [{ sku: "WDG-OVER", quantity_received: 8 }] });
+  var overRec = await stSvc.reconcile({ transfer_id: over.id });
+  check("over-receipt discrepancy negative",        overRec.lines[0].discrepancy === -3);
+  var wOver = await locSvc.stockForSku("WDG-OVER");
+  var wOverWest = wOver.by_location.find(function (l) { return l.code === "WH-WEST"; });
+  check("over-receipt credit clamped to shipped",   wOverWest && wOverWest.quantity === 5);
+  check("over-receipt mints no net inventory",      wOver.total === 20);
+
   // Missing-SKU short-ship: ship 5 WDG-1, receive received_lines=[]
   // → discrepancy = 5 (every shipped unit was lost), destination
   // credited nothing.
