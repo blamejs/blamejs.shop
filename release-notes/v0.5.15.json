@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.15",
+  "date": "2026-07-25",
+  "headline": "`giftCardLedger.history` and `loyaltyRedemption.redemptionsForCustomer` no longer return a next-page cursor that resolves to an empty page",
+  "summary": "Fixes a cursor-pagination contract defect in two ledger/history primitives. giftCardLedger.history and loyaltyRedemption.redemptionsForCustomer emitted a next-page cursor whenever a page came back full — its row count equalled the requested limit — instead of first peeking one row past the page. When the history length is an exact multiple of the page size, the last full page still handed back a cursor; following it queried for strictly older rows and returned nothing, so a caller paginating with the cursor would land on an empty page. Both methods now fetch one extra row, emit the cursor only when a genuinely older row exists, and return the page trimmed to the requested size — matching the store-credit and loyalty-transaction history that already peek. This is an API-level correctness fix: the shop's current callers of these two methods read only the returned rows (the admin gift-card ledger view and the account loyalty-redemptions list do not paginate on this cursor), so no live page changes today; the fix corrects the primitives' cursor contract for any consumer that does paginate and removes a latent phantom-page. A codebase check now covers each method so the peek can't be dropped again.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Gift-card and loyalty-redemption history return an honest next-page cursor",
+          "body": "giftCardLedger.history and loyaltyRedemption.redemptionsForCustomer keyed their next-page cursor off \"the page came back full\" (row count === limit) rather than peeking one row beyond the page, so a history whose length is an exact multiple of the page size returned a cursor on its last full page that resolves to an empty page when followed. Both now fetch limit + 1 rows, emit the cursor only when an older row actually exists, and return the page trimmed to the requested limit — the same peek the store-credit and loyalty-transaction history already use. The change is to the primitives' pagination contract (the shop's present callers of these two methods consume only the rows, so no rendered page changes); it removes a latent phantom next page for any consumer that paginates on the cursor. A codebase-patterns check now guards each method against a regression that drops the peek."
+        }
+      ]
+    }
+  ]
+}

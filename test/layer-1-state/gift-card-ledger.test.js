@@ -250,6 +250,16 @@ async function _historyPagination() {
   var p3 = await f.ledger.history(cardId, { limit: 2, cursor: p2.next_cursor });
   check("page3 has final 1 row",            p3.rows.length === 1 && p3.rows[0].occurred_at === base + 1);
   check("page3 cursor null at tail",        p3.next_cursor === null);
+
+  // Boundary: a page that returns EXACTLY `limit` rows with nothing older must
+  // NOT advertise a phantom next page. (Pre-peek, next_cursor was keyed off
+  // rows.length === limit and emitted a cursor onto an empty page.)
+  var cardExact = _uuid();
+  await f.ledger.credit({ gift_card_id: cardExact, amount_minor: 10, source: "manual", occurred_at: base + 1 });
+  await f.ledger.credit({ gift_card_id: cardExact, amount_minor: 20, source: "manual", occurred_at: base + 2 });
+  var exact = await f.ledger.history(cardExact, { limit: 2 });
+  check("exact-multiple page has 2 rows",      exact.rows.length === 2);
+  check("exact-multiple page emits NO cursor", exact.next_cursor === null);
 }
 
 async function _bulkBalance() {
