@@ -1,0 +1,39 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.13",
+  "date": "2026-07-25",
+  "headline": "Vendored framework refreshed from 0.16.3 to 0.17.22, inheriting a batch of security and correctness fixes across the rate-limit, CSP, cookie, data-subject-request, webhook, TLS, and SQL primitives the store composes",
+  "summary": "Refreshes the framework the store is built on from 0.16.3 to 0.17.22, a broad security and robustness update to primitives the store wires into every request. All of the following are inherited without shop code changes. Per-route rate-limit buckets now key on the request path only, not the query string, so an abuser can no longer mint a fresh bucket per request with a rotating query parameter to slip past a login or checkout limiter. CSP source screening, cookie-prefix checks, and the CSRF cookie branch are now ASCII case-insensitive, closing a case-variant bypass of a Content-Security-Policy keyword and of the __Secure-/__Host- cookie-prefix guarantees. A data-subject-request (privacy export/erasure) whose subject has no indexable key now fails closed instead of matching every ticket, removing a cross-subject disclosure and erasure path. The shared outbound HTTP cache no longer serves an Authorization-bearing response across principals, the strict TLS hostname verifier no longer accepts a name smuggled through a quoted subjectAltName, and inbound webhook verification rejects a non-canonical signed timestamp. The minimum Node.js engine is unchanged at 24.18.0.",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Per-route rate limiters can no longer be evaded with a rotating query string",
+          "body": "The framework's per-route rate limiters — mounted on the abusable login, signup, checkout, and gift-card endpoints — bucketed a client by the full request target including the query string, so a request stream carrying a rotating parameter such as ?nonce=1, ?nonce=2, ... minted a fresh bucket each time and never tripped the limit. Buckets now key on the path only, so the limit counts every hit to a route regardless of its query string. Inherited from the framework refresh; no configuration change."
+        },
+        {
+          "title": "Case-variant bypass of CSP keywords and cookie prefixes closed",
+          "body": "Content-Security-Policy source screening and the __Secure-/__Host- cookie-prefix checks compared tokens case-sensitively, so a case-variant of a policy keyword or a cookie-prefix marker could slip past the guard; the CSRF cookie path was also missing the __Secure- branch. These comparisons are now ASCII case-insensitive and the CSRF branch is present, so the store's CSP and its prefixed session/CSRF cookies enforce their intended guarantees against a mixed-case forgery. Inherited from the framework refresh."
+        },
+        {
+          "title": "Data-subject-request filter fails closed on a subject with no indexable key",
+          "body": "The data-subject-request store (the privacy export and erasure path) built its subject filter such that a subject carrying no indexable key matched every ticket, which could disclose or erase records across subjects. The filter now fails closed — a subject that cannot be keyed matches nothing — removing the cross-subject path. The store also now composes the shared SQL builder, inheriting its reserved-word and sealed-column handling. Inherited from the framework refresh."
+        },
+        {
+          "title": "Shared outbound HTTP cache no longer crosses principals; TLS and webhook verifiers hardened",
+          "body": "Three verifier and cache fixes ride in with the refresh: the shared outbound HTTP response cache no longer returns an Authorization-bearing response to a different principal; the strict RFC 9525 TLS hostname verifier now parses subjectAltName quote-aware, so a hostname smuggled through a quoted SAN value can no longer be accepted; and inbound webhook signature verification rejects a non-canonical signed timestamp (scientific/hex/leading-zero forms) instead of treating it as valid. The declared algorithm on a verified JWT is now bound to the key's real type, closing an algorithm-confusion acceptance. Inherited from the framework refresh."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Vendored framework refreshed to 0.17.22",
+          "body": "Advances the vendored framework from 0.16.3 to 0.17.22. Beyond the security fixes above, the store inherits SQLite/D1 robustness — a paginated query with an OFFSET but no LIMIT now runs instead of raising a syntax error, and a CSV export degrades an out-of-range timestamp for one row instead of aborting the whole export — along with prototype-safe own-property lookups across the crypto, internationalization, and content-guard primitives and a current Public Suffix List snapshot for domain-scoped cookie and email-alignment decisions. The minimum Node.js engine is unchanged at 24.18.0."
+        }
+      ]
+    }
+  ]
+}
