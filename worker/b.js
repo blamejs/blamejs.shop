@@ -10,7 +10,7 @@
 // Surface re-exported:
 //   b.template    — escapeHtml + the strict {{name}} interpreter
 //   b.money       — Money / of / fromMinorUnits / format
-//   b.crypto      — timingSafeEqual, sha3Hash, hmacSha256, generateBytes,
+//   b.crypto      — timingSafeEqual, sha3Hash, hmac, generateBytes,
 //                   namespaceHash (anything that doesn't reach for
 //                   node:tls or noble-ciphers' worker-incompatible
 //                   parts; tested via worker-b-loadable smoke)
@@ -33,7 +33,6 @@
 // directly — the codebase-patterns detector
 // `worker-direct-vendor-import` enforces it.
 
-import { createHmac } from "node:crypto";
 import bCrypto     from "../lib/vendor/blamejs/lib/crypto.js";
 import bTemplate   from "../lib/vendor/blamejs/lib/template.js";
 import bMoney      from "../lib/vendor/blamejs/lib/money.js";
@@ -52,23 +51,8 @@ import bValidateOpts from "../lib/vendor/blamejs/lib/validate-opts.js";
 // module init — verified Worker-safe by the worker-b-loadable smoke.
 import bWebhook    from "../lib/vendor/blamejs/lib/webhook.js";
 
-// `b.crypto.hmacSha256` extension. Composes node:crypto's
-// `createHmac` — the same primitive `b.crypto.hmac` (private)
-// composes inside the framework. Stripe webhooks demand HMAC-SHA256
-// per their published signature format; `b.crypto` deliberately ships
-// only `hmacSha3` publicly under the framework's PQC-first policy.
-// The Worker-side extension provides the SHA-256 binding without a
-// policy change upstream. Returns a lowercase-hex digest.
-function _hmacSha256Hex(secret, message) {
-  return createHmac("sha256", secret).update(message).digest("hex");
-}
-
-var bCryptoAugmented = Object.assign({}, bCrypto, {
-  hmacSha256: _hmacSha256Hex,
-});
-
 var b = {
-  crypto:     bCryptoAugmented,
+  crypto:     bCrypto,
   template:   bTemplate,
   money:      bMoney,
   uuid:       bUuid,

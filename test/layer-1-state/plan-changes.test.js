@@ -47,6 +47,7 @@ var MIGS = [
   "0009_subscriptions.sql",
   "0066_subscription_billing.sql",
   "0083_plan_changes.sql",
+  "0239_subscriptions_plan_transition_claim.sql",
 ].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });
@@ -832,13 +833,21 @@ async function _concurrentImmediateNoDoubleProration() {
 
 // Records every Stripe subscriptions.update (repricing) call + its
 // idempotency key so a plan-change test can assert single-push + stable key.
-function _stripePaymentStub() {
+// `opts.onUpdate(callNumber)` runs after the call is recorded and before it
+// returns — a test uses it to re-enter executeChange mid-push, or to throw a
+// transport-level / HTTP-status failure on a chosen attempt.
+function _stripePaymentStub(opts) {
+  opts = opts || {};
   var updates = [];
   return {
     updates: updates,
     subscriptions: {
       retrieve: async function (subId) { return { id: subId, items: { data: [{ id: "si_" + subId }] } }; },
-      update:   async function (subId, params, idemKey) { updates.push({ subId: subId, idemKey: idemKey }); return { id: subId }; },
+      update:   async function (subId, params, idemKey) {
+        updates.push({ subId: subId, idemKey: idemKey });
+        if (typeof opts.onUpdate === "function") await opts.onUpdate(updates.length);
+        return { id: subId };
+      },
     },
   };
 }
@@ -852,16 +861,16 @@ async function _executeImmediateStripeClaimFirst() {
   var payment = _stripePaymentStub();
   var ctx = _setup({ payment: payment });
   var seed = await _seed(ctx.query, { plan_a_amount: 1000, plan_b_amount: 3000, period_start: now - 1000, period_end: now + 9000 });
-  var subRow0 = (await ctx.query("SELECT stripe_subscription_id FROM subscriptions WHERE id = ?1", [seed.subscription_id])).rows[0];
-
   var row = await ctx.pc.executeChange({ subscription_id: seed.subscription_id, new_plan_id: seed.plan_b_id });
   check("stripe immediate executed",                 row.status === "executed");
   check("stripe push called exactly once",           payment.updates.length === 1);
-  check("stripe idem key is transition identity, not row id",
-    payment.updates[0].idemKey.indexOf("planchange:" + subRow0.stripe_subscription_id + ":" + seed.plan_a_id + ":") === 0 &&
-    payment.updates[0].idemKey.indexOf(row.id) === -1);
-  var sAfter = (await ctx.query("SELECT plan_id FROM subscriptions WHERE id = ?1", [seed.subscription_id])).rows[0];
+  check("stripe idem key is this change row's id",
+    payment.updates[0].idemKey === "planchange:" + row.id);
+  var sAfter = (await ctx.query(
+    "SELECT plan_id, plan_transition_change_id FROM subscriptions WHERE id = ?1",
+    [seed.subscription_id])).rows[0];
   check("stripe immediate flips plan_id",            sAfter.plan_id === seed.plan_b_id);
+  check("settled push releases the in-flight claim", sAfter.plan_transition_change_id === null);
 
   // Concurrency: a change that LOSES the plan_id claim (a concurrent change
   // already moved the plan between our read and our claim) is voided
@@ -872,9 +881,9 @@ async function _executeImmediateStripeClaimFirst() {
   var baseQ = _makeQuery();
   var raceArmed = false;
   var raceQ = async function (sql, params) {
-    if (raceArmed && /UPDATE subscriptions SET plan_id = \?1, updated_at = \?2 WHERE id = \?3 AND plan_id = \?4/.test(sql)) {
+    if (raceArmed && /UPDATE subscriptions SET plan_id = \?1, plan_transition_change_id = \?2/.test(sql)) {
       raceArmed = false;
-      await baseQ("UPDATE subscriptions SET plan_id = ?1 WHERE id = ?2", [params[0], params[2]]);   // concurrent transition A -> B
+      await baseQ("UPDATE subscriptions SET plan_id = ?1 WHERE id = ?2", [params[0], params[3]]);   // concurrent transition A -> B
     }
     return baseQ(sql, params);
   };
@@ -888,12 +897,160 @@ async function _executeImmediateStripeClaimFirst() {
   check("race: plan transitioned exactly once (B)",  s2.plan_id === seed2.plan_b_id);
 }
 
+// ---- 3c. A repeated transition inside one period is not a retry ----------
+// Keying the idempotency on the transition's SHAPE — subscription + from/to
+// price + current period — makes A→B and a later A→B in the SAME period
+// byte-identical. Stripe then replays the second as the first: the plan moves
+// locally but the always_invoice proration is never cut, so the customer sits
+// on the dearer plan without being billed for it. The key is the change row's
+// id, which is unique per transition, so a genuine repeat bills.
+async function _repeatedTransitionsEachReprice() {
+  var now = Date.now();
+  var payment = _stripePaymentStub();
+  var ctx  = _setup({ payment: payment });
+  var seed = await _seed(ctx.query, { plan_a_amount: 1000, plan_b_amount: 3000, period_start: now - 1000, period_end: now + 9000 });
+
+  var up1   = await ctx.pc.executeChange({ subscription_id: seed.subscription_id, new_plan_id: seed.plan_b_id });
+  var down  = await ctx.pc.executeChange({ subscription_id: seed.subscription_id, new_plan_id: seed.plan_a_id });
+  var up2   = await ctx.pc.executeChange({ subscription_id: seed.subscription_id, new_plan_id: seed.plan_b_id });
+
+  check("A->B, B->A, A->B all executed",
+    up1.status === "executed" && down.status === "executed" && up2.status === "executed");
+  check("the repeated A->B repriced at Stripe (not swallowed as a replay)",
+    payment.updates.length === 3);
+  var k = payment.updates.map(function (u) { return u.idemKey; });
+  check("the third transition does not reuse the first's idempotency key", k[0] !== k[2]);
+  check("all three pushes carry distinct idempotency keys",
+    k[0] !== k[1] && k[1] !== k[2] && k[0] !== k[2]);
+  check("each key is its own change row id",
+    k[0] === "planchange:" + up1.id && k[1] === "planchange:" + down.id && k[2] === "planchange:" + up2.id);
+}
+
+// ---- 3d. A successor cannot start while a transition is still settling ----
+// The claim publishes the new plan while its own Stripe call is still in
+// flight. Guarded on plan_id ALONE, a following change reads that new plan,
+// wins its own claim, and puts a SECOND repricing on the wire; the two settle
+// in arbitrary order, so Stripe can come to rest on the earlier plan while the
+// shop shows the later one. Re-enter executeChange from inside the first push
+// — precisely the window the bug lived in.
+async function _inFlightTransitionBlocksSuccessor() {
+  var now = Date.now();
+  var ctx     = null;
+  var seed    = null;
+  var during  = null;
+  var payment = _stripePaymentStub({
+    onUpdate: async function (n) {
+      if (n !== 1) return;                       // only re-enter during the FIRST push
+      during = await ctx.pc.executeChange({ subscription_id: seed.subscription_id, new_plan_id: seed.plan_a_id });
+    },
+  });
+  ctx  = _setup({ payment: payment });
+  seed = await _seed(ctx.query, { plan_a_amount: 1000, plan_b_amount: 3000, period_start: now - 1000, period_end: now + 9000 });
+
+  var first = await ctx.pc.executeChange({ subscription_id: seed.subscription_id, new_plan_id: seed.plan_b_id });
+  check("the in-flight transition itself executed",  first.status === "executed");
+  check("a successor attempted mid-push is refused",
+    during && during.status === "cancelled" && during.cancel_reason === "transition-in-flight");
+  check("the successor never reached Stripe",        payment.updates.length === 1);
+
+  var s = (await ctx.query(
+    "SELECT plan_id, plan_transition_change_id FROM subscriptions WHERE id = ?1",
+    [seed.subscription_id])).rows[0];
+  check("only the settled transition landed",        s.plan_id === seed.plan_b_id);
+  check("the claim is released once it settles",     s.plan_transition_change_id === null);
+}
+
+// ---- 3e. An unknown provider outcome holds the claim for the sweep -------
+// A transport error carries no HTTP status, so the repricing may or may not
+// have landed. Rolling back would risk showing the outgoing plan for a
+// subscription Stripe already charged, so the claim is HELD and
+// reconcileStrandedTransitions replays it under the SAME key.
+async function _indeterminatePushHoldsClaimThenReconciles() {
+  var now = Date.now();
+  var failNext = true;
+  var payment = _stripePaymentStub({
+    onUpdate: async function () {
+      if (!failNext) return;
+      failNext = false;
+      throw new Error("socket hang up");         // transport-level: no statusCode
+    },
+  });
+  var ctx  = _setup({ payment: payment });
+  var seed = await _seed(ctx.query, { plan_a_amount: 1000, plan_b_amount: 3000, period_start: now - 1000, period_end: now + 9000 });
+
+  await assert.rejects(
+    ctx.pc.executeChange({ subscription_id: seed.subscription_id, new_plan_id: seed.plan_b_id }),
+    /no answer from Stripe on the plan swap/,
+  );
+
+  var held = (await ctx.query(
+    "SELECT plan_id, plan_transition_change_id FROM subscriptions WHERE id = ?1",
+    [seed.subscription_id])).rows[0];
+  check("unknown outcome does NOT roll the plan back", held.plan_id === seed.plan_b_id);
+  check("unknown outcome holds the claim for the sweep", !!held.plan_transition_change_id);
+  var heldId   = held.plan_transition_change_id;
+  var firstKey = payment.updates[0].idemKey;
+
+  var settled = await ctx.pc.reconcileStrandedTransitions({ now: Date.now() });
+  check("the sweep settled the stranded transition",
+    settled.length === 1 && settled[0].id === heldId);
+  check("the sweep replayed under the ORIGINAL idempotency key",
+    payment.updates.length === 2 && payment.updates[1].idemKey === firstKey);
+
+  var after = (await ctx.query(
+    "SELECT plan_id, plan_transition_change_id FROM subscriptions WHERE id = ?1",
+    [seed.subscription_id])).rows[0];
+  check("the sweep released the claim",              after.plan_transition_change_id === null);
+  check("the sweep left the new plan in place",      after.plan_id === seed.plan_b_id);
+  check("a second sweep finds nothing to settle",
+    (await ctx.pc.reconcileStrandedTransitions({ now: Date.now() })).length === 0);
+}
+
+// ---- 3f. A refusal Stripe DID answer rolls the transition back -----------
+// A 4xx means Stripe received the request, refused it, and billed nothing, so
+// the local claim can be undone without risking divergence.
+async function _determinateRefusalRollsBack() {
+  var now = Date.now();
+  var payment = _stripePaymentStub({
+    onUpdate: async function () {
+      var e = new Error("stripe: POST /subscriptions → HTTP 402 — card declined");
+      e.statusCode = 402;
+      throw e;
+    },
+  });
+  var ctx  = _setup({ payment: payment });
+  var seed = await _seed(ctx.query, { plan_a_amount: 1000, plan_b_amount: 3000, period_start: now - 1000, period_end: now + 9000 });
+
+  await assert.rejects(
+    ctx.pc.executeChange({ subscription_id: seed.subscription_id, new_plan_id: seed.plan_b_id }),
+    /Stripe rejected the plan swap/,
+  );
+
+  var s = (await ctx.query(
+    "SELECT plan_id, plan_transition_change_id FROM subscriptions WHERE id = ?1",
+    [seed.subscription_id])).rows[0];
+  check("a refused swap rolls plan_id back",         s.plan_id === seed.plan_a_id);
+  check("a refused swap releases the claim",         s.plan_transition_change_id === null);
+
+  var chg = (await ctx.query(
+    "SELECT status, cancel_reason FROM subscription_plan_changes WHERE subscription_id = ?1",
+    [seed.subscription_id])).rows[0];
+  check("a refused swap voids the change row",
+    chg.status === "cancelled" && chg.cancel_reason === "stripe-push-failed");
+  check("a refused swap leaves nothing for the sweep",
+    (await ctx.pc.reconcileStrandedTransitions({ now: Date.now() })).length === 0);
+}
+
 async function run() {
   await _prorationMidPeriod();
   await _proposeImmediate();
   await _proposeNextCycle();
   await _executeImmediateFsm();
   await _executeImmediateStripeClaimFirst();
+  await _repeatedTransitionsEachReprice();
+  await _inFlightTransitionBlocksSuccessor();
+  await _indeterminatePushHoldsClaimThenReconciles();
+  await _determinateRefusalRollsBack();
   await _downgradeIssuesStoreCredit();
   await _downgradeWithoutStoreCreditThrows();
   await _scheduledDowngradeIssuesStoreCredit();

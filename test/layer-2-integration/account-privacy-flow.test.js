@@ -52,6 +52,7 @@ var MIGS = [
   "0102_quotes.sql", "0211_quote_view_token.sql", "0227_quote_response_version.sql",
   "0151_order_ratings.sql", "0133_product_qa.sql",
   "0134_customer_notes.sql", "0013_giftcards.sql", "0025_referrals.sql",
+  "0239_subscriptions_plan_transition_claim.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 // The SAME reader shims + streaming helper server.js builds (mirrors

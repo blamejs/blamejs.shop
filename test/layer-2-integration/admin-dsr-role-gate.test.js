@@ -38,6 +38,7 @@ var MIGS = [
   "0006_customers.sql", "0026_customer_addresses.sql", "0009_subscriptions.sql",
   "0047_support_tickets.sql", "0022_loyalty.sql", "0237_loyalty_txn_running_balance.sql", "0109_compliance_export.sql",
   "0074_operator_audit_log.sql", "0213_operator_accounts.sql",
+  "0239_subscriptions_plan_transition_claim.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 // Reader shims + streaming helper, mirroring server.js (and the DSR console

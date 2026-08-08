@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
-        with: { node-version: '24.18.0' }
+        with: { node-version: '24.19.0' }
       - run: npx eslint@latest --max-warnings 0 .
 
   shellcheck:
@@ -86,7 +86,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
-        with: { node-version: '24.18.0' }
+        with: { node-version: '24.19.0' }
       - name: Verify the committed vendored blamejs is present
         # Smoke runs against the COMMITTED lib/vendor/ tree — the exact
         # tree the Dockerfile copies into the deployed container — so the
@@ -118,7 +118,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
-        with: { node-version: '24.18.0' }
+        with: { node-version: '24.19.0' }
       - name: Verify the committed vendored blamejs is present
         run: test -f lib/vendor/blamejs/lib/app.js || { echo "::error::lib/vendor/blamejs missing from checkout"; exit 1; }
         shell: bash
@@ -149,7 +149,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
-        with: { node-version: '24.18.0' }
+        with: { node-version: '24.19.0' }
       - name: Verify the committed vendored blamejs is present
         run: test -f lib/vendor/blamejs/lib/app.js || { echo "::error::lib/vendor/blamejs missing from checkout"; exit 1; }
         shell: bash
@@ -179,7 +179,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
-        with: { node-version: '24.18.0' }
+        with: { node-version: '24.19.0' }
       - name: Verify the committed vendored blamejs is present
         run: test -f lib/vendor/blamejs/lib/app.js || { echo "::error::lib/vendor/blamejs missing from checkout"; exit 1; }
         shell: bash

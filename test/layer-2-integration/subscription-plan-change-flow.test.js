@@ -52,6 +52,7 @@ var MIGS = [
   // downgrade-credit path reads/writes prev_hash + row_hash, so the chain
   // columns + the chain-parent fence must be present.
   "0235_store_credit_ledger_chain.sql", "0236_store_credit_ledger_chain_fence.sql",
+  "0239_subscriptions_plan_transition_claim.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
 function _splitSchema(text) {

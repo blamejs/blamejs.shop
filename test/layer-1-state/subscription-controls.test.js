@@ -42,6 +42,7 @@ var MIGS = [
   "0001_catalog.sql",
   "0009_subscriptions.sql",
   "0045_subscription_controls.sql",
+  "0239_subscriptions_plan_transition_claim.sql",
 ].map(function (f) {
   return nodePath.resolve(__dirname, "..", "..", "migrations-d1", f);
 });

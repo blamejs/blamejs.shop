@@ -96,12 +96,53 @@ node -e "
 " <tarball>.mldsa.sig <tarball>
 ```
 
+## Verifying the vendored framework
+
+This project carries no npm runtime dependencies. The one thing it does
+vendor is the framework it is built on, unpacked under
+`lib/vendor/blamejs/` — the largest body of third-party code it ships,
+and it arrives over the network. The refresh therefore treats the
+upstream **signed release artifact** as the unit of trust rather than a
+git tag, which is mutable and proves nothing about origin.
+
+`scripts/vendor-update.sh` downloads the published tarball together with
+its SHA3-512 digest and its ML-DSA-65 signature, verifies both, and
+refuses to write anything under `lib/vendor/` if either fails:
+
+```
+bash scripts/vendor-update.sh blamejs vX.Y.Z
+```
+
+The signature is checked against the upstream release key **pinned in
+this repository** at `keys/vendor-blamejs-pqc-pub.json` — not against a
+key fetched at refresh time from the same host that served the artifact,
+which would prove nothing. If upstream rotates its release key the
+refresh fails closed on a signature mismatch. That is deliberate:
+re-review the new key out of band, confirm its fingerprint against the
+upstream security policy, then update the pinned copy and the
+fingerprint below in one commit. Do not re-copy the upstream key to
+clear the failure.
+
+To run the same two checks by hand against a downloaded release:
+
+```
+node scripts/verify-vendor-artifact.js \
+  blamejs-core-X.Y.Z.tgz \
+  blamejs-core-X.Y.Z.tgz.mldsa.sig \
+  blamejs-core-X.Y.Z.tgz.sha3-512
+```
+
+`node test/smoke.js` additionally recomputes a per-file SHA-256 map over
+the vendored tree (`vendor-integrity`), so an edit made to
+`lib/vendor/` after the refresh fails the build.
+
 ## Public keys + fingerprints
 
 | Purpose                           | Algorithm  | Fingerprint               |
 |-----------------------------------|------------|---------------------------|
 | Maintainer commit/tag signing key | SSH-ED25519 | `SHA256:5oF/XWhFpMde9TRfEX2GAHiApAq/MXOS4vti5zQbD7g` (cross-check against `https://github.com/<maintainer>.keys` — see below) |
 | Release-signing public key        | ML-DSA-65 (FIPS 204) | `d40e1e2b06a2509271cc3cf76bd34c63d2fbb093f42e1e1f6b349288900ec044509ca183b3d735cda003d80eb6cf5d80fd9181ad897889e1c1f701d61b7902c9` (SHA3-512 of `keys/release-pqc-pub.json#publicKey`) |
+| Vendored framework release key (upstream, pinned) | ML-DSA-65 (FIPS 204) | `ad6bee961782cd01a0751286c23ddc04a6a0ce5d2672cfb6f4ade0cc7cdc62c351c857599e9d22996e91ee56462ddf3939951808286132335d56d3bfe99d2ede` (SHA3-512 of `keys/vendor-blamejs-pqc-pub.json#publicKey`) |
 
 To populate the maintainer SSH fingerprint:
 ```

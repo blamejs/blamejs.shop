@@ -29,7 +29,7 @@ var b = bShop.framework;
 var ORDER_ACCESS_SECRET = b.crypto.namespaceHash("order-access-token", "rec-conf-access-secret");
 function _accessToken(orderId) {
   var expB36 = (Date.now() + b.constants.TIME.days(90)).toString(36);
-  var tag = b.crypto.hmacSha3(ORDER_ACCESS_SECRET, "order-access:v1:" + orderId + ":" + expB36).slice(0, 32);
+  var tag = b.crypto.hmac(ORDER_ACCESS_SECRET, "order-access:v1:" + orderId + ":" + expB36).slice(0, 32);
   return expB36 + "." + tag;
 }
 

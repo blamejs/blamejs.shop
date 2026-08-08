@@ -9,9 +9,19 @@
 #
 # What it does:
 #   1. Resolves the requested tag (or fetches latest from github.com/blamejs/blamejs).
-#   2. Shallow git clones at that tag into lib/vendor/blamejs/.
-#   3. Updates lib/vendor/MANIFEST.json with the new version + tag + bundledAt date.
-#   4. Shows git diff so the operator can audit the refresh.
+#   2. Downloads that release's SIGNED tarball, its SHA3-512 digest, and its
+#      ML-DSA-65 signature with `gh release download`.
+#   3. Verifies the digest, then the signature against the pinned upstream key in
+#      keys/vendor-blamejs-pqc-pub.json. Either failing aborts before a single
+#      byte is written under lib/vendor/.
+#   4. Unpacks it into lib/vendor/blamejs/ and updates lib/vendor/MANIFEST.json
+#      with the new version + tag + bundledAt date.
+#   5. Shows git diff so the operator can audit the refresh.
+#
+# The SIGNED RELEASE ARTIFACT is the unit of trust here, not a git clone. A tag
+# is mutable and a clone carries no proof of origin, so cloning would put the
+# largest body of code this project ships at the mercy of whatever the host
+# serves at that moment. Requires the GitHub CLI (gh).
 #
 # After running, verify the smoke gate:
 #   node test/smoke.js
@@ -28,7 +38,6 @@ cd "$(dirname "$0")/.."
 
 MANIFEST="lib/vendor/MANIFEST.json"
 DATE="$(date +%Y-%m-%d)"
-REPO_URL="https://github.com/blamejs/blamejs.git"
 RELEASES_URL="https://api.github.com/repos/blamejs/blamejs/releases/latest"
 
 _vendored_ver() {
@@ -92,26 +101,83 @@ _refresh_blamejs() {
   [[ "$tag" == v* ]] || tag="v$tag"
   local version="${tag#v}"
 
-  echo "[vendor] cloning blamejs $tag from $REPO_URL ..."
-  local tmp
-  tmp="$(mktemp -d)"
-  git clone --depth=1 --branch "$tag" "$REPO_URL" "$tmp" 2>&1 | tail -3
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "ERROR: the GitHub CLI (gh) is required to fetch a signed release artifact." >&2
+    echo "       Install gh and run 'gh auth login', then retry." >&2
+    exit 1
+  fi
 
-  # Verify we got the tag we asked for (defense against tag drift between
-  # the resolve step and the clone — the clone resolves the ref at clone
-  # time, which could differ from what `_latest_tag` saw a moment ago).
-  local cloned_tag
-  cloned_tag="$(cd "$tmp" && git describe --tags --exact-match HEAD 2>/dev/null || echo "")"
-  if [ "$cloned_tag" != "$tag" ]; then
-    echo "ERROR: requested $tag but clone HEAD describes as $cloned_tag — refusing to vendor stale ref" >&2
+  # Fetch the PUBLISHED, SIGNED release artifact rather than cloning the tag.
+  # A git tag is mutable and a clone carries no proof of origin — whatever the
+  # host serves at that moment lands in lib/vendor/. The release publishes an
+  # ML-DSA-65 signature and a SHA3-512 digest precisely so a consumer does not
+  # have to trust the transport, and this refresh refuses to unpack anything
+  # that fails either check.
+  local tmp tgz f dest attempt
+  tmp="$(mktemp -d)"
+  tgz="blamejs-core-${version}.tgz"
+  dest="$PWD/lib/vendor/blamejs"
+
+  echo "[vendor] downloading signed release $tag from github.com/blamejs/blamejs ..."
+  if ! gh release download "$tag" --repo blamejs/blamejs \
+        --pattern "$tgz" --pattern "${tgz}.mldsa.sig" --pattern "${tgz}.sha3-512" \
+        --dir "$tmp"; then
+    echo "ERROR: could not download the release assets for $tag" >&2
+    rm -rf "$tmp"
+    exit 1
+  fi
+  # A release missing any of the three is not vendorable: without the digest and
+  # signature there is nothing to verify against, and silently proceeding would
+  # defeat the point of fetching the signed artifact in the first place.
+  for f in "$tgz" "${tgz}.mldsa.sig" "${tgz}.sha3-512"; do
+    if [ ! -f "$tmp/$f" ]; then
+      echo "ERROR: release $tag is missing the asset '$f' — refusing to vendor an unverifiable tree" >&2
+      rm -rf "$tmp"
+      exit 1
+    fi
+  done
+
+  # Fail closed: SHA3-512 first, then the signature against the PINNED upstream
+  # key. Nothing under lib/vendor/ is touched until both pass.
+  if ! node scripts/verify-vendor-artifact.js \
+        "$tmp/$tgz" "$tmp/${tgz}.mldsa.sig" "$tmp/${tgz}.sha3-512"; then
+    echo "ERROR: verification failed for $tag — lib/vendor/ was left untouched" >&2
     rm -rf "$tmp"
     exit 1
   fi
 
-  rm -rf lib/vendor/blamejs
+  # Purge the vendored copy before unpacking. It is disposable — nothing here is
+  # ever hand-edited and the framework's own working repository lives elsewhere —
+  # but the purge has to be COMPLETE. Extraction only writes the paths the new
+  # tarball contains, so a file left behind by a half-finished delete survives
+  # into the new tree; `stamp-vendor-integrity.js` then runs over whatever is on
+  # disk and stamps that mixture as genuine, and the integrity gate would pass
+  # for a tree that is part one version and part another.
+  #
+  # On Windows a file-sync client or on-access virus scanner holding a handle
+  # open surfaces as a transient "Device or resource busy" partway through the
+  # delete, so retry rather than fail on the first attempt.
+  for attempt in 1 2 3 4 5; do
+    rm -rf lib/vendor/blamejs 2>/dev/null || true
+    [ ! -e lib/vendor/blamejs ] && break
+    echo "[vendor] purge attempt $attempt left files behind (open handle?) — retrying ..." >&2
+    sleep 2
+  done
+  if [ -e lib/vendor/blamejs ]; then
+    echo "ERROR: could not fully remove lib/vendor/blamejs — refusing to unpack over a partial tree." >&2
+    echo "       Close whatever is holding files open (editor, file-sync client, antivirus) and retry." >&2
+    rm -rf "$tmp"
+    exit 1
+  fi
   mkdir -p lib/vendor/blamejs
-  # Copy without .git so the vendored tree is just source.
-  (cd "$tmp" && tar --exclude=.git -cf - .) | (cd lib/vendor/blamejs && tar -xf -)
+  # The tarball roots every entry under `package/`; strip that one level so the
+  # vendored layout stays lib/vendor/blamejs/{lib,bin,index.js,...} as before.
+  #
+  # The archive is named RELATIVELY from inside $tmp on purpose: GNU tar reads a
+  # `host:path` argument to -f as a remote-shell spec, so an absolute Windows
+  # path such as C:/Users/... is parsed as the host "C" and the extract fails.
+  # -C is not subject to that rewriting, so the destination stays absolute.
+  ( cd "$tmp" && tar -xzf "$tgz" -C "$dest" --strip-components=1 )
   rm -rf "$tmp"
 
   # Update MANIFEST.json
@@ -125,7 +191,7 @@ _refresh_blamejs() {
     m.packages.blamejs.bundledAt = '$DATE';
     if (!m.packages.blamejs.license) m.packages.blamejs.license = 'Apache-2.0';
     if (!m.packages.blamejs.source)  m.packages.blamejs.source  = 'https://github.com/blamejs/blamejs';
-    if (!m.packages.blamejs.bundler) m.packages.blamejs.bundler = 'shallow git clone of release tag from github.com/blamejs/blamejs';
+    m.packages.blamejs.bundler = 'signed release tarball blamejs-core-$version.tgz from github.com/blamejs/blamejs — SHA3-512 digest and ML-DSA-65 signature verified against keys/vendor-blamejs-pqc-pub.json before unpacking';
     if (!m.packages.blamejs.files)   m.packages.blamejs.files   = { server: 'lib/vendor/blamejs/' };
     fs.writeFileSync(p, JSON.stringify(m, null, 2) + '\n');
   "

@@ -1,16 +1,70 @@
 {
   "$schema": "../scripts/release-notes-schema.json",
   "version": "0.5.19",
-  "date": "2026-07-25",
-  "headline": "A concurrent immediate subscription plan change no longer double-charges the card, and a lost race no longer leaves a phantom executed change",
-  "summary": "Fixes a double-charge in immediate subscription plan changes on Stripe-backed subscriptions. executeChange pushed the proration to Stripe (proration_behavior always_invoice, which invoices the delta immediately) BEFORE claiming the plan transition locally, and used an idempotency key derived from the per-call plan-change row id. Two concurrent immediate changes for the same subscription therefore each read the current plan, each pushed to Stripe with a distinct idempotency key, and Stripe cut TWO always_invoice proration invoices against the customer's card — double-billing the upgrade delta — while the losing change also left a phantom executed history row carrying charge and credit amounts for a transition that did not settle. executeChange now claims the plan transition FIRST — a conditional update gated on the current plan id — so two concurrent changes serialize and only the winner pushes to Stripe; the loser is voided (transition-lost) with no charge, matching the non-Stripe path and the scheduled-change path. The Stripe push now derives its idempotency key from the transition identity (subscription, from and to price, current period) instead of the per-call id, so a retry of the same transition dedupes at Stripe rather than cutting a second proration. A Stripe failure after winning the claim rolls the plan back and voids the row.",
+  "date": "2026-08-08",
+  "headline": "Concurrent subscription plan changes no longer double-charge the card or silently skip a proration, the minimum Node is now 24.19.0, and the vendored framework moves to 0.18.17 — signature-verified before it is unpacked",
+  "summary": "Three strands. An immediate plan change on a Stripe-backed subscription pushed the repricing to Stripe before it claimed the transition locally, so two overlapping changes each cut an always_invoice proration invoice and double-billed the upgrade delta, while the losing change left a phantom executed history row. The transition is now claimed first, and the claim is held until the provider call settles, so a following change cannot start a second repricing while the first is still in flight; the provider call is keyed on the claimed change row, so a retry of the same unsettled transition dedupes at Stripe while a genuinely repeated transition between the same two plans in one billing period still bills. Separately the minimum Node.js is raised to 24.19.0, which carries the fixes from the 24.18.1 security release that the previous 24.18.0 floor predates. Finally, refreshing the vendored framework now downloads the published, signed release artifact and verifies its SHA3-512 digest and ML-DSA-65 signature against a signing key pinned in this repository before writing anything, instead of taking a mutable git tag on trust — and the framework itself advances to 0.18.17, which rebuilds the store's outbound TLS posture and is where the 24.19.0 requirement comes from.",
   "sections": [
     {
       "heading": "Fixed",
       "items": [
         {
           "title": "Concurrent immediate plan changes no longer cut two Stripe proration invoices",
-          "body": "For a Stripe-backed subscription, an immediate plan change repriced the subscription at Stripe with always_invoice (billing the proration delta now) before it claimed the plan transition in the local database, and keyed the Stripe request's idempotency on the per-call change row id. Two overlapping immediate changes — a double-submitted upgrade, or a retry racing the original — each observed the pre-change plan, each pushed to Stripe under a different idempotency key, and Stripe issued two proration invoices, charging the customer twice for the same upgrade; the change that lost the local transition also left an executed history row for a transition that never settled. executeChange now claims the transition first with a conditional update on the current plan id and only pushes to Stripe when it wins, voiding the losing change (transition-lost) without any charge. The Stripe idempotency key is now the transition identity (subscription + from/to price + current period), so a retry of the same transition is a Stripe no-op instead of a second invoice, and a Stripe failure after the claim rolls the plan back and voids the row."
+          "body": "For a Stripe-backed subscription, an immediate plan change repriced the subscription at Stripe with always_invoice — billing the proration delta straight away — before it claimed the plan transition in the database. Two overlapping immediate changes, a double-submitted upgrade or a retry racing the original, each observed the pre-change plan and each pushed to Stripe, so Stripe issued two proration invoices and charged the customer twice for one upgrade; the change that lost the local transition also left an executed history row carrying charge and credit amounts for a transition that never settled. The transition is now claimed before anything is sent to the provider, and only the winner reprices; the loser is voided with no charge, matching the non-Stripe path and the scheduled-change path."
+        },
+        {
+          "title": "A plan change can no longer start while the previous one is still settling at the provider",
+          "body": "Claiming the transition on the plan alone was not sufficient. The claim publishes the new plan while its own provider call is still in flight, so a following change could read that new plan, win its own claim, and put a second repricing on the wire. The two then settled in whatever order the provider happened to finish them, which could leave Stripe resting on the earlier plan while the shop displayed the later one, with the proration invoices cut against the wrong transition. A subscription now carries the identity of the transition that has not settled yet, and the claim requires that field to be empty, so two provider calls for one subscription can never overlap. A change attempted during that window is refused and recorded as such rather than being applied."
+        },
+        {
+          "title": "Repeating a plan transition inside one billing period bills correctly",
+          "body": "The provider call's idempotency key was derived from the shape of the transition — the subscription, the outgoing and incoming prices, and the current period. Moving A to B, back to A, then to B again inside one billing period produced an identical key for the first and third moves, so the provider replayed the third as the first: the plan moved locally but the always_invoice proration was never charged. The key is now the claimed change row's own identity, which is unique per transition, so a genuine repeat bills while a retry of the same unsettled transition still dedupes."
+        },
+        {
+          "title": "An unanswered provider call no longer rolls back a repricing that may have happened",
+          "body": "Any failure from the provider previously undid the local transition. A refusal and a timeout are not the same thing: a 4xx is the provider's considered answer and means nothing was billed, but a timeout or a server error means the repricing may well have landed and cut its invoice. Undoing on the latter could leave the shop showing the outgoing plan for a subscription the provider had already repriced and charged. A refusal now rolls the plan back and voids the change as before, while an unanswered call keeps the claim and leaves the change in place for the scheduler to settle."
+        }
+      ]
+    },
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "planChanges.reconcileStrandedTransitions settles subscriptions left mid-transition",
+          "body": "Scheduler-callable, and already wired into the once-a-minute subscription plan-change tick, so an operator running that cron needs no new scheduling. It finds subscriptions whose provider call never returned a definite answer and replays the repricing under the original idempotency key: if the first call did land the provider returns the recorded response and nothing is billed twice, and if it never landed this is the call that lands it. Either way the subscription converges on the plan its change row names and the held claim is released, so later plan changes for that customer are no longer blocked. A subscription the provider refuses outright is rolled back and voided. One unresolved subscription never aborts the run. The tick's JSON summary gains a reconciled count alongside applied.",
+          "migration": "Apply migration 0239_subscriptions_plan_transition_claim.sql, which adds the in-flight transition column to subscriptions plus a partial index for the sweep. Existing rows default to no transition in flight."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Minimum Node.js raised to 24.19.0",
+          "body": "engines.node is now >=24.19.0, up from >=24.18.0. Operators must run Node 24.19.0 or newer. The move is motivated by the 24.18.1 security release, which the previous floor predates: it fixes eleven issues including three rated high, covering HTTP/2 header memory retention, HTTP/2 stream reset handling, and the permission model. 24.19.0 contains all of them. The .nvmrc, the container base image, the CI runner pins, and the README and architecture docs are synced to the new floor; it is a patch-level move within the same LTS line, so an existing 24.x install updates in place.",
+          "migration": "Update the Node runtime to 24.19.0 or newer before upgrading. Self-hosted container operators get the new base image automatically on rebuild."
+        },
+        {
+          "title": "Vendored framework refreshed to 0.18.17",
+          "body": "Advances the vendored framework from 0.17.23 to 0.18.17. The store inherits all of the following without application code changes. Outbound TLS is the bulk of it: the framework's key-share offer previously led with a draft hybrid that deployed TLS stacks do not implement, so nearly every outbound connection — payment processors, outbound webhooks, encrypted DNS, telemetry — completed only after a HelloRetryRequest, costing an extra round trip; worse, Node reports an empty stapled OCSP response across a retried handshake, so the framework's stapling requirement rejected peers that had stapled correctly. The offer now leads with the widely implemented hybrid, with no group added or removed. A connection that performed no ephemeral key exchange — meaning no forward secrecy at all — was previously recorded as though it had negotiated a post-quantum hybrid, because on older Node a hybrid reported nothing; detection is now positive and a non-ephemeral exchange raises its own audit action. The inbound post-quantum gate no longer refuses a client whose only offered hybrid is one the framework itself advertises. Redis over TLS, the syslog sink, wss:// connections, outbound mail and the OTLP collector now all carry the framework's TLS floor and group preference rather than negotiating on Node's defaults, and certificate compression is advertised in both directions. Away from TLS: distinguished-name comparison in the bundled PKI no longer treats a NumericString value as equal to a PrintableString or UTF8String value with the same characters, which is the comparison that decides certificate chaining, revocation-issuer matching and name-constraint evaluation for mutual TLS; and a hostname written in absolute form now reaches the resolver as written, while one carrying an empty label that is not the root is refused rather than resolving a different name than the caller asked for.",
+          "migration": "None beyond the Node runtime update. The framework's HMAC surface consolidated onto a single entry point during this refresh and the store's calls move with it; the digest and its output are unchanged, so emailed guest-order access links minted before the upgrade keep working."
+        },
+        {
+          "title": "The Node floor may now lead the vendored framework's own requirement",
+          "body": "The gate that keeps every Node version pin in step previously required all of them to equal the vendored framework's declared floor exactly, which also prevented the application from ever requiring a newer Node than the framework asks for. That blocked adopting a Node security release ahead of the framework's own schedule. The gate now enforces that every pin is at or above the framework's floor and that the pins agree with each other, comparing versions numerically rather than as strings. Regenerating the pins raises them and never lowers a deliberate lead, so a vendor refresh can no longer quietly walk the runtime back to an older Node."
+        }
+      ]
+    },
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "The vendored framework is verified against a pinned signing key before it is unpacked",
+          "body": "The framework is the largest body of third-party code the application ships and it arrives over the network. The refresh previously cloned a git tag, which is mutable and carries no proof of origin, and checked nothing about what it received. It now downloads the published release tarball together with its SHA3-512 digest and its ML-DSA-65 signature, verifies the digest and then the signature, and refuses to write anything into the vendored tree if either check fails. The signature is checked against a release key pinned in this repository rather than one fetched at refresh time from the same host that served the artifact, so an upstream key rotation fails closed and requires a reviewed update instead of being trusted automatically. The verification is also runnable on its own against any downloaded release. See the security policy for the pinned key's fingerprint and the verification commands."
+        },
+        {
+          "title": "The vendored tree is now the published package rather than the source repository",
+          "body": "Because the refresh consumes the signed release artifact, the vendored tree contains what the framework publishes — its library code, executables, licence, notice and bill of materials — and no longer carries the framework's own test suite, benchmarks or CI configuration. The framework's bundled dependency manifest, which vulnerability scanners read to attribute advisories, is still present. The result is roughly a thousand fewer files to install and scan, with no change to any behaviour the application relies on."
         }
       ]
     }

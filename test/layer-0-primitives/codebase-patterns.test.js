@@ -331,7 +331,7 @@ var KNOWN_ANTIPATTERNS = [
     // Reaching for node:crypto in lib/ — first confirm whether the
     // composed blamejs primitive already covers the use case. Most
     // hash / hmac / random API calls in shop code should compose
-    // with b.crypto.* (sha3Hash, namespaceHash, hmacSha3,
+    // with b.crypto.* (sha3Hash, namespaceHash, hmac,
     // generateBytes, generateToken, randomInt, timingSafeEqual) or
     // b.uuid.* (v4 / v7) rather than the raw node:crypto API.
     // Allow with `// allow:node-crypto-instead-of-b-crypto — <reason>`
@@ -369,8 +369,10 @@ var KNOWN_ANTIPATTERNS = [
 
   // ---- blamejs primitive composition catchers ----------------------------
   //
-  // Detector shape mirrors the vendored framework's own catalog at
-  // `lib/vendor/blamejs/test/layer-0-primitives/codebase-patterns.test.js`
+  // Detector shape mirrors the framework's own catalog, kept upstream at
+  // `test/layer-0-primitives/codebase-patterns.test.js` in
+  // github.com/blamejs/blamejs (the vendored tree here is the published
+  // package, which carries no tests)
   // — `id` / `primitive` (canonical replacement) / `regex` / `allowlist` /
   // `reason`. Worker code that needs framework behavior composes
   // through `worker/b.js`; lib/ code composes through `_b()` (the
@@ -426,7 +428,7 @@ var KNOWN_ANTIPATTERNS = [
   },
   {
     id:        "inline-hmac-subtle-crypto",
-    primitive: "b.crypto.hmacSha256(secret, message) — Worker-side HMAC-SHA256 extension composing node:crypto.createHmac (the same primitive the framework's internal hmac() helper uses); the framework also exposes b.crypto.hmacSha3 publicly as the PQC-first default",
+    primitive: "b.crypto.hmac(secret, message) — HMAC-SHA3-512, the PQC-first default; pass an explicit \"sha256\" third argument only to interop with a scheme that fixes the algorithm (Stripe / Tailscale webhook signatures)",
     regex:     /crypto\s*\.\s*subtle\s*\.\s*sign\s*\(\s*["']HMAC["']/,
     scanScope: "shop",
     allowlist: [],
@@ -458,13 +460,11 @@ var KNOWN_ANTIPATTERNS = [
   },
   {
     id:        "manual-createhmac",
-    primitive: "b.crypto.hmacSha3(key, data) — HMAC-SHA3-512 (PQC-first default), or b.crypto.hmacSha256 (Worker-side extension at worker/b.js) for protocol-mandated SHA-256 cases",
+    primitive: "b.crypto.hmac(key, data) — HMAC-SHA3-512 (PQC-first default), or b.crypto.hmac(key, data, \"sha256\") for protocol-mandated SHA-256 cases",
     regex:     /\bcreateHmac\s*\(/,
     scanScope: "shop",
-    allowlist: [
-      "worker/b.js",                              // the hmacSha256 Worker-side extension composes node:crypto.createHmac — this IS the documented composition site
-    ],
-    reason:    "`createHmac(...)` reinvents the framework's HMAC primitive. The PQC-first default is `b.crypto.hmacSha3`; protocol-mandated SHA-256 (Stripe webhooks) composes through `b.crypto.hmacSha256` wired into the Worker adapter. Direct `createHmac` calls outside `worker/b.js` get flagged.",
+    allowlist: [],
+    reason:    "`createHmac(...)` reinvents the framework's HMAC primitive, which validates the algorithm against a SHA-2 / SHA-3 allowlist so a typo or a broken choice (SHA-1 / MD5) throws at the entry tier rather than silently signing under a surprise hash. The PQC-first default is `b.crypto.hmac(key, data)`; protocol-mandated SHA-256 (Stripe webhooks) passes `\"sha256\"` as the third argument.",
   },
   {
     id:        "manual-set-cookie-header",
@@ -748,11 +748,19 @@ var KNOWN_ANTIPATTERNS = [
   },
   {
     id:        "worker-uses-sha3-primitive",
-    primitive: "Cloudflare Workers' `nodejs_compat` runtime exposes `node:crypto` but the supported digest set is a subset of full Node — `createHash(\"sha3-512\")` / SHAKE256 are NOT in it (`Error: Digest method not supported`). Worker code that needs a stable hash either routes to the container (where the framework's SHA3-512 path runs server-side) or uses an algorithm in the Workers-supported subset (`b.crypto.hmacSha256` already augmented onto `worker/b.js`).",
-    regex:     /\bb\.crypto\.(?:sha3Hash|hmacSha3|namespaceHash|shake256|shake512|hkdfSha3)\s*\(/,
+    primitive: "Cloudflare Workers' `nodejs_compat` runtime exposes `node:crypto` but the supported digest set is a subset of full Node — `createHash(\"sha3-512\")` / SHAKE256 are NOT in it (`Error: Digest method not supported`). Worker code that needs a stable hash either routes to the container (where the framework's SHA3-512 path runs server-side) or uses an algorithm in the Workers-supported subset (`b.crypto.hmac(key, data, \"sha256\")`).",
+    regex:     /\bb\.crypto\.(?:sha3Hash|namespaceHash|shake256|shake512|hkdfSha3)\s*\(/,
     scanScope: "worker",
     allowlist: [],
-    reason:    "v0.0.120 — `b.crypto.namespaceHash` shipped in `_edgeNewsletter` returned `Error: Digest method not supported` on every request; the Workers `nodejs_compat` surface doesn't include SHA3-family digests. Working around with a Web-Crypto SHA-256 fallback would silently diverge hash outputs from container-side SHA3-512 values, breaking cross-substrate lookups (e.g. unsubscribe-by-email_hash). When edge code needs to derive a stable identifier from operator-controlled bytes: route the request to the container, OR use `b.crypto.hmacSha256` IFF both sides will read with the same SHA-256 path — never have one substrate write SHA3 and another read SHA-256.",
+    reason:    "v0.0.120 — `b.crypto.namespaceHash` shipped in `_edgeNewsletter` returned `Error: Digest method not supported` on every request; the Workers `nodejs_compat` surface doesn't include SHA3-family digests. Working around with a Web-Crypto SHA-256 fallback would silently diverge hash outputs from container-side SHA3-512 values, breaking cross-substrate lookups (e.g. unsubscribe-by-email_hash). When edge code needs to derive a stable identifier from operator-controlled bytes: route the request to the container, OR use `b.crypto.hmac(key, data, \"sha256\")` IFF both sides will read with the same SHA-256 path — never have one substrate write SHA3 and another read SHA-256.",
+  },
+  {
+    id:        "worker-hmac-defaults-to-sha3",
+    primitive: "b.crypto.hmac(key, data, \"sha256\") — in Worker code the algorithm must be named explicitly, because the primitive's default is SHA3-512 and the Workers `nodejs_compat` digest set does not include it",
+    regex:     /\bb\.crypto\.hmac\s*\((?![^)]*["'](?:sha256|sha384|sha512)["'])/,
+    scanScope: "worker",
+    allowlist: [],
+    reason:    "`b.crypto.hmac(key, data)` defaults to HMAC-SHA3-512. That default is correct everywhere the container runs, but on the Workers `nodejs_compat` runtime it throws `Error: Digest method not supported` at call time — a runtime 500 on the request that reaches it, not a load-time failure the worker-b-loadable smoke would catch. The framework previously exposed this as `hmacSha3`, a name that said which digest it used and that this detector's sibling matched by name; the surface is now the single `hmac` entry point with the digest as an optional argument, so the unsafe call and the safe one differ only by that argument. Worker code must pass an explicit Workers-supported algorithm. A cross-substrate tag must additionally be read with the same algorithm on both sides — never have one substrate write SHA3 and another read SHA-256.",
   },
   {
     id:        "inline-base64url-three-replace",
@@ -826,7 +834,9 @@ var KNOWN_ANTIPATTERNS = [
   },
 
   // ---- Catalog mirror from vendored blamejs ----
-  // Ported from lib/vendor/blamejs/test/layer-0-primitives/codebase-patterns.test.js.
+  // Ported from test/layer-0-primitives/codebase-patterns.test.js in
+  // github.com/blamejs/blamejs (not present in the vendored tree, which is
+  // the published package rather than the source repository).
   // Detectors scoped "shop" (lib + worker) so reinventions are caught
   // anywhere in the application surface. Allowlist entries that
   // reference vendor paths (e.g. `lib/crypto.js`) are kept verbatim;

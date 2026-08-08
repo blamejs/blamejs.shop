@@ -250,7 +250,7 @@ async function _run() {
     // own copy of the signing key (the verifier recomputes over orderId+exp,
     // so this is a structurally-valid-but-expired token, not a forgery).
     var pastExpB36 = (Date.now() - 1000).toString(36);
-    var pastTag = b.crypto.hmacSha3(ORDER_ACCESS_SECRET, "order-access:v1:" + orderId + ":" + pastExpB36).slice(0, 32);
+    var pastTag = b.crypto.hmac(ORDER_ACCESS_SECRET, "order-access:v1:" + orderId + ":" + pastExpB36).slice(0, 32);
     var expiredToken = pastExpB36 + "." + pastTag;
     var expiredGet = await helpers.httpRequest({ port: port, path: "/orders/" + orderId + "?k=" + encodeURIComponent(expiredToken), jar: helpers.cookieJar() });
     check("expired token → 404",                   expiredGet.status === 404);
@@ -258,7 +258,7 @@ async function _run() {
     // A token minted for a DIFFERENT order can't open this one (order-scoped).
     var otherId = b.uuid.v7();
     var otherExpB36 = (Date.now() + 86400000).toString(36);
-    var otherTag = b.crypto.hmacSha3(ORDER_ACCESS_SECRET, "order-access:v1:" + otherId + ":" + otherExpB36).slice(0, 32);
+    var otherTag = b.crypto.hmac(ORDER_ACCESS_SECRET, "order-access:v1:" + otherId + ":" + otherExpB36).slice(0, 32);
     var otherToken = otherExpB36 + "." + otherTag;
     var wrongOrderGet = await helpers.httpRequest({ port: port, path: "/orders/" + orderId + "?k=" + encodeURIComponent(otherToken), jar: helpers.cookieJar() });
     check("token for a different order → 404",      wrongOrderGet.status === 404);
