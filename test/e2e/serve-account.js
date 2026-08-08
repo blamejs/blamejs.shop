@@ -65,6 +65,7 @@ var MIGS = [
   "0066_subscription_billing.sql", "0083_plan_changes.sql",
   "0094_store_credit.sql",
   "0235_store_credit_ledger_chain.sql", "0236_store_credit_ledger_chain_fence.sql",
+  "0239_subscriptions_plan_transition_claim.sql",
 ].map(function (n) { return nodePath.resolve(REPO_ROOT, "migrations-d1", n); });
 
 // The asset manifest maps a theme asset path (`js/cart-count.js`) to its

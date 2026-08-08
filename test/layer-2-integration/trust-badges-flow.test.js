@@ -40,7 +40,7 @@ var MIGS = ["0001_catalog.sql", "0002_cart.sql", "0003_order.sql", "0228_orders_
 var ORDER_ACCESS_SECRET = b.crypto.namespaceHash("order-access-token", "trust-badges-access-secret");
 function _accessToken(orderId) {
   var expB36 = (Date.now() + b.constants.TIME.days(90)).toString(36);
-  var tag = b.crypto.hmacSha3(ORDER_ACCESS_SECRET, "order-access:v1:" + orderId + ":" + expB36).slice(0, 32);
+  var tag = b.crypto.hmac(ORDER_ACCESS_SECRET, "order-access:v1:" + orderId + ":" + expB36).slice(0, 32);
   return expB36 + "." + tag;
 }
 

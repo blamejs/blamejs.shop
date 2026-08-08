@@ -3316,8 +3316,14 @@ async function main() {
           return;
         }
         try {
-          var applied = await planChanges.applyScheduledChanges({ now: Date.now() });
-          res.json({ ok: true, enabled: true, applied: applied.length });
+          // Settle anything stranded mid-transition BEFORE walking the due
+          // rows. An immediate change whose Stripe call returned no verdict
+          // holds its claim on purpose, and that claim blocks every later
+          // change for the subscription until this sweep replays it under the
+          // original idempotency key and Stripe answers definitively.
+          var reconciled = await planChanges.reconcileStrandedTransitions({ now: Date.now() });
+          var applied    = await planChanges.applyScheduledChanges({ now: Date.now() });
+          res.json({ ok: true, enabled: true, applied: applied.length, reconciled: reconciled.length });
         } catch (e) {
           // Never 5xx — a thrown sweep would mark the cron run failed. The
           // error message rides back in the JSON summary the Worker fires

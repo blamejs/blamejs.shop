@@ -115,7 +115,7 @@ async function _seedOrder(query, customers, opts) {
 // the email factory does (order-scoped HMAC-SHA3-512 tag + embedded expiry).
 function _mintAccessToken(orderId, expMs) {
   var expB36 = Number(expMs).toString(36);
-  var tag = b.crypto.hmacSha3(ORDER_ACCESS_SECRET, "order-access:v1:" + orderId + ":" + expB36).slice(0, 32);
+  var tag = b.crypto.hmac(ORDER_ACCESS_SECRET, "order-access:v1:" + orderId + ":" + expB36).slice(0, 32);
   return expB36 + "." + tag;
 }
 

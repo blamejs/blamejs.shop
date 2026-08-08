@@ -43,6 +43,7 @@ var check                 = helpers.check;
 var assert                = helpers.assert;
 
 var MIG_BASE     = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0009_subscriptions.sql");
+var MIG_CLAIM    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0239_subscriptions_plan_transition_claim.sql");
 var MIG_CONTROLS = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0045_subscription_controls.sql");
 var MIG_BILLING  = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0066_subscription_billing.sql");
 var MIG_CACHE    = nodePath.resolve(__dirname, "..", "..", "migrations-d1", "0178_subscription_analytics_cache.sql");
@@ -68,7 +69,7 @@ function _makeQuery() {
   // variant catalog in.
   db.prepare("PRAGMA foreign_keys = OFF").run();
   db.prepare(MIG_VARIANTS_STUB).run();
-  [MIG_BASE, MIG_CONTROLS, MIG_BILLING, MIG_CACHE].forEach(function (path) {
+  [MIG_BASE, MIG_CLAIM, MIG_CONTROLS, MIG_BILLING, MIG_CACHE].forEach(function (path) {
     _splitSchema(nodeFs.readFileSync(path, "utf8")).forEach(function (s) {
       db.prepare(s).run();
     });
