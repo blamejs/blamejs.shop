@@ -89,6 +89,15 @@ function _signThirdParty(secret, timestampSeconds, body) {
     .digest("hex");
 }
 
+// Byte-exact variant of the signer above. A real sender HMACs the bytes it
+// puts on the wire, so a body that is not valid UTF-8 is signed over those
+// bytes — not over a string round-trip of them, which is lossy.
+function _signThirdPartyBytes(secret, timestampSeconds, bodyBuf) {
+  return nodeCrypto.createHmac("sha256", secret)
+    .update(Buffer.concat([Buffer.from(timestampSeconds + ".", "utf8"), bodyBuf]))
+    .digest("hex");
+}
+
 async function _defineSourceHappyPath() {
   var s = _setup();
 
@@ -744,10 +753,54 @@ async function _idempotencyKeyValidation() {
   check("null idempotency_key passes through", none.ok === true);
 }
 
+// The signed payload is `<ts>.<raw-body>`, so the digest has to be taken over
+// the bytes received. Recomputing it from a UTF-8 string rebuild of the body
+// replaces every byte that is not valid UTF-8 with U+FFFD, changing what gets
+// hashed and rejecting a delivery the sender signed correctly.
+async function _verifyAcceptsNonUtf8Body() {
+  var s = _setup();
+  var src = await s.wr.defineSource({ slug: "raw-bytes", active: true });
+  var secret = src.secret_plaintext;
+
+  var body = Buffer.concat([
+    Buffer.from('{"a":"', "utf8"),
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from('"}', "utf8"),
+  ]);
+  check("fixture body is genuinely not valid utf8",
+    Buffer.compare(Buffer.from(body.toString("utf8"), "utf8"), body) !== 0);
+
+  var ts  = Math.floor(Date.now() / 1000);
+  var sig = _signThirdPartyBytes(secret, ts, body);
+
+  var out = await s.wr.verifyAndPersist({
+    source_slug:      "raw-bytes",
+    secret_plaintext: secret,
+    body:             body,
+    signature_header: sig,
+    timestamp_header: String(ts),
+    idempotency_key:  "evt_raw_bytes",
+  });
+  check("non-utf8 body accepts the sender's byte-exact signature",  out.ok === true);
+  check("non-utf8 body is not reported signature_invalid",          out.signature_invalid === false);
+
+  var row = s.db.prepare("SELECT * FROM webhook_received_events WHERE id = ?").get(out.event_id);
+  check("non-utf8 body persisted at its true byte length",          Number(row.body_size) === body.length);
+
+  // The lossy recomputation this guards against would have produced a
+  // different digest — assert the two really do differ, so the test cannot
+  // pass vacuously if the fixture is ever changed to a UTF-8-clean body.
+  var lossy = nodeCrypto.createHmac("sha256", secret)
+    .update(ts + "." + body.toString("utf8"), "utf8")
+    .digest("hex");
+  check("byte-exact and utf8-round-trip digests differ for this body", lossy !== sig);
+}
+
 async function run() {
   await _defineSourceHappyPath();
   await _idempotencyKeyValidation();
   await _verifyAndPersistGoodSignature();
+  await _verifyAcceptsNonUtf8Body();
   await _verifyAndPersistBadSignature();
   await _verifyAndPersistExpiredTimestamp();
   await _verifyAndPersistReplay();

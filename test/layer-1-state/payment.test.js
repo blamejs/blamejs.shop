@@ -17,7 +17,6 @@
 
 var nodeCrypto = require("node:crypto");
 
-var nodeHttps = require("node:https");
 var bShop   = require("../../lib");
 var helpers = require("../helpers");
 var check   = helpers.check;
@@ -247,18 +246,17 @@ async function _idempotencyReplayPaymentIntent() {
   var r1 = await s.createPaymentIntent(input, key);
   check("first call returns Stripe response",        r1.id === "pi_abc");
   check("first call hit Stripe (1 http request)",     fake.calls.length === 1);
-  // The Stripe dial must carry the explicit PSP TLS agent: the vendored
-  // httpClient's PQC-hybrid-only group list draws handshake_failure
-  // (alert 40) from api.stripe.com, so payment constructs a classical-
-  // capable agent (TLS 1.3 min, Node default groups) per the framework's
-  // own downgrade-visible-in-the-diff prescription. Losing this agent
-  // re-breaks every live charge.
-  check("Stripe dial carries the PSP TLS agent",
-    fake.calls[0].agent instanceof nodeHttps.Agent);
-  check("PSP agent pins TLS 1.3 minimum",
-    fake.calls[0].agent.options.minVersion === "TLSv1.3");
-  check("PSP agent does NOT carry the PQC-only group list",
-    fake.calls[0].agent.options.ecdhCurve === undefined);
+  // The Stripe dial must NOT carry a caller-supplied TLS agent. An agent
+  // passed here wins over the vendored client's own, and the client's is
+  // built by b.pqcAgent, which locks the key exchange to
+  // b.network.tls.outboundPosture() and runs the post-handshake downgrade
+  // audit. Pinning one back would re-impose classical key exchange on a
+  // processor that offers an ML-KEM hybrid and silence that audit.
+  check("Stripe dial supplies no caller TLS agent",
+    fake.calls[0].agent === undefined);
+  // The SSRF host allowlist is independent of the agent and must survive.
+  check("Stripe dial keeps its host allowlist",
+    Array.isArray(fake.calls[0].allowedHosts) && fake.calls[0].allowedHosts.length === 1);
   check("first call wrote cache row",                 store.rows().length === 1);
   check("cached row carries operation",               store.rows()[0].operation === "payment_intent.create");
   check("cached row carries 200 status",              store.rows()[0].response_status === 200);

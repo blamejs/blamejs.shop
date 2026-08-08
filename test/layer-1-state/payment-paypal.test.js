@@ -247,9 +247,43 @@ async function _validation() {
   assert.throws(function () { pp.refund({}); }, /capture_id/);
 }
 
+// A burst of calls arriving on a cold token cache must mint ONE token, not
+// one per call. The exchange runs behind a keyed serializer and re-checks the
+// cache inside it, so the callers that queue behind the first find the token
+// already there. PayPal rate-limits the token endpoint well below the rate a
+// checkout burst can reach, so a per-call exchange is a live outage shape.
+async function _tokenSingleFlightUnderBurst() {
+  var calls = [];
+  var routes = {
+    "/v1/oauth2/token": async function () {
+      // Hold the exchange open long enough that the whole burst overlaps it.
+      await new Promise(function (r) { setTimeout(r, 25); });
+      return _res(200, { access_token: "A21AA-token", token_type: "Bearer", expires_in: 32400 });
+    },
+    "/v2/checkout/orders": function () { return _res(201, { id: "ORDER-B", status: "CREATED" }); },
+  };
+  var pp = payment.create({
+    adapter: "paypal", clientId: "AY-client-id-xxxxxxxx", secret: "EL-secret-xxxxxxxx",
+    sandbox: true, httpClient: _stub(routes, calls), webhookId: "WH-TEST-1",
+  });
+
+  var burst = [];
+  for (var i = 0; i < 6; i += 1) {
+    burst.push(pp.createOrder({ amount_minor: 1000 + i, currency: "USD", order_id: "burst-" + i }));
+  }
+  var orders = await Promise.all(burst);
+
+  var tokenCalls = calls.filter(function (c) { return c.url.indexOf("/v1/oauth2/token") !== -1; });
+  var orderCalls = calls.filter(function (c) { return c.url.indexOf("/v2/checkout/orders") !== -1; });
+  check("burst of 6 mints exactly one token",        tokenCalls.length === 1);
+  check("burst of 6 still places all 6 orders",      orderCalls.length === 6);
+  check("every order in the burst succeeded",        orders.length === 6 && orders.every(function (o) { return o.id === "ORDER-B"; }));
+}
+
 async function run() {
   await _createOrder();
   await _tokenCached();
+  await _tokenSingleFlightUnderBurst();
   await _captureAndRefund();
   await _getOrder();
   await _zeroDecimal();

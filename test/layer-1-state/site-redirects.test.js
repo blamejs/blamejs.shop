@@ -226,7 +226,11 @@ async function _regexMatch() {
   // backtracking that the backref/lookaround walker doesn't catch. The pattern
   // runs against the request path in resolveForPath, so a super-linear match
   // is a per-request DoS; it is refused at define time.
-  var redosShapes = ["(a+)+", "(a*)*$", "(?:a+)+", "(.+)+", "((ab)+)+"];
+  // `(a|a)*` is the ambiguous-alternation arm of the same class: overlapping
+  // branches under an unbounded quantifier backtrack exponentially exactly as
+  // `(a+)+` does. The module's previous hand-rolled walker only looked for
+  // nested quantifiers and accepted it; b.guardRegex.assertSafe refuses it.
+  var redosShapes = ["(a+)+", "(a*)*$", "(?:a+)+", "(.+)+", "((ab)+)+", "(a|a)*b"];
   for (var ri = 0; ri < redosShapes.length; ri += 1) {
     await assert.rejects(s.sr.defineRedirect({
       slug: "bad-redos-" + ri, source_path: redosShapes[ri], target_url: "/x",
@@ -234,10 +238,26 @@ async function _regexMatch() {
     }), /nested unbounded quantifier|catastrophic-backtracking|ReDoS/);
   }
 
+  // The screen is conservative in two places: it refuses an alternation under
+  // an unbounded quantifier even when the branches are disjoint (`/a(?:b|c)+`)
+  // and a nested quantifier even when a delimiter makes each repetition
+  // unambiguous (`/shop/(?:[a-z]+-)*[a-z]+`). Both are linear in practice.
+  // Refusing them fails closed — the operator gets a define-time error and can
+  // rewrite — so the conservative screen is kept rather than reintroducing a
+  // local walker. Reported upstream as blamejs/blamejs#559; move these back to
+  // linearShapes when it lands.
+  var conservativeShapes = ["/a(?:b|c)+", "/shop/(?:[a-z]+-)*[a-z]+"];
+  for (var ci = 0; ci < conservativeShapes.length; ci += 1) {
+    await assert.rejects(s.sr.defineRedirect({
+      slug: "conservative-" + ci, source_path: conservativeShapes[ci], target_url: "/x",
+      code: 301, match_kind: "regex", active: true,
+    }), /catastrophic-backtracking|ReDoS/);
+  }
+
   // Regression guard: a LINEAR pattern using a quantified non-capturing group
-  // ((?:…)? / (?:…)*) or an optional quantified group ((…+)?) is safe and MUST
-  // be accepted — the ReDoS screen only rejects a nested UNBOUNDED quantifier.
-  var linearShapes = ["/blog(?:/page/\\d+)?", "/foo(?:bar)*", "/foo(?:bar)?", "/p/(?:\\d+)?/edit", "/a(?:b|c)+"];
+  // ((?:…)? / (?:…)*), an optional quantified group ((…+)?), or an alternation
+  // with no quantifier on it, is safe and MUST be accepted.
+  var linearShapes = ["/blog(?:/page/\\d+)?", "/foo(?:bar)*", "/foo(?:bar)?", "/p/(?:\\d+)?/edit", "/(?:en|fr|de)/blog/.*"];
   for (var li = 0; li < linearShapes.length; li += 1) {
     var okRow = await s.sr.defineRedirect({
       slug: "ok-nc-" + li, source_path: linearShapes[li], target_url: "/dest-" + li,
