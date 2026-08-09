@@ -21,6 +21,19 @@ function _res(status, obj) {
   return { statusCode: status, body: Buffer.from(JSON.stringify(obj), "utf8") };
 }
 
+// Read a recorded request header without caring how it was capitalised — the
+// adapter's own dials use lowercase, the framework's OAuth client uses the
+// canonical spelling, and HTTP treats them as the same header.
+function _header(call, name) {
+  var headers = (call && call.headers) || {};
+  var want = name.toLowerCase();
+  var keys = Object.keys(headers);
+  for (var i = 0; i < keys.length; i += 1) {
+    if (keys[i].toLowerCase() === want) return headers[keys[i]];
+  }
+  return undefined;
+}
+
 // Build a stub httpClient that records calls and answers by path. `routes`
 // maps a path-substring → function(reqOpts) → response.
 function _stub(routes, calls) {
@@ -57,7 +70,18 @@ async function _createOrder() {
   check("createOrder returns the PayPal order",   order.id === "ORDER-1" && order.status === "CREATED");
   // First call is the OAuth2 token exchange (Basic auth), second is the order.
   check("token exchanged before the order",        calls.length === 2 && calls[0].url.indexOf("/v1/oauth2/token") !== -1);
-  check("token uses Basic auth",                   /^Basic /.test(calls[0].headers["authorization"]));
+  // PayPal requires HTTP Basic client auth. Header names are case-insensitive
+  // on the wire, so read it that way rather than pinning one spelling.
+  var tokenAuth = _header(calls[0], "authorization");
+  check("token uses Basic auth",                   /^Basic /.test(tokenAuth));
+  check("Basic credentials are the client id and secret",
+    Buffer.from(String(tokenAuth).slice(6), "base64").toString("utf8") ===
+      "AY-client-id-xxxxxxxx:EL-secret-xxxxxxxx");
+  // client_secret_basic must not ALSO leave the secret in the request body.
+  check("the client secret is not repeated in the token request body",
+    String(calls[0].body || "").indexOf("EL-secret-xxxxxxxx") === -1);
+  check("token dial keeps the PayPal host pin",
+    Array.isArray(calls[0].allowedHosts) && calls[0].allowedHosts.indexOf("api-m.sandbox.paypal.com") !== -1);
   check("order call uses the bearer token",        calls[1].headers["authorization"] === "Bearer A21AA-token");
   var sent = JSON.parse(calls[1].body);
   check("order intent is CAPTURE",                 sent.intent === "CAPTURE");
@@ -177,6 +201,52 @@ async function _errorPath() {
 // failures must never open the circuit live checkout's createOrder rides —
 // that would let webhook spam fast-fail real payments for the cooldown
 // window.
+// The token exchange runs inside b.auth.oauth, but it must still dial through
+// THIS adapter's client — so the payment circuit breaker and the bounded retry
+// cover it like every other PayPal call. If the manager reached for its own
+// client instead, the one endpoint whose failure most clearly says "PayPal is
+// unhealthy" would be the one the circuit could not see.
+async function _tokenDialRidesBreakerAndRetry() {
+  var calls = [];
+  var pp = _adapter({
+    "/v1/oauth2/token":    function () { return _res(500, { error: "server_error" }); },
+    "/v2/checkout/orders": function () { return _res(201, { id: "ORDER-X", status: "CREATED" }); },
+  }, calls);
+  var tokenDials = function () {
+    return calls.filter(function (c) { return c.url.indexOf("/v1/oauth2/token") !== -1; }).length;
+  };
+
+  var failed = null;
+  try { await pp.createOrder({ amount_minor: 100, currency: "USD" }); }
+  catch (e) { failed = e; }
+
+  check("a failing token exchange rejects the order",  failed !== null);
+  // b.httpClient resolves a 500 as an ordinary response, so this only holds if
+  // the dial raises the non-2xx itself — which is what puts the token endpoint
+  // inside the retry and the circuit at all.
+  check("a 5xx token exchange is retried, not sent once",   tokenDials() > 1);
+  check("the retry stays bounded",                          tokenDials() <= 3);
+  check("the breaker recorded the failure (the token dial is inside the circuit)",
+    pp.breaker.consecutiveFailures > 0);
+  check("a failing token exchange never reaches the orders endpoint",
+    calls.filter(function (c) { return c.url.indexOf("/v2/checkout/orders") !== -1; }).length === 0);
+  // Checkout renders its recoverable "didn't go through" page for anything
+  // that is not a TypeError, so this must not surface as one.
+  check("the failure is not a TypeError (recoverable checkout page, not a field error)",
+    !(failed instanceof TypeError));
+
+  // Repeated attempts must stop reaching PayPal. The manager opens a backoff
+  // window after a transient failure and serves nothing from it, so further
+  // orders fail without dialling — protection the previous hand-rolled cache
+  // did not have, and it engages sooner than the breaker's own threshold.
+  var beforeBurst = tokenDials();
+  for (var i = 0; i < 6; i += 1) {
+    try { await pp.createOrder({ amount_minor: 200 + i, currency: "USD" }); } catch (_e) { /* expected */ }
+  }
+  check("further orders during the backoff window dial PayPal zero more times",
+    tokenDials() === beforeBurst);
+}
+
 async function _verifyBreakerIsolated() {
   var calls = [];
   var pp = _adapter({
@@ -284,6 +354,7 @@ async function run() {
   await _createOrder();
   await _tokenCached();
   await _tokenSingleFlightUnderBurst();
+  await _tokenDialRidesBreakerAndRetry();
   await _captureAndRefund();
   await _getOrder();
   await _zeroDecimal();
