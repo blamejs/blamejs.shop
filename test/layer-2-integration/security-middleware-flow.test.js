@@ -33,9 +33,10 @@
  * not the shared loopback socket address.
  */
 
-var nodeFs   = require("node:fs");
-var nodeOs   = require("node:os");
-var nodePath = require("node:path");
+var nodeFs     = require("node:fs");
+var nodeOs     = require("node:os");
+var nodePath   = require("node:path");
+var nodeStream = require("node:stream");
 
 var bShop   = require("../../lib");
 var b       = bShop.framework;
@@ -393,7 +394,14 @@ async function _run() {
     // (i) clientKey collapses an IPv6 client to its /64 bucket so one
     // end-site can't rotate the low 64 bits to evade a per-IP limiter; IPv4
     // is keyed verbatim, and a non-IP value falls back to itself.
-    var ck = function (ip) { return smw.clientKey({ headers: { "cf-connecting-ip": ip } }); };
+    //
+    // Every request carries a socket — the forwarded address is believed only
+    // because the peer that presented it is a trusted proxy, so a request with
+    // no identifiable peer has nothing to make that header credible.
+    var EDGE = { remoteAddress: "10.0.0.1" };
+    var ck = function (ip) {
+      return smw.clientKey({ headers: { "cf-connecting-ip": ip }, socket: EDGE });
+    };
     check("(i) clientKey: two IPv6 addresses in one /64 share a bucket",
       ck("2001:db8:1:2:dead:beef:0:1") === ck("2001:db8:1:2:0:0:0:99"));
     check("(i) clientKey: IPv6 addresses in different /64s do NOT share a bucket",
@@ -405,11 +413,117 @@ async function _run() {
     check("(i) clientKey: a non-IP value falls back to itself (own bucket, not the empty bucket)",
       ck("garbage-header") === "garbage-header");
     check("(i) clientKey: an unresolved client gets the 'unknown' bucket, never empty",
-      smw.clientKey({ headers: {} }) === "unknown");
+      smw.clientKey({ headers: {}, socket: {} }) === "unknown");
+    check("(i) clientKey: a direct client with no forwarded header keys on its own socket",
+      smw.clientKey({ headers: {}, socket: { remoteAddress: "203.0.113.90" } }) === "203.0.113.90");
+    // The peer gate, not the header, is what makes the forwarded value
+    // believable: with no peer to place inside the trusted range there is
+    // nothing to trust, so the header is ignored rather than taken on faith.
+    check("(i) clientKey: a forwarded header from an unidentifiable peer is not trusted",
+      smw.clientKey({ headers: { "cf-connecting-ip": "203.0.113.47" } }) === "unknown");
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
   }
 }
 
-module.exports = { run: _run };
+// ---- streamToResponse: the download-route write discipline ----------------
+//
+// Every generated download composes this. The three properties below are the
+// three ways the obvious `for await (…) res.write(chunk)` loop goes wrong.
+
+// A Writable that accepts bytes slowly and reports a full buffer, so write()
+// actually returns false — b.testing.streamingRes() always reports accepted
+// and cannot exercise this path.
+function _slowSink(opts) {
+  opts = opts || {};
+  var seen = [];
+  var w = new nodeStream.Writable({
+    highWaterMark: opts.highWaterMark || 16,
+    write: function (chunk, _enc, cb) {
+      seen.push(chunk.toString("utf8"));
+      setTimeout(cb, opts.delayMs || 1);
+    },
+  });
+  w.setHeader    = function (k, v) { (w._headers = w._headers || {})[k.toLowerCase()] = v; };
+  w.removeHeader = function (k) { if (w._headers) delete w._headers[k.toLowerCase()]; };
+  w.getHeader    = function (k) { return w._headers && w._headers[k.toLowerCase()]; };
+  w._seen = seen;
+  return w;
+}
+
+async function _streamToResponseDiscipline() {
+  var smw = bShop.securityMiddleware;
+  var check = helpers.check;
+
+  // (1) Backpressure — the producer must wait rather than queue.
+  var sink = _slowSink({ highWaterMark: 16, delayMs: 1 });
+  var produced = 0;
+  var maxBuffered = 0;
+  async function* many() {
+    for (var i = 0; i < 200; i += 1) {
+      produced += 1;
+      maxBuffered = Math.max(maxBuffered, sink.writableLength);
+      yield "chunk-" + i + "-payload\n";
+    }
+  }
+  await smw.streamToResponse(sink, many());
+  check("streamToResponse: every chunk reached the sink",
+    sink._seen.length === 200 && produced === 200);
+  // Without awaiting drain the generator runs to completion immediately and
+  // the sink's buffer holds most of the body at once.
+  check("streamToResponse: honours backpressure (buffer stayed bounded, peak " + maxBuffered + "B)",
+    maxBuffered < 400);
+
+  // (2) A mid-stream failure must not read as a clean download. Once bytes are
+  // committed the only honest signal is a broken transfer.
+  var sink2 = _slowSink();
+  sink2.setHeader("content-disposition", 'attachment; filename="orders.csv"');
+  var destroyed = false;
+  var origDestroy = sink2.destroy.bind(sink2);
+  sink2.destroy = function () { destroyed = true; return origDestroy(); };
+  async function* throwsMidway() {
+    yield "order_id,total\n";
+    yield "ord_1,10.00\n";
+    throw new Error("d1: connection reset mid-export");
+  }
+  var threw = null;
+  try { await smw.streamToResponse(sink2, throwsMidway()); }
+  catch (e) { threw = e; }
+  check("streamToResponse: a committed mid-stream failure rethrows",
+    threw !== null && /connection reset/.test(threw.message));
+  check("streamToResponse: a committed mid-stream failure destroys the response",
+    destroyed === true);
+  check("streamToResponse: it does NOT quietly end the body as a complete download",
+    sink2._seen.join("").indexOf("Internal Server Error") === -1);
+
+  // (3) A failure BEFORE the first byte can still be a real error page — but
+  // the download headers must not survive onto it.
+  var sink3 = _slowSink();
+  sink3.setHeader("content-type", "text/csv; charset=utf-8");
+  sink3.setHeader("content-disposition", 'attachment; filename="orders.csv"');
+  // Still an async generator without a reachable yield — it throws on the
+  // first pull, which is the "query failed before any row" case.
+  async function* throwsFirst() { throw new Error("d1: query failed"); }
+  var threw3 = null;
+  try { await smw.streamToResponse(sink3, throwsFirst()); }
+  catch (e) { threw3 = e; }
+  check("streamToResponse: a pre-commit failure rethrows", threw3 !== null);
+  check("streamToResponse: a pre-commit failure drops the attachment headers",
+    sink3.getHeader("content-disposition") === undefined &&
+    sink3.getHeader("content-type") === undefined);
+
+  // (4) The buffering fallback the plain-object test doubles rely on.
+  var plain = { _body: null, end: function (b) { plain._body = b; } };
+  async function* two() { yield "a"; yield "b"; }
+  await smw.streamToResponse(plain, two());
+  check("streamToResponse: a response with no write() buffers instead",
+    plain._body === "ab");
+}
+
+async function run() {
+  await _run();
+  await _streamToResponseDiscipline();
+}
+
+module.exports = { run: run };

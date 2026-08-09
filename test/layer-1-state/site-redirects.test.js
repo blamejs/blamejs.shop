@@ -238,26 +238,18 @@ async function _regexMatch() {
     }), /nested unbounded quantifier|catastrophic-backtracking|ReDoS/);
   }
 
-  // The screen is conservative in two places: it refuses an alternation under
-  // an unbounded quantifier even when the branches are disjoint (`/a(?:b|c)+`)
-  // and a nested quantifier even when a delimiter makes each repetition
-  // unambiguous (`/shop/(?:[a-z]+-)*[a-z]+`). Both are linear in practice.
-  // Refusing them fails closed — the operator gets a define-time error and can
-  // rewrite — so the conservative screen is kept rather than reintroducing a
-  // local walker. Reported upstream as blamejs/blamejs#559; move these back to
-  // linearShapes when it lands.
-  var conservativeShapes = ["/a(?:b|c)+", "/shop/(?:[a-z]+-)*[a-z]+"];
-  for (var ci = 0; ci < conservativeShapes.length; ci += 1) {
-    await assert.rejects(s.sr.defineRedirect({
-      slug: "conservative-" + ci, source_path: conservativeShapes[ci], target_url: "/x",
-      code: 301, match_kind: "regex", active: true,
-    }), /catastrophic-backtracking|ReDoS/);
-  }
-
-  // Regression guard: a LINEAR pattern using a quantified non-capturing group
-  // ((?:…)? / (?:…)*), an optional quantified group ((…+)?), or an alternation
-  // with no quantifier on it, is safe and MUST be accepted.
-  var linearShapes = ["/blog(?:/page/\\d+)?", "/foo(?:bar)*", "/foo(?:bar)?", "/p/(?:\\d+)?/edit", "/(?:en|fr|de)/blog/.*"];
+  // Regression guard: a LINEAR pattern MUST be accepted. Beyond the quantified
+  // non-capturing group and the optional quantified group, this covers the two
+  // shapes the screen used to refuse conservatively: an alternation under an
+  // unbounded quantifier whose branches are disjoint (`/a(?:b|c)+` — at each
+  // position exactly one branch can match, so there is nothing to backtrack
+  // into), and a nested quantifier whose repetitions a delimiter makes
+  // unambiguous (`/shop/(?:[a-z]+-)*[a-z]+` — `-` is not in `[a-z]`, so the
+  // split points are forced). Both are ordinary URL-matching shapes.
+  var linearShapes = [
+    "/blog(?:/page/\\d+)?", "/foo(?:bar)*", "/foo(?:bar)?", "/p/(?:\\d+)?/edit",
+    "/(?:en|fr|de)/blog/.*", "/a(?:b|c)+", "/shop/(?:[a-z]+-)*[a-z]+",
+  ];
   for (var li = 0; li < linearShapes.length; li += 1) {
     var okRow = await s.sr.defineRedirect({
       slug: "ok-nc-" + li, source_path: linearShapes[li], target_url: "/dest-" + li,
