@@ -497,22 +497,22 @@ async function _downloadStreamDiscipline() {
   await b.render.stream(plain, two());
   check("render.stream: works against a plain write/end double", plain._body === "ab");
 
-  // ---- streamDownload: the first pull happens before the response commits --
+  // ---- the first pull happens before the response commits -----------------
   //
   // A generator body does not run until its first next(), so a query that
-  // fails before yielding a row would otherwise fail with the status line
-  // already sent — the operator gets a download that resets instead of a page
-  // saying what went wrong. The routes go through streamDownload for this.
-  var smw = bShop.securityMiddleware;
-
+  // fails before yielding a row must not fail with the status line already
+  // sent — that turns "the export failed" into a download that resets, and
+  // the operator loses the reason. The shop carried a wrapper for this until
+  // the primitive took it on; these assertions stay so a refresh that lost it
+  // fails here rather than in an operator's browser.
   var sink3 = _slowSink();
   async function* failsFirstPull() { throw new Error("d1: query failed before any row"); }
   var earlyErr = null;
-  try { await smw.streamDownload(sink3, failsFirstPull(), { status: 200 }); }
+  try { await b.render.stream(sink3, failsFirstPull(), { status: 200 }); }
   catch (e) { earlyErr = e; }
-  check("streamDownload: a first-pull failure reaches the caller",
+  check("render.stream: a first-pull failure reaches the caller",
     earlyErr !== null && /before any row/.test(earlyErr.message));
-  check("streamDownload: a first-pull failure writes nothing (error page still possible)",
+  check("render.stream: a first-pull failure writes nothing (error page still possible)",
     (sink3._seen || []).length === 0);
 
   // Cancellation has to reach the producer underneath the wrapper, or a client
@@ -526,16 +526,16 @@ async function _downloadStreamDiscipline() {
   var iterable = {}; iterable[Symbol.asyncIterator] = function () { return inner; };
   var sink4 = _slowSink();
   var ac = new AbortController();
-  var p = smw.streamDownload(sink4, iterable, { status: 200, signal: ac.signal });
+  var p = b.render.stream(sink4, iterable, { status: 200, signal: ac.signal });
   ac.abort();
   try { await p; } catch (_e) { /* an aborted transfer is not a clean end */ }
-  check("streamDownload: an abort closes the underlying iterator (cursor released)", closed === true);
+  check("render.stream: an abort closes the underlying iterator (cursor released)", closed === true);
 
   // And the happy path still delivers every chunk in order.
   var sink5 = _slowSink();
   async function* three() { yield "x"; yield "y"; yield "z"; }
-  await smw.streamDownload(sink5, three(), { status: 200 });
-  check("streamDownload: the happy path writes every chunk in order",
+  await b.render.stream(sink5, three(), { status: 200 });
+  check("render.stream: the happy path writes every chunk in order",
     (sink5._seen || []).join("") === "xyz");
 }
 
