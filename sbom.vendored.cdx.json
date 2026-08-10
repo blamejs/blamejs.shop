@@ -2,7 +2,7 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.6",
-  "serialNumber": "urn:uuid:24b8ab30-f883-54ac-917d-edfd20c2ad3a",
+  "serialNumber": "urn:uuid:36959ff8-b7fe-5225-8b18-5234af88be54",
   "version": 1,
   "metadata": {
     "timestamp": "2026-08-10T00:00:00Z",
@@ -23,13 +23,13 @@
   },
   "components": [
     {
-      "bom-ref": "vendored/blamejs@0.18.20",
+      "bom-ref": "vendored/blamejs@0.18.21",
       "type": "library",
       "name": "blamejs",
-      "version": "0.18.20",
-      "purl": "pkg:generic/blamejs@0.18.20?vcs_url=https%3A%2F%2Fgithub.com%2Fblamejs%2Fblamejs",
+      "version": "0.18.21",
+      "purl": "pkg:generic/blamejs@0.18.21?vcs_url=https%3A%2F%2Fgithub.com%2Fblamejs%2Fblamejs",
       "scope": "required",
-      "description": "Vendored under lib/vendor/blamejs/ (signed release tarball blamejs-core-0.18.20.tgz from github.com/blamejs/blamejs — SHA3-512 digest and ML-DSA-65 signature verified against keys/vendor-blamejs-pqc-pub.json before unpacking).",
+      "description": "Vendored under lib/vendor/blamejs/ (signed release tarball blamejs-core-0.18.21.tgz from github.com/blamejs/blamejs — SHA3-512 digest and ML-DSA-65 signature verified against keys/vendor-blamejs-pqc-pub.json before unpacking).",
       "licenses": [
         {
           "license": {
