@@ -995,41 +995,53 @@ function _dsrSectionFilled(section) {
 // manifest is a small array of {section,status} pairs accumulated while the
 // per-section data streams, so it doesn't reintroduce whole-bundle buffering.
 async function _streamDsrBundle(res, readers, sections, row) {
-  res.status(200);
-  if (res.setHeader) {
-    res.setHeader("content-type", "application/json; charset=utf-8");
-    res.setHeader(
-      "content-disposition",
-      "attachment; filename=\"dsr-export-" + String(row.id).replace(/[^A-Za-z0-9._-]/g, "") + ".json\"",
-    );
-    res.setHeader("x-content-type-options", "nosniff");
-  }
-  var canWrite = typeof res.write === "function" && typeof res.end === "function";
-  var buf = "";
-  function emit(s) { if (canWrite) res.write(s); else buf += s; }
-  emit("{\"request_id\":" + JSON.stringify(row.id) +
-       ",\"customer_id\":" + JSON.stringify(row.customer_id) +
-       ",\"jurisdiction\":" + JSON.stringify(row.jurisdiction) +
-       ",\"scope\":" + JSON.stringify(row.scope) +
-       ",\"data\":{");
+  // The manifest is accumulated while the sections stream and serialized at
+  // the end, so it stays a small array of {section,status} pairs rather than
+  // reintroducing whole-bundle buffering.
   var manifest = [];
-  var first = true;
-  for (var i = 0; i < sections.length; i += 1) {
-    var name   = sections[i];
-    var reader = readers[name];
-    if (!reader || typeof reader.forCustomerExport !== "function") {
-      manifest.push({ section: name, status: "absent" });
-      continue;
+
+  async function* bundle() {
+    yield "{\"request_id\":" + JSON.stringify(row.id) +
+          ",\"customer_id\":" + JSON.stringify(row.customer_id) +
+          ",\"jurisdiction\":" + JSON.stringify(row.jurisdiction) +
+          ",\"scope\":" + JSON.stringify(row.scope) +
+          ",\"data\":{";
+    var first = true;
+    for (var i = 0; i < sections.length; i += 1) {
+      var name   = sections[i];
+      var reader = readers[name];
+      if (!reader || typeof reader.forCustomerExport !== "function") {
+        manifest.push({ section: name, status: "absent" });
+        continue;
+      }
+      var section;
+      try { section = await reader.forCustomerExport(row.customer_id); }
+      catch (_e) { section = null; }
+      yield (first ? "" : ",") + JSON.stringify(name) + ":" +
+            JSON.stringify(section == null ? null : section);
+      first = false;
+      manifest.push({ section: name, status: _dsrSectionFilled(section) ? "exported" : "empty" });
     }
-    var section;
-    try { section = await reader.forCustomerExport(row.customer_id); }
-    catch (_e) { section = null; }
-    emit((first ? "" : ",") + JSON.stringify(name) + ":" + JSON.stringify(section == null ? null : section));
-    first = false;
-    manifest.push({ section: name, status: _dsrSectionFilled(section) ? "exported" : "empty" });
+    yield "},\"manifest\":" + JSON.stringify(manifest) + "}";
   }
-  emit("},\"manifest\":" + JSON.stringify(manifest) + "}");
-  if (canWrite) res.end(); else (res.end ? res.end(buf) : res.send(buf));
+
+  // Written through b.render.stream like every other generated download: the
+  // per-section writes wait for the socket rather than queueing in memory when
+  // the subject's connection is slow, a subject who navigates away stops the
+  // readers rather than leaving them walking every domain, and a reader that
+  // fails part-way breaks the transfer instead of closing a truncated bundle
+  // as a complete one. The last matters most here — a subject-access response
+  // that arrives short but well-formed is a compliance answer that quietly
+  // omits data.
+  await b.render.stream(res, bundle(), {
+    status:  200,
+    headers: {
+      "Content-Type":           "application/json; charset=utf-8",
+      "Content-Disposition":    "attachment; filename=\"dsr-export-" +
+                                  String(row.id).replace(/[^A-Za-z0-9._-]/g, "") + ".json\"",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 }
 
 // Build the ESP bounce / complaint intake handler (finding: b.mailBounce

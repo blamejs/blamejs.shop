@@ -252,17 +252,29 @@ async function _restApiErrorEnvelope() {
 }
 
 async function _timeoutSurfacesAsCode() {
-  // A fetch that never resolves — AbortController fires; adapter
-  // converts to a D1_TIMEOUT error.
+  // A fetch that never resolves — the deadline signal fires and the adapter
+  // converts that to a D1_TIMEOUT error.
+  //
+  // The rejection uses the SIGNAL'S OWN REASON, which is what fetch does. It
+  // matters: a deadline built on AbortSignal.timeout rejects with a
+  // DOMException named TimeoutError, not AbortError. A stub that manufactured
+  // its own AbortError would pass whether or not the adapter recognised the
+  // real one, and the D1_TIMEOUT contract would break silently in production.
   var aborted = false;
+  var abortName = null;
+  // The deadline signal does NOT hold the event loop open — that is the point
+  // of the change, and in the container the listening server holds it instead.
+  // A stub whose only pending work is that signal would let the process exit
+  // before the deadline ever fires, so stand in for the socket a real fetch
+  // would have kept open.
+  var keepAlive = setInterval(function () {}, 10);
   var fetchImpl = async function (_url, init) {
     return await new Promise(function (resolve, reject) {
       if (init && init.signal) {
         init.signal.addEventListener("abort", function () {
           aborted = true;
-          var e = new Error("aborted");
-          e.name = "AbortError";
-          reject(e);
+          abortName = init.signal.reason && init.signal.reason.name;
+          reject(init.signal.reason);
         });
       }
       // Never resolves on its own.
@@ -282,7 +294,39 @@ async function _timeoutSurfacesAsCode() {
     threw = true;
     check("timeout code", e.code === "D1_TIMEOUT");
   }
-  check("timeout fires AbortController", aborted && threw);
+  clearInterval(keepAlive);
+  check("timeout fires the deadline signal", aborted && threw);
+  check("the deadline arrives as a TimeoutError (the shape fetch really raises)",
+    abortName === "TimeoutError");
+}
+
+// A query must not leave a pending timer behind. The deadline used to be a
+// hand-rolled setTimeout cleared only by a function nobody called, so every
+// query left one — and a pending timer is ref'd, so it keeps the event loop
+// awake until it expires. On this path that is a standing population of live
+// timers and a shutdown that cannot settle until the last one drains.
+async function _noTimerLeftBehind() {
+  var fetchImpl = async function () {
+    return { ok: true, status: 200, json: async function () { return { result: [{ results: [], meta: {} }] }; } };
+  };
+  var d1 = d1factory.create({
+    mode:         "service-binding",
+    bridgeUrl:    "http://bridge.local",
+    bridgeSecret: "s",
+    timeoutMs:    30000,     // long enough that a leaked timer is still pending
+    fetch:        fetchImpl,
+  });
+  var client = await d1.connect();
+
+  function timers() {
+    return process.getActiveResourcesInfo().filter(function (r) { return r === "Timeout"; }).length;
+  }
+  var before = timers();
+  for (var i = 0; i < 5; i += 1) await d1.query(client, "SELECT 1", []);
+  var after = timers();
+
+  check("five completed queries leave no pending timer (was +1 each, held for the full timeout)",
+    after <= before);
 }
 
 async function run() {
@@ -296,6 +340,7 @@ async function run() {
   await _restApiShape();
   await _restApiErrorEnvelope();
   await _timeoutSurfacesAsCode();
+  await _noTimerLeftBehind();
 }
 
 module.exports = { run: run };

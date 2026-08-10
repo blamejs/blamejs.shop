@@ -1,0 +1,83 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.20",
+  "date": "2026-08-10",
+  "headline": "A download that fails part-way through no longer arrives looking complete, a webhook body carrying non-text bytes is no longer refused, and a redirect pattern is matched in time proportional to the path rather than screened and hoped for",
+  "summary": "Every generated download — the order export, a segment's member list, a buyer's receipt — shared a write loop with three faults. A slow client turned a deliberately bounded-memory export back into an unbounded one; a client that hung up left the export pulling rows to write them nowhere; and a failure part-way through arrived as a well-formed 200 whose final row read \"Internal Server Error\", which a spreadsheet or an import job reads as a complete export. All three are fixed, and a failure before the first byte now reaches a real error page instead of a download that resets. Separately, inbound webhook verification recomputed its digest over a re-encoded copy of the request body, so a delivery carrying any byte that is not valid UTF-8 was refused however correctly it was signed. And an operator's redirect pattern is now run by a matcher that cannot backtrack, so patterns that were previously refused as a denial-of-service risk are simply accepted and matched in time proportional to the request path. The vendored framework moves from 0.18.17 to 0.18.21.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "A download that fails part-way through is no longer delivered as a complete one",
+          "body": "Once a response's status line and headers are on the wire they cannot be replaced. The error handler tried anyway: its attempt to send a 500 threw, and the fallback appended the text \"Internal Server Error\" to whatever had already been written and closed the response normally. The client received a 200, the content type it asked for, and however many rows had made it out followed by that sentence. A spreadsheet or an import job ingests that as a complete, successful export whose last row happens to read oddly — there is nothing in the status or the headers to say otherwise. The transfer is now ended incomplete instead, which every HTTP client reports as a failed download. Affects the order export, a segment's member list and the emailed receipt."
+        },
+        {
+          "title": "An export whose query fails before the first row reaches an error page again",
+          "body": "The response was committed before the producer had been asked for anything. Because the rows come from a generator over a database cursor, and a generator does no work until its first row is pulled, a query that failed immediately failed after the headers were already sent — so instead of a page explaining what went wrong, the operator got an attachment that reset mid-download. The producer is now asked for its first row before anything is committed, which puts that failure back where an error page can still be produced. This is the failure most likely to occur in practice, and the only one where there is something useful to say."
+        },
+        {
+          "title": "A slow client no longer costs unbounded memory during an export",
+          "body": "Each export writes one chunk per database batch so that memory stays flat however many rows the range covers. The write loop discarded the signal that the socket buffer was full, which does not slow the producer down — the remaining chunks queue in memory instead. Nothing shows this in testing, because a local client drains instantly; it appears only against a genuinely slow connection, which is exactly when the export is largest. The producer now waits for the socket before continuing."
+        },
+        {
+          "title": "A client that hangs up mid-export stops the work behind it",
+          "body": "Nothing checked whether the peer was still there, so an abandoned download kept reading pages out of the database and writing them into a closed socket until the range was exhausted. The full query cost was paid with nothing delivered. The read now stops when the client goes away, and the cursor behind it is released rather than held until the request is torn down."
+        },
+        {
+          "title": "The data-subject export shares the same download discipline",
+          "body": "The subject-access bundle is written section by section so that the process never holds the whole thing at once, and it had the same three faults as the other exports: no wait for a slow connection, no stop when the subject navigated away, and a reader failing part-way through closing a short bundle as though it were complete. The last is the one that matters here — a subject-access response that arrives well-formed but missing a domain is a compliance answer that quietly omits data, with nothing in it to say so. It now breaks the transfer instead, and a subject who abandons the download stops the readers rather than leaving them walking every domain."
+        },
+        {
+          "title": "Every database query left a pending timer behind",
+          "body": "Each query to the database arms a deadline so a hung request cannot wait forever. The timer behind it was only ever cancelled by a function that nothing called, so a query that completed normally — which is almost all of them — left its timer pending until it expired on its own. A pending timer also keeps the runtime's event loop awake, so under load the process carried a standing population of them and a shutdown could not settle until the last one drained. The deadline now uses a timer that is discarded when the query finishes and does not hold the loop open.",
+          "migration": "None. The timeout behaviour and the D1_TIMEOUT error a caller sees on a genuinely slow query are unchanged."
+        },
+        {
+          "title": "An inbound webhook carrying non-text bytes is no longer refused",
+          "body": "The signature is computed over the timestamp and the exact bytes of the request body. Verification recomputed it over a text copy of that body, and any byte sequence that is not valid UTF-8 does not survive being rebuilt as text — it is replaced. The digest was therefore taken over different bytes than the sender signed, and a correctly signed delivery was rejected as though the secret were wrong. The digest is now taken over the bytes as received, and over the timestamp exactly as it appeared in the header rather than a reparsed copy of it."
+        },
+        {
+          "title": "A rotated webhook secret verifies without downtime",
+          "body": "A signature header may carry more than one signature so that a secret can be rotated without dropping deliveries signed under the previous one. Verification only ever checked a single value. Every signature the header carries is now checked."
+        },
+        {
+          "title": "Concurrent checkouts no longer request a PayPal access token each",
+          "body": "The access token is cached, but nothing serialised the exchange, so a burst of checkouts arriving on a cold or just-expired cache each requested one. PayPal rate-limits that endpoint well below the rate a checkout burst reaches. A burst now performs one exchange and the rest use its result. A failure at that endpoint additionally opens a short window during which a still-valid cached token is served rather than the endpoint being retried on every order."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "A redirect pattern is now matched in linear time, and patterns that were refused are accepted",
+          "body": "A regex redirect runs against the request path on every lookup, so an operator's pattern was screened when it was registered: anything whose shape suggested it could backtrack badly was refused. Screening is an approximation in both directions — it turned away patterns that were perfectly well behaved, and it could not promise to catch every shape that was not, so each shape it missed became another case to add. Patterns are now matched by a matcher that simulates every path through the pattern at once, one character at a time, so the work cannot grow faster than the length of the path times the size of the pattern whatever was written. The screen is gone with it. Patterns previously refused — including the classic nested and ambiguous repetitions — now register and match normally; one that took a conventional engine the better part of a minute on thirty characters completes in about two milliseconds on two thousand.",
+          "migration": "Nothing to do. Existing redirects are unaffected, and a pattern that was refused before can now be registered. Three constructs remain unsupported because they cannot be matched this way, and each is refused at registration naming what to write instead: a backreference, a lookahead or lookbehind, and a repetition whose body can match nothing."
+        },
+        {
+          "title": "The payment processors are dialled on the framework's own TLS posture",
+          "body": "Both processor clients pinned a hand-built TLS agent that fell back to the platform's default key exchange. That was a workaround from a time when the framework offered post-quantum key agreement only, which one processor answers with a handshake failure. The framework's offer has since ended with a classical option, so the workaround had quietly become a downgrade: it forced classical key exchange on a processor that does negotiate a post-quantum hybrid, and it bypassed the post-handshake check that records when a connection came out weaker than intended. The dials now use the framework posture, which follows a runtime change to the preferred groups. Verified against both processors: one negotiates a post-quantum hybrid, the other a classical exchange, and both connect."
+        },
+        {
+          "title": "The client address behind the proxy is trusted only from the proxy",
+          "body": "Per-client rate limiting keys on the client address the edge publishes in a request header. That header was read wherever it appeared. It is now honoured only when the connection it arrived on came from a trusted proxy, and the address falls back to the peer's own otherwise — a header alone never speaks for a client. The default states this deployment's topology, where the container accepts connections only from the edge.",
+          "migration": "A deployment where the container is reachable by some other route should narrow SHOP_TRUSTED_PROXIES to the proxy's addresses in CIDR form. Left unset, every peer is trusted, which is correct only when nothing else can open a connection to it."
+        },
+        {
+          "title": "Vendored framework refreshed to 0.18.21",
+          "body": "Advances the vendored framework from 0.18.17 to 0.18.21, and the store inherits the following without application changes. Outbound connections no longer lead their key-share offer with a hybrid no deployed peer implements, which cost an extra round trip on every connection and — because a retried handshake returns an empty stapled certificate status — made the framework reject peers whose certificate status was stapled correctly. A connection that performed no ephemeral key exchange, meaning no forward secrecy at all, was recorded as though it had negotiated a post-quantum hybrid; it is now identified and reported as itself. Redis over TLS, the syslog sink, WebSocket connections, outbound mail and the telemetry collector all now use the same TLS floor and group preference rather than the platform defaults. Certificate compression is offered in both directions. In the bundled certificate toolkit, two distinguished names that differ only in how their text was encoded no longer compare as equal, which is the comparison behind certificate chaining and revocation matching. A hostname written in absolute form now reaches the resolver as written, while one carrying an empty label is refused rather than resolving a different name than was asked for. And a clock-synchronisation query that could not be built no longer leaves its socket open, which on a long-running deployment accumulated one handle per failed query."
+        }
+      ]
+    },
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "A redirect pattern that backtracks exponentially can no longer be registered — or matter",
+          "body": "The screen that vetted operator redirect patterns looked for repetition nested inside repetition, and missed the other shape that behaves the same way: a choice whose alternatives can match the same text, repeated without bound. A pattern of that shape was accepted and then run against every request path that reached the redirect table, where it takes time exponential in the length of the path — a denial of service requiring no payload, only a long URL. Patterns are now matched by an engine that cannot backtrack at all, so the shape is no longer dangerous and no longer refused."
+        }
+      ]
+    }
+  ]
+}

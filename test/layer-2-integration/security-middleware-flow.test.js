@@ -33,9 +33,10 @@
  * not the shared loopback socket address.
  */
 
-var nodeFs   = require("node:fs");
-var nodeOs   = require("node:os");
-var nodePath = require("node:path");
+var nodeFs     = require("node:fs");
+var nodeOs     = require("node:os");
+var nodePath   = require("node:path");
+var nodeStream = require("node:stream");
 
 var bShop   = require("../../lib");
 var b       = bShop.framework;
@@ -393,7 +394,14 @@ async function _run() {
     // (i) clientKey collapses an IPv6 client to its /64 bucket so one
     // end-site can't rotate the low 64 bits to evade a per-IP limiter; IPv4
     // is keyed verbatim, and a non-IP value falls back to itself.
-    var ck = function (ip) { return smw.clientKey({ headers: { "cf-connecting-ip": ip } }); };
+    //
+    // Every request carries a socket — the forwarded address is believed only
+    // because the peer that presented it is a trusted proxy, so a request with
+    // no identifiable peer has nothing to make that header credible.
+    var EDGE = { remoteAddress: "10.0.0.1" };
+    var ck = function (ip) {
+      return smw.clientKey({ headers: { "cf-connecting-ip": ip }, socket: EDGE });
+    };
     check("(i) clientKey: two IPv6 addresses in one /64 share a bucket",
       ck("2001:db8:1:2:dead:beef:0:1") === ck("2001:db8:1:2:0:0:0:99"));
     check("(i) clientKey: IPv6 addresses in different /64s do NOT share a bucket",
@@ -405,11 +413,135 @@ async function _run() {
     check("(i) clientKey: a non-IP value falls back to itself (own bucket, not the empty bucket)",
       ck("garbage-header") === "garbage-header");
     check("(i) clientKey: an unresolved client gets the 'unknown' bucket, never empty",
-      smw.clientKey({ headers: {} }) === "unknown");
+      smw.clientKey({ headers: {}, socket: {} }) === "unknown");
+    check("(i) clientKey: a direct client with no forwarded header keys on its own socket",
+      smw.clientKey({ headers: {}, socket: { remoteAddress: "203.0.113.90" } }) === "203.0.113.90");
+    // The peer gate, not the header, is what makes the forwarded value
+    // believable: with no peer to place inside the trusted range there is
+    // nothing to trust, so the header is ignored rather than taken on faith.
+    check("(i) clientKey: a forwarded header from an unidentifiable peer is not trusted",
+      smw.clientKey({ headers: { "cf-connecting-ip": "203.0.113.47" } }) === "unknown");
   } finally {
     try { await app.shutdown(); } catch (_e) { /* */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* */ }
   }
 }
 
-module.exports = { run: _run };
+// ---- streamToResponse: the download-route write discipline ----------------
+//
+// Every generated download composes this. The three properties below are the
+// three ways the obvious `for await (…) res.write(chunk)` loop goes wrong.
+
+// A Writable that accepts bytes slowly and reports a full buffer, so write()
+// actually returns false. b.testing.streamingRes gained a highWaterMark in
+// 0.18.19; this keeps a local double so the shop half stays checkable on its
+// own rather than through the same framework object under test.
+function _slowSink(opts) {
+  opts = opts || {};
+  var seen = [];
+  var w = new nodeStream.Writable({
+    highWaterMark: opts.highWaterMark || 16,
+    write: function (chunk, _enc, cb) {
+      seen.push(chunk.toString("utf8"));
+      setTimeout(cb, opts.delayMs || 1);
+    },
+  });
+  w._seen = seen;
+  return w;
+}
+
+// Every generated download in the shop — the order export, a segment's member
+// list, a receipt — writes through b.render.stream. These are the properties
+// those routes depend on, asserted here so a vendor refresh that regressed one
+// fails in this repo rather than silently corrupting an operator's export.
+async function _downloadStreamDiscipline() {
+  var check = helpers.check;
+
+  // Backpressure — the producer waits rather than queueing the whole export
+  // into the socket buffer when the client reads slowly.
+  var sink = _slowSink({ highWaterMark: 16, delayMs: 1 });
+  var maxBuffered = 0;
+  async function* many() {
+    for (var i = 0; i < 200; i += 1) {
+      maxBuffered = Math.max(maxBuffered, sink.writableLength);
+      yield "chunk-" + i + "-payload\n";
+    }
+  }
+  await b.render.stream(sink, many());
+  check("render.stream: every chunk reached the sink", (sink._seen || []).length === 200);
+  check("render.stream: honours backpressure (peak buffered " + maxBuffered + "B)",
+    maxBuffered < 400);
+
+  // A mid-stream failure reaches the route rather than being swallowed and the
+  // partial body closed as though it were whole. What the client sees on a real
+  // socket — an incomplete transfer, not a complete 200 — is the framework's
+  // job via requestHelpers.failAfterHeaders.
+  var sink2 = _slowSink();
+  async function* throwsMidway() {
+    yield "order_id,total\n";
+    yield "ord_1,10.00\n";
+    throw new Error("d1: connection reset mid-export");
+  }
+  var threw = null;
+  try { await b.render.stream(sink2, throwsMidway()); } catch (e) { threw = e; }
+  check("render.stream: a mid-stream failure reaches the route",
+    threw !== null && /connection reset/.test(threw.message));
+  check("render.stream: no error text is appended to the partial body",
+    (sink2._seen || []).join("").indexOf("Internal Server Error") === -1);
+
+  // The plain write/end doubles several route tests pass must still work — the
+  // routes no longer carry a buffering fallback of their own.
+  var plain = { _body: "", write: function (c) { plain._body += c; return true; },
+                end: function (c) { if (c) plain._body += c; } };
+  async function* two() { yield "a"; yield "b"; }
+  await b.render.stream(plain, two());
+  check("render.stream: works against a plain write/end double", plain._body === "ab");
+
+  // ---- the first pull happens before the response commits -----------------
+  //
+  // A generator body does not run until its first next(), so a query that
+  // fails before yielding a row must not fail with the status line already
+  // sent — that turns "the export failed" into a download that resets, and
+  // the operator loses the reason. The shop carried a wrapper for this until
+  // the primitive took it on; these assertions stay so a refresh that lost it
+  // fails here rather than in an operator's browser.
+  var sink3 = _slowSink();
+  async function* failsFirstPull() { throw new Error("d1: query failed before any row"); }
+  var earlyErr = null;
+  try { await b.render.stream(sink3, failsFirstPull(), { status: 200 }); }
+  catch (e) { earlyErr = e; }
+  check("render.stream: a first-pull failure reaches the caller",
+    earlyErr !== null && /before any row/.test(earlyErr.message));
+  check("render.stream: a first-pull failure writes nothing (error page still possible)",
+    (sink3._seen || []).length === 0);
+
+  // Cancellation has to reach the producer underneath the wrapper, or a client
+  // that disconnects mid-export leaves the cursor open.
+  var closed = false;
+  var inner = {
+    i: 0,
+    next: async function () { inner.i += 1; return { value: "row-" + inner.i + "\n", done: inner.i > 100 }; },
+    return: async function () { closed = true; return { done: true }; },
+  };
+  var iterable = {}; iterable[Symbol.asyncIterator] = function () { return inner; };
+  var sink4 = _slowSink();
+  var ac = new AbortController();
+  var p = b.render.stream(sink4, iterable, { status: 200, signal: ac.signal });
+  ac.abort();
+  try { await p; } catch (_e) { /* an aborted transfer is not a clean end */ }
+  check("render.stream: an abort closes the underlying iterator (cursor released)", closed === true);
+
+  // And the happy path still delivers every chunk in order.
+  var sink5 = _slowSink();
+  async function* three() { yield "x"; yield "y"; yield "z"; }
+  await b.render.stream(sink5, three(), { status: 200 });
+  check("render.stream: the happy path writes every chunk in order",
+    (sink5._seen || []).join("") === "xyz");
+}
+
+async function run() {
+  await _run();
+  await _downloadStreamDiscipline();
+}
+
+module.exports = { run: run };
