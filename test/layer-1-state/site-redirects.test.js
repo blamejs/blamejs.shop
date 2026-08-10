@@ -222,30 +222,40 @@ async function _regexMatch() {
     code: 301, match_kind: "regex", active: true,
   }), /lookahead/);
 
-  // Nested unbounded quantifier ((a+)+, (a*)*, (?:a+)+ …): catastrophic
-  // backtracking that the backref/lookaround walker doesn't catch. The pattern
-  // runs against the request path in resolveForPath, so a super-linear match
-  // is a per-request DoS; it is refused at define time.
-  // `(a|a)*` is the ambiguous-alternation arm of the same class: overlapping
-  // branches under an unbounded quantifier backtrack exponentially exactly as
-  // `(a+)+` does. The module's previous hand-rolled walker only looked for
-  // nested quantifiers and accepted it; b.guardRegex.assertSafe refuses it.
-  var redosShapes = ["(a+)+", "(a*)*$", "(?:a+)+", "(.+)+", "((ab)+)+", "(a|a)*b"];
-  for (var ri = 0; ri < redosShapes.length; ri += 1) {
-    await assert.rejects(s.sr.defineRedirect({
-      slug: "bad-redos-" + ri, source_path: redosShapes[ri], target_url: "/x",
+  // A repetition whose body can match nothing means what its body means and
+  // cannot be simulated in linear time, so it is refused by name.
+  await assert.rejects(s.sr.defineRedirect({
+    slug: "bad-nullable", source_path: "(a*)*", target_url: "/x",
+    code: 301, match_kind: "regex", active: true,
+  }), /match nothing/);
+
+  // The shapes that used to be refused as ReDoS are now ACCEPTED, because the
+  // pattern is no longer handed to a backtracking engine — it is simulated one
+  // character at a time, so `(a+)+` costs what its length costs. Screening
+  // these away was always an approximation that also turned away good
+  // patterns; running them removes the question.
+  var formerlyRefused = ["(a+)+", "(?:a+)+", "(.+)+", "((ab)+)+", "(a|a)*b"];
+  for (var ri = 0; ri < formerlyRefused.length; ri += 1) {
+    var okRedos = await s.sr.defineRedirect({
+      slug: "runs-linear-" + ri, source_path: formerlyRefused[ri], target_url: "/dest-redos-" + ri,
       code: 301, match_kind: "regex", active: true,
-    }), /nested unbounded quantifier|catastrophic-backtracking|ReDoS/);
+    });
+    check("a backtracking-shaped pattern is accepted: " + formerlyRefused[ri],
+      okRedos && okRedos.slug === "runs-linear-" + ri);
   }
 
-  // Regression guard: a LINEAR pattern MUST be accepted. Beyond the quantified
-  // non-capturing group and the optional quantified group, this covers the two
-  // shapes the screen used to refuse conservatively: an alternation under an
-  // unbounded quantifier whose branches are disjoint (`/a(?:b|c)+` — at each
-  // position exactly one branch can match, so there is nothing to backtrack
-  // into), and a nested quantifier whose repetitions a delimiter makes
-  // unambiguous (`/shop/(?:[a-z]+-)*[a-z]+` — `-` is not in `[a-z]`, so the
-  // split points are forced). Both are ordinary URL-matching shapes.
+  // …and matching one is bounded. This subject is the classic blow-up input:
+  // on a backtracking engine `(a+)+` against a long run of `a` ending in a
+  // non-match runs for the better part of a minute, which is a per-request DoS
+  // on every path that reaches the redirect table.
+  var evilSubject = "/" + "a".repeat(2000) + "!";
+  var t0 = Date.now();
+  await s.sr.resolveForPath(evilSubject);
+  var elapsed = Date.now() - t0;
+  check("resolving against a backtracking-shaped pattern stays bounded (" + elapsed + "ms)",
+    elapsed < 2000);
+
+  // Regression guard: ordinary URL-matching shapes stay accepted.
   var linearShapes = [
     "/blog(?:/page/\\d+)?", "/foo(?:bar)*", "/foo(?:bar)?", "/p/(?:\\d+)?/edit",
     "/(?:en|fr|de)/blog/.*", "/a(?:b|c)+", "/shop/(?:[a-z]+-)*[a-z]+",

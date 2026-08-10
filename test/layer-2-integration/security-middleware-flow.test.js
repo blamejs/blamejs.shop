@@ -433,8 +433,9 @@ async function _run() {
 // three ways the obvious `for await (…) res.write(chunk)` loop goes wrong.
 
 // A Writable that accepts bytes slowly and reports a full buffer, so write()
-// actually returns false — b.testing.streamingRes() always reports accepted
-// and cannot exercise this path.
+// actually returns false. b.testing.streamingRes gained a highWaterMark in
+// 0.18.19; this keeps a local double so the shop half stays checkable on its
+// own rather than through the same framework object under test.
 function _slowSink(opts) {
   opts = opts || {};
   var seen = [];
@@ -445,85 +446,102 @@ function _slowSink(opts) {
       setTimeout(cb, opts.delayMs || 1);
     },
   });
-  w.setHeader    = function (k, v) { (w._headers = w._headers || {})[k.toLowerCase()] = v; };
-  w.removeHeader = function (k) { if (w._headers) delete w._headers[k.toLowerCase()]; };
-  w.getHeader    = function (k) { return w._headers && w._headers[k.toLowerCase()]; };
   w._seen = seen;
   return w;
 }
 
-async function _streamToResponseDiscipline() {
-  var smw = bShop.securityMiddleware;
+// Every generated download in the shop — the order export, a segment's member
+// list, a receipt — writes through b.render.stream. These are the properties
+// those routes depend on, asserted here so a vendor refresh that regressed one
+// fails in this repo rather than silently corrupting an operator's export.
+async function _downloadStreamDiscipline() {
   var check = helpers.check;
 
-  // (1) Backpressure — the producer must wait rather than queue.
+  // Backpressure — the producer waits rather than queueing the whole export
+  // into the socket buffer when the client reads slowly.
   var sink = _slowSink({ highWaterMark: 16, delayMs: 1 });
-  var produced = 0;
   var maxBuffered = 0;
   async function* many() {
     for (var i = 0; i < 200; i += 1) {
-      produced += 1;
       maxBuffered = Math.max(maxBuffered, sink.writableLength);
       yield "chunk-" + i + "-payload\n";
     }
   }
-  await smw.streamToResponse(sink, many());
-  check("streamToResponse: every chunk reached the sink",
-    sink._seen.length === 200 && produced === 200);
-  // Without awaiting drain the generator runs to completion immediately and
-  // the sink's buffer holds most of the body at once.
-  check("streamToResponse: honours backpressure (buffer stayed bounded, peak " + maxBuffered + "B)",
+  await b.render.stream(sink, many());
+  check("render.stream: every chunk reached the sink", (sink._seen || []).length === 200);
+  check("render.stream: honours backpressure (peak buffered " + maxBuffered + "B)",
     maxBuffered < 400);
 
-  // (2) A mid-stream failure must not read as a clean download. Once bytes are
-  // committed the only honest signal is a broken transfer.
+  // A mid-stream failure reaches the route rather than being swallowed and the
+  // partial body closed as though it were whole. What the client sees on a real
+  // socket — an incomplete transfer, not a complete 200 — is the framework's
+  // job via requestHelpers.failAfterHeaders.
   var sink2 = _slowSink();
-  sink2.setHeader("content-disposition", 'attachment; filename="orders.csv"');
-  var destroyed = false;
-  var origDestroy = sink2.destroy.bind(sink2);
-  sink2.destroy = function () { destroyed = true; return origDestroy(); };
   async function* throwsMidway() {
     yield "order_id,total\n";
     yield "ord_1,10.00\n";
     throw new Error("d1: connection reset mid-export");
   }
   var threw = null;
-  try { await smw.streamToResponse(sink2, throwsMidway()); }
-  catch (e) { threw = e; }
-  check("streamToResponse: a committed mid-stream failure rethrows",
+  try { await b.render.stream(sink2, throwsMidway()); } catch (e) { threw = e; }
+  check("render.stream: a mid-stream failure reaches the route",
     threw !== null && /connection reset/.test(threw.message));
-  check("streamToResponse: a committed mid-stream failure destroys the response",
-    destroyed === true);
-  check("streamToResponse: it does NOT quietly end the body as a complete download",
-    sink2._seen.join("").indexOf("Internal Server Error") === -1);
+  check("render.stream: no error text is appended to the partial body",
+    (sink2._seen || []).join("").indexOf("Internal Server Error") === -1);
 
-  // (3) A failure BEFORE the first byte can still be a real error page — but
-  // the download headers must not survive onto it.
-  var sink3 = _slowSink();
-  sink3.setHeader("content-type", "text/csv; charset=utf-8");
-  sink3.setHeader("content-disposition", 'attachment; filename="orders.csv"');
-  // Still an async generator without a reachable yield — it throws on the
-  // first pull, which is the "query failed before any row" case.
-  async function* throwsFirst() { throw new Error("d1: query failed"); }
-  var threw3 = null;
-  try { await smw.streamToResponse(sink3, throwsFirst()); }
-  catch (e) { threw3 = e; }
-  check("streamToResponse: a pre-commit failure rethrows", threw3 !== null);
-  check("streamToResponse: a pre-commit failure drops the attachment headers",
-    sink3.getHeader("content-disposition") === undefined &&
-    sink3.getHeader("content-type") === undefined);
-
-  // (4) The buffering fallback the plain-object test doubles rely on.
-  var plain = { _body: null, end: function (b) { plain._body = b; } };
+  // The plain write/end doubles several route tests pass must still work — the
+  // routes no longer carry a buffering fallback of their own.
+  var plain = { _body: "", write: function (c) { plain._body += c; return true; },
+                end: function (c) { if (c) plain._body += c; } };
   async function* two() { yield "a"; yield "b"; }
-  await smw.streamToResponse(plain, two());
-  check("streamToResponse: a response with no write() buffers instead",
-    plain._body === "ab");
+  await b.render.stream(plain, two());
+  check("render.stream: works against a plain write/end double", plain._body === "ab");
+
+  // ---- streamDownload: the first pull happens before the response commits --
+  //
+  // A generator body does not run until its first next(), so a query that
+  // fails before yielding a row would otherwise fail with the status line
+  // already sent — the operator gets a download that resets instead of a page
+  // saying what went wrong. The routes go through streamDownload for this.
+  var smw = bShop.securityMiddleware;
+
+  var sink3 = _slowSink();
+  async function* failsFirstPull() { throw new Error("d1: query failed before any row"); }
+  var earlyErr = null;
+  try { await smw.streamDownload(sink3, failsFirstPull(), { status: 200 }); }
+  catch (e) { earlyErr = e; }
+  check("streamDownload: a first-pull failure reaches the caller",
+    earlyErr !== null && /before any row/.test(earlyErr.message));
+  check("streamDownload: a first-pull failure writes nothing (error page still possible)",
+    (sink3._seen || []).length === 0);
+
+  // Cancellation has to reach the producer underneath the wrapper, or a client
+  // that disconnects mid-export leaves the cursor open.
+  var closed = false;
+  var inner = {
+    i: 0,
+    next: async function () { inner.i += 1; return { value: "row-" + inner.i + "\n", done: inner.i > 100 }; },
+    return: async function () { closed = true; return { done: true }; },
+  };
+  var iterable = {}; iterable[Symbol.asyncIterator] = function () { return inner; };
+  var sink4 = _slowSink();
+  var ac = new AbortController();
+  var p = smw.streamDownload(sink4, iterable, { status: 200, signal: ac.signal });
+  ac.abort();
+  try { await p; } catch (_e) { /* an aborted transfer is not a clean end */ }
+  check("streamDownload: an abort closes the underlying iterator (cursor released)", closed === true);
+
+  // And the happy path still delivers every chunk in order.
+  var sink5 = _slowSink();
+  async function* three() { yield "x"; yield "y"; yield "z"; }
+  await smw.streamDownload(sink5, three(), { status: 200 });
+  check("streamDownload: the happy path writes every chunk in order",
+    (sink5._seen || []).join("") === "xyz");
 }
 
 async function run() {
   await _run();
-  await _streamToResponseDiscipline();
+  await _downloadStreamDiscipline();
 }
 
 module.exports = { run: run };
