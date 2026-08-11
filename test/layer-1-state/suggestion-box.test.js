@@ -157,7 +157,7 @@ async function _submitSuggestionShape() {
   // Control bytes refused in title.
   await assert.rejects(f.sb.submitSuggestion({
     title: "bad\x00title", body: "ok", category: "general",
-  }), /control bytes/);
+  }), /control character|null byte/);
   // Oversized title refused.
   var longTitle = new Array(suggestionBox.MAX_TITLE_LEN + 2).join("x");
   await assert.rejects(f.sb.submitSuggestion({

@@ -711,7 +711,7 @@ async function _validationRefusals() {
   await assert.rejects(ctx.pr.unenrollPayment({
     payment_intent_id: _uuid(),
     reason:            "bad\x00reason",
-  }), /control \/ zero-width bytes/);
+  }), /null byte/);
 
   // tickRetries requires a numeric `now`.
   await assert.rejects(ctx.pr.tickRetries({ now: "later" }), /must be a positive integer/);

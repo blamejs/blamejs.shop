@@ -279,6 +279,23 @@ node -e "
   an unmoderated reply can ever surface publicly. Author identity is the
   customer id (verified against the customers primitive) or a hash-only
   email — the raw address is never persisted.
+- **Text one person writes and another reads is screened for invisible
+  characters.** A Unicode bidirectional override reverses the display
+  order of everything after it while itself rendering as nothing, so
+  stored text can be made to read on screen as something other than what
+  it says — the Trojan Source trick, aimed at a reader rather than a
+  compiler. Every field carrying free text from one party to another —
+  review title and body, order-rating comment and operator reply, product
+  question, customer note, support ticket, suggestion, knowledge-base
+  article, gift message — refuses the overrides, the null byte and the C0
+  control characters. Fields rendered on a single line additionally refuse
+  tabs, line breaks and the two line separators, so a value cannot break
+  out of the row it is displayed in. Fields that are not free-form prose
+  also refuse the zero-width and invisible-formatting characters; the
+  prose fields deliberately do not, because the joiner that holds an
+  emoji sequence together belongs to that class. A link URL inside a
+  campaign email is screened the same way, since the plain-text part of a
+  message prints it for the recipient to read.
 - **Gift-card codes are bearer secrets, stored hash-only.** A gift
   card's plaintext code is shown exactly once at issuance and never
   persisted — only its `namespaceHash` digest plus a 4-character hint

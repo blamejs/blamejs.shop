@@ -204,7 +204,7 @@ async function _recordRefusals() {
   await assert.rejects(ctx.log.record({
     actor_type: "operator", actor_id: "x", action: "a",
     resource_kind: "r", resource_id: "rid", ip_hash: "bad\x00byte",
-  }), /ip_hash contains control/);
+  }), /ip_hash contains a null byte/);
 
   // Non-JSON-serializable before (BigInt).
   await assert.rejects(ctx.log.record({

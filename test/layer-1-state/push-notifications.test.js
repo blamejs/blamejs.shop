@@ -402,7 +402,7 @@ async function _enqueueGates() {
     channel:               "alert",
     title:                 "Alert",
     body:                  "Hello\x07World",
-  }), /control bytes/);
+  }), /control character/);
 
   // Title length cap.
   await assert.rejects(ctx.push.enqueueNotification({

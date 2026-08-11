@@ -118,7 +118,7 @@ async function _addNoteHappyAndRefusals() {
   }), /customer_id/);
   await assert.rejects(ctx.notes.addNote({
     customer_id: "bad\x01id", author: "operator", body: "ok",
-  }), /control bytes/);
+  }), /control character/);
 
   // bad author enum
   await assert.rejects(ctx.notes.addNote({
@@ -142,10 +142,19 @@ async function _addNoteHappyAndRefusals() {
   await assert.rejects(ctx.notes.addNote({
     customer_id: "c1", author: "operator", body: "x".repeat(8001),
   }), /body/);
-  // control bytes refused in body
+  // control bytes refused in body — a NUL is named as a null byte
   await assert.rejects(ctx.notes.addNote({
     customer_id: "c1", author: "operator", body: "bad\x00body",
-  }), /control bytes/);
+  }), /null byte/);
+  // ...and a non-NUL C0 control as a control character
+  await assert.rejects(ctx.notes.addNote({
+    customer_id: "c1", author: "operator", body: "bad\x07body",
+  }), /control character/);
+  // a bidi override is refused too — it reorders how the note displays
+  await assert.rejects(ctx.notes.addNote({
+    customer_id: "c1", author: "operator",
+    body: "paid" + String.fromCharCode(0x202E) + "dnufer",
+  }), /bidi override/);
   // zero-width refused
   await assert.rejects(ctx.notes.addNote({
     customer_id: "c1", author: "operator",

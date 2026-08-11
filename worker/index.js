@@ -1191,22 +1191,20 @@ function _hasSessionCookie(request) {
 // container's actual resolution agree on which tag wins.
 function _edgeAcceptLanguageTags(header) {
   if (typeof header !== "string" || !header.length || header.length > 4096) return [];
-  return header.split(",")
-    .map(function (part, i) {
-      var seg = part.trim();
-      if (!seg) return null;
-      var semi = seg.indexOf(";");
-      var tag = (semi === -1 ? seg : seg.slice(0, semi)).trim().toLowerCase();
-      if (!tag || tag === "*") return null;
-      var q = 1;
-      if (semi !== -1) {
-        var m = /q=([0-9.]+)/.exec(seg.slice(semi + 1));
-        if (m) { var n = parseFloat(m[1]); if (isFinite(n) && n >= 0 && n <= 1) q = n; }
-      }
-      return { tag: tag, q: q, order: i };
-    })
-    .filter(Boolean)
-    .sort(function (a, b) { return a.q !== b.q ? b.q - a.q : a.order - b.order; });
+  // b.requestHelpers.parseQualityList is the RFC 9110 §12.5 parser, and the
+  // container resolver reads the same header through it — which is what makes
+  // "the edge and the container agree on which tag wins" true rather than
+  // aspirational. Two copies of this loop had already drifted apart.
+  //
+  // It also settles two things the copies got wrong. `q=0` is an explicit
+  // "not acceptable", so a tag carrying it is dropped rather than ranked last
+  // — the old lists kept it and could serve a locale the visitor had ruled
+  // out. And the `q` parameter name is case-insensitive: a header spelling it
+  // `Q=0.9` was read as having no q at all here, so it ranked as 1 and won,
+  // while the container read it correctly and chose differently.
+  return b.requestHelpers.parseQualityList(header)
+    .filter(function (e) { return e.value !== "*" && e.q > 0; })
+    .map(function (e) { return { tag: e.value, q: e.q }; });
 }
 
 // True when a first-time visitor (no cookie, no `?lang=`) sends an
@@ -1658,7 +1656,22 @@ async function _edgeHome(request, env, _url, version, shopName) {
 var SEARCH_MAX_FACET_KEYS    = 32;
 var SEARCH_MAX_FACET_VALUES  = 64;
 var SEARCH_MAX_VALUE_LEN     = 256;
-var SEARCH_CONTROL_BYTE_RE   = /[\x00-\x1f\x7f]/;
+// The codepoints a facet VALUE may not carry. The container screens the same
+// parameter through lib/text-guard.js `hasCodepointThreat(v, { singleLine })`,
+// which this must match exactly: a value one substrate keeps and the other
+// drops means the same URL paints different filter chrome depending on whether
+// the page came off the edge cache. text-guard is CommonJS and cannot be
+// imported here, so both sides compose b.codepointClass instead, and
+// search-faceting-parity compares the two accept/reject sets codepoint by
+// codepoint rather than trusting them to be spelled alike.
+//
+// C0 + DEL + the two line separators, built from the catalog's compiler, then
+// the catalog's own bidi class — a right-to-left override inside a facet chip
+// reorders how the active filter reads.
+var SEARCH_CONTROL_BYTE_RE   = new RegExp(
+  "[" + b.codepointClass.charClass([[0x0000, 0x001F], 0x007F, [0x2028, 0x2029]]) + "]" +
+  "|" + b.codepointClass.BIDI_RE.source
+);
 
 // The fixed search page size — mirrors lib/storefront.js SEARCH_PAGE_SIZE
 // so the edge and container page the result grid identically.

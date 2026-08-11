@@ -564,15 +564,21 @@ async function _membersCsvExport() {
   check("export: neutralizes the formula-injection name", body.indexOf("\"\t=cmd()") !== -1);
   check("export: no raw leading-= cell", body.indexOf(",\"=cmd()") === -1);
 
-  // Unit-level injection neutralizer — now the shared vendored primitive,
-  // which prefixes a leading TAB for ANY formula-trigger char (= + - @ plus
-  // the tab / CR / LF / pipe / full-width variants an `= + - @`-only check
-  // missed). Signed numerics are prefixed too (the safe OWASP posture).
-  check("neutralize: leading = escaped",  customerSegments._neutralizeInjection("=SUM(A1)") === "\t=SUM(A1)");
-  check("neutralize: leading @ escaped",  customerSegments._neutralizeInjection("@foo") === "\t@foo");
-  check("neutralize: leading pipe escaped", customerSegments._neutralizeInjection("|calc") === "\t|calc");
-  check("neutralize: signed number escaped", customerSegments._neutralizeInjection("-3.50") === "\t-3.50");
-  check("neutralize: plain text passes",  customerSegments._neutralizeInjection("Bob") === "Bob");
+  // Injection neutralization, asserted on the emitted row rather than a
+  // helper — a spreadsheet reads the bytes, so that is where it has to hold.
+  // A leading TAB is prefixed for any formula-trigger character (= + - @, plus
+  // the tab / CR / LF / pipe variants an `= + - @`-only check misses), signed
+  // numerics included: exempting things that look like amounts is the gap
+  // `-2+3+cmd|…` walks through.
+  function segCell(v) {
+    return customerSegments._csvRow([v]).replace(/\r\n$/, "").replace(/^"/, "").replace(/"$/, "");
+  }
+  check("row escapes a leading =",        segCell("=SUM(A1)") === "\t=SUM(A1)");
+  check("row escapes a leading @",        segCell("@foo") === "\t@foo");
+  check("row escapes a leading pipe",     segCell("|calc") === "\t|calc");
+  check("row escapes a signed number",    segCell("-3.50") === "\t-3.50");
+  check("row leaves plain text alone",    segCell("Bob") === "Bob");
+  check("row is CRLF-terminated",         customerSegments._csvRow(["a"]).slice(-2) === "\r\n");
 
   // Batched streaming — with a tiny seed set the stream still yields the
   // prelude chunk + at least one data chunk (more than one chunk total),

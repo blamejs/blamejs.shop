@@ -140,48 +140,52 @@ async function _csvBasics() {
 async function _rfc4180Quoting() {
   var q  = _makeQuery();
   var ex = orderExport.create({ query: q });
-  // Probe the cell helper directly — the projection of stored rows
-  // doesn't naturally surface a comma-and-quote payload, so a
-  // direct-API call is the cleaner gate.
-  var weird = ex._csvCell('hello, "world"');
-  check("_csvCell wraps the cell in double quotes",
-    weird.charAt(0) === '"' && weird.charAt(weird.length - 1) === '"');
-  check("_csvCell doubles embedded double-quotes",
-    weird.indexOf('""world""') !== -1);
-  check("_csvCell preserves embedded comma",
-    weird.indexOf('hello,') !== -1);
+  // Probe the row builder directly — the projection of stored rows doesn't
+  // naturally surface a comma-and-quote payload, so a direct-API call is the
+  // cleaner gate. Asserting the ROW rather than a single cell also covers the
+  // delimiter and the line ending, which is the whole of what the format owes
+  // a downstream parser.
+  var row = ex._csvRow(['hello, "world"', "second"]);
+  check("csv row quotes every cell",
+    row.charAt(0) === '"' && row.indexOf('","') !== -1);
+  check("csv row doubles embedded double-quotes",
+    row.indexOf('""world""') !== -1);
+  check("csv row preserves an embedded comma inside the quotes",
+    row.indexOf('hello,') !== -1);
+  check("csv row is CRLF-terminated",
+    row.slice(-2) === "\r\n");
+  check("csv row separates cells with a comma",
+    row.replace(/\r\n$/, "").split('","').length === 2);
 }
 
 async function _csvInjectionRefusal() {
   var q  = _makeQuery();
   var ex = orderExport.create({ query: q });
-  // Classic OWASP CSV-injection vectors — neutralized via the shared
-  // b.guardCsv.escapeCell (prefix-tab posture). A leading TAB makes a
-  // spreadsheet treat the cell as text; it renders as invisible whitespace.
-  var attack = ex._neutralizeInjection("=cmd|' /C calc'!A0");
-  check("_neutralizeInjection prefixes `=` cell with a tab",
-    attack.charAt(0) === "\t" && attack.charAt(1) === "=");
-  check("_neutralizeInjection prefixes `+SUM(...)`",
-    ex._neutralizeInjection("+SUM(A1:A9)").charAt(0) === "\t");
-  check("_neutralizeInjection prefixes `-2+3+cmd`",
-    ex._neutralizeInjection("-2+3+cmd|' /C calc'").charAt(0) === "\t");
-  check("_neutralizeInjection prefixes `@SUM`",
-    ex._neutralizeInjection("@SUM(A1)").charAt(0) === "\t");
-  // The vectors the prior `= + - @`-only check missed — leading tab / CR /
-  // LF / pipe — are now neutralized by the shared primitive.
-  check("_neutralizeInjection prefixes leading pipe",
-    ex._neutralizeInjection("|calc").charAt(0) === "\t");
-  check("_neutralizeInjection prefixes leading CR",
-    ex._neutralizeInjection("\r=evil").charAt(0) === "\t");
-  // Signed numerics are now prefixed too (the safe OWASP posture; the prior
-  // numeric-sign exemption was the weakening this consolidation removes).
-  check("_neutralizeInjection prefixes `+15.00`",
-    ex._neutralizeInjection("+15.00") === "\t+15.00");
-  check("_neutralizeInjection prefixes `-3.5`",
-    ex._neutralizeInjection("-3.5") === "\t-3.5");
-  // Anything benign passes unmodified.
-  check("_neutralizeInjection lets benign text through",
-    ex._neutralizeInjection("Alice Smith") === "Alice Smith");
+  // Classic OWASP CSV-injection vectors, asserted on the row that actually
+  // ships rather than on a helper — a spreadsheet reads the emitted bytes, so
+  // that is where neutralization has to hold. A leading TAB makes the cell
+  // text; it renders as invisible whitespace.
+  //
+  // Each cell arrives quoted, so a neutralized one opens `"\t` and the
+  // metacharacter follows.
+  function cell(v) {
+    var row = ex._csvRow([v]);
+    return row.replace(/\r\n$/, "").replace(/^"/, "").replace(/"$/, "");
+  }
+  check("row escapes a leading `=`",              cell("=cmd|' /C calc'!A0").indexOf("\t=") === 0);
+  check("row escapes a leading `+`",              cell("+SUM(A1:A9)").charAt(0) === "\t");
+  check("row escapes `-2+3+cmd`",                 cell("-2+3+cmd|' /C calc'").charAt(0) === "\t");
+  check("row escapes a leading `@`",              cell("@SUM(A1)").charAt(0) === "\t");
+  // Vectors an `= + - @`-only check misses — leading pipe, CR, tab.
+  check("row escapes a leading pipe",             cell("|calc").charAt(0) === "\t");
+  check("row escapes a leading CR",               cell("\r=evil").charAt(0) === "\t");
+  // Signed numerics are escaped too. That is the safe OWASP posture: an
+  // exemption for things that look like amounts is exactly the gap
+  // `-2+3+cmd|…` walks through.
+  check("row escapes `+15.00`",                   cell("+15.00") === "\t+15.00");
+  check("row escapes `-3.5`",                     cell("-3.5") === "\t-3.5");
+  // Anything benign passes through unmodified.
+  check("row leaves benign text alone",           cell("Alice Smith") === "Alice Smith");
 }
 
 async function _columnsFilter() {

@@ -141,7 +141,7 @@ async function _issueRefusals() {
   await assert.rejects(ctx.apiKeys.issueKey(_validIssue({ owner_type: 123 })),    /owner_type/);
   await assert.rejects(ctx.apiKeys.issueKey(_validIssue({ name: "" })),           /name/);
   await assert.rejects(ctx.apiKeys.issueKey(_validIssue({ name: "   " })),        /name/);
-  await assert.rejects(ctx.apiKeys.issueKey(_validIssue({ name: "x\x00y" })),     /control/);
+  await assert.rejects(ctx.apiKeys.issueKey(_validIssue({ name: "x\x00y" })),     /null byte/);
   await assert.rejects(ctx.apiKeys.issueKey(_validIssue({ name: "x​y" })),   /zero-width/);
   await assert.rejects(ctx.apiKeys.issueKey(_validIssue({ scopes: [] })),         /at least one/);
   await assert.rejects(ctx.apiKeys.issueKey(_validIssue({ scopes: "admin:read" })), /array/);
@@ -197,7 +197,7 @@ async function _verifyHappyAndRefusals() {
   await assert.rejects(ctx.apiKeys.revoke(_validUUID(), "x"),      /not found/);
   // Reason validation.
   await assert.rejects(ctx.apiKeys.revoke(issued.key_id, ""),      /non-empty/);
-  await assert.rejects(ctx.apiKeys.revoke(issued.key_id, "x\x00y"), /control/);
+  await assert.rejects(ctx.apiKeys.revoke(issued.key_id, "x\x00y"), /null byte/);
 
   // Expired by expires_at - verify refuses even though status is still active.
   var soonExpiry = Date.now() - 1000;
@@ -347,7 +347,7 @@ async function _recordUseAndUsageLog() {
   await assert.rejects(ctx.apiKeys.recordUse(),                                       /input object required/);
   await assert.rejects(ctx.apiKeys.recordUse({ key_id: _validUUID(), endpoint: "/x" }), /not found/);
   await assert.rejects(ctx.apiKeys.recordUse({ key_id: issued.key_id, endpoint: "" }), /endpoint/);
-  await assert.rejects(ctx.apiKeys.recordUse({ key_id: issued.key_id, endpoint: "x\x00y" }), /control/);
+  await assert.rejects(ctx.apiKeys.recordUse({ key_id: issued.key_id, endpoint: "x\x00y" }), /null byte/);
   await assert.rejects(ctx.apiKeys.recordUse({ key_id: "not-a-uuid", endpoint: "/x" }), /key_id/);
   await assert.rejects(ctx.apiKeys.recordUse({ key_id: issued.key_id, endpoint: "/x", occurred_at: -1 }), /occurred_at/);
   await assert.rejects(ctx.apiKeys.usageForKey({ key_id: issued.key_id, from: 100, to: 50 }), /from must be <= to/);

@@ -167,7 +167,7 @@ async function _submitRefusals() {
   // Comment control byte refused.
   await assert.rejects(
     f.rate.submitRating(Object.assign({}, base, { comment: "badbyte" })),
-    /comment must not contain control bytes/,
+    /comment contains a C0 control character/,
   );
   // Comment too long refused.
   var longStr = new Array(orderRatings.MAX_COMMENT_LEN + 2).join("x");

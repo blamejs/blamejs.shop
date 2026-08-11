@@ -251,6 +251,55 @@ async function _restApiErrorEnvelope() {
   check("REST error envelope throws", threw);
 }
 
+// undici does not put the network code on the error it throws. A transport
+// failure arrives as TypeError("fetch failed") with the real code nested on
+// `.cause`, and the two codes that matter most here — transient DNS, and a
+// socket torn down mid-request — are outside the framework's default
+// retryable set. A classifier that reads only the top level would leave the
+// retry loop in place while quietly never firing it.
+async function _causeNestedTransportRetries() {
+  var codes = ["UND_ERR_SOCKET", "EAI_AGAIN", "ECONNRESET"];
+  for (var i = 0; i < codes.length; i += 1) {
+    var calls = 0;
+    var code  = codes[i];
+    var fetchImpl = async function (_url, _init) {
+      calls += 1;
+      if (calls === 1) {
+        // Exactly the shape undici raises: the code is NOT on the error.
+        var e = new TypeError("fetch failed");
+        e.cause = { code: code };
+        throw e;
+      }
+      return {
+        ok: true, status: 200,
+        json: async function () { return { ok: true, rows: [{ n: calls }], rowCount: 1 }; },
+      };
+    };
+    var d1 = d1factory.create({
+      mode: "service-binding", bridgeUrl: "http://bridge.local", bridgeSecret: "s", fetch: fetchImpl,
+    });
+    var client = await d1.connect();
+    var r = await d1.query(client, "SELECT 1 AS n", []);
+    check("a cause-nested " + code + " is retried", calls === 2 && r.rows[0].n === 2);
+  }
+
+  // And the counterpart: a nested code that is NOT transient must not be
+  // retried, or a genuine bug gets hidden behind repeated attempts.
+  var tries = 0;
+  var permanent = async function () {
+    tries += 1;
+    var e = new TypeError("fetch failed");
+    e.cause = { code: "CERT_HAS_EXPIRED" };
+    throw e;
+  };
+  var d1b = d1factory.create({
+    mode: "service-binding", bridgeUrl: "http://bridge.local", bridgeSecret: "s", fetch: permanent,
+  });
+  var clientB = await d1b.connect();
+  await assert.rejects(d1b.query(clientB, "SELECT 1", []), /fetch failed/);
+  check("a non-transient nested code is not retried", tries === 1);
+}
+
 async function _timeoutSurfacesAsCode() {
   // A fetch that never resolves — the deadline signal fires and the adapter
   // converts that to a D1_TIMEOUT error.
@@ -339,6 +388,7 @@ async function run() {
   await _serviceBindingTransientNetworkRetries();
   await _restApiShape();
   await _restApiErrorEnvelope();
+  await _causeNestedTransportRetries();
   await _timeoutSurfacesAsCode();
   await _noTimerLeftBehind();
 }

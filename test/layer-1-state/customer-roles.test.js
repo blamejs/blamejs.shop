@@ -559,7 +559,7 @@ async function _factoryAndInputValidation() {
   // control byte in title
   await assert.rejects(ctx.roles.defineRole({
     slug: "ok", title: "bad\x01title", capabilities: ["can_view_orders"],
-  }), /control bytes/);
+  }), /control character/);
 
   // ---- assignRole refusal classes ----
   await ctx.roles.defineRole({

@@ -806,7 +806,49 @@ async function _emailFactoryComposition() {
   check("inner mailer received send via ._mailer", inner.sent.length === 1);
 }
 
+// A markdown link's URL is shown to the recipient verbatim in the plain-text
+// part, so a bidi override inside it displays a host the link does not go to
+// — the Trojan Source spoof, aimed at the reader rather than a compiler. The
+// screen refuses the link (the body keeps the anchor text, drops the URL).
+function _linkUrlCodepointScreen() {
+  var cc  = require("../../lib/vendor/blamejs/lib/codepoint-class");
+  var RLO = cc.fromCp(0x202E);
+  var PDF = cc.fromCp(0x202C);
+
+  var spoof = "[Click here](https://evil.example/" + RLO + "gro.knab-doog" + PDF + ")";
+  var out   = bShop.emailCampaigns.renderBodyText(spoof);
+  check("bidi override in a link URL drops the link",
+    out.indexOf("evil.example") === -1 && out.indexOf(RLO) === -1);
+  check("the anchor text survives the dropped link", out.indexOf("Click here") !== -1);
+
+  // Every invisible class the screen covers, one per group.
+  [
+    [0x200B, "zero-width space"],
+    [0x2060, "word joiner"],
+    [0x2062, "invisible times"],
+    [0x00AD, "soft hyphen"],
+    [0x061C, "arabic letter mark"],
+    [0x2066, "left-to-right isolate"],
+    [0x2028, "line separator"],
+  ].forEach(function (pair) {
+    var body = "[t](https://evil.example/" + cc.fromCp(pair[0]) + "x)";
+    check("link URL carrying " + pair[1] + " is dropped",
+      bShop.emailCampaigns.renderBodyText(body).indexOf("evil.example") === -1);
+  });
+
+  // The screen must not eat ordinary links.
+  [
+    "https://example.com/a?b=1&c=2",
+    "/account/orders",
+    "https://example.com/caf%C3%A9",
+  ].forEach(function (url) {
+    check("ordinary link survives: " + url,
+      bShop.emailCampaigns.renderBodyText("[t](" + url + ")").indexOf(url) !== -1);
+  });
+}
+
 async function run() {
+  _linkUrlCodepointScreen();
   await _defineHappyPath();
   await _scheduleAndDispatchTick();
   await _recipientResolutionPagination();

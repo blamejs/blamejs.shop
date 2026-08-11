@@ -106,6 +106,38 @@ function _freeText() {
   check("freeText refuses mixed-script under policy", _throws(function () { textGuard.freeText(CONFUSABLE, "n", { mixedScript: "reject" }); }));
   check("freeText mixed-script allowedScripts clears", textGuard.freeText(CONFUSABLE, "n", { mixedScript: "reject", allowedScripts: ["latin", "cyrillic"] }) === CONFUSABLE);
   check("freeText refuses non-string", _throws(function () { textGuard.freeText(42, "n"); }));
+
+  // The two groups the shop refuses that the framework catalog does not carry.
+  // U+007F rides the control check; U+2061-2064 ride the zero-width policy.
+  var cc = require("../../lib/vendor/blamejs/lib/codepoint-class");
+  check("freeText refuses U+007F DELETE as a control char",
+    _throws(function () { textGuard.freeText("a" + cc.fromCp(0x007F) + "b", "n"); }));
+  [0x2061, 0x2062, 0x2063, 0x2064].forEach(function (cp) {
+    var hex = "U+" + cp.toString(16).toUpperCase();
+    var s = "a" + cc.fromCp(cp) + "b";
+    check("freeText refuses " + hex + " under the zero-width policy",
+      _throws(function () { textGuard.freeText(s, "n", { zeroWidth: "reject" }); }));
+    check("freeText allows " + hex + " with zero-width off",
+      textGuard.freeText(s, "n") === s);
+  });
+
+  // Drift guard: the supplement above exists ONLY because the framework
+  // catalog lacks these codepoints (requested upstream as blamejs#580). If a
+  // vendor refresh adds them, this fails — delete DEL_RE / INVISIBLE_OP_RE
+  // from lib/text-guard.js and these assertions with it, rather than carrying
+  // a second copy of a table the catalog now owns.
+  check("U+007F is still absent from the framework C0 catalog",
+    cc.C0_CTRL_RE.test(cc.fromCp(0x007F)) === false);
+  check("U+2061-2064 are still absent from the framework zero-width catalog",
+    [0x2061, 0x2062, 0x2063, 0x2064].every(function (cp) {
+      return cc.ZERO_WIDTH_RE.test(cc.fromCp(cp)) === false;
+    }));
+  // The inverse direction: adopting the catalog TIGHTENED the zero-width set
+  // by U+00AD, which the per-module copies this replaced did not refuse.
+  check("freeText refuses U+00AD SOFT HYPHEN under the zero-width policy",
+    _throws(function () {
+      textGuard.freeText("soft" + cc.fromCp(0x00AD) + "hyphen", "n", { zeroWidth: "reject" });
+    }));
 }
 
 function _reExports() {

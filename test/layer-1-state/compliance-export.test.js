@@ -697,6 +697,26 @@ async function _statutoryDeadline() {
     complianceExport.DSR_RESPONSE_WINDOW.ccpa.days === 45 &&
     complianceExport.DSR_RESPONSE_WINDOW.lgpd.days === 15 &&
     complianceExport.DSR_RESPONSE_WINDOW.other === null);
+
+  // The framework carries the same statutory clocks in b.dsr. This registry
+  // deliberately does NOT read them: each entry pairs the deadline with the
+  // statute it comes from, and that citation is operator-facing text the
+  // framework does not supply — sourcing the number remotely while keeping the
+  // citation here is how the two silently come to disagree. The jurisdiction
+  // keys differ too (this table's `lgpd` is persisted in a CHECK constraint;
+  // the framework says `lgpd-br`).
+  //
+  // What is worth catching is DIVERGENCE. If upstream revises a window, this
+  // fails and someone decides whether the citation beside it still holds,
+  // rather than the two drifting apart unnoticed.
+  var b = require("../../lib/vendor/blamejs");
+  var FRAMEWORK_KEY = { gdpr: "gdpr", ccpa: "ccpa", lgpd: "lgpd-br" };
+  Object.keys(FRAMEWORK_KEY).forEach(function (ours) {
+    var mine  = complianceExport.DSR_RESPONSE_WINDOW[ours].days;
+    var their = b.dsr.POSTURE_DEADLINE_MS[FRAMEWORK_KEY[ours]] / _DAY_MS;
+    check("statutory window for " + ours + " agrees with the framework (" + mine + "d)",
+      mine === their);
+  });
 }
 
 async function run() {

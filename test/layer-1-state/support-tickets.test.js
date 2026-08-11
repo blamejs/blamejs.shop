@@ -176,7 +176,7 @@ async function _openRefusalClasses() {
   // control byte in body
   await assert.rejects(ctx.tickets.open({
     customer_email: "x@example.com", subject: "s", body: "bad\x00body", category: "other",
-  }), /control bytes/);
+  }), /null byte/);
   // zero-width in body — built via String.fromCharCode so the source
   // file stays free of irregular-whitespace ESLint hits.
   await assert.rejects(ctx.tickets.open({

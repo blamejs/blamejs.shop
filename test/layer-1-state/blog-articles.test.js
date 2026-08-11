@@ -615,11 +615,11 @@ async function _validationSurface() {
   // title with CR/LF refused.
   await assert.rejects(ctx.blog.createDraft({
     slug: "ok", title: "Line1\nLine2", body: "B", author_id: "ed",
-  }), /title contains control bytes/);
+  }), /title contains a line break or tab/);
   // body with control bytes refused (LF is fine; \x00 is not).
   await assert.rejects(ctx.blog.createDraft({
     slug: "ok", title: "T", body: "Body with \x00 null", author_id: "ed",
-  }), /body contains control bytes/);
+  }), /body contains a null byte/);
 
   // get / getPublished
   await assert.rejects(ctx.blog.get(undefined),                                      /slug/);
