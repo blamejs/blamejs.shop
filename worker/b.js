@@ -45,6 +45,12 @@ import bRedact     from "../lib/vendor/blamejs/lib/redact.js";
 import bCookies    from "../lib/vendor/blamejs/lib/cookies.js";
 import bConstants  from "../lib/vendor/blamejs/lib/constants.js";
 import bValidateOpts from "../lib/vendor/blamejs/lib/validate-opts.js";
+// requestHelpers: header parsing only on this substrate. Its top-level
+// imports are pure (constants, structured-fields, pick, codepoint-class);
+// the ssrf-guard and guard-regex it can reach are lazyRequire'd behind
+// functions the edge never calls, so nothing pulls node:net / node:dns at
+// module init — held to that by the worker-b-loadable smoke.
+import bRequestHelpers from "../lib/vendor/blamejs/lib/request-helpers.js";
 // webhook: inbound Stripe-signature verification only. The module's
 // outbound HTTP client + delivery dispatcher are lazyRequire'd (send
 // path), so this import loads no node:net / node:tls / node:http at
@@ -64,6 +70,7 @@ var b = {
   cookies:    bCookies,
   constants:  bConstants,
   validateOpts: bValidateOpts,
+  requestHelpers: bRequestHelpers,
   webhook:    bWebhook,
 };
 

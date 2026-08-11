@@ -1191,22 +1191,20 @@ function _hasSessionCookie(request) {
 // container's actual resolution agree on which tag wins.
 function _edgeAcceptLanguageTags(header) {
   if (typeof header !== "string" || !header.length || header.length > 4096) return [];
-  return header.split(",")
-    .map(function (part, i) {
-      var seg = part.trim();
-      if (!seg) return null;
-      var semi = seg.indexOf(";");
-      var tag = (semi === -1 ? seg : seg.slice(0, semi)).trim().toLowerCase();
-      if (!tag || tag === "*") return null;
-      var q = 1;
-      if (semi !== -1) {
-        var m = /q=([0-9.]+)/.exec(seg.slice(semi + 1));
-        if (m) { var n = parseFloat(m[1]); if (isFinite(n) && n >= 0 && n <= 1) q = n; }
-      }
-      return { tag: tag, q: q, order: i };
-    })
-    .filter(Boolean)
-    .sort(function (a, b) { return a.q !== b.q ? b.q - a.q : a.order - b.order; });
+  // b.requestHelpers.parseQualityList is the RFC 9110 §12.5 parser, and the
+  // container resolver reads the same header through it — which is what makes
+  // "the edge and the container agree on which tag wins" true rather than
+  // aspirational. Two copies of this loop had already drifted apart.
+  //
+  // It also settles two things the copies got wrong. `q=0` is an explicit
+  // "not acceptable", so a tag carrying it is dropped rather than ranked last
+  // — the old lists kept it and could serve a locale the visitor had ruled
+  // out. And the `q` parameter name is case-insensitive: a header spelling it
+  // `Q=0.9` was read as having no q at all here, so it ranked as 1 and won,
+  // while the container read it correctly and chose differently.
+  return b.requestHelpers.parseQualityList(header)
+    .filter(function (e) { return e.value !== "*" && e.q > 0; })
+    .map(function (e) { return { tag: e.value, q: e.q }; });
 }
 
 // True when a first-time visitor (no cookie, no `?lang=`) sends an
