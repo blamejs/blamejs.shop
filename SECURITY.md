@@ -288,7 +288,13 @@ node -e "
   review title and body, order-rating comment and operator reply, product
   question, customer note, support ticket, suggestion, knowledge-base
   article, gift message — refuses the overrides, the null byte and the C0
-  control characters. Fields rendered on a single line additionally refuse
+  control characters. The direction MARKS (U+200E, U+200F, U+061C) are
+  deliberately permitted in prose: they carry no text and only resolve the
+  direction of neighbouring characters, which is how a Latin house number
+  inside an Arabic street name is written, and refusing them turns away
+  right-to-left addresses and names. A value that is machine-plain rather
+  than prose — a URL, a slug, an identifier — refuses the marks as well.
+  Fields rendered on a single line additionally refuse
   tabs, line breaks and the two line separators, so a value cannot break
   out of the row it is displayed in. Fields that are not free-form prose
   also refuse the zero-width and invisible-formatting characters; the

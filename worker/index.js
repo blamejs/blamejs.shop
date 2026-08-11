@@ -1665,9 +1665,15 @@ var SEARCH_MAX_VALUE_LEN     = 256;
 // search-faceting-parity compares the two accept/reject sets codepoint by
 // codepoint rather than trusting them to be spelled alike.
 //
-// C0 + DEL + the two line separators, built from the catalog's compiler, then
-// the catalog's own bidi class — a right-to-left override inside a facet chip
-// reorders how the active filter reads.
+// C0 + DEL + the two line separators, then the catalog's bidi class — which is
+// the overrides, the isolates AND the direction marks.
+//
+// The marks belong here even though the container's shared screen permits them
+// in prose. A facet value is machine-plain: it is matched against the facet
+// values the operator defined, so an invisible character in one can only ever
+// make a chip read as a value nobody selected. The container's facet parser
+// takes the same position by not passing `bidiMarks: "allow"`, and the parity
+// test compares the two across the whole plane.
 var SEARCH_CONTROL_BYTE_RE   = new RegExp(
   "[" + b.codepointClass.charClass([[0x0000, 0x001F], 0x007F, [0x2028, 0x2029]]) + "]" +
   "|" + b.codepointClass.BIDI_RE.source

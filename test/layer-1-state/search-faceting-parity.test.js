@@ -407,7 +407,10 @@ async function _facetParamCodepointParity() {
   // numbers so this source file stays free of raw control bytes.
   // U+202E is the one that matters most here: it reorders how an active-filter
   // chip reads, and it is the codepoint the edge used to let through.
-  var MUST_REFUSE = [0x0000, 0x0007, 0x001B, 0x007F, 0x000A, 0x2028, 0x202E, 0x061C];
+  // The direction marks ARE refused here, unlike in prose: a facet value is
+  // matched against the values the operator defined, so an invisible character
+  // in one can only make a chip read as something nobody selected.
+  var MUST_REFUSE = [0x0000, 0x0007, 0x001B, 0x007F, 0x000A, 0x2028, 0x202E, 0x2066, 0x200F, 0x061C];
   MUST_REFUSE.forEach(function (cp) {
     var c = String.fromCharCode(cp);
     check("facet-param screen refuses U+" + cp.toString(16).toUpperCase().padStart(4, "0"),
