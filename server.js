@@ -810,6 +810,68 @@ var _dsrReader = {
   // free-form operator commentary has no legal-obligation basis once the
   // subject invokes erasure. `query` is the composition-root D1 handle
   // (the primitive archives per-note; no per-customer bulk delete).
+  // Support sessions opened on this customer's account, and what was done
+  // under each. This is personal data about them — when someone looked, who,
+  // why, and which pages — so an Art. 15 subject-access request has to return
+  // it. The customer already sees a paged summary on their account page; the
+  // export is the complete record, actions included.
+  //
+  // Deletion RETAINS it, and says so. Every other section here is scrubbed on
+  // erasure, but an impersonation row is the store's own accountability
+  // record: an operator who wanted to hide having opened an account could
+  // otherwise file an erasure on the customer's behalf and take the evidence
+  // with it. The customer id is already the only identifier on the row, and
+  // the customers row it points at is anonymized in place by its own reader,
+  // so what survives is "an operator opened account <id> at <time> for
+  // <reason>" — an audit fact about the STORE, not a profile of a person.
+  customerImpersonation: function (handle) {
+    return {
+      forCustomerExport: async function (id) {
+        try {
+          // Drain by offset until a short page — listForCustomer is bounded
+          // per call so the account page stays cheap, and Art. 15 wants the
+          // whole history. The stop condition is "the page came back short",
+          // never a record count: a cap on how much of their own record a
+          // customer may receive is the defect this reader exists to avoid.
+          var sessions = [];
+          var PAGE = 200;
+          var off = 0;
+          // Runaway guard only — a page that never shortens means the reader
+          // is not advancing, which is a bug, not a customer with more
+          // history. Bounded so a broken reader cannot spin forever.
+          for (var guard = 0; guard < 100000; guard += 1) {
+            var page = await handle.listForCustomer(id, { limit: PAGE, offset: off });
+            if (!page || !page.length) break;
+            sessions = sessions.concat(page);
+            if (page.length < PAGE) break;
+            off += PAGE;
+          }
+          var out = [];
+          for (var i = 0; i < sessions.length; i += 1) {
+            var actions = [];
+            try { actions = await handle.actionsForSession(sessions[i].id); }
+            catch (_e) { actions = []; }
+            out.push({ session: sessions[i], actions: actions });
+          }
+          return out;
+        } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (_id, opts) {
+        var dryRun = !!(opts && opts.dry_run);
+        return {
+          table:    "impersonations",
+          deleted:  0,
+          retained: true,
+          reason:   "accountability record of store access to this account — " +
+                    "retained so an erasure cannot remove the evidence that an " +
+                    "operator opened it; carries no identifier beyond the customer id, " +
+                    "whose own row is anonymized in place",
+          dry_run:  dryRun,
+        };
+      },
+    };
+  },
+
   customerNotes: function (handle, query) {
     return {
       forCustomerExport: async function (id) {
@@ -3699,6 +3761,8 @@ async function main() {
           orderRatings:   orderRatings  ? _dsrReader.orderRatings(orderRatings, b.externalDb.query) : null,
           productQa:      productQa     ? _dsrReader.productQa(b.externalDb.query)                  : null,
           customerNotes:  customerNotes ? _dsrReader.customerNotes(customerNotes, b.externalDb.query) : null,
+          customerImpersonation: customerImpersonation
+            ? _dsrReader.customerImpersonation(customerImpersonation) : null,
           giftcards:      giftcards     ? _dsrReader.giftcards(giftcards, b.externalDb.query)       : null,
           referrals:      referrals     ? _dsrReader.referrals(referrals, b.externalDb.query)       : null,
         };

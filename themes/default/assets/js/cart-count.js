@@ -93,7 +93,24 @@
     host.appendChild(strip);
   }
 
-  fetch("/cart/count", { credentials: "same-origin", headers: { accept: "application/json" } })
+  // The page path rides along. With edge rendering on, the catalog, product,
+  // search, blog and content pages are answered by the Worker and never reach
+  // the container — so the container's own record of an impersonated session
+  // would show a string of /cart/count calls and not one page the operator
+  // actually looked at. Reporting the path here is what keeps "every request
+  // is recorded" true for the majority of browsing.
+  //
+  // Only the path, never the query string: a search term or a filter can
+  // carry whatever the operator typed, and the audit trail does not need it.
+  // The server screens and length-caps this before storing it — it arrives
+  // from a browser, so it is not trusted here.
+  var here = "/";
+  try { here = window.location.pathname || "/"; } catch (_e) { here = "/"; }
+  // 256 matches the cap the action log stores, so the value the server keeps
+  // is the value sent rather than a silently shortened one.
+  var countUrl = "/cart/count?p=" + encodeURIComponent(here.slice(0, 256));
+
+  fetch(countUrl, { credentials: "same-origin", headers: { accept: "application/json" } })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (data) {
       if (!data) return;

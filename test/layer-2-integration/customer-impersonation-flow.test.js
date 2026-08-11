@@ -224,6 +224,45 @@ async function _run() {
     check("an ordinary visitor sees no impersonation marker",
       JSON.parse(plainIsland.body).impersonating === undefined);
 
+    // With edge rendering on, the catalog pages never reach the container, so
+    // the island reports which page the operator is actually looking at. That
+    // is what keeps the trail honest for the majority of browsing.
+    await helpers.httpRequest({
+      port: port, path: "/cart/count?p=" + encodeURIComponent("/products/blue-widget"),
+      method: "GET", jar: jar, headers: { accept: "application/json" },
+    });
+    var viewed = await impersonation.actionsForSession(payload.impersonation_id);
+    check("the page the operator viewed is recorded, not just the island call",
+      viewed.some(function (a) { return a.resource_id === "/products/blue-widget"; }));
+
+    // A hostile or malformed report is dropped, and the count still returns —
+    // this value arrives from a browser.
+    var junk = await helpers.httpRequest({
+      port: port, path: "/cart/count?p=" + encodeURIComponent("not-rooted "),
+      method: "GET", jar: jar, headers: { accept: "application/json" },
+    });
+    check("a malformed reported path does not break the island",
+      junk.status === 200 && typeof JSON.parse(junk.body).count === "number");
+    var afterJunk = await impersonation.actionsForSession(payload.impersonation_id);
+    check("and it is not recorded",
+      !afterJunk.some(function (a) { return String(a.resource_id || "").indexOf("not-rooted") !== -1; }));
+
+    // A very long path is truncated to what the action log accepts, not
+    // dropped: over the primitive's cap the record would be refused and the
+    // recorder's catch would swallow it, so the page would vanish from the
+    // trail with nothing to show it had been visited.
+    var longPath = "/products/" + "a".repeat(400);
+    await helpers.httpRequest({
+      port: port, path: "/cart/count?p=" + encodeURIComponent(longPath),
+      method: "GET", jar: jar, headers: { accept: "application/json" },
+    });
+    var afterLong = await impersonation.actionsForSession(payload.impersonation_id);
+    check("an over-long page path is still recorded, truncated",
+      afterLong.some(function (a) {
+        var r = String(a.resource_id || "");
+        return r.length <= 256 && r.indexOf("/products/aaa") === 0;
+      }));
+
     // ---- credential surfaces are closed -----------------------------------
     var CLOSED = [
       "/account/delete",
