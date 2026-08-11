@@ -529,7 +529,7 @@ async function _validationSurface() {
   await assert.rejects(f.sw.defineWidget(),                                          /input object required/);
   await assert.rejects(f.sw.defineWidget({ slug: "Bad Slug" }),                      /slug/);
   await assert.rejects(f.sw.defineWidget(_baseDefine("x", { title: "" })),           /title/);
-  await assert.rejects(f.sw.defineWidget(_baseDefine("x", { title: "ok\nlf" })),     /control bytes/);
+  await assert.rejects(f.sw.defineWidget(_baseDefine("x", { title: "ok\nlf" })),     /must be a single line/);
   await assert.rejects(f.sw.defineWidget(_baseDefine("x", { kind: "bogus" })),       /kind must be one of/);
   await assert.rejects(f.sw.defineWidget(_baseDefine("x", { audience: "bogus" })),   /audience must be one of/);
   await assert.rejects(f.sw.defineWidget(_baseDefine("x", { priority: -1 })),        /priority/);

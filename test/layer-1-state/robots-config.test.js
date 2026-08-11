@@ -356,7 +356,7 @@ async function _inputRefusals() {
   // defineRule: bad user_agent.
   await assert.rejects(
     ctx.rc.defineRule({ user_agent: "bad\nname", disallow: ["/"] }),
-    /control bytes/
+    /must be a single line/
   );
   await assert.rejects(
     ctx.rc.defineRule({ user_agent: "has:colon", disallow: ["/"] }),
@@ -375,7 +375,7 @@ async function _inputRefusals() {
   // Path with control bytes refused.
   await assert.rejects(
     ctx.rc.defineRule({ user_agent: "Bot", disallow: ["/admin\n"] }),
-    /control bytes/
+    /must not contain control bytes/
   );
 
   // defineRule: bad crawl_delay.
@@ -411,7 +411,7 @@ async function _inputRefusals() {
   // addSitemap: control bytes refused.
   await assert.rejects(
     ctx.rc.addSitemap("https://shop.example.com/sitemap.xml\n"),
-    /control bytes/
+    /must be a single line/
   );
 
   // setHostDirective: refuses scheme.
@@ -427,7 +427,7 @@ async function _inputRefusals() {
   // setHostDirective: refuses control bytes.
   await assert.rejects(
     ctx.rc.setHostDirective("shop.example.com\n"),
-    /control bytes/
+    /must be a single line/
   );
 
   // applyTemplate: unknown slug.

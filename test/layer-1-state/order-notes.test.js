@@ -186,7 +186,7 @@ async function _addRefusalClasses() {
   // control byte
   await assert.rejects(ctx.notes.add({
     order_id: ctx.orderId, author: "operator", visibility: "internal", body: "bad\x00body",
-  }), /control bytes/);
+  }), /null byte/);
   // zero-width char (U+200B built via String.fromCharCode so the
   // source file stays free of irregular-whitespace ESLint hits)
   await assert.rejects(ctx.notes.add({

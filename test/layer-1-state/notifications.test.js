@@ -397,7 +397,7 @@ async function _inputValidation() {
   await assert.rejects(async function () { await n.enqueue({ recipient_id: "x", channel: "email", event_type: "Bad" }); }, /event_type/);
   await assert.rejects(async function () {
     await n.enqueue({ recipient_id: "x evil", channel: "email", event_type: "ok.y" });
-  }, /control bytes/);
+  }, /null byte/);
   await assert.rejects(async function () {
     await n.enqueue({ recipient_id: "x", channel: "email", event_type: "ok.y", payload: [1, 2, 3] });
   }, /payload/);

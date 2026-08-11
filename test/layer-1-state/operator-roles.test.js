@@ -615,7 +615,7 @@ async function _factoryAndInputValidation() {
   }), /title/);
   await assert.rejects(ctx.roles.defineRole({
     slug: "ok", title: "bad\x01title", permissions: ["orders.read"],
-  }), /control bytes/);
+  }), /control character/);
   await assert.rejects(ctx.roles.defineRole({
     slug: "ok", title: "ok", permissions: ["orders.read"],
     description: "x".repeat(3000),

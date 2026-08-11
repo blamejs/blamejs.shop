@@ -209,7 +209,7 @@ async function _updateValidation() {
   await assert.rejects(customers.update(c.id),                              /patch object required/);
   await assert.rejects(customers.update(c.id, {}),                          /nothing to update/);
   await assert.rejects(customers.update(c.id, { display_name: "" }),         /display_name/);
-  await assert.rejects(customers.update(c.id, { display_name: "x\r\ny" }),   /control bytes/);
+  await assert.rejects(customers.update(c.id, { display_name: "x\r\ny" }),   /must be a single line/);
   // Email change is deliberately refused — it needs a verification ceremony.
   await assert.rejects(
     customers.update(c.id, { email: "new@example.com" }),

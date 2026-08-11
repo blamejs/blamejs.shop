@@ -404,7 +404,7 @@ async function _enqueueGates() {
     country_code:     "US",
     body:             "Hello\x07World",
     kind:             "verification",
-  }), /control bytes/);
+  }), /control character/);
 
   // Non-E.164 phone refused.
   await assert.rejects(ctx.sms.enqueue({

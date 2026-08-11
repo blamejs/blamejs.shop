@@ -125,7 +125,7 @@ async function _openSessionAndEnqueue() {
   }), /body/);
   await assert.rejects(ctx.chat.openSession({
     session_id: "x", source_page: "/x", initial_message: "bad\x00body",
-  }), /control bytes/);
+  }), /null byte/);
   await assert.rejects(ctx.chat.openSession({
     session_id: "x", source_page: "/x", initial_message: "x".repeat(liveChat.MAX_BODY_LEN + 1),
   }), /body/);

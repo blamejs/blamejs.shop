@@ -493,7 +493,7 @@ async function _refusals() {
   await assert.rejects(s.sr.defineRedirect({
     slug: "ok", source_path: "/has\x00null", target_url: "/y",
     code: 301, match_kind: "exact", active: true,
-  }), /control/);
+  }), /null byte/);
   await assert.rejects(s.sr.defineRedirect({
     slug: "ok", source_path: "/x", target_url: "javascript:alert(1)",
     code: 301, match_kind: "exact", active: true,
@@ -528,7 +528,7 @@ async function _refusals() {
   }), /expires_at/);
 
   await assert.rejects(s.sr.resolveForPath(""), /path/);
-  await assert.rejects(s.sr.resolveForPath("/has\x00null"), /control/);
+  await assert.rejects(s.sr.resolveForPath("/has\x00null"), /null byte/);
 
   await assert.rejects(s.sr.recordHit(), /input object required/);
   await assert.rejects(s.sr.recordHit({ slug: "x", occurred_at: -1 }), /occurred_at/);

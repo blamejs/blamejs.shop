@@ -187,7 +187,7 @@ async function _enqueueAddressing() {
       subject:     "bad\x00subject",
       body:        "ok",
     }),
-    /control bytes/,
+    /null byte/,
   );
 }
 

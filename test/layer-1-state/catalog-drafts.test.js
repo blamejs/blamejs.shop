@@ -288,7 +288,7 @@ async function _openDraftHappy() {
   await assert.rejects(cd.openDraft(), /input object required/);
   await assert.rejects(cd.openDraft({ slug: "has space", title: "x" }), /slug/);
   await assert.rejects(cd.openDraft({ slug: "ok", title: "" }), /title/);
-  await assert.rejects(cd.openDraft({ slug: "ok", title: "x", description: "y\x00z" }), /control bytes/);
+  await assert.rejects(cd.openDraft({ slug: "ok", title: "x", description: "y\x00z" }), /null byte/);
 
   var got = await cd.getDraft("spring-2026");
   check("getDraft round-trips", got.slug === "spring-2026" && got.status === "open");

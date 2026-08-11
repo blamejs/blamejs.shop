@@ -152,7 +152,7 @@ async function _defineShape() {
       slug: "bad-msg", message: "line one\nline two", theme: "info",
       audience: "all", dismissible: false,
     });
-  }, /control bytes/);
+  }, /must be a single line/);
 
   // expires_at <= starts_at refused.
   await assert.rejects(function () {
