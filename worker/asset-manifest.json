@@ -1,13 +1,13 @@
 {
-  "version": "0.5.22",
+  "version": "0.5.23",
   "assets": {
     "css/admin.css": {
       "integrity": "sha384-imfe0otYErcB8rr2h6KLSGTtStirysptpXETSPY4zLv3bZoIT75Lo1dOvkOav+xL",
       "fingerprinted": "css/admin.6941d5151488a7c1.css"
     },
     "css/main.css": {
-      "integrity": "sha384-wm9Kgl9osJlGxNW9swpY/yaFoS07Sw6ek5e9sce9RLd5W5BPwz9DcXs0wxym4oAn",
-      "fingerprinted": "css/main.9f60d689ff4715d7.css"
+      "integrity": "sha384-rZSWtyj5fcR9Bi8nZKLJZQLPAlkatv+A69WL2Bao7GD8nnNDf4IWmXDkYEDeJgq+",
+      "fingerprinted": "css/main.25ab2735c1a3acac.css"
     },
     "js/announcement.js": {
       "integrity": "sha384-z4zcEMn+tScoVnYRE4nEf8N/oyvpxdpaxTNrT4QO/jURChid4+qjAvWkzatCaAPq",
@@ -18,8 +18,8 @@
       "fingerprinted": "js/captcha.2aab5803642f8ac5.js"
     },
     "js/cart-count.js": {
-      "integrity": "sha384-K/rkm//Dzg8nuOfpaeenJvLKKl+6DEuvuJi1LLgd46BK+dd1HYmU8R7/gHHjtEsr",
-      "fingerprinted": "js/cart-count.bfc2eb434b19c00a.js"
+      "integrity": "sha384-yyau4KFcmGMoJe8GhySaq5aNhyI7IFX01yrMTQYHF/j4qAQObnb6Ok7UDE8s+0Uo",
+      "fingerprinted": "js/cart-count.25a2e51cafe0e1cf.js"
     },
     "js/consent.js": {
       "integrity": "sha384-XY3GHA5QDj/Nri03ZO1t7nsr9RGepZuanY45CTpFQnnTorQnygbtAVG4vVGfkNIP",

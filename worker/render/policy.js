@@ -48,6 +48,9 @@ var LAYOUT =
   "      </nav>\n" +
   "    </div>\n" +
   "  </header>\n" +
+  // See lib/storefront.js — always emitted, always empty, filled by the
+  // session-chrome island so a cached body stays identical for every visitor.
+  "  <div id=\"impersonation-banner\"></div>\n" +
   "  <main id=\"main\" class=\"policy-page\">\n" +
   "    <div class=\"policy-page__inner\">\n" +
   "      <p class=\"eyebrow\">{{eyebrow}}</p>\n" +

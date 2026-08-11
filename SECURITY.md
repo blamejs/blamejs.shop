@@ -279,6 +279,24 @@ node -e "
   an unmoderated reply can ever surface publicly. Author identity is the
   customer id (verified against the customers primitive) or a hash-only
   email — the raw address is never persisted.
+- **An operator viewing a customer's account cannot take it over.** Support
+  can open the storefront as a specific customer to reproduce what that
+  customer is seeing. The session is gated on its own permission
+  (`customers.impersonate`, held by `owner` and not by `manager`, so editing
+  a customer and becoming one are different authorities), requires a stated
+  reason, lasts an hour, and shows as a banner on every page with one control
+  to leave. Everything that decides who owns the account is refused for its
+  duration — enrolling or revoking a passkey, linking an identity provider,
+  mailing a sign-in link, changing the email address, deleting the account,
+  exporting the record — enforced ahead of every route rather than per
+  handler, so a route added under one of those paths later is closed by where
+  it lives. Signing out ends the session rather than revoking the customer's
+  own logins on their other devices. Ending or revoking a session stops the
+  operator on their next request, not at cookie expiry, and that check fails
+  closed. The handoff link is single-use and cannot be spent by a prefetch.
+  Every request made under the session lands in an append-only log, and the
+  customer sees each session — with the reason the operator gave — on their
+  own account page.
 - **Text one person writes and another reads is screened for invisible
   characters.** A Unicode bidirectional override reverses the display
   order of everything after it while itself rendering as nothing, so

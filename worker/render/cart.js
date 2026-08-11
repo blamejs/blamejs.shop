@@ -75,6 +75,10 @@ var LAYOUT =
   "    </div>\n" +
   "  </header>\n" +
   "\n" +
+  // See lib/storefront.js — always emitted, always empty, filled by the
+  // session-chrome island so a cached body stays identical for every visitor.
+  "  <div id=\"impersonation-banner\"></div>\n" +
+  "\n" +
   "  <div class=\"page-shell\">\n" +
   "  <main id=\"main\">{{body}}</main>\n" +
   "RAW_SIDEBAR_RAIL" +

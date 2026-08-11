@@ -314,6 +314,24 @@ var KNOWN_ANTIPATTERNS = [
     allowlist:   [],
   },
   {
+    id:          "edge-layout-without-impersonation-host",
+    scanScope:   "worker",
+    multiline:   true,
+    description: "An edge-rendered page layout emits `<main id=\"main\"` but no `<div id=\"impersonation-banner\">`. Those pages are served from cache as one body to every visitor, so the \"you are viewing as a customer\" warning cannot be rendered into them server-side — the session-chrome island fills that host after load instead, and with no host it silently does nothing. The operator then browses that surface with no banner and no exit control, which is exactly where forgetting whose account you are in becomes someone else's order. Add `\"  <div id=\\\"impersonation-banner\\\"></div>\\n\" +` immediately before the `<main>` line, matching lib/storefront.js. Deliberate exceptions take a per-line `// allow:edge-layout-without-impersonation-host — <reason>` marker.",
+    // A layout string containing `<main id="main"` with no banner host anywhere in the file.
+    regex:       /^(?:(?!impersonation-banner)[\s\S])*<main id=\\"main\\"(?:(?!impersonation-banner)[\s\S])*$/,
+    allowlist:   [],
+  },
+  {
+    id:          "impersonation-admin-without-storefront",
+    scanScope:   "server",
+    multiline:   true,
+    description: "server.js hands `customerImpersonation` to the admin console but never puts it on `sfDeps`. The console then mints handoff links for `/account/impersonate/:token` — a route the storefront only mounts when it holds the same handle — so every link 404s, and with it every protection that lives on that side: the per-request liveness read that makes `end` and `revoke` bite immediately, the closed credential surfaces, the banner that stops an operator forgetting whose account they are in, the exit control, and the customer's own record of the visit on their account page. It fails silently and it fails OPEN on the audit: sessions are created and nothing records what was done under them. An integration test that wires both handles by hand cannot catch this — only the real composition can. Wire `sfDeps.customerImpersonation = customerImpersonation;` alongside `sfDeps.customers`. Deliberate exceptions take a per-line `// allow:impersonation-admin-without-storefront — <reason>` marker.",
+    // Fires when the admin dep is present and the sfDeps assignment is not.
+    regex:       /customerImpersonation:\s*customerImpersonation,(?:(?!sfDeps\.customerImpersonation)[\s\S])*$/,
+    allowlist:   [],
+  },
+  {
     id:          "fs-existssync-then-read-toctou",
     scanScope:   "lib",
     description: "`fs.existsSync(p)` followed by `fs.readFile`/`fs.readFileSync` against the same path is symlink-swap-vulnerable. The canonical defense is `try { fs.readFileSync(p) } catch (e) { if (e.code === \"ENOENT\") ... }` — single syscall, no TOCTOU window",

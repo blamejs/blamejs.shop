@@ -2019,6 +2019,37 @@ async function main() {
         ? bShop.customerSegments.create({ cursorSecret: customerSegmentsCursorSecret })
         : null;
 
+      // Operator "view as customer" — a support operator opens the storefront
+      // carrying the customer's own session so they can see what the customer
+      // sees. The naive shape (sign in as them) is indefensible: every action
+      // reads as the customer's own and nothing tells the customer it
+      // happened. This primitive mints a one-time bearer instead, holds the
+      // session to a TTL, records every action taken under it, and gives the
+      // customer a record of it.
+      //
+      // `operatorRoles` is deliberately NOT passed: this deployment runs the
+      // single-credential console, so the primitive's own capability gate has
+      // nothing to resolve against and would refuse every start. Authorization
+      // is enforced one layer up instead, at the admin write chokepoint, where
+      // the `impersonation.*` action maps to the `customers.impersonate`
+      // permission — a scope only `owner` holds (through its root `*`), never
+      // `manager`. A shop that wires lib/operator-roles.js gets the
+      // primitive-level gate as well.
+      //
+      // `notifications` is deliberately NOT passed either, and the customer
+      // notice is delivered a different way — see the "account access" section
+      // on the account page. This store keeps customer email as a hash only;
+      // the plaintext resolver returns null by design, and nothing drains the
+      // notifications queue. Wiring it would stamp `customer_notified_at` on
+      // enqueue and leave an audit row reading "notified" for a message that
+      // could never be sent. Left null, `notifyCustomer` reports
+      // `notified: false` and stamps nothing, which is the truth.
+      var customerImpersonation = (catalog && cart)
+        ? bShop.customerImpersonation.create({
+            operatorAuditLog: operatorAuditLog,
+          })
+        : null;
+
       // ---- email campaigns (consent-gated broadcast) ------------------
       //
       // Marketing broadcast: an operator authors a campaign, targets a
@@ -2137,6 +2168,37 @@ async function main() {
       // each row atomically, so an _in_flight guard here is belt-and-suspenders
       // against one slow pass overlapping the next minute's fire.
       var _webhookRetryInFlight = false;
+      // Sweep impersonation sessions whose hour has elapsed from `active` to
+      // `expired`. The verify + liveness paths already refuse an elapsed row,
+      // so nothing hangs on this for authority — what it buys is an honest
+      // record: without it a customer's "account access" panel keeps saying
+      // "in progress now" for a session an operator simply walked away from,
+      // and `currentlyImpersonating()` reads as a queue of open sessions that
+      // are not open. Cheap enough to run on the minute tick.
+      r.post("/_/impersonation-sweep", async function (req, res) {
+        var got = req.headers && req.headers["x-d1-bridge-secret"];
+        var want = process.env.D1_BRIDGE_SECRET || "";
+        if (
+          !want ||
+          typeof got !== "string" ||
+          got.length !== want.length ||
+          !b.crypto.timingSafeEqual(got, want)
+        ) {
+          res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+          return;
+        }
+        if (!customerImpersonation) {
+          res.json({ ok: true, enabled: false, reason: "impersonation not composed (no catalog/cart)" });
+          return;
+        }
+        try {
+          var swept = await customerImpersonation.cleanupExpired({ now: Date.now() });
+          res.json({ ok: true, enabled: true, swept: swept.swept });
+        } catch (e) {
+          res.json({ ok: false, enabled: true, error: (e && e.message) || "sweep failed" });
+        }
+      });
+
       r.post("/_/webhook-retry-tick", async function (req, res) {
         var got = req.headers && req.headers["x-d1-bridge-secret"];
         var want = process.env.D1_BRIDGE_SECRET || "";
@@ -3763,6 +3825,10 @@ async function main() {
           customerNotes:    customerNotes,
           customerSegments: customerSegments,
           customerActivity: customerActivity,
+          // "View as customer" from the customer detail screen. Gated at the
+          // write chokepoint on `customers.impersonate`, which only `owner`
+          // holds — see the `impersonation` entry in _ACTION_PERMISSION.
+          customerImpersonation: customerImpersonation,
           // Threaded customer-service notes panel on the order-detail screen.
           orderNotes:       orderNotes,
           // Chronological order-story timeline on the order-detail screen,
@@ -3903,6 +3969,14 @@ async function main() {
         // single `customers` instance built above (also wired into the
         // admin roster), so both surfaces share one handle.
         sfDeps.customers = customers;
+        // Operator "view as customer". BOTH surfaces need the same handle:
+        // the admin console mints the handoff link, and the storefront is
+        // where it is redeemed and where every protection lives — the
+        // per-request liveness read, the closed credential surfaces, the
+        // banner, the exit, and the customer's own record of the visit on
+        // their account page. Wired into admin alone, the console would hand
+        // out links to a route that was never mounted.
+        sfDeps.customerImpersonation = customerImpersonation;
         // CAPTCHA gate — wired from the boot-time resolution (captchaWiring,
         // resolved before createApp where await is allowed). Present only when
         // the operator has an active provider named in CAPTCHA_PROVIDER_SLUG;
