@@ -341,6 +341,80 @@ async function _run() {
     assert.strictEqual(corrEdge, corrContainer, "render <main> parity: correction notice");
     check("render <main> byte-identical (correction notice)", true);
   }
+
+  await _facetParamCodepointParity();
+}
+
+// The facet query-string parser exists twice — once at the edge in
+// worker/index.js, once in the container in lib/storefront.js — because the
+// Worker substrate cannot require the CommonJS lib/ tree, so the edge cannot
+// call the container's screen. Both drop a facet value carrying a dangerous
+// codepoint, and they must drop exactly the same values: one the edge keeps
+// and the container drops means the same URL paints different filter chrome
+// depending on whether the page came off the cache.
+//
+// Every other duplicated codepoint class in the shop was replaced by the shared
+// screen in lib/text-guard.js. This pair cannot be, so it is pinned here —
+// against BEHAVIOUR, not spelling. The container side is the real screen the
+// storefront calls, so this stays honest if either side is rewritten.
+async function _facetParamCodepointParity() {
+  var fsSrc = require("node:fs");
+  var workerPath = path.resolve(__dirname, "..", "..", "worker", "index.js");
+  // worker/ is excluded from the container build context, so this half is
+  // absent in the in-image smoke — same guard as the parity blocks above.
+  if (!fsSrc.existsSync(workerPath)) return;
+
+  // The edge's class is read out of the source rather than imported: importing
+  // worker/index.js pulls the whole Worker entry (and its bindings), which this
+  // layer has no way to stand up.
+  var DECL = /var SEARCH_CONTROL_BYTE_RE\s*=\s*new RegExp\(([\s\S]*?)\);/;
+  var m = fsSrc.readFileSync(workerPath, "utf8").match(DECL);
+  assert.ok(m, "worker/index.js: SEARCH_CONTROL_BYTE_RE declaration not found — " +
+    "if it was renamed or restructured, update this parity check with it");
+
+  // Rebuild the edge class from the same catalog pieces the worker composes,
+  // so no source string is evaluated here.
+  var cc = require("../../lib/vendor/blamejs/lib/codepoint-class");
+  assert.ok(/charClass\(\[\[0x0000, 0x001F\], 0x007F, \[0x2028, 0x2029\]\]\)/.test(m[1]),
+    "worker facet screen no longer composes the expected range table");
+  assert.ok(/BIDI_RE\.source/.test(m[1]),
+    "worker facet screen no longer composes the catalog bidi class");
+  var edgeRe = new RegExp(
+    "[" + cc.charClass([[0x0000, 0x001F], 0x007F, [0x2028, 0x2029]]) + "]" +
+    "|" + cc.BIDI_RE.source
+  );
+
+  // The container side is the screen itself, with the policy the storefront
+  // facet parser passes.
+  var textGuard = require("../../lib/text-guard");
+  function containerRefuses(ch) {
+    return textGuard.hasCodepointThreat(ch, { singleLine: "reject" });
+  }
+
+  var disagree = [];
+  for (var cp = 0; cp <= 0xFFFF; cp += 1) {
+    var ch = String.fromCharCode(cp);
+    if (edgeRe.test(ch) !== containerRefuses(ch)) {
+      disagree.push("U+" + cp.toString(16).toUpperCase().padStart(4, "0"));
+    }
+  }
+  assert.strictEqual(disagree.length, 0,
+    "edge and container facet-param screens disagree on: " + disagree.slice(0, 20).join(" "));
+  check("facet-param codepoint screen agrees edge vs container", true);
+
+  // Both must still refuse the class they exist for, so the assertion above
+  // cannot pass by both sides having been emptied. Codepoints are built from
+  // numbers so this source file stays free of raw control bytes.
+  // U+202E is the one that matters most here: it reorders how an active-filter
+  // chip reads, and it is the codepoint the edge used to let through.
+  var MUST_REFUSE = [0x0000, 0x0007, 0x001B, 0x007F, 0x000A, 0x2028, 0x202E, 0x061C];
+  MUST_REFUSE.forEach(function (cp) {
+    var c = String.fromCharCode(cp);
+    check("facet-param screen refuses U+" + cp.toString(16).toUpperCase().padStart(4, "0"),
+      edgeRe.test(c) && containerRefuses(c));
+  });
+  check("facet-param screen accepts an ordinary value",
+    !edgeRe.test("summer") && !containerRefuses("summer"));
 }
 
 module.exports = { run: _run };

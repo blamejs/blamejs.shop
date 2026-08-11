@@ -51,6 +51,13 @@ import bValidateOpts from "../lib/vendor/blamejs/lib/validate-opts.js";
 // functions the edge never calls, so nothing pulls node:net / node:dns at
 // module init — held to that by the worker-b-loadable smoke.
 import bRequestHelpers from "../lib/vendor/blamejs/lib/request-helpers.js";
+// codepointClass: the bidi / control / null / zero-width tables plus the
+// charClass compiler. Pure data and string work — no node: imports at all, so
+// it is Worker-safe by construction. The edge needs it because the container's
+// screen (lib/text-guard.js) is CommonJS and cannot be imported here; both
+// sides compose the same catalog instead, and search-faceting-parity pins them
+// to the same accept/reject set.
+import bCodepointClass from "../lib/vendor/blamejs/lib/codepoint-class.js";
 // webhook: inbound Stripe-signature verification only. The module's
 // outbound HTTP client + delivery dispatcher are lazyRequire'd (send
 // path), so this import loads no node:net / node:tls / node:http at
@@ -71,6 +78,7 @@ var b = {
   constants:  bConstants,
   validateOpts: bValidateOpts,
   requestHelpers: bRequestHelpers,
+  codepointClass: bCodepointClass,
   webhook:    bWebhook,
 };
 
