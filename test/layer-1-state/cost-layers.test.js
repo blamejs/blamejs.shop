@@ -198,6 +198,95 @@ async function _weightedAverageConsumption() {
   check("wavg total on-hand after sale",        totalRemaining === 16);
 }
 
+// 3a-ii) weighted_average: when the average unit cost is not a whole number of
+//        minor units, each layer's attributed COGS must be its proportional
+//        share — not a rounded per-unit price with the whole accumulated
+//        shortfall dumped on the last layer.
+//
+//        Pricing every debit at round(average) loses a fraction of a minor
+//        unit per unit debited, and all of it lands on whichever row is
+//        settled last. The line total stays correct either way, so nothing is
+//        over- or under-charged; what goes wrong is the per-layer COGS the
+//        margin and inventory-valuation reports read.
+async function _weightedAverageProportionalAttribution() {
+  var w = _wire();
+  await w.svc.setMethod({ sku: "WDG-SKEW", method: "weighted_average" });
+  // 40 @ 100 + 40 @ 100 + 20 @ 102  →  sumValue = 10040 over 100 units,
+  // an average of 100.4 minor units, which no integer per-unit price captures.
+  await w.svc.recordReceipt({ sku: "WDG-SKEW", quantity: 40, unit_cost_minor: 100, currency: "USD", source: "receipt", occurred_at: 1000 });
+  await w.svc.recordReceipt({ sku: "WDG-SKEW", quantity: 40, unit_cost_minor: 100, currency: "USD", source: "receipt", occurred_at: 2000 });
+  await w.svc.recordReceipt({ sku: "WDG-SKEW", quantity: 20, unit_cost_minor: 102, currency: "USD", source: "receipt", occurred_at: 3000 });
+
+  var res = await w.svc.consumeForSale({
+    sku: "WDG-SKEW", quantity: 100, order_id: "ord-skew", line_id: "ln-skew",
+  });
+  check("skew: line cogs is the full on-hand value", res.total_cogs_minor === 10040);
+
+  // A debit whose cost does not divide evenly by its quantity is persisted as
+  // two rows — a floor-priced block and a ceil-priced sliver — so the layer's
+  // attributed cost is the sum over its rows, not any single one.
+  var cost = {};
+  var units = {};
+  res.consumed_layers.forEach(function (c) {
+    cost[c.layer_id]  = (cost[c.layer_id]  || 0) + c.qty * c.unit_cost_minor;
+    units[c.layer_id] = (units[c.layer_id] || 0) + c.qty;
+  });
+  var layerIds = Object.keys(cost);
+  check("skew: all three layers were debited", layerIds.length === 3);
+
+  var summed = layerIds.reduce(function (a, k) { return a + cost[k]; }, 0);
+  check("skew: attributions still sum to the line total", summed === 10040);
+
+  // Exact shares are 40/40/20 of 10040 = 4016 / 4016 / 2008. Largest-remainder
+  // allocation puts every layer within one minor unit of that; the rounded
+  // average produced 4000 / 4000 / 2040 — the last layer 32 out.
+  var worst = 0;
+  layerIds.forEach(function (k) {
+    var exact = 10040 * units[k] / 100;
+    worst = Math.max(worst, Math.abs(cost[k] - exact));
+  });
+  check("skew: no layer is off its exact share by more than a minor unit (worst " + worst + ")",
+    worst <= 1);
+}
+
+// 3a-iii) The COGS split must not narrow which currencies can be sold.
+//
+//         recordReceipt accepts any well-formed ISO 4217 code; b.money accepts
+//         a narrower catalog. Splitting the line in the layers' own currency
+//         would therefore let an operator receive inventory priced in, say,
+//         PKR and then fail every sale of it — receivable but never sellable,
+//         which is far worse than the rounding it set out to fix. The split
+//         runs on a carrier currency for exactly this reason.
+async function _weightedAverageSellsAnyValidCurrency() {
+  for (var i = 0; i < 3; i += 1) {
+    var cur = ["PKR", "NPR", "XOF"][i];        // valid ISO 4217, outside b.money's catalog
+    var w = _wire();
+    await w.svc.setMethod({ sku: "WDG-" + cur, method: "weighted_average" });
+    await w.svc.recordReceipt({ sku: "WDG-" + cur, quantity: 40, unit_cost_minor: 100, currency: cur, source: "receipt", occurred_at: 1000 });
+    await w.svc.recordReceipt({ sku: "WDG-" + cur, quantity: 20, unit_cost_minor: 102, currency: cur, source: "receipt", occurred_at: 2000 });
+    var res = await w.svc.consumeForSale({ sku: "WDG-" + cur, quantity: 60, order_id: "ord-" + cur, line_id: "ln-1" });
+    check("a " + cur + "-priced SKU can still be sold", res.total_cogs_minor === 6040);
+    check("a " + cur + "-priced sale reports its own currency", res.currency === cur);
+  }
+}
+
+// 3a-iv) The carrier only works because allocating a count of MINOR UNITS is
+//        independent of the currency's exponent. Pin that, so the carrier
+//        cannot quietly become wrong if the primitive's rounding ever grows
+//        currency awareness.
+function _allocationIsExponentIndependent() {
+  var b = require("../../lib/vendor/blamejs");
+  var cases = [[10040, [40, 40, 20]], [23, [3, 5, 2]], [7, [1, 1, 1]], [1, [1, 1]]];
+  var same = cases.every(function (c) {
+    var split = function (cur) {
+      return b.money.fromMinorUnits(BigInt(c[0]), cur).allocate(c[1])
+        .map(function (m) { return Number(m.toMinorUnits()); }).join(",");
+    };
+    return split("USD") === split("JPY") && split("USD") === split("CLP");
+  });
+  check("minor-unit allocation does not depend on the currency exponent", same);
+}
+
 // 3b) weighted_average: a residual attribution row whose quantity does not
 //     evenly divide its cost must still reconstruct the sale's COGS exactly
 //     in the reports (no per-attribution penny drift).
@@ -562,6 +651,9 @@ async function run() {
   await _fifoConsumption();
   await _lifoConsumption();
   await _weightedAverageConsumption();
+  await _weightedAverageProportionalAttribution();
+  await _weightedAverageSellsAnyValidCurrency();
+  _allocationIsExponentIndependent();
   await _weightedAverageNoCogsDrift();
   await _overdraftRefusal();
   await _cogsAggregations();
