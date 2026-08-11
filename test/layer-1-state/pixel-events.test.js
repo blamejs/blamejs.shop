@@ -618,7 +618,63 @@ async function _metricsForProvider() {
 
 // ---- run --------------------------------------------------------------
 
+// A provider must not be able to hold an event open by choosing its response
+// body. `markDispatched` validates the body BEFORE it transitions the event, so
+// anything that refuses instead of cleaning leaves the row in `queued` and the
+// scheduler re-sends the identical pixel on every tick — forever, to a third
+// party, because we disliked a byte in the reply. The body is scrubbed of
+// invisible characters and stored; nothing about it can fail the transition.
+//
+// Every hostile codepoint is built from its number so this file stays free of
+// raw invisible bytes.
+async function _hostileResponseBodyCannotWedgeAnEvent() {
+  var ctx = _setup();
+  await ctx.pe.registerProvider(_validProvider());
+  var cc = require("../../lib/vendor/blamejs/lib/codepoint-class");
+  var at = function (cp) { return '{"ok":' + cc.fromCp(cp) + "true}"; };
+
+  var BODIES = [
+    ["a C0 control byte",  at(0x0007)],
+    ["a null byte",        at(0x0000)],
+    ["a zero-width space", at(0x200B)],
+    ["a bidi override",    at(0x202E)],
+    ["a direction mark",   at(0x200F)],
+    ["a word joiner",      at(0x2060)],
+  ];
+
+  var INVISIBLE = new RegExp("[" + cc.charClass([
+    0x00AD, [0x200B, 0x200F], 0x061C, [0x202A, 0x202E],
+    [0x2060, 0x2064], [0x2066, 0x2069], 0xFEFF,
+  ]) + "]");
+
+  for (var i = 0; i < BODIES.length; i += 1) {
+    // A distinct event_id per pass — recordEvent is idempotent on it, so a
+    // shared id would queue one row and leave later passes with nothing.
+    await ctx.pe.recordEvent(_validEvent({ event_id: "wedge_probe_" + i }));
+    var queued = await ctx.pe.dispatchTick({ batch_size: 1 });
+    var row = await ctx.pe.markDispatched({
+      event_id:        queued[0].id,
+      response_status: 200,
+      response_body:   BODIES[i][1],
+    });
+    check("a reply carrying " + BODIES[i][0] + " still marks the event dispatched",
+      row.status === "dispatched");
+    check("a reply carrying " + BODIES[i][0] + " stores no invisible character",
+      !INVISIBLE.test(row.response_body));
+  }
+
+  // Scrubbing is not truncation — everything legible survives, including the
+  // whitespace a real JSON body is full of.
+  await ctx.pe.recordEvent(_validEvent({ event_id: "wedge_probe_keeps" }));
+  var q = await ctx.pe.dispatchTick({ batch_size: 1 });
+  var kept = await ctx.pe.markDispatched({
+    event_id: q[0].id, response_status: 200, response_body: '{\n\t"ok": true\n}',
+  });
+  check("a reply keeps its tabs and newlines", kept.response_body === '{\n\t"ok": true\n}');
+}
+
 async function run() {
+  await _hostileResponseBodyCannotWedgeAnEvent();
   await _registerProviderHappy();
   await _registerProviderRefusals();
   await _recordEventHashes();

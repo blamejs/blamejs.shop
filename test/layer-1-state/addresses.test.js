@@ -329,7 +329,46 @@ async function _refusals() {
   await assert.rejects(addresses.matchByContent({ customer_id: cid, country: "US" }),  /postal_code/);
 }
 
+// A right-to-left postal address must be storable.
+//
+// U+200E / U+200F / U+061C are DIRECTION MARKS, not the overrides that reorder
+// a run of text. They are how a Latin house number inside an Arabic street
+// name, or a Latin brand inside a Hebrew line, is authored correctly — an
+// ordinary Saudi or Israeli address carries one. Screening them alongside the
+// overrides refuses those customers at checkout while doing nothing for the
+// spoofing risk, which lives entirely in U+202A-202E and U+2066-2069.
+async function _rightToLeftAddressesAreStorable() {
+  var addresses = bShop.addresses.create({ query: _makeQuery() });
+  var cid = _customerId();
+  var cc  = require("../../lib/vendor/blamejs/lib/codepoint-class");
+  var RLM = cc.fromCp(0x200F), LRM = cc.fromCp(0x200E), ALM = cc.fromCp(0x061C);
+
+  var ACCEPT = [
+    ["arabic street with a right-to-left mark", "شارع الملك فهد" + RLM + " 12"],
+    ["hebrew street with left-to-right marks",  "רחוב הרצל " + LRM + "42" + LRM],
+    ["arabic letter mark in a PO box",          "ص.ب" + ALM + " 1234"],
+  ];
+  for (var i = 0; i < ACCEPT.length; i += 1) {
+    var row = await addresses.add(_input({
+      customer_id:    cid,
+      recipient_name: "عبد الله",
+      street_line1:   ACCEPT[i][1],
+      city: "الرياض", region: "Riyadh", postal_code: "11564", country: "SA",
+    }));
+    check("stores an address with " + ACCEPT[i][0], row.street_line1 === ACCEPT[i][1]);
+  }
+
+  // The overrides stay refused — that is the half that spoofs.
+  await assert.rejects(addresses.add(_input({
+    customer_id:    cid,
+    recipient_name: "Test",
+    street_line1:   "12 Main St" + cc.fromCp(0x202E) + "reversed",
+    city: "Riyadh", region: "Riyadh", postal_code: "11564", country: "SA",
+  })), /bidi override/);
+}
+
 async function run() {
+  await _rightToLeftAddressesAreStorable();
   await _addBasic();
   await _addWithDefaults();
   await _updatePartial();

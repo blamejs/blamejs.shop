@@ -3,8 +3,8 @@
   "_about": "blamejs.shop vendors a single framework — blamejs — which itself bundles every server-side crypto/identity dependency. The transitive packages blamejs ships are surfaced in its own MANIFEST.json at lib/vendor/blamejs/lib/vendor/MANIFEST.json — Trivy / Grype rely on that nested data for CVE attribution.",
   "packages": {
     "blamejs": {
-      "version": "0.18.21",
-      "tag": "v0.18.21",
+      "version": "0.18.24",
+      "tag": "v0.18.24",
       "license": "Apache-2.0",
       "author": "blamejs contributors",
       "source": "https://github.com/blamejs/blamejs",
@@ -599,15 +599,15 @@
         "package.json": "lib/vendor/blamejs/package.json",
         "sbom.cdx.json": "lib/vendor/blamejs/sbom.cdx.json"
       },
-      "bundler": "signed release tarball blamejs-core-0.18.21.tgz from github.com/blamejs/blamejs — SHA3-512 digest and ML-DSA-65 signature verified against keys/vendor-blamejs-pqc-pub.json before unpacking",
-      "bundledAt": "2026-08-10",
+      "bundler": "signed release tarball blamejs-core-0.18.24.tgz from github.com/blamejs/blamejs — SHA3-512 digest and ML-DSA-65 signature verified against keys/vendor-blamejs-pqc-pub.json before unpacking",
+      "bundledAt": "2026-08-11",
       "hashes": {
-        "CHANGELOG.md": "sha256:8604c2e45b6e3575b1cc2df0021fd97ce959a8b6e269d129388fe365bbe69f47",
+        "CHANGELOG.md": "sha256:2ac9860b3cc5e84c9103557a9610d3e60af5f9a3f648d22aa127c55f9c72cf0e",
         "LICENSE": "sha256:812075be5abe785284e823a97d09b5d1515b0221e3128059e1f5065de3c907d5",
         "LTS-CALENDAR.md": "sha256:fbdf074ca0d9544bf10fff87c8947ba38aa5ac0500267796dc8f0c92822aacbe",
         "MIGRATING.md": "sha256:7bee6f55c28f017d4083132dbe45e0e63bcdb7ad3086b95b02551eaa4cc052bc",
-        "NOTICE": "sha256:73a48bab0eb79e491df655fb57d4ec690da51228a8698c1c828c3870fbd22c31",
-        "README.md": "sha256:3c2b7909d68c10b80560b1fcc94ae70f79ef760fdfa6d7fe914c62035bfac842",
+        "NOTICE": "sha256:979a65f58486faf2defacd821fa97476149a3a4efe1ddea8f6b53b3283175fe5",
+        "README.md": "sha256:4ea822a1e856e860ea6d24b01a6dbb34252d519f78707eccdcb0a6de3d3775e8",
         "bin/blamejs.js": "sha256:59798e63ad43c0afdf03ab88aaae105fa1f525c2703d80903eee48717db567c4",
         "index.js": "sha256:2d2c81c19e4177450b701dba05f582a8b6ef9581d202f01ec04d912556266a2f",
         "lib/_test/crypto-fixtures.js": "sha256:16055e38d3c1a3065735e50fe43e81de1ed5d90cf72d7fb90ac263d07deb7ced",
@@ -1019,7 +1019,7 @@
         "lib/network-nts.js": "sha256:947e1887f339ef1bb20891d5c9531e2969653b162886b576c9b8a723d6b62002",
         "lib/network-proxy.js": "sha256:392e79ddc58ae7125cd7a8abec872df50ffee76170ea40ff6847d581b2a405a3",
         "lib/network-smtp-policy.js": "sha256:b8b88766be9dd1a0e4dfe60b21f97fe8b166d76328ecbbbb4e1349bfb2335e95",
-        "lib/network-tls.js": "sha256:ef77f7f153636b28cd6b28ab8de60b14fa3d60fc675e2fc7fa4063033c513074",
+        "lib/network-tls.js": "sha256:0a2b52cf7d9e35d988ba0a6d3d0afd22536c7f68ff047f24981e0732964a4fa3",
         "lib/network-tsig.js": "sha256:233b008815bbbd60e6914e4a74b41de0d9136c27331bf00827ca4a983ddd29e2",
         "lib/network.js": "sha256:a4a4bd54396c0e162f1d5469d4d3e264a9f4537179446843589674e551ac1f29",
         "lib/nis2-report.js": "sha256:d54937f1fe996c5316756cfcf9095c67c8f955621c199079abb87862a82afd75",
@@ -1158,10 +1158,10 @@
         "lib/vc.js": "sha256:2f0e2a32bb52f53e4c38df64a2a658665cf5e442b56882d3b3bbdf31c7124132",
         "lib/vendor-data.js": "sha256:365b0dcca1198e4fad647b3873b82702fcf90a5ee2d8c7f25c78864cadb7d717",
         "lib/vendor/.vendor-data-pubkey": "sha256:73a935b8c72f55d821c22ddb8188453bab324f80d229d033a0a1549819a1f096",
-        "lib/vendor/MANIFEST.json": "sha256:f32f5ed3c3bc4b0475246cc2e8822749e9ed235d331e9e5eeb186e70b42e76d9",
+        "lib/vendor/MANIFEST.json": "sha256:75576b6fbcb07383d382c94fbf3fb317703d5cb4bf838b55801b93d7ead3de08",
         "lib/vendor/bimi-trust-anchors.data.js": "sha256:aa7a4d33b65a68422a2a2c1670177689f66fdcaa08bd2514d78798b827bd1608",
         "lib/vendor/bimi-trust-anchors.pem": "sha256:81ff9f5ab3c9774132c845684e783be95cf73146f8b670d964105f0a3765b4b4",
-        "lib/vendor/blamejs-pki.cjs": "sha256:067ac05899ef04f7851a8d010dc4289e7a01706d5fd2cdc1ce59860631bba284",
+        "lib/vendor/blamejs-pki.cjs": "sha256:96a873b733c95b53b8e2ced065a82192b6acabcede312cf68a45a128857cc3bc",
         "lib/vendor/browser/noble-ciphers.mjs": "sha256:0ffd91540bcb586a29b56e52ee1c29df69097b50776beb4036a07558f7a4e12e",
         "lib/vendor/browser/noble-hashes.mjs": "sha256:dfe4b7ae3c9880e388c8da4b68f44742b229b53afacd1e674179527e33da62b0",
         "lib/vendor/browser/noble-post-quantum.mjs": "sha256:cae1d5bbdc7184b202b6ca68df6e1db7b0d0f668c77809ded189ca7f271accc9",
@@ -1188,8 +1188,8 @@
         "lib/ws-client.js": "sha256:348d01cd552fed583f05944d1853f71b0119105cb067c2e607b19ec9e6f47aee",
         "lib/x509-chain.js": "sha256:c2b5544202601a50230c7c652ff028e73e9d29a34d58db349beb5b5164b7b4d5",
         "lib/xml-c14n.js": "sha256:6239db09b021f032a78aa101fe295238db4ad91acc93ae13eef7d14efd797b94",
-        "package.json": "sha256:0feb395d6b015bdf53375147fd96972507ea80974bb81a93841a77aa95e5e0f6",
-        "sbom.cdx.json": "sha256:d659ac36810bd4f2c120e75c09ba0b1ae40c48a8a4a6aef36d9569cb3899dbe2"
+        "package.json": "sha256:ab52ca260fa6408d4910a3d9a726d442e61127e883e920c965e7ef31c9319a0d",
+        "sbom.cdx.json": "sha256:b47182cff49c56cc0534ba835f62bd8ddebcb659ae3d693bbfc1f4b059a427c7"
       }
     }
   }
