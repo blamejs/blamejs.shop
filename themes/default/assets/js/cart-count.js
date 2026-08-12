@@ -104,7 +104,9 @@
   // carry whatever the operator typed, and the audit trail does not need it.
   // The server screens and length-caps this before storing it — it arrives
   // from a browser, so it is not trusted here.
-  var here = "/";
+  // Declaration only — both branches below assign, so an initializer here
+  // would be dead.
+  var here;
   try { here = window.location.pathname || "/"; } catch (_e) { here = "/"; }
   // 256 matches the cap the action log stores, so the value the server keeps
   // is the value sent rather than a silently shortened one.
