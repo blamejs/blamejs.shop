@@ -51,7 +51,8 @@ var MIGS = [
   "0048_stock_alerts.sql", "0207_stock_alert_unsubscribe_token.sql",
   "0102_quotes.sql", "0211_quote_view_token.sql", "0227_quote_response_version.sql",
   "0151_order_ratings.sql", "0133_product_qa.sql",
-  "0134_customer_notes.sql", "0013_giftcards.sql", "0025_referrals.sql",
+  "0134_customer_notes.sql", "0190_customer_impersonation.sql",
+  "0013_giftcards.sql", "0025_referrals.sql",
   "0239_subscriptions_plan_transition_claim.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
@@ -212,6 +213,24 @@ function _buildReaders(h, query) {
         catch (_e) { return []; }
       },
     },
+    // Support sessions opened on the account, with what was done under each.
+    // Personal data about the customer — when someone looked at their
+    // account, why, and which pages — so a subject-access export carries it.
+    customerImpersonation: {
+      forCustomerExport: async function (id) {
+        try {
+          var sessions = await h.customerImpersonation.listForCustomer(id, { limit: 200 });
+          var out = [];
+          for (var i = 0; i < sessions.length; i += 1) {
+            out.push({
+              session: sessions[i],
+              actions: await h.customerImpersonation.actionsForSession(sessions[i].id),
+            });
+          }
+          return out;
+        } catch (_e) { return []; }
+      },
+    },
     giftcards: {
       forCustomerExport: async function (id) {
         try {
@@ -324,6 +343,7 @@ async function _run() {
   var quotes         = bShop.quotes.create({ query: query });
   var orderRatings   = bShop.orderRatings.create({ query: query });
   var customerNotes  = bShop.customerNotes.create({ query: query, cursorSecret: "priv-notes" });
+  var customerImpersonation = bShop.customerImpersonation.create({ query: query });
   var giftcards      = bShop.giftcards.create({ query: query });
   var referrals      = bShop.referrals.create({ query: query });
 
@@ -334,7 +354,8 @@ async function _run() {
     customerSurveys: customerSurveys, recentlyViewed: recentlyViewed,
     suggestionBox: suggestionBox, saveForLater: saveForLater, storeCredit: storeCredit,
     stockAlerts: stockAlerts, quotes: quotes, orderRatings: orderRatings,
-    customerNotes: customerNotes, giftcards: giftcards, referrals: referrals,
+    customerNotes: customerNotes, customerImpersonation: customerImpersonation,
+    giftcards: giftcards, referrals: referrals,
   }, query);
   var dsr = bShop.complianceExport.create({
     query: query, customers: readers.customers, addresses: readers.addresses, order: readers.order,

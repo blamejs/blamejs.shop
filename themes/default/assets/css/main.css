@@ -279,6 +279,68 @@ hr { border: 0; border-top: 1px solid var(--border); margin: var(--space-6) 0; }
    Sits above the utility bar; one of four themes (rank urgency > promo >
    info > success). Hidden client-side by the announcement island when its
    slug is in the dismissed cookie (native [hidden]). */
+/* Operator "viewing as customer" banner.
+ *
+ * Injected by the session-chrome island, so it only ever appears for an
+ * operator in a support session. Deliberately loud and deliberately not in
+ * the brand palette: this is the one piece of chrome whose whole job is to
+ * stop someone forgetting they are looking at another person's account. It
+ * is sticky because an operator who scrolls a long order history must not
+ * scroll the warning away. */
+.impersonation-banner {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--gutter);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.03em;
+  text-align: center;
+  color: #1a1200;
+  background: repeating-linear-gradient(
+    45deg, #ffcc33, #ffcc33 12px, #f0b400 12px, #f0b400 24px
+  );
+  border-bottom: 2px solid #7a5c00;
+}
+.impersonation-banner__text { font-weight: 700; }
+.impersonation-banner__exit { margin: 0; }
+.impersonation-banner__exit button {
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0.25rem 0.75rem;
+  color: #ffcc33;
+  background: #1a1200;
+  border: 1px solid #1a1200;
+  border-radius: 2px;
+}
+.impersonation-banner__exit button:hover,
+.impersonation-banner__exit button:focus-visible {
+  color: #1a1200;
+  background: #fff;
+}
+
+/* The customer's own record of when support opened their account. Quiet by
+ * design — it is reassurance, not an alarm, and it renders only when there is
+ * something to report. */
+.account-access { margin-top: var(--space-6); }
+.account-access__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.account-access__table th,
+.account-access__table td {
+  text-align: left;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
 .announcement-bar {
   font-family: var(--font-mono);
   font-size: var(--text-xs);

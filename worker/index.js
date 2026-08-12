@@ -414,6 +414,7 @@ var _INTERNAL_CRON_PATHS = {
   "/_/campaign-send-tick":    true,
   "/_/winback-send-tick":     true,
   "/_/webhook-retry-tick":    true,
+  "/_/impersonation-sweep":   true,
 };
 
 export default {
@@ -916,6 +917,29 @@ export default {
       // others. The container handler self-gates cadence (one real sweep
       // every few hours), so this is a cheap call most ticks. Inert
       // (enabled:false) on a deploy with no mailer.
+      // Flip elapsed impersonation sessions from `active` to `expired`. The
+      // authority is already gone by then — the verify and liveness paths
+      // refuse an elapsed row — so this is about the RECORD: without it a
+      // customer's "account access" panel keeps reading "in progress now" for
+      // a session an operator walked away from. Its own waitUntil so it never
+      // blocks a slower sweep, and cheap enough for the minute tick.
+      ctx.waitUntil((async function () {
+        try {
+          var impUrl = new URL("/_/impersonation-sweep", "http://shop.container");
+          var impReq = new Request(impUrl.toString(), {
+            method:  "POST",
+            headers: {
+              "content-type":       "application/json; charset=utf-8",
+              "x-d1-bridge-secret": env.D1_BRIDGE_SECRET || "",
+            },
+            body: "{}",
+          });
+          await _shopContainer(env).fetch(impReq);
+        } catch (e) {
+          console.error("impersonation-sweep failed:", _redact(e && e.stack || e));  // allow:console-direct — Worker substrate; console.* IS the observability sink
+        }
+      })());
+
       ctx.waitUntil((async function () {
         try {
           var wlaUrl = new URL("/_/wishlist-alerts-sweep", "http://shop.container");

@@ -74,6 +74,13 @@ var LAYOUT =
   "    </div>\n" +
   "  </header>\n" +
   "\n" +
+  // Always emitted, always empty — the session-chrome island fills it when
+  // /cart/count reports an operator viewing a customer's account. Emitting it
+  // unconditionally keeps this cached body identical for every visitor. Must
+  // match lib/storefront.js, and sits outside <main> so the render-parity
+  // comparison of that region is unaffected.
+  "  <div id=\"impersonation-banner\"></div>\n" +
+  "\n" +
   "  <div class=\"page-shell\">\n" +
   "  <main id=\"main\">{{body}}</main>\n" +
   "RAW_SIDEBAR_RAIL" +

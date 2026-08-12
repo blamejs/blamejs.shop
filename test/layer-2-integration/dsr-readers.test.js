@@ -64,7 +64,7 @@ var MIGS = [
   "0048_stock_alerts.sql", "0207_stock_alert_unsubscribe_token.sql",
   "0102_quotes.sql", "0211_quote_view_token.sql", "0227_quote_response_version.sql",
   "0151_order_ratings.sql", "0133_product_qa.sql",
-  "0134_customer_notes.sql", "0013_giftcards.sql", "0025_referrals.sql",
+  "0134_customer_notes.sql", "0190_customer_impersonation.sql", "0013_giftcards.sql", "0025_referrals.sql",
   "0239_subscriptions_plan_transition_claim.sql",
 ].map(function (n) { return nodePath.resolve(__dirname, "..", "..", "migrations-d1", n); });
 
@@ -367,6 +367,33 @@ function _buildReaders(handles, query) {
         } catch (_e) { return { table: "product_qa_questions", deleted: 0 }; }
       },
     },
+    // Support sessions opened on the account. Exported because when someone
+    // looked at the account, why, and which pages is personal data about the
+    // customer; RETAINED on erasure because it is also the store's own record
+    // that the access happened — an erasure must not be able to remove the
+    // evidence that an operator opened the account.
+    customerImpersonation: {
+      forCustomerExport: async function (id) {
+        try {
+          var sessions = await handles.customerImpersonation.listForCustomer(id, { limit: 200 });
+          var out = [];
+          for (var i = 0; i < sessions.length; i += 1) {
+            out.push({
+              session: sessions[i],
+              actions: await handles.customerImpersonation.actionsForSession(sessions[i].id),
+            });
+          }
+          return out;
+        } catch (_e) { return []; }
+      },
+      forCustomerDeletion: async function (_id, opts) {
+        return {
+          table: "impersonations", deleted: 0, retained: true,
+          dry_run: !!(opts && opts.dry_run),
+          reason: "accountability record of store access to this account",
+        };
+      },
+    },
     customerNotes: {
       forCustomerExport: async function (id) {
         try {
@@ -560,6 +587,7 @@ async function _run() {
   var orderRatings   = bShop.orderRatings.create({ query: query });
   var productQa      = bShop.productQA.create({ query: query, customers: customers });
   var customerNotes  = bShop.customerNotes.create({ query: query, cursorSecret: "dsr-readers-notes" });
+  var customerImpersonation = bShop.customerImpersonation.create({ query: query });
   var giftcards      = bShop.giftcards.create({ query: query });
   var referrals      = bShop.referrals.create({ query: query });
 
@@ -571,7 +599,7 @@ async function _run() {
     customerPortal: customerPortal,
     suggestionBox: suggestionBox, saveForLater: saveForLater, storeCredit: storeCredit,
     stockAlerts: stockAlerts, quotes: quotes, orderRatings: orderRatings,
-    customerNotes: customerNotes, giftcards: giftcards, referrals: referrals,
+    customerNotes: customerNotes, customerImpersonation: customerImpersonation, giftcards: giftcards, referrals: referrals,
   };
   var readers = _buildReaders(handles, query);
 
@@ -599,6 +627,7 @@ async function _run() {
     orderRatings:   readers.orderRatings,
     productQa:      readers.productQa,
     customerNotes:  readers.customerNotes,
+    customerImpersonation: readers.customerImpersonation,
     giftcards:      readers.giftcards,
     referrals:      readers.referrals,
   });

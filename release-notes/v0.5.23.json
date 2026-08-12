@@ -1,0 +1,54 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.23",
+  "date": "2026-08-11",
+  "headline": "An operator can open the storefront as a customer to see what they are seeing — for an hour, with everything they do recorded, and with no way to take the account over",
+  "summary": "Support work routinely needs the operator to see the store the way one specific customer sees it: to reproduce a cart total that looks wrong, a delivery estimate that will not appear, a discount that should apply and does not. Signing in as the customer is the obvious way to do that and the worst one — every action then reads as the customer's own, nothing tells the customer it happened, and a forgotten session stays open indefinitely. This is that capability built so none of those are true. An owner opens a customer's page, states a reason, and browses as them for an hour. The session shows as a banner on every page, ends the moment it is left, and appears on the customer's own account page with the reason the operator gave. The operator can act — fix the cart, correct an address, place the order — but everything that decides who owns the account is closed to them, so a support visit cannot become a takeover and cannot lock the customer out.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "View the storefront as a customer, from their page in the console",
+          "body": "A \"View as customer\" panel on each customer's admin page opens a support session. A reason is required, and it is not decoration: it is stored with the session and shown to the customer. Following the link lands on a confirmation naming the account and the stated reason before anything begins — so a link that is prefetched, previewed by a chat client, or fetched by a scanner cannot start a session on the operator's behalf, and the operator sees whose account they are entering before they are in it. The session lasts an hour.",
+          "migration": "Nothing to configure. The panel appears on the customer page for operators holding the new `customers.impersonate` permission, which the `owner` role holds and `manager` does not."
+        },
+        {
+          "title": "The customer is told, on their own account page",
+          "body": "An \"Account access by our support team\" section lists every session opened on the account: when, the reason the operator gave, and whether one is in progress right now. It is delivered this way rather than by email deliberately. This store keeps customer email as a hash, so there is no address to write to, and a notice that cannot be sent is not a notice — recording one as sent would put a line in an audit trail that never happened. Rendered on the account page it needs no address and cannot silently fail. A store that has wired its own plaintext-address store and a notification dispatcher can additionally pass the notifications handle to the primitive and get the out-of-band message as well.",
+          "migration": "The section renders only when the account has actually been opened, so a customer who has never needed support sees nothing new."
+        },
+        {
+          "title": "A banner on every page, and one control to leave",
+          "body": "While a session is live every storefront page carries a banner naming the customer and a button that ends it. It is filled in by the same small script that corrects the cart count, which is what lets it appear on cached pages too — those are served as one identical body to every visitor, so nothing about who is looking can be baked into them. Browsing the catalog during a support session therefore looks like a support session, not like an ordinary visit."
+        }
+      ]
+    },
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "A support session cannot become a takeover",
+          "body": "Everything that decides who owns the account is refused for the duration: enrolling or revoking a passkey, linking an identity provider, mailing a sign-in link, changing the email address, deleting the account, and exporting the whole record. The refusals are enforced at one point ahead of every route rather than inside each handler, so a route added under one of those paths later is closed by where it lives rather than by its author remembering. Each attempt is recorded against the session.",
+          "migration": "None. An operator who needs one of these changed walks the customer through it on the customer's own device."
+        },
+        {
+          "title": "Signing out ends the session, and does not sign the customer out",
+          "body": "The account page's own sign-out control revokes every session the customer has, on every device, and invalidates their pending sign-in links. An operator reaching for it means \"get me out of here\". Left alone it would have signed the customer out of their phone and laptop because someone helped them — the precise lock-out this feature promises an operator cannot cause. It ends the impersonation instead."
+        },
+        {
+          "title": "Ending a session takes effect on the next request",
+          "body": "The session behind the cookie is re-read on every request made under it, so ending or revoking one stops the operator on their very next click rather than whenever the cookie would have expired. That check fails closed: where the equivalent gate for ordinary shoppers deliberately fails open so a database blip cannot sign everyone out, here a blip must not extend one person's authority over someone else's account."
+        },
+        {
+          "title": "The handoff link is single-use",
+          "body": "The link is spent by being used. It remains in browser history and anywhere it was pasted, so a second holder must not be able to mint their own session from it — and cannot: the session's authority moves into a cookie bound to the browser that redeemed it. Two holders racing the same link resolve to exactly one, because the claim is a conditional write rather than a check followed by a write."
+        },
+        {
+          "title": "Opening a session is its own permission",
+          "body": "`customers.impersonate` is separate from `customers.write`. A manager who can edit a customer record cannot become one; only the owner role holds it. A refusal names the missing authority in the audit record rather than reporting a generic write denial."
+        }
+      ]
+    }
+  ]
+}

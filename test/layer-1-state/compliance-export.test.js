@@ -204,6 +204,13 @@ async function _fulfillFullScope() {
   var giftcardsReader      = _mockReader("giftcards",      "giftcards",       [{ code_hint: "WXYZ", balance_minor: 2500 }], 1);
   var referralsReader      = _mockReader("referrals",      "referral_invitations", { as_referrer: null, invitations_sent: [], as_referee: [{ reward_status: "pending" }] }, 1);
 
+  // Support sessions opened on the account. In the export because when
+  // someone looked at your account, why, and which pages is personal data
+  // about you; retained on erasure because it is also the store's own record
+  // that the access happened.
+  var impersonationReader  = _mockReader("customerImpersonation", "impersonations",
+    [{ session: { id: "imp-1", reason: "cart total looked wrong", status: "ended" }, actions: [] }], 0);
+
   var ce = complianceExport.create({
     query:          q,
     customers:      customersReader,
@@ -228,6 +235,7 @@ async function _fulfillFullScope() {
     orderRatings:   orderRatingsReader,
     productQa:      productQaReader,
     customerNotes:  customerNotesReader,
+    customerImpersonation: impersonationReader,
     giftcards:      giftcardsReader,
     referrals:      referralsReader,
   });
@@ -480,9 +488,10 @@ async function _deletionFlow() {
   // reviews / consentLedger / wishlist / surveys / recentlyViewed /
   // suggestionBox / saveForLater / storeCredit /
   // guestOrderReconciliations / stockAlerts / quotes / orderRatings /
-  // productQa / customerNotes / giftcards / referrals). 5 of the 24
-  // deletion domains are wired here, so 19 surface as absent.
-  check("dry-run reports absent domains",       preview.domains_absent.length === 19);
+  // productQa / customerNotes / giftcards / referrals /
+  // customerImpersonation). 5 of the 25 deletion domains are wired here, so
+  // 20 surface as absent.
+  check("dry-run reports absent domains",       preview.domains_absent.length === 20);
   check("dry-run absent includes paymentMethods", preview.domains_absent.indexOf("paymentMethods") !== -1);
   check("dry-run absent includes wishlist",     preview.domains_absent.indexOf("wishlist") !== -1);
   check("dry-run absent includes saveForLater", preview.domains_absent.indexOf("saveForLater") !== -1);
