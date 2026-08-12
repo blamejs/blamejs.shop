@@ -48,6 +48,10 @@ var fs = require("node:fs");
 var path = require("node:path");
 var https = require("node:https");
 var childProcess = require("node:child_process");
+// Same import the other operator scripts use. Wanted for `b.retry.withRetry`:
+// the waits in this file are retries, and the framework already owns
+// exponential backoff with jitter and a retryable classifier.
+var b = require("../lib/vendor/blamejs");
 
 var ROOT = path.resolve(__dirname, "..");
 var REPO = "blamejs/blamejs.shop";
@@ -427,8 +431,43 @@ async function cmdDeploy() {
   if (!_gitOnMain()) throw new Error("release: deploy must run on main (post-merge)");
 
   _section("D1 migrations");
-  _run("node", ["node_modules/wrangler/bin/wrangler.js", "d1", "migrations", "apply", D1_DB, "--remote"],
-       { env: { CI: "true" } });
+  // Cloudflare answers this endpoint with 7403 ("account is not valid or is
+  // not authorized") transiently — twice on consecutive releases, each time
+  // clearing on a plain retry seconds later with the same credentials. It
+  // reads like an auth failure and is not one: the distinct, PERMANENT 7403 is
+  // an OAuth token that has narrowed to read-only, which `wrangler whoami`
+  // shows in its scope list and only `wrangler login` fixes.
+  //
+  // Retry a few times, then report the difference rather than leaving the
+  // operator to guess which 7403 they are looking at. Applying is idempotent
+  // (already-applied migrations are skipped), so a retry after a partial
+  // success is safe.
+  try {
+    await b.retry.withRetry(function () {
+      var rv = _run("node",
+        ["node_modules/wrangler/bin/wrangler.js", "d1", "migrations", "apply", D1_DB, "--remote"],
+        { env: { CI: "true" }, allowFail: true });
+      if (rv.status !== 0) throw new Error("d1 migrations apply exited " + rv.status);
+      return true;
+    }, {
+      maxAttempts:  4,
+      baseDelayMs:  5000,
+      maxDelayMs:   20000,
+      // Every failure of this command is worth another go: applying is
+      // idempotent, so the only cost of a retry on a genuinely broken
+      // credential is the wait before the message below.
+      isRetryable:  function () { return true; },
+      onRetry: function (info) {
+        console.log("d1 migrations apply failed (attempt " + info.attempt + "/4) — retrying in " +
+                    Math.round(info.delay) + "ms. Cloudflare returns a transient 7403 here.");
+      },
+    });
+  } catch (_e) {
+    throw new Error("release: d1 migrations apply failed 4 times. If the error is 7403, " +
+      "check `wrangler whoami` — a token showing `d1 (write)` means it was transient and " +
+      "worth retrying, while a token narrowed to `account (read)` / `user (read)` needs " +
+      "`npx wrangler login`.");
+  }
   _ok("pending D1 migrations applied (idempotent)");
 
   _section("R2 theme assets");
@@ -502,22 +541,80 @@ function cmdTag() {
   console.log("\nnext: node scripts/release.js publish");
 }
 
-function cmdPublish() {
+async function cmdPublish() {
   _section("publish");
   var next = _readPackageVersion();
-  var runId = _capture("gh", ["run", "list", "--workflow=npm-publish.yml", "--limit", "1",
-                              "--json", "databaseId", "--jq", ".[0].databaseId"]).stdout;
-  if (runId) {
-    // No allowFail: `--exit-status` makes a failed npm-publish run exit
-    // non-zero, which must fail the release rather than be swallowed.
-    _run("gh", ["run", "watch", runId, "--exit-status"]);
-  } else {
-    console.log("no npm-publish run found yet (the tag push may still be registering)");
+  var tag  = "v" + next;
+
+  // Match the run by TAG, not by recency.
+  //
+  // `--limit 1` returns the newest run of the workflow whatever triggered it.
+  // GitHub takes a few seconds to register the run a tag push starts, so in
+  // that window the newest run is the PREVIOUS release's — already completed,
+  // already successful. Watching it returns instantly, and the version check
+  // below then reports "npm version != <next> — may still be in flight" for a
+  // publish that had not been looked at at all. That happened on two
+  // consecutive releases, and a false "still in flight" is exactly the warning
+  // an operator learns to scroll past.
+  var runId = "";
+  try {
+    runId = await b.retry.withRetry(function () {
+      var found = _capture("gh", [
+        "run", "list", "--workflow=npm-publish.yml", "--limit", "20",
+        "--json", "databaseId,headBranch",
+        "--jq", '[.[] | select(.headBranch == "' + tag + '")][0].databaseId',
+      ], { allowFail: true }).stdout;
+      if (!found) throw new Error("no run for " + tag + " yet");
+      return found;
+    }, {
+      maxAttempts: 10, baseDelayMs: 3000, maxDelayMs: 15000,
+      isRetryable: function () { return true; },
+      onRetry: function (info) {
+        if (info.attempt === 1) console.log("waiting for the " + tag + " publish run to register…");
+      },
+    });
+  } catch (_e) {
+    throw new Error("release: no npm-publish run found for " + tag +
+      " — check that the tag push landed and the workflow is enabled");
   }
-  var npmVersion = _capture("npm", ["view", NPM_PKG, "version"]).stdout;
+  console.log("watching npm-publish run " + runId + " (" + tag + ")");
+  // No allowFail: `--exit-status` makes a failed npm-publish run exit
+  // non-zero, which must fail the release rather than be swallowed.
+  _run("gh", ["run", "watch", runId, "--exit-status"]);
+
+  // Poll the registry rather than reading it once. The publish step inside the
+  // workflow succeeds before the version is visible everywhere — metadata
+  // propagates and is CDN-cached — so a single read straight after the run
+  // completes can still answer with the PREVIOUS version. Failing on that
+  // would turn a healthy release into a red one, which is the same
+  // cry-wolf this phase was just fixed for.
+  var npmVersion = "";
+  try {
+    npmVersion = await b.retry.withRetry(function () {
+      var seen = _capture("npm", ["view", NPM_PKG, "version"], { allowFail: true }).stdout;
+      if (seen !== next) throw new Error("registry still shows " + (seen || "nothing"));
+      return seen;
+    }, {
+      maxAttempts: 10, baseDelayMs: 3000, maxDelayMs: 15000,
+      isRetryable: function () { return true; },
+      onRetry: function (info) {
+        if (info.attempt === 1) {
+          console.log("npm " + NPM_PKG + " has not caught up yet — waiting for " +
+                      next + " to propagate…");
+        }
+      },
+    });
+  } catch (_e) {
+    npmVersion = _capture("npm", ["view", NPM_PKG, "version"], { allowFail: true }).stdout;
+  }
   console.log("npm " + NPM_PKG + ": " + (npmVersion || "(unable to query)") + "  (expected " + next + ")");
-  if (npmVersion === next) _ok("npm matches " + next);
-  else console.error("warning: npm version != " + next + " — workflow may still be in flight");
+  if (npmVersion === next) { _ok("npm matches " + next); return; }
+  // The correct run was watched to completion and the registry has had a
+  // minute to catch up, so this is a real failure rather than a timing
+  // artefact — the version this release claims to have published is not there.
+  throw new Error("release: npm shows " + (npmVersion || "nothing") +
+    " but this release published " + next + " — the publish workflow completed without " +
+    "the version landing on the registry");
 }
 
 async function cmdAll(opts) {
@@ -529,7 +626,7 @@ async function cmdAll(opts) {
   cmdMerge();
   await cmdDeploy();
   cmdTag();
-  cmdPublish();
+  await cmdPublish();
 }
 
 function cmdStatus() {
@@ -577,7 +674,7 @@ var opts = { minor: process.argv.slice(3).indexOf("--minor") !== -1 };
       case "merge":   cmdMerge();       break;
       case "deploy":  await cmdDeploy(); break;
       case "tag":     cmdTag();         break;
-      case "publish": cmdPublish();     break;
+      case "publish": await cmdPublish(); break;
       case "all":     await cmdAll(opts); break;
       case "status":  cmdStatus();      break;
       case "help": case "--help": case "-h": cmdHelp(); break;

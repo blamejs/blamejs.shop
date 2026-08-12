@@ -602,9 +602,12 @@ async function _signatureRoundTrip() {
 // production `_defaultTransport`, which dials `b.httpClient.request`
 // with NO caller `agent`. That keeps the framework's PQC-first TLS
 // posture (ML-KEM hybrid groups, TLS 1.3 minimum) for arbitrary
-// operator URLs — the opposite of the PSP adapters (lib/payment.js),
-// which pin a classical-downgrade agent ONLY for their two fixed
-// processor endpoints. A receiver that can't negotiate an ML-KEM hybrid
+// operator URLs. The payment adapters hold the same posture — they used
+// to pin a hand-built agent for their two fixed processor endpoints, and
+// that was removed once the framework's own offer ended with a classical
+// option, at which point the pin had become the downgrade. Their test
+// pins the absence: test/layer-1-state/payment.test.js asserts the Stripe
+// dial supplies no caller TLS agent. A receiver that can't negotiate an ML-KEM hybrid
 // group fails the handshake (TLS alert 40); the framework records it as
 // a transport error and retries / DLQs. This guard pins that decision:
 // if someone ever wires a downgrade agent into the default webhook

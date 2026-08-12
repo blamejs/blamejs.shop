@@ -128,6 +128,30 @@ async function _run() {
     // audit store (read-only observability view must never 500).
     var html = await helpers.httpRequest({ port: port, path: "/admin/audit", jar: jar });
     check("audit screen then 200",         html.status === 200);
+
+    // Every admin response is signed-in operator data — customer rosters,
+    // order detail, the audit chain itself. It was being served with NO cache
+    // directive at all, which leaves a shared proxy free to decide for itself
+    // whether to store it. The console's HTML and its JSON API both go through
+    // the framework renderer now, so both carry the private/no-cache default
+    // and a Content-Length; the console keeps its noindex on top.
+    check("admin HTML is not cacheable by a shared proxy",
+      /private/.test(String(html.headers["cache-control"] || "")) &&
+      /no-cache/.test(String(html.headers["cache-control"] || "")));
+    check("admin HTML is framed with a length",
+      Number(html.headers["content-length"]) > 0);
+    check("admin HTML keeps its noindex",
+      /noindex/.test(String(html.headers["x-robots-tag"] || "")));
+
+    var apiJson = await helpers.httpRequest({
+      port: port, path: "/admin/audit", headers: bearer,
+    });
+    check("admin JSON answers a bearer",   apiJson.status === 200);
+    check("admin JSON is not cacheable by a shared proxy",
+      /private/.test(String(apiJson.headers["cache-control"] || "")) &&
+      /no-cache/.test(String(apiJson.headers["cache-control"] || "")));
+    check("admin JSON is framed with a length",
+      Number(apiJson.headers["content-length"]) > 0);
     check("nav includes /admin/audit",     html.body.indexOf("\"/admin/audit\"") !== -1);
 
     // Bearer GET → JSON, 200, never a 500.
