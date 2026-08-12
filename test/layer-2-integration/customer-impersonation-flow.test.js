@@ -349,6 +349,33 @@ async function _run() {
     check("a live session reads as in progress",
       acctPage.body.indexOf("in progress now") !== -1);
 
+    // ---- a supervisor can see the session, and end it ---------------------
+    //
+    // The per-customer history answers "was my account opened". This is the
+    // other half: every live session at once, and one control to stop any of
+    // them. A capability that lets one person browse as another is only as
+    // accountable as the place you can watch it from.
+    var dash = await helpers.httpRequest({
+      port: port, path: "/admin/impersonation", method: "GET", headers: bearer,
+    });
+    check("the sessions dashboard answers a bearer", dash.status === 200);
+    var dashRows = JSON.parse(dash.body).rows;
+    check("the live session is listed",
+      dashRows.some(function (r) { return r.id === payload.impersonation_id; }));
+    check("and it names the customer and the reason",
+      dashRows.some(function (r) {
+        return r.customer_id === alice.id &&
+               String(r.reason).indexOf("cart total is wrong") !== -1;
+      }));
+
+    // Revoking requires a reason, like starting does.
+    var noWhy = await helpers.httpRequest({
+      port: port, path: "/admin/impersonation/" + encodeURIComponent(payload.impersonation_id) + "/revoke",
+      method: "POST", headers: Object.assign({ "content-type": "application/json" }, bearer),
+      body: JSON.stringify({}),
+    });
+    check("revoking without a reason is refused", noWhy.status === 400);
+
     // ---- ending takes effect on the NEXT request --------------------------
     await impersonation.endImpersonation({
       impersonation_id: payload.impersonation_id,
@@ -383,6 +410,82 @@ async function _run() {
     check("the sweep flips it", sweptResult.swept >= 1);
     var afterSweep = await impersonation.getSession(abandoned.impersonation_id);
     check("an elapsed session no longer reads as active", afterSweep.status !== "active");
+
+    // A supervisor revoking someone else's live session kicks that operator
+    // out on their very next request — the whole point of the control.
+    var victim = await impersonation.startImpersonation({
+      operator_id: "owner", customer_id: alice.id, reason: "to be revoked",
+    });
+    var victimJar = helpers.cookieJar();
+    await helpers.httpRequest({
+      port: port, path: "/account/impersonate/start", method: "POST", jar: victimJar,
+      form: { token: victim.plaintext_token },
+    });
+    var inBefore = await helpers.httpRequest({ port: port, path: "/account", method: "GET", jar: victimJar });
+    check("the revoke target is inside the account first", inBefore.status === 200);
+
+    var revoked = await helpers.httpRequest({
+      port: port, path: "/admin/impersonation/" + encodeURIComponent(victim.impersonation_id) + "/revoke",
+      method: "POST", headers: Object.assign({ "content-type": "application/json" }, bearer),
+      body: JSON.stringify({ reason: "supervisor ended it" }),
+    });
+    check("revoke succeeds", revoked.status === 200);
+
+    // The audit row must name the SUPERVISOR, not the operator they removed.
+    // On a feature whose whole justification is an accurate record of who did
+    // what to whose account, attributing a revocation to its target is a
+    // falsified line — and the one an investigation would rely on.
+    // Asserted against a recording sink rather than through HTTP, because the
+    // app's audit store is not queryable from here and a conditional check
+    // would quietly pass by skipping itself.
+    var recorded = [];
+    var spySvc = bShop.customerImpersonation.create({
+      query: query,
+      operatorAuditLog: { record: async function (ev) { recorded.push(ev); } },
+    });
+    var spied = await spySvc.startImpersonation({
+      operator_id: "33333333-3333-7333-8333-333333333333",
+      customer_id: alice.id, reason: "attribution probe",
+    });
+    recorded.length = 0;
+    await spySvc.revoke({
+      impersonation_id: spied.impersonation_id,
+      reason: "supervisor ended it", revoked_by: "owner",
+    });
+    check("the revocation emits exactly one audit event", recorded.length === 1);
+    check("attributed to the supervisor who acted, not the operator removed",
+      String(recorded[0] && recorded[0].actor_id) === "owner");
+    check("and flagged as somebody else's intervention",
+      recorded[0] && recorded[0].after && recorded[0].after.self_revoked === false);
+    var inAfter = await helpers.httpRequest({ port: port, path: "/account", method: "GET", jar: victimJar });
+    check("the revoked operator is out on the next request", inAfter.status === 303);
+    var goneFromDash = JSON.parse((await helpers.httpRequest({
+      port: port, path: "/admin/impersonation", method: "GET", headers: bearer,
+    })).body).rows;
+    check("and the session leaves the dashboard",
+      !goneFromDash.some(function (r) { return r.id === victim.impersonation_id; }));
+
+    // An elapsed session must drop off the dashboard the moment its hour is
+    // up, not whenever the sweep next runs. Authority is already gone by then
+    // — a screen still showing the operator as present is telling a supervisor
+    // something untrue, which is how an oversight screen becomes noise.
+    var stale = await impersonation.startImpersonation({
+      operator_id: "owner", customer_id: alice.id, reason: "elapsed but unswept",
+    });
+    var liveNow = await impersonation.currentlyImpersonating();
+    check("a fresh session is on the dashboard",
+      liveNow.some(function (r) { return r.id === stale.impersonation_id; }));
+    var laterView = await impersonation.currentlyImpersonating({
+      now: Date.now() + 1000 * 60 * 60 * 2,
+    });
+    check("an elapsed session is off it before any sweep runs",
+      !laterView.some(function (r) { return r.id === stale.impersonation_id; }));
+    var stillMarkedActive = await impersonation.getSession(stale.impersonation_id);
+    check("even though its status column still says active",
+      stillMarkedActive.status === "active");
+    await impersonation.endImpersonation({
+      impersonation_id: stale.impersonation_id, ended_by: "operator", reason: "probe done",
+    });
   } finally {
     try { await app.shutdown(); } catch (_e) { /* already down */ }
     try { nodeFs.rmSync(dataDir, { recursive: true, force: true }); } catch (_e) { /* temp dir */ }

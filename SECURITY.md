@@ -296,7 +296,12 @@ node -e "
   closed. The handoff link is single-use and cannot be spent by a prefetch.
   Every request made under the session lands in an append-only log, and the
   customer sees each session — with the reason the operator gave — on their
-  own account page.
+  own account page. Operators get the other half of that view at
+  `/admin/impersonation`: every live session at once, with one control to end
+  any of them. Reading it needs no special permission, because restricting
+  oversight to the role that can start sessions is how a capability stops
+  being watched; ending one takes the same owner-only authority as starting
+  one, and takes effect on that operator's next request.
 - **Text one person writes and another reads is screened for invisible
   characters.** A Unicode bidirectional override reverses the display
   order of everything after it while itself rendering as nothing, so

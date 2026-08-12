@@ -1,0 +1,50 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.24",
+  "date": "2026-08-11",
+  "headline": "A supervisor can see every operator currently inside a customer's account and end any of them, and admin responses are no longer served to a shared cache without instruction",
+  "summary": "The support session added in the previous release could be started, watched by the customer it concerned, and left — but there was nowhere an operator could see all of them at once. That is the surface a capability like this is supervised from, so it now exists: every live session, whose account, since when, the reason the operator gave, and one control to end any of them. Separately, every response the admin console produces carried no cache directive at all. That is signed-in operator data — customer rosters, order detail, the audit chain — and a shared proxy was left to make its own decision about storing it; all of it is now marked private and must-revalidate, and framed with a content length.",
+  "sections": [
+    {
+      "heading": "Added",
+      "items": [
+        {
+          "title": "A screen showing who is inside a customer's account right now",
+          "body": "`/admin/impersonation` lists every live support session across all operators: who is in, whose account, when it started, when it expires on its own, and the reason they gave for opening it. Each row carries a control to end that session, which also requires a reason. Ending one stops that operator on their very next request rather than whenever their cookie would have expired. Reading the screen needs no special permission — seeing that a session is running is oversight, and restricting oversight to the same role that can start sessions is how a capability stops being watched. Ending one takes the same owner-only authority as starting one.",
+          "migration": "The screen and its nav entry appear only where the impersonation primitive is wired; a store that has not enabled the feature sees neither."
+        }
+      ]
+    },
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Admin responses are no longer cacheable by a shared proxy",
+          "body": "Every JSON and HTML response from the admin console was served with no `Cache-Control` header whatsoever, which leaves an intermediary free to decide for itself whether to store it. The content is signed-in operator data: customer rosters, order detail, the audit chain, captured error text. All of it now carries `private, no-cache, must-revalidate` and a `Content-Length`, so a response is framed and an intermediary is told plainly not to keep it. The console keeps its existing `noindex`.",
+          "migration": "None. A browser still caches nothing it did not before; what changes is that a proxy between the operator and the store is now instructed rather than left to guess."
+        }
+      ]
+    },
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "The release pipeline no longer reports a healthy publish as unfinished",
+          "body": "The publish step looked up the most recent run of the publish workflow rather than the run for the tag it had just pushed. GitHub takes a few seconds to register a run, so within that window it watched the PREVIOUS release's run — already finished, already green — and then reported that the registry did not have the new version yet. It now matches the run by tag, waits for it to appear, and polls the registry for a bounded interval before concluding anything, so a slow propagation is waited out rather than announced as a problem."
+        },
+        {
+          "title": "A transient Cloudflare error no longer stops a deploy",
+          "body": "Applying database migrations occasionally fails with an authorization error that clears on its own moments later with the same credentials. It reads exactly like a broken token and is not one. The step now retries with backoff, and if it still fails the message says how to tell the two apart: a token that lists database write access was the transient case, while one narrowed to read-only genuinely needs re-authenticating."
+        },
+        {
+          "title": "Five copies of the same control-byte scanner became one call",
+          "body": "Business hours, carrier rates, delivery estimates, shipping labels and shipping zones each carried a character-for-character copy of the same six-line loop. All five now call the framework's own predicate. The accepted and rejected sets are unchanged — verified codepoint by codepoint before the change, which is how the one difference that mattered was caught: the framework's default permits a tab, and these fields do not."
+        },
+        {
+          "title": "Comments describing the outbound TLS posture match the code again",
+          "body": "Four comments still described payment-processor connections as pinning a hand-built handshake configuration. That was removed when the framework's own offer gained a classical option, at which point the pin had become the downgrade it was meant to avoid. The comments said the opposite of what the code did, in the place an operator reading about outbound TLS would look."
+        }
+      ]
+    }
+  ]
+}
