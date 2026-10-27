@@ -1,0 +1,29 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.25",
+  "date": "2026-10-27",
+  "headline": "The minimum Node.js is now 24.22.1, which fixes the Brotli decoder flaw CVE-2026-111497, and the vendored framework moves to 0.18.25",
+  "summary": "Node.js 24.22.1 fixes CVE-2026-111497, an out-of-bounds write in the Brotli decoder that Node bundles. The store's container calls fetch() against payment, carrier and webhook endpoints, and fetch() decodes a Brotli-encoded response automatically, so every container on an earlier 24.x release can be reached through a response body. The engines floor, the container base image and the CI runners now all require 24.22.1.",
+  "sections": [
+    {
+      "heading": "Security",
+      "items": [
+        {
+          "title": "Minimum Node.js raised to 24.22.1 for CVE-2026-111497",
+          "body": "CVE-2026-111497 is an out-of-bounds write in the Brotli decompression library that Node.js bundles. Node.js rates it high, and the CVE record scores it 9.2 under CVSS v4.0. Decompressing attacker-supplied Brotli data can crash the process, disclose process memory, or execute code. Node.js fixed it in 24.22.1, released on 2026-10-20. Node 20.x, 23.x and 25.x receive no fix. In this store the reachable path is outbound: fetch() decodes a response sent with Content-Encoding: br, so a payment processor, carrier, webhook target or any other endpoint the store calls could deliver the payload. The request body parser does not decode Content-Encoding, and the edge worker does not run on Node. engines.node is now >=24.22.1, up from >=24.19.0. The .nvmrc, the Dockerfile NODE_VERSION argument, the CI and publish workflow runners, and the README and architecture docs all move to the same version. The new floor is ahead of the vendored framework's own floor of 24.19.0, which the version gate allows.",
+          "migration": "Update the Node runtime to 24.22.1 or newer before upgrading. A container rebuilt from this release uses the node:24.22.1-alpine base image. A self-hosted install on 24.x updates in place, because this is a patch release within the same LTS line."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Vendored framework refreshed to 0.18.25",
+          "body": "Advances the vendored framework from 0.18.24 to 0.18.25. Sixteen documented examples called methods the framework does not have, including b.db.from(t).insert(), b.scheduler.every(), b.httpClient.create() and b.https.createServer(), and each of them has been corrected. The bundled PKI toolkit behind mutual TLS moves from 0.4.14 to 0.4.15. It now reaches a revocation verdict for a CA that partitions its CRLs by reason code and for a CA that publishes a delta CRL alongside its base CRL; both cases previously came back undetermined. The store's application code does not change.",
+          "migration": "None."
+        }
+      ]
+    }
+  ]
+}
