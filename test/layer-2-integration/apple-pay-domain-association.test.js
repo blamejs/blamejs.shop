@@ -134,8 +134,6 @@ async function _run() {
   );
   try {
     // Apple's verification crawl: a non-browser GET that omits Accept-Language.
-    // An empty Accept-Language is falsy to the bot-guard's missing-header
-    // heuristic, so without the well-known skip this would 403.
     var crawl = await helpers.httpRequest({
       port:    handle3.port,
       path:    WELL_KNOWN_PATH,
@@ -144,15 +142,15 @@ async function _run() {
     check("(c) crawl without Accept-Language is SERVED (not 403)", crawl.status === 200);
     check("(c) crawl gets the verbatim association bytes", crawl.body === ASSOC_VALUE);
 
-    // Control: a DIFFERENT no-Accept-Language path on the same bot-guarded app
-    // is refused — proves the bot-guard is genuinely active and the skip is
-    // scoped to the well-known path, not the whole app.
+    // Control: an automation user agent on a DIFFERENT path of the same
+    // bot-guarded app is refused, which proves the bot-guard is active and
+    // the skip is scoped to the well-known path, not the whole app.
     var blocked = await helpers.httpRequest({
       port:    handle3.port,
       path:    "/cart",
-      headers: { "user-agent": "Some Random Scraper", "accept-language": "", "sec-fetch-mode": "" },
+      headers: { "user-agent": "curl/8.5.0", "accept-language": "", "sec-fetch-mode": "" },
     });
-    check("(c) control: a non-skip path without Accept-Language IS bot-blocked (403)",
+    check("(c) control: an automation user agent on a non-skip path IS bot-blocked (403)",
       blocked.status === 403);
   } finally {
     await _teardown(handle3);

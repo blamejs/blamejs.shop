@@ -285,6 +285,31 @@ async function _shopifyJsonShape() {
   check("shopify product image attached", media.length === 1 && media[0].r2_key === "products/shop-1.jpg");
 }
 
+// A JSON import carries product copy as written. Emoji sequences joined with
+// U+200D, subdivision flags built from Unicode tag characters and soft hyphens
+// are ordinary there and must not refuse the file; a bidi override still does.
+async function _jsonTextAcceptsEmojiAndFlags() {
+  var query   = _makeQuery();
+  var catalog = catalogModule.create({ query: query });
+  var imp     = bShop.create({ query: query, catalog: catalog });
+
+  var family = "Family pack \u{1F468}‍\u{1F469}‍\u{1F467}";
+  var flag   = "Made in \u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}";
+  var shy    = "Extra­ordinary";
+  var text = JSON.stringify([
+    { slug: "emoji-1", title: family, description: flag + " " + shy, status: "active",
+      variants: [{ sku: "EMOJI-1", price_minor: 500, currency: "USD" }] },
+  ]);
+  var result = await imp.importFromJson(text, { format: "blamejs_native", on_conflict: "error" });
+  check("json import with emoji, flags and soft hyphens completes", result.status === "complete" && result.rows_errored === 0);
+  var p = await catalog.products.bySlug("emoji-1");
+  check("json import keeps the emoji title as written", !!p && p.title === family);
+  check("json import keeps the flag and soft hyphen as written", !!p && p.description === flag + " " + shy);
+
+  var bidi = JSON.stringify([{ slug: "bidi-1", title: "a‮b", status: "active", variants: [] }]);
+  await assert.rejects(imp.importFromJson(bidi, { format: "blamejs_native" }), /json refused/);
+}
+
 async function _withinImportDedupe() {
   var query   = _makeQuery();
   var catalog = catalogModule.create({ query: query });
@@ -366,6 +391,7 @@ async function run() {
   await _onConflictModes();
   await _quotedCommas();
   await _shopifyJsonShape();
+  await _jsonTextAcceptsEmojiAndFlags();
   await _withinImportDedupe();
   await _errorsForImportRetrieval();
   await _factoryValidation();

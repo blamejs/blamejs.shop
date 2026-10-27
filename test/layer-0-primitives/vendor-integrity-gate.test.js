@@ -63,7 +63,7 @@ async function _run() {
     check("fixture not ok after tamper",   tampered.ok === false);
     check("fixture reports the mismatch",  tampered.mismatches.length === 1 && tampered.mismatches[0].path === fileA);
 
-    // 4. Missing manifest → VENDOR_MANIFEST_MISSING ConfigDriftError.
+    // 4. Missing manifest → config-drift/vendor-manifest-missing ConfigDriftError.
     var missingThrew = null;
     try {
       b.configDrift.verifyVendorIntegrity({
@@ -72,7 +72,8 @@ async function _run() {
       });
     } catch (e) { missingThrew = e; }
     check("missing manifest throws",        !!missingThrew);
-    check("error code VENDOR_MANIFEST_MISSING", missingThrew && missingThrew.code === "VENDOR_MANIFEST_MISSING");
+    check("error code config-drift/vendor-manifest-missing",
+      missingThrew && missingThrew.code === "config-drift/vendor-manifest-missing");
   } finally {
     try { nodeFs.rmSync(dir, { recursive: true, force: true }); } catch (_e) { /* */ }
   }

@@ -163,27 +163,31 @@ async function _csvInjectionRefusal() {
   var ex = orderExport.create({ query: q });
   // Classic OWASP CSV-injection vectors, asserted on the row that actually
   // ships rather than on a helper — a spreadsheet reads the emitted bytes, so
-  // that is where neutralization has to hold. A leading TAB makes the cell
-  // text; it renders as invisible whitespace.
+  // that is where neutralization has to hold. A leading single quote makes
+  // the cell text.
   //
-  // Each cell arrives quoted, so a neutralized one opens `"\t` and the
+  // Each cell arrives quoted, so a neutralized one opens `"'` and the
   // metacharacter follows.
   function cell(v) {
     var row = ex._csvRow([v]);
     return row.replace(/\r\n$/, "").replace(/^"/, "").replace(/"$/, "");
   }
-  check("row escapes a leading `=`",              cell("=cmd|' /C calc'!A0").indexOf("\t=") === 0);
-  check("row escapes a leading `+`",              cell("+SUM(A1:A9)").charAt(0) === "\t");
-  check("row escapes `-2+3+cmd`",                 cell("-2+3+cmd|' /C calc'").charAt(0) === "\t");
-  check("row escapes a leading `@`",              cell("@SUM(A1)").charAt(0) === "\t");
-  // Vectors an `= + - @`-only check misses — leading pipe, CR, tab.
-  check("row escapes a leading pipe",             cell("|calc").charAt(0) === "\t");
-  check("row escapes a leading CR",               cell("\r=evil").charAt(0) === "\t");
+  check("row escapes a leading `=`",              cell("=cmd|' /C calc'!A0").indexOf("'=") === 0);
+  check("row escapes a leading `+`",              cell("+SUM(A1:A9)").charAt(0) === "'");
+  check("row escapes `-2+3+cmd`",                 cell("-2+3+cmd|' /C calc'").charAt(0) === "'");
+  check("row escapes a leading `@`",              cell("@SUM(A1)").charAt(0) === "'");
+  // A trigger hidden behind a leading CR is still found.
+  check("row escapes a trigger after a leading CR", cell("\r=evil") === "'\r=evil");
+  // A leading pipe is not a formula trigger.
+  check("row leaves a leading pipe alone",        cell("|calc") === "|calc");
   // Signed numerics are escaped too. That is the safe OWASP posture: an
   // exemption for things that look like amounts is exactly the gap
   // `-2+3+cmd|…` walks through.
-  check("row escapes `+15.00`",                   cell("+15.00") === "\t+15.00");
-  check("row escapes `-3.5`",                     cell("-3.5") === "\t-3.5");
+  check("row escapes `+15.00`",                   cell("+15.00") === "'+15.00");
+  check("row escapes `-3.5`",                     cell("-3.5") === "'-3.5");
+  // A stored control character is stripped instead of failing the export.
+  check("row strips a C1 control character",      cell("Ali\u0085ce") === "Alice");
+  check("row strips DEL",                         cell("Ali\u007fce") === "Alice");
   // Anything benign passes through unmodified.
   check("row leaves benign text alone",           cell("Alice Smith") === "Alice Smith");
 }

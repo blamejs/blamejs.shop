@@ -1541,9 +1541,8 @@ async function main() {
       rateLimit:       bShop.securityMiddleware.globalRateLimitOpts(),
       // Bot-guard keeps the vendored block-mode defaults but skips the
       // worker→container internal endpoints: those calls carry no browser
-      // fingerprint (no User-Agent / Accept-Language), so the default
-      // heuristics 403 them before each handler's constant-time
-      // D1_BRIDGE_SECRET gate — the stronger check — ever runs. See
+      // fingerprint (no User-Agent / Accept-Language), and each handler's
+      // constant-time D1_BRIDGE_SECRET gate is the deciding check. See
       // INTERNAL_BRIDGE_PATHS in lib/security-middleware.js.
       botGuard:        bShop.securityMiddleware.botGuardOpts(),
       csrf:            false,

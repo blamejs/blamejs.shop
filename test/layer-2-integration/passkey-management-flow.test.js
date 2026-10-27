@@ -19,6 +19,7 @@
 
 process.env.BLAMEJS_SKIP_NTP_CHECK = "1";
 
+var nodeCrypto = require("node:crypto");
 var nodeFs   = require("node:fs");
 var nodeOs   = require("node:os");
 var nodePath = require("node:path");
@@ -76,6 +77,69 @@ async function _bootApp(deps) {
 
 function _authCookie(customerId) {
   return helpers.authCookie(b, customerId);
+}
+
+// A software WebAuthn authenticator: one ES256 (P-256) credential with "none"
+// attestation. WebAuthn fixes the digest and curve for this algorithm, so it
+// signs through node:crypto. The storefront in this harness has no
+// shop_origin, so its RP ID is "localhost" and its origin https://localhost.
+var RP_ID  = "localhost";
+var ORIGIN = "https://localhost";
+
+function _softAuthenticator() {
+  var kp     = nodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  var jwk    = kp.publicKey.export({ format: "jwk" });
+  var credId = nodeCrypto.randomBytes(16).toString("base64url");
+  var rpIdHash = nodeCrypto.createHash("sha256").update(RP_ID).digest();
+
+  function _clientData(type, challenge) {
+    return Buffer.from(JSON.stringify({ type: type, challenge: challenge, origin: ORIGIN, crossOrigin: false }));
+  }
+  function _u32(n) { var buf = Buffer.alloc(4); buf.writeUInt32BE(n, 0); return buf; }
+
+  return {
+    credId: credId,
+    register: function (challenge) {
+      var cose = Buffer.from(b.cbor.encode(new Map([
+        [1, 2], [3, -7], [-1, 1],
+        [-2, Buffer.from(jwk.x, "base64url")],
+        [-3, Buffer.from(jwk.y, "base64url")],
+      ])));
+      var idBytes = Buffer.from(credId, "base64url");
+      var idLen = Buffer.alloc(2); idLen.writeUInt16BE(idBytes.length, 0);
+      // flags: UP | UV | AT
+      var authData = Buffer.concat([rpIdHash, Buffer.from([0x45]), _u32(0), Buffer.alloc(16), idLen, idBytes, cose]);
+      var attObj = Buffer.from(b.cbor.encode({ fmt: "none", attStmt: {}, authData: authData }));
+      return {
+        id: credId, rawId: credId, type: "public-key",
+        response: {
+          clientDataJSON:    _clientData("webauthn.create", challenge).toString("base64url"),
+          attestationObject: attObj.toString("base64url"),
+          transports:        ["internal"],
+        },
+        clientExtensionResults: {},
+      };
+    },
+    assert: function (challenge, counter) {
+      var clientData = _clientData("webauthn.get", challenge);
+      // flags: UP | UV
+      var authData = Buffer.concat([rpIdHash, Buffer.from([0x05]), _u32(counter)]);
+      var digest = nodeCrypto.createHash("sha256").update(clientData).digest();
+      var sig = nodeCrypto.sign("sha256", Buffer.concat([authData, digest]), kp.privateKey);
+      return {
+        id: credId, rawId: credId, type: "public-key",
+        response: {
+          clientDataJSON:    clientData.toString("base64url"),
+          authenticatorData: authData.toString("base64url"),
+          signature:         sig.toString("base64url"),
+          // themes/default/assets/js/passkey-login.js sends null when the
+          // authenticator returns no user handle.
+          userHandle:        null,
+        },
+        clientExtensionResults: {},
+      };
+    },
+  };
 }
 
 async function _teardown(handle) {
@@ -182,6 +246,53 @@ async function _run() {
     var opts = JSON.parse(addBegin.body);
     check("add-begin returns a challenge",        typeof opts.challenge === "string" && opts.challenge.length > 0);
     check("add-begin excludes existing creds",     Array.isArray(opts.excludeCredentials) && opts.excludeCredentials.length === 1);
+
+    // ---- full ceremony: enroll a real credential, then sign in with it ---
+    var authr = _softAuthenticator();
+    var addFinish = await helpers.httpRequest({
+      port: handle.port, path: "/account/passkey/add-finish", method: "POST", jar: jarA,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(authr.register(opts.challenge)),
+    });
+    check("add-finish with a real attestation then 200", addFinish.status === 200);
+    var enrolled = (await customers.listPasskeys(custA.id)).filter(function (p) { return p.credential_id === authr.credId; })[0];
+    check("add-finish stored the attested credential id", !!enrolled);
+    check("add-finish stored the COSE public key as base64url text",
+      !!enrolled && typeof enrolled.public_key === "string" && enrolled.public_key.length > 0 &&
+      Buffer.from(enrolled.public_key, "base64url").toString("base64url") === enrolled.public_key);
+
+    async function _loginBegin(jar) {
+      var rv = await helpers.httpRequest({
+        port: handle.port, path: "/account/passkey/login-begin", method: "POST", jar: jar,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "alice@example.com" }),
+      });
+      return { status: rv.status, challenge: rv.status === 200 ? JSON.parse(rv.body).challenge : null };
+    }
+
+    var jarBad = helpers.cookieJar();
+    var beginBad = await _loginBegin(jarBad);
+    check("login-begin then 200", beginBad.status === 200 && typeof beginBad.challenge === "string");
+    var forged = authr.assert(beginBad.challenge, 1);
+    forged.response.clientDataJSON = Buffer.from(JSON.stringify({
+      type: "webauthn.get", challenge: beginBad.challenge, origin: ORIGIN, crossOrigin: false, tampered: true,
+    })).toString("base64url");
+    var loginBad = await helpers.httpRequest({
+      port: handle.port, path: "/account/passkey/login-finish", method: "POST", jar: jarBad,
+      headers: { "content-type": "application/json" }, body: JSON.stringify(forged),
+    });
+    check("login-finish refuses an assertion whose signature does not cover its client data",
+      loginBad.status === 401);
+
+    var jarLogin = helpers.cookieJar();
+    var begin = await _loginBegin(jarLogin);
+    var loginOk = await helpers.httpRequest({
+      port: handle.port, path: "/account/passkey/login-finish", method: "POST", jar: jarLogin,
+      headers: { "content-type": "application/json" }, body: JSON.stringify(authr.assert(begin.challenge, 1)),
+    });
+    check("login-finish with a valid assertion then 200", loginOk.status === 200);
+    var afterLogin = (await customers.listPasskeys(custA.id)).filter(function (p) { return p.credential_id === authr.credId; })[0];
+    check("login-finish persisted the authenticator's counter", !!afterLogin && afterLogin.counter === 1);
     // Anon add-begin → login redirect (never mints a challenge).
     var addBeginAnon = await helpers.httpRequest({ port: handle.port, path: "/account/passkey/add-begin", method: "POST", body: "{}", headers: { "content-type": "application/json" } });
     check("anon add-begin then 303 login",        addBeginAnon.status === 303);
@@ -232,8 +343,9 @@ async function _run() {
     check("takeover register-begin on a credential-less account then 409", guestTakeover.status === 409);
 
     // A brand-new email still registers — begin mints a challenge.
+    var jarNew = helpers.cookieJar();
     var freshBegin = await helpers.httpRequest({
-      port: handle.port, path: "/account/passkey/register-begin", method: "POST",
+      port: handle.port, path: "/account/passkey/register-begin", method: "POST", jar: jarNew,
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: "newcomer@example.com", display_name: "Newcomer" }),
     });
@@ -246,6 +358,20 @@ async function _run() {
     // challenge cookie until finish.
     check("new-email register-begin persists NO customer row yet",
                                                  (await customers.byEmailHash(customers.hashEmail("newcomer@example.com"))) === null);
+
+    // Finishing the ceremony with a real attestation creates the account and
+    // enrolls the credential together.
+    var newAuthr = _softAuthenticator();
+    var freshFinish = await helpers.httpRequest({
+      port: handle.port, path: "/account/passkey/register-finish", method: "POST", jar: jarNew,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(newAuthr.register(JSON.parse(freshBegin.body).challenge)),
+    });
+    check("register-finish with a real attestation succeeds", freshFinish.status >= 200 && freshFinish.status < 400);
+    var newcomer = await customers.byEmailHash(customers.hashEmail("newcomer@example.com"));
+    check("register-finish created the account", !!newcomer);
+    check("register-finish enrolled the attested credential",
+      !!newcomer && (await customers.listPasskeys(newcomer.id)).some(function (p) { return p.credential_id === newAuthr.credId; }));
 
     // ---- profile edit -------------------------------------------------
     var profGet = await helpers.httpRequest({ port: handle.port, path: "/account/profile", jar: jarA });

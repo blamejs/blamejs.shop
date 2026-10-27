@@ -164,6 +164,14 @@ function _fakeHttp(responses) {
         var r = responses[Math.min(i, responses.length - 1)];
         i += 1;
         var bodyStr = typeof r.body === "string" ? r.body : JSON.stringify(r.body);
+        // Same contract as b.httpClient.request: a non-2xx response rejects
+        // unless the caller asked for responseMode "always-resolve".
+        if ((r.status < 200 || r.status >= 300) && opts.responseMode !== "always-resolve") {
+          var httpErr = new Error("HTTP " + r.status + ": " + bodyStr.slice(0, 500));
+          httpErr.code = "http-client/http-error";
+          httpErr.statusCode = r.status;
+          throw httpErr;
+        }
         return {
           statusCode: r.status,
           headers:    r.headers || { "content-type": "application/json" },
@@ -689,6 +697,41 @@ async function _circuitBreakerTripsAndRecovers() {
   check("breaker:false disables the per-adapter breaker", sNB.breaker === null);
 }
 
+// ---- a PSP error response reaches the caller with its own code -----------
+//
+// Stripe answers a decline with HTTP 402 and a JSON error body. The caller
+// needs Stripe's code and the HTTP status, not a transport error carrying the
+// body as text.
+async function _pspErrorBodyReachesCaller() {
+  var declined = _fakeHttp([{ status: 402, body: { error: {
+    type: "card_error", code: "card_declined", decline_code: "insufficient_funds",
+    message: "Your card has insufficient funds.",
+  } } }]);
+  var s = payment.create({ apiKey: "sk_test_x", webhookSecret: "whsec_xxxxxxxx",
+    httpClient: declined.httpClient, breaker: false });
+  var err = null;
+  try { await s.createPaymentIntent({ amount_minor: 100, currency: "usd" }); } catch (e) { err = e; }
+  check("stripe dial asks for every response to resolve",
+    declined.calls[0].responseMode === "always-resolve");
+  check("a stripe decline rejects with stripe's code", !!err && err.code === "card_declined");
+  check("a stripe decline carries the HTTP status", !!err && err.statusCode === 402);
+  check("a stripe decline carries the parsed stripe error",
+    !!err && !!err.stripe && err.stripe.decline_code === "insufficient_funds");
+
+  var ppFake = _fakeHttp([
+    { status: 200, body: { access_token: "A", expires_in: 3600 } },
+    { status: 422, body: { name: "UNPROCESSABLE_ENTITY", details: [{ description: "Instrument declined" }] } },
+  ]);
+  var pp = payment.paypal({ clientId: "clientidxxxx", secret: "secretxxxxxx", sandbox: true,
+    httpClient: ppFake.httpClient, breaker: false });
+  var ppErr = null;
+  try { await pp.createOrder({ amount_minor: 500, currency: "USD", order_id: "ord-1" }, null); } catch (e) { ppErr = e; }
+  check("paypal dials ask for every response to resolve",
+    ppFake.calls.length === 2 && ppFake.calls.every(function (c) { return c.responseMode === "always-resolve"; }));
+  check("a paypal refusal rejects with paypal's error name", !!ppErr && ppErr.code === "UNPROCESSABLE_ENTITY");
+  check("a paypal refusal carries the HTTP status", !!ppErr && ppErr.statusCode === 422);
+}
+
 // ---- egress hardening: PSP dials pin allowedHosts to the configured host -
 //
 // b.httpClient already SSRF-gates the IP class + pins DNS even on the PSP
@@ -803,6 +846,7 @@ async function run() {
   await _paymentMethodDomains();
   await _setupIntentAndCustomer();
   await _circuitBreakerTripsAndRecovers();
+  await _pspErrorBodyReachesCaller();
 }
 
 module.exports = { run: run };

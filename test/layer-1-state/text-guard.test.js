@@ -107,7 +107,6 @@ function _freeText() {
   check("freeText mixed-script allowedScripts clears", textGuard.freeText(CONFUSABLE, "n", { mixedScript: "reject", allowedScripts: ["latin", "cyrillic"] }) === CONFUSABLE);
   check("freeText refuses non-string", _throws(function () { textGuard.freeText(42, "n"); }));
 
-  // The two groups the shop refuses that the framework catalog does not carry.
   // U+007F rides the control check; U+2061-2064 ride the zero-width policy.
   var cc = require("../../lib/vendor/blamejs/lib/codepoint-class");
   check("freeText refuses U+007F DELETE as a control char",
@@ -121,17 +120,18 @@ function _freeText() {
       textGuard.freeText(s, "n") === s);
   });
 
-  // Drift guard: the supplement above exists ONLY because the framework
-  // catalog lacks these codepoints (requested upstream as blamejs#580). If a
-  // vendor refresh adds them, this fails — delete DEL_RE / INVISIBLE_OP_RE
-  // from lib/text-guard.js and these assertions with it, rather than carrying
-  // a second copy of a table the catalog now owns.
+  // Drift guard: DEL_RE in lib/text-guard.js exists only because the
+  // framework's C0 table stops at 0x1F. If a vendor refresh adds U+007F to it,
+  // this fails; delete DEL_RE and this assertion with it.
   check("U+007F is still absent from the framework C0 catalog",
-    cc.C0_CTRL_RE.test(cc.fromCp(0x007F)) === false);
-  check("U+2061-2064 are still absent from the framework zero-width catalog",
+    cc.firstInRanges(cc.fromCp(0x007F), cc.C0_CTRL_RANGES) === -1);
+  // U+2061-2064 come from the framework's zero-width table, with no local copy.
+  check("U+2061-2064 are in the framework zero-width catalog",
     [0x2061, 0x2062, 0x2063, 0x2064].every(function (cp) {
-      return cc.ZERO_WIDTH_RE.test(cc.fromCp(cp)) === false;
+      return cc.firstInRanges(cc.fromCp(cp), cc.ZERO_WIDTH_RANGES) === 0;
     }));
+  check("scrubInvisible removes U+2061-2064",
+    textGuard.scrubInvisible("a" + cc.fromCp(0x2061) + "b" + cc.fromCp(0x2064) + "c") === "abc");
   // The inverse direction: adopting the catalog TIGHTENED the zero-width set
   // by U+00AD, which the per-module copies this replaced did not refuse.
   check("freeText refuses U+00AD SOFT HYPHEN under the zero-width policy",
@@ -144,9 +144,9 @@ function _reExports() {
   // The catalog re-exports are the framework's own instances, so the
   // single source of truth for the codepoint tables stays the framework.
   var cc = require("../../lib/vendor/blamejs/lib/codepoint-class");
-  check("BIDI_RE is the framework instance", textGuard.BIDI_RE === cc.BIDI_RE);
-  check("C0_CTRL_RE is the framework instance", textGuard.C0_CTRL_RE === cc.C0_CTRL_RE);
-  check("ZERO_WIDTH_RE is the framework instance", textGuard.ZERO_WIDTH_RE === cc.ZERO_WIDTH_RE);
+  check("BIDI_RANGES is the framework table", textGuard.BIDI_RANGES === cc.BIDI_RANGES);
+  check("C0_CTRL_RANGES is the framework table", textGuard.C0_CTRL_RANGES === cc.C0_CTRL_RANGES);
+  check("ZERO_WIDTH_RANGES is the framework table", textGuard.ZERO_WIDTH_RANGES === cc.ZERO_WIDTH_RANGES);
   check("NULL_BYTE is the framework value", textGuard.NULL_BYTE === cc.NULL_BYTE);
   check("detectMixedScripts is the framework fn", textGuard.detectMixedScripts === cc.detectMixedScripts);
   // currencyCode composes the framework's live ISO 4217 catalog.

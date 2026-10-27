@@ -243,10 +243,9 @@ node -e "
   The shop serves that path verbatim from `APPLE_PAY_DOMAIN_ASSOCIATION`
   (the file's contents, supplied by Stripe) — a static, unauthenticated,
   state-free public file with no transform applied. Apple's verification
-  crawler may omit `Accept-Language`, so the path is on the bot guard's
-  skip list (the same machine-caller exemption the `/_/` ticks use)
-  rather than being 403'd as automated traffic; this exposes nothing
-  beyond the public association bytes. When the value is unset the route
+  crawler does not send browser headers, so the path is on the bot guard's
+  skip list (the same machine-caller exemption the `/_/` ticks use); this
+  exposes nothing beyond the public association bytes. When the value is unset the route
   returns 404 and the button stays hidden — no other payment method is
   affected. Set the value identically on the Worker and the container;
   apex, `www`, and each subdomain serve their own file.
