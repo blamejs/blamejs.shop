@@ -1700,7 +1700,7 @@ var SEARCH_MAX_VALUE_LEN     = 256;
 // test compares the two across the whole plane.
 var SEARCH_CONTROL_BYTE_RE   = new RegExp(
   "[" + b.codepointClass.charClass([[0x0000, 0x001F], 0x007F, [0x2028, 0x2029]]) + "]" +
-  "|" + b.codepointClass.BIDI_RE.source
+  "|[" + b.codepointClass.charClass(b.codepointClass.BIDI_RANGES) + "]"
 );
 
 // The fixed search page size — mirrors lib/storefront.js SEARCH_PAGE_SIZE

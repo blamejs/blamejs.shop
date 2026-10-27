@@ -2,7 +2,7 @@
   "_comment": "Vendored dependencies — no npm runtime packages. Use scripts/vendor-update.sh to update.",
   "packages": {
     "@noble/ciphers": {
-      "version": "2.3.0",
+      "version": "2.4.0",
       "license": "MIT",
       "author": "Paul Miller",
       "source": "https://github.com/paulmillr/noble-ciphers",
@@ -15,16 +15,16 @@
         "browser": "lib/vendor/browser/noble-ciphers.mjs"
       },
       "bundler": "esbuild --format=cjs --platform=node (server), esbuild --format=esm --platform=browser (browser)",
-      "bundledAt": "2026-08-10T00:00:00Z",
-      "cpe": "cpe:2.3:a:paulmillr:noble-ciphers:2.3.0:*:*:*:*:node.js:*:*",
+      "bundledAt": "2026-08-27T00:00:00Z",
+      "cpe": "cpe:2.3:a:paulmillr:noble-ciphers:2.4.0:*:*:*:*:node.js:*:*",
       "hashes": {
-        "server": "sha256:f3325f480cb8eb814fcb0baaa19336cbbf2b993f48624c6aa9600ffd69d0be5e",
-        "browser": "sha256:0ffd91540bcb586a29b56e52ee1c29df69097b50776beb4036a07558f7a4e12e"
+        "server": "sha256:acdcf1ba4bde8177cbfcfef22b543022284a1529afb68bc8329303837c8c021e",
+        "browser": "sha256:fc422d85a65c5dc1208066b0156e100c4790be3c8791f644b80524c25d4bc3ee"
       },
-      "refreshedAt": "2026-08-11T05:20:51.853Z"
+      "refreshedAt": "2026-10-23T14:34:12.282Z"
     },
     "@noble/hashes": {
-      "version": "2.3.0",
+      "version": "2.4.0",
       "license": "MIT",
       "author": "Paul Miller",
       "source": "https://github.com/paulmillr/noble-hashes",
@@ -43,15 +43,15 @@
         "browser": "lib/vendor/browser/noble-hashes.mjs"
       },
       "bundler": "esbuild --format=esm --platform=browser (browser only)",
-      "bundledAt": "2026-08-10T00:00:00Z",
-      "cpe": "cpe:2.3:a:paulmillr:noble-hashes:2.3.0:*:*:*:*:node.js:*:*",
+      "bundledAt": "2026-08-27T00:00:00Z",
+      "cpe": "cpe:2.3:a:paulmillr:noble-hashes:2.4.0:*:*:*:*:node.js:*:*",
       "hashes": {
-        "browser": "sha256:dfe4b7ae3c9880e388c8da4b68f44742b229b53afacd1e674179527e33da62b0"
+        "browser": "sha256:0e135cbb496a1b7d15bf36b8c611a8feaad49ced60a03bf916bada78b589aa66"
       },
-      "refreshedAt": "2026-08-11T05:20:51.853Z"
+      "refreshedAt": "2026-10-23T14:34:12.282Z"
     },
     "@noble/curves": {
-      "version": "2.3.0",
+      "version": "2.4.0",
       "license": "MIT",
       "author": "Paul Miller",
       "source": "https://github.com/paulmillr/noble-curves",
@@ -65,21 +65,21 @@
         "server": "lib/vendor/noble-curves.cjs"
       },
       "bundler": "esbuild --format=cjs --platform=node",
-      "bundledAt": "2026-08-06T00:00:00Z",
-      "cpe": "cpe:2.3:a:paulmillr:noble-curves:2.3.0:*:*:*:*:node.js:*:*",
+      "bundledAt": "2026-08-27T00:00:00Z",
+      "cpe": "cpe:2.3:a:paulmillr:noble-curves:2.4.0:*:*:*:*:node.js:*:*",
       "hashes": {
-        "server": "sha256:b5fe88d1ea780d0581dee6145d666f89d46fc9531b5db35db2e5b16627840890"
+        "server": "sha256:477359f445eed241ad4ededb84921483c3c97618a160ef78b74bb1a421c17da7"
       },
-      "refreshedAt": "2026-08-11T05:20:51.853Z",
+      "refreshedAt": "2026-10-23T14:34:12.282Z",
       "components": {
         "@noble/hashes": {
           "url": "https://github.com/paulmillr/noble-hashes",
-          "version": "2.3.0"
+          "version": "2.4.0"
         }
       }
     },
     "@noble/post-quantum": {
-      "version": "0.7.0",
+      "version": "0.7.1",
       "license": "MIT",
       "author": "Paul Miller",
       "source": "https://github.com/paulmillr/noble-post-quantum",
@@ -108,50 +108,27 @@
         "browser": "lib/vendor/browser/noble-post-quantum.mjs"
       },
       "bundler": "esbuild --format=cjs --platform=node (server), esbuild --format=esm --platform=browser (browser)",
-      "bundledAt": "2026-08-10T00:00:00Z",
-      "cpe": "cpe:2.3:a:paulmillr:noble-post-quantum:0.7.0:*:*:*:*:node.js:*:*",
+      "bundledAt": "2026-08-27T00:00:00Z",
+      "cpe": "cpe:2.3:a:paulmillr:noble-post-quantum:0.7.1:*:*:*:*:node.js:*:*",
       "hashes": {
-        "server": "sha256:fab7ebe5737793862c473444f4ee5912f79dd1edec86683acbb4eecbca0f5892",
-        "browser": "sha256:cae1d5bbdc7184b202b6ca68df6e1db7b0d0f668c77809ded189ca7f271accc9"
+        "server": "sha256:04eaaa4838b43162912c851dd2cab52ab82f56decad8542934171247017a6893",
+        "browser": "sha256:30ceef750bc57ae5f59c5aa7454eafb7aad55d30c261a1b5c538a66c569fc031"
       },
-      "refreshedAt": "2026-08-11T05:20:51.853Z",
+      "refreshedAt": "2026-10-23T14:34:12.282Z",
       "components": {
         "@noble/hashes": {
           "url": "https://github.com/paulmillr/noble-hashes",
-          "version": "2.3.0"
+          "version": "2.4.0"
         },
         "@noble/curves": {
           "url": "https://github.com/paulmillr/noble-curves",
-          "version": "2.3.0"
+          "version": "2.4.0"
         },
         "@noble/ciphers": {
           "url": "https://github.com/paulmillr/noble-ciphers",
-          "version": "2.3.0"
+          "version": "2.4.0"
         }
       }
-    },
-    "@simplewebauthn/server": {
-      "version": "13.3.2",
-      "license": "MIT",
-      "author": "Matthew Miller",
-      "source": "https://github.com/MasterKale/SimpleWebAuthn",
-      "exports": [
-        "generateRegistrationOptions",
-        "verifyRegistrationResponse",
-        "generateAuthenticationOptions",
-        "verifyAuthenticationResponse",
-        "MetadataService"
-      ],
-      "files": {
-        "server": "lib/vendor/simplewebauthn-server.cjs"
-      },
-      "bundler": "esbuild --format=cjs --platform=node --alias:reflect-metadata=reflect-metadata/lite --external:crypto --external:node:crypto",
-      "bundledAt": "2026-07-13T00:00:00Z",
-      "cpe": "cpe:2.3:a:simplewebauthn:server:13.3.2:*:*:*:*:node.js:*:*",
-      "hashes": {
-        "server": "sha256:e83195dc9f189385da9c856ef38843f4466f93ea8f3d7fc2efcb1e1b18da6f20"
-      },
-      "refreshedAt": "2026-08-11T05:20:51.853Z"
     },
     "SecLists-common-passwords-top-10000": {
       "version": "10k-most-common (master)",
@@ -164,14 +141,14 @@
         "data_js": "lib/vendor/common-passwords-top-10000.data.js"
       },
       "bundler": "curl https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt",
-      "bundledAt": "2026-05-13T00:00:00Z",
+      "bundledAt": "2026-09-09T00:00:00Z",
       "hashes": {
-        "server": "sha256:3c04e3cec775a7d0e21e544d33810dd434cccdb02e98903ba12e506dd9cd01bd",
-        "data_js": "sha256:87b223beca89f33d2c2c32a2cfda0bc187e58061de40e7127bb5ffc4258c6e2a"
+        "server": "sha256:6120cdb93d71c8f1002c0bf8e317e35ccbda027f1fb9a7eeb270d6aaaf421bef",
+        "data_js": "sha256:f7397c0d039121737d674d776b45c00859e174f1cc2b79e9ad3f21184569a3c8"
       },
       "runtime_artifact": "lib/vendor/common-passwords-top-10000.data.js",
       "integrity_layers": "sha256 + sha3-512 + SLH-DSA-SHAKE-256f signature + in-payload canary (where applicable)",
-      "refreshedAt": "2026-08-11T05:20:51.853Z"
+      "refreshedAt": "2026-10-23T14:34:12.282Z"
     },
     "bimi-trust-anchors": {
       "version": "operator-managed",
@@ -179,7 +156,7 @@
       "license_is_spdx": false,
       "author": "BIMI Group / DigiCert / Entrust",
       "source": "https://bimigroup.org/",
-      "_about": "RFC 9091 BIMI Group Verified Mark trust-anchor bundle (PEM, concatenated). Loaded by lib/mail-bimi.js for VMC + CMC chain validation. Source-tree default is empty-of-PEM — operators populate via the documented refresh procedure in the file header below; call-site overrides via b.mail.bimi.fetchAndVerifyMark({ trustAnchorsPem }) are supported. Refresh procedure pulls https://www.digicert.com/CACerts/DigiCertVerifiedMarkRootCA.pem + https://web.entrust.com/root-certificates/entrust_verified_mark_root_g3.cer and concatenates them into the file. The empty default ships with a runtime warning when b.mail.bimi loads it absent any operator-supplied trustAnchorsPem call-site override — the canary skip is intentional (the dual-hash + SLH-DSA signature cover the threat for a non-empty bundle; an empty bundle has no canary to verify).",
+      "_about": "BIMI (draft-blank-ietf-bimi) Group Verified Mark trust-anchor bundle (PEM, concatenated). Loaded by lib/mail-bimi.js for VMC + CMC chain validation. Source-tree default is empty-of-PEM — operators populate via the documented refresh procedure in the file header below; call-site overrides via b.mail.bimi.fetchAndVerifyMark({ trustAnchorsPem }) are supported. Refresh procedure pulls https://www.digicert.com/CACerts/DigiCertVerifiedMarkRootCA.pem + https://web.entrust.com/root-certificates/entrust_verified_mark_root_g3.cer and concatenates them into the file. The empty default ships with a runtime warning when b.mail.bimi loads it absent any operator-supplied trustAnchorsPem call-site override — the canary skip is intentional (the dual-hash + SLH-DSA signature cover the threat for a non-empty bundle; an empty bundle has no canary to verify).",
       "_warning": "Empty PEM default — populate before invoking b.mail.bimi.fetchAndVerifyMark in production. b.mail.bimi emits a `bimi.trust-anchors.empty` runtime warning when this default is used without an operator-supplied trustAnchorsPem call-site override.",
       "exports": [
         "bimi-vmc-trust-anchors"
@@ -189,14 +166,14 @@
         "data_js": "lib/vendor/bimi-trust-anchors.data.js"
       },
       "bundler": "operator-managed (see file header for refresh procedure)",
-      "bundledAt": "2026-05-13T00:00:00Z",
+      "bundledAt": "2026-08-17T00:00:00Z",
       "hashes": {
-        "server": "sha256:81ff9f5ab3c9774132c845684e783be95cf73146f8b670d964105f0a3765b4b4",
-        "data_js": "sha256:aa7a4d33b65a68422a2a2c1670177689f66fdcaa08bd2514d78798b827bd1608"
+        "server": "sha256:5a2a4c695ff86db813284a35f985db7edf55b221fbd6e7d2ad7eb08344eccd72",
+        "data_js": "sha256:59ab628e10a3e10aa2e189cdb835e5d786939cc45f793e0e0390816ec3e9a0fd"
       },
       "runtime_artifact": "lib/vendor/bimi-trust-anchors.data.js",
       "integrity_layers": "sha256 + sha3-512 + SLH-DSA-SHAKE-256f signature + in-payload canary (where applicable)",
-      "refreshedAt": "2026-08-11T05:20:51.853Z"
+      "refreshedAt": "2026-10-23T14:34:12.282Z"
     },
     "publicsuffix-list": {
       "version": "master",
@@ -209,17 +186,17 @@
         "data_js": "lib/vendor/public-suffix-list.data.js"
       },
       "bundler": "curl https://publicsuffix.org/list/public_suffix_list.dat",
-      "bundledAt": "2026-07-25T00:00:00Z",
+      "bundledAt": "2026-10-23T00:00:00Z",
       "hashes": {
-        "server": "sha256:0240b3f1e8c90ecd4af5b94597afb5ba89997ad395f292f87318caefb7e10413",
-        "data_js": "sha256:7994e24e1865f197540a988783de567fe20fb29e7f6c3a5c142766bb0cfd9bfd"
+        "server": "sha256:1026fc1bed62e606331f822dc9f5653cd90bff103de3d69d3c7b1331aaabee20",
+        "data_js": "sha256:4143a3d169fae6067bc1e05386796e220e0f090e2c46483f0781eab0463e9161"
       },
       "runtime_artifact": "lib/vendor/public-suffix-list.data.js",
       "integrity_layers": "sha256 + sha3-512 + SLH-DSA-SHAKE-256f signature + in-payload canary (where applicable)",
-      "refreshedAt": "2026-08-11T05:20:51.853Z"
+      "refreshedAt": "2026-10-23T14:34:12.282Z"
     },
     "@blamejs/pki": {
-      "version": "0.4.15",
+      "version": "0.9.7",
       "license": "Apache-2.0",
       "author": "blamejs",
       "source": "https://github.com/blamejs/pki",
@@ -239,12 +216,12 @@
         "server": "lib/vendor/blamejs-pki.cjs"
       },
       "bundler": "esbuild --format=cjs --platform=node --external:crypto --external:node:crypto",
-      "bundledAt": "2026-08-10T00:00:00Z",
-      "cpe": "cpe:2.3:a:blamejs:pki:0.4.15:*:*:*:*:node.js:*:*",
+      "bundledAt": "2026-10-23T00:00:00Z",
+      "cpe": "cpe:2.3:a:blamejs:pki:0.9.7:*:*:*:*:node.js:*:*",
       "hashes": {
-        "server": "sha256:7b933e02ba3cf884385369e140808dfcaf114a402306c46183059dc1c86bb9c2"
+        "server": "sha256:5c66fa38df0bab0bb6692d93d13aea71911824c6be248ceb4108743780a87e82"
       },
-      "refreshedAt": "2026-08-11T05:20:51.853Z"
+      "refreshedAt": "2026-10-23T14:34:12.282Z"
     }
   }
 }

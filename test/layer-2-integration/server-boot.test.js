@@ -169,10 +169,12 @@ async function _runBare() {
     });
     check("node healthcheck probe exits 0", hc === 0);
 
-    // 3. A header-less client is still blocked on the same path — bot-guard
-    //    is intact; the probe is a well-shaped caller, not an exemption.
-    var headerless = await _get(state.port, {});
-    check("header-less /_/health still 403 (bot-guard on)", headerless === 403);
+    // 3. An automation user agent is still blocked on the same path, so
+    //    bot-guard is intact and the probe is a well-shaped caller, not an
+    //    exemption. A missing Accept-Language alone does not block: crawlers
+    //    and uptime monitors omit it.
+    var automation = await _get(state.port, { "user-agent": "curl/8.5.0" });
+    check("curl user agent on /_/health still 403 (bot-guard on)", automation === 403);
 
     // And the browser-shaped request the probe sends is allowed.
     var browserish = await _get(state.port, {

@@ -1,0 +1,65 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.26",
+  "date": "2026-10-27",
+  "headline": "Customers can create, add and sign in with passkeys, a Stripe or PayPal refusal reaches the caller with the provider's own error code, and the vendored framework moves to 0.21.4",
+  "summary": "Passkey registration and sign-in read a credential shape the framework does not return, so every registration was refused and no passkey could sign in. Both now use the framework's documented shape, and a test drives a real register-then-sign-in ceremony against the storefront routes. Stripe and PayPal requests now resolve every HTTP status, so a card decline or a PayPal refusal reaches the caller as the provider's own error code and status rather than as a generic transport error. The vendored framework moves from 0.18.25 to 0.21.4; the changes the store inherits, and the ones that change what operators see, are listed below.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Passkey sign-up, adding a passkey and passkey sign-in work",
+          "body": "The register-finish and add-finish routes read registrationInfo.credentialID and registrationInfo.credentialPublicKey, and the login-finish route passed the stored key as authenticator. The framework returns the credential as registrationInfo.credential { id, publicKey, counter } and reads it back as credential { id, publicKey, counter }. The public key therefore arrived undefined, the customer store refused it, and every passkey registration failed; no passkey could be stored, so none could sign in. The three routes now read and pass the documented shape. The stored public key is the COSE key as base64url text, and login-finish persists the counter the authenticator reports."
+        },
+        {
+          "title": "A Stripe or PayPal refusal reaches the caller with the provider's error code",
+          "body": "b.httpClient.request rejects a non-2xx response with http-client/http-error unless the request sets responseMode \"always-resolve\". The Stripe and PayPal requests did not set it, so the code that parses the provider's JSON error body never ran: a card decline surfaced as a transport error carrying the body as text instead of Stripe's code (for example card_declined) and decline_code, and a PayPal refusal lost its error name. The PayPal token exchange also could not hand the response back to the OAuth client. All three requests now set responseMode \"always-resolve\". A 5xx still counts against the circuit breaker and is retried on idempotent requests."
+        },
+        {
+          "title": "A media source URL over the upload cap is answered 413",
+          "body": "Uploading an image from source_url matched the framework's old RESPONSE_TOO_LARGE code. The framework now raises http-client/response-too-large, so an oversized source returned 502 source-fetch-failed. It returns 413 source-too-large again."
+        },
+        {
+          "title": "A JSON catalog import accepts emoji sequences, regional flags and soft hyphens",
+          "body": "The framework's strict JSON profile now refuses zero-width characters and Unicode tag characters. A product title or description containing a joined emoji sequence (U+200D), a subdivision flag (built from tag characters) or a soft hyphen (U+00AD) would have refused the whole import file. The JSON import now allows those characters, as a product created from the admin console does. A bidi override is still refused."
+        },
+        {
+          "title": "Order and segment CSV exports strip control characters",
+          "body": "The framework's CSV serializer now refuses DEL (U+007F) and the C1 controls (U+0080-009F) in the strict profile. A stored value carrying one would have stopped a streaming order or segment export partway through. Both exports now strip C0, DEL and C1 control characters from each cell."
+        },
+        {
+          "title": "An incomplete data-subject erasure is recorded as a failure",
+          "body": "When one or more domains failed during a DSR delete, the admin recorded the audit event with outcome \"partial\". The framework did not recognize that value: 0.18.25 stored it as success, and 0.21.4 stores an unrecognized outcome as failure. The event now records failure explicitly."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Vendored framework refreshed to 0.21.4",
+          "body": "Advances the vendored framework from 0.18.25 to 0.21.4, verified against the pinned ML-DSA-65 signing key before unpacking. Changes the store inherits without code changes: every outbound TLS connection now checks the server's certificate chain up to a trust anchor and refuses a chain that reaches none (tls/server-chain-unverifiable) or one that carries a key whose private half is public (tls/compromised-key); b.httpClient.request refuses an option it does not read (http-client/bad-opts); a passkey ceremony run in a cross-origin frame is refused, and a bad attestation signature now returns verified: false instead of throwing; an SVG carrying Unicode tag characters is refused by the strict profile; and every framework error code now has the form namespace/code. The framework's own Node floor is 24.21.0; this store's floor stays at 24.22.1."
+        },
+        {
+          "title": "Bot-guard no longer refuses a request for omitting Accept-Language",
+          "body": "In its default block mode the bot guard answered 403 to any request without an Accept-Language header. Googlebot, Bingbot, uptime monitors, link previewers and feed readers omit that header, so they received 403 on every page the container served. A missing Accept-Language is now an advisory signal. Requests from known automation user agents (curl, wget, python-requests and similar) are still refused. The worker-to-container endpoints and the Apple Pay domain-association path stay on the bot guard's skip list."
+        },
+        {
+          "title": "CSV formula cells are prefixed with a single quote instead of a tab",
+          "body": "Order and segment exports neutralize a cell that starts with =, +, - or @ (or a full-width variant, also after a leading tab, CR or LF) by prefixing a single quote ('), which a spreadsheet reads as text. The previous prefix was a tab character. A leading pipe (|) is no longer treated as a formula trigger and is exported unchanged.",
+          "migration": "A script that reads these exports and strips a leading tab from neutralized cells should strip a leading single quote instead."
+        },
+        {
+          "title": "CSV imports refuse a formula trigger in the first column",
+          "body": "The framework's CSV validator already refused a cell starting with =, +, - or @ in later columns; it now refuses one in the first column too. A catalog, customer or product CSV whose first column holds a value such as -123 is refused.",
+          "migration": "Make sure the first column of an import file does not start with =, +, - or @."
+        },
+        {
+          "title": "The admin audit log can be filtered to warning events",
+          "body": "The framework records a partial or advisory result with outcome warning. The audit screen at /admin/audit lists it as a filter alongside success, failure and denied."
+        }
+      ]
+    }
+  ]
+}

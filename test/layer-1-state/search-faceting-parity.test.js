@@ -377,11 +377,11 @@ async function _facetParamCodepointParity() {
   var cc = require("../../lib/vendor/blamejs/lib/codepoint-class");
   assert.ok(/charClass\(\[\[0x0000, 0x001F\], 0x007F, \[0x2028, 0x2029\]\]\)/.test(m[1]),
     "worker facet screen no longer composes the expected range table");
-  assert.ok(/BIDI_RE\.source/.test(m[1]),
+  assert.ok(/charClass\(b\.codepointClass\.BIDI_RANGES\)/.test(m[1]),
     "worker facet screen no longer composes the catalog bidi class");
   var edgeRe = new RegExp(
     "[" + cc.charClass([[0x0000, 0x001F], 0x007F, [0x2028, 0x2029]]) + "]" +
-    "|" + cc.BIDI_RE.source
+    "|[" + cc.charClass(cc.BIDI_RANGES) + "]"
   );
 
   // The container side is the screen itself, with the policy the storefront

@@ -1109,7 +1109,7 @@ var KNOWN_ANTIPATTERNS = [
   },
     {
     id: "inline-codepoint-class-table",
-    primitive: "codepointClass.BIDI_RE / C0_CTRL_RE / ZERO_WIDTH_RE / NULL_RE_G / hex4 / charClass / fromCp",
+    primitive: "codepointClass.BIDI_RANGES / C0_CTRL_RANGES / ZERO_WIDTH_RANGES / firstInRanges / hex4 / charClass / fromCp",
     regex: /var\s+BIDI_RANGES\s*=\s*\[\s*0x200E[\s\S]{0,500}?function\s+_charClass/,
     scanScope: "shop",
     allowlist: ["lib/codepoint-class.js"],

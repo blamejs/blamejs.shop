@@ -50,8 +50,9 @@ function main() {
       manifestPath: MANIFEST,
     });
   } catch (e) {
-    // VENDOR_MANIFEST_MISSING / VENDOR_MANIFEST_SHAPE (ConfigDriftError) —
-    // a missing or unstamped manifest is a gate failure, not a crash.
+    // config-drift/vendor-manifest-missing and
+    // config-drift/vendor-manifest-shape (ConfigDriftError): a missing or
+    // unstamped manifest is a gate failure, not a crash.
     var code = (e && e.code) || "ERROR";
     process.stderr.write("[vendor-integrity] FAILED — " + code + ": " + (e && e.message || e) + "\n");
     process.exit(1);

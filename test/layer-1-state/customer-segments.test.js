@@ -558,25 +558,24 @@ async function _membersCsvExport() {
   check("export: carries both member ids", body.indexOf(c1) !== -1 && body.indexOf(c2) !== -1);
   check("export: carries the ordinary display name", body.indexOf("Bob Buyer") !== -1);
   check("export: order_count column populated", body.indexOf("\"1\"") !== -1);
-  // CSV-injection neutralization — the "=cmd()" display_name is prefixed
-  // with a TAB (the shared b.guardCsv.escapeCell, OWASP prefix-tab) so a
-  // spreadsheet treats it as text, never a formula.
-  check("export: neutralizes the formula-injection name", body.indexOf("\"\t=cmd()") !== -1);
+  // CSV-injection neutralization: the "=cmd()" display_name is prefixed
+  // with a single quote by b.guardCsv, so a spreadsheet treats it as text.
+  check("export: neutralizes the formula-injection name", body.indexOf("\"'=cmd()") !== -1);
   check("export: no raw leading-= cell", body.indexOf(",\"=cmd()") === -1);
 
   // Injection neutralization, asserted on the emitted row rather than a
   // helper — a spreadsheet reads the bytes, so that is where it has to hold.
-  // A leading TAB is prefixed for any formula-trigger character (= + - @, plus
-  // the tab / CR / LF / pipe variants an `= + - @`-only check misses), signed
-  // numerics included: exempting things that look like amounts is the gap
-  // `-2+3+cmd|…` walks through.
+  // A single quote is prefixed for any formula-trigger character (= + - @,
+  // also after a leading tab, CR or LF), signed numerics included: exempting
+  // things that look like amounts is the gap `-2+3+cmd|…` walks through.
   function segCell(v) {
     return customerSegments._csvRow([v]).replace(/\r\n$/, "").replace(/^"/, "").replace(/"$/, "");
   }
-  check("row escapes a leading =",        segCell("=SUM(A1)") === "\t=SUM(A1)");
-  check("row escapes a leading @",        segCell("@foo") === "\t@foo");
-  check("row escapes a leading pipe",     segCell("|calc") === "\t|calc");
-  check("row escapes a signed number",    segCell("-3.50") === "\t-3.50");
+  check("row escapes a leading =",        segCell("=SUM(A1)") === "'=SUM(A1)");
+  check("row escapes a leading @",        segCell("@foo") === "'@foo");
+  check("row leaves a leading pipe alone", segCell("|calc") === "|calc");
+  check("row escapes a signed number",    segCell("-3.50") === "'-3.50");
+  check("row strips a C1 control character", segCell("B\u0085ob") === "Bob");
   check("row leaves plain text alone",    segCell("Bob") === "Bob");
   check("row is CRLF-terminated",         customerSegments._csvRow(["a"]).slice(-2) === "\r\n");
 

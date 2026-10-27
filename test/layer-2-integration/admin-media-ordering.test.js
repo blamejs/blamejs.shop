@@ -422,7 +422,7 @@ async function _runUploadHardening() {
 // client's `maxResponseBytes` so an over-cap source is refused with a clean
 // 4xx (never a 500 / OOM) BEFORE the magic-byte sniff. This stub stands in
 // for `b.httpClient.request`, honoring `maxResponseBytes` exactly as the real
-// client does (reject with a `RESPONSE_TOO_LARGE`-coded error past the cap),
+// client does (reject with an `http-client/response-too-large` error past the cap),
 // so the assertion proves the route wires the cap through. b.httpClient is the
 // same singleton admin.js captured at module top, so the patch is observed.
 async function _runUrlUploadCap() {
@@ -440,6 +440,13 @@ async function _runUrlUploadCap() {
   // The bytes the next fetch should "serve". The stub enforces maxResponseBytes
   // the way the real http-client does. capSeen records the cap the route asked
   // for, proving it forwarded _UPLOAD_MAX_BYTES rather than the ~1 GiB default.
+  // The stub's error code must be the one the real client raises, or the
+  // route can match a code the framework no longer uses and this test passes.
+  var httpClientSrc = nodeFs.readFileSync(nodePath.resolve(__dirname, "..", "..",
+    "lib", "vendor", "blamejs", "lib", "http-client.js"), "utf8");
+  check("the framework client raises http-client/response-too-large",
+    httpClientSrc.indexOf("\"http-client/response-too-large\"") !== -1);
+
   var TEN_MIB = 10 * 1024 * 1024;
   var nextBody = TINY_PNG;
   var capSeen  = null;
@@ -448,7 +455,7 @@ async function _runUrlUploadCap() {
     capSeen = opts.maxResponseBytes;
     if (typeof opts.maxResponseBytes === "number" && nextBody.length > opts.maxResponseBytes) {
       var e = new Error("response body exceeds " + opts.maxResponseBytes + " bytes");
-      e.code = "RESPONSE_TOO_LARGE";
+      e.code = "http-client/response-too-large";
       return Promise.reject(e);
     }
     return Promise.resolve({
