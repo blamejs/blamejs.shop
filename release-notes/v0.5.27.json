@@ -1,0 +1,36 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.27",
+  "date": "2026-10-28",
+  "headline": "Product titles, descriptions and alt text refuse bidi overrides and control characters, a webhook delivery records the status the receiver answered, and the vendored framework moves to 0.21.6",
+  "summary": "Product and variant titles, product descriptions and image alt text are shown to every shopper, but the catalog stored them without the codepoint screen the rest of the store applies to free text. They are now screened. A webhook delivery that the receiver answered with a non-2xx status recorded status 0, and an R2 upload that the worker refused lost the worker's error code. Both now report what the other side answered. The vendored framework moves from 0.21.4 to 0.21.6, which adds framework-side guards for the October 2026 Node.js security releases.",
+  "sections": [
+    {
+      "heading": "Fixed",
+      "items": [
+        {
+          "title": "Catalog copy refuses bidi overrides and control characters",
+          "body": "Creating or updating a product title, a product description, a variant title or an image alt text now refuses a bidi override or isolate (such as U+202E), NUL, a C0 control character and DEL. Titles and alt text must also stay on one line; a description may span several lines. Right-to-left text, bidi direction marks, joined emoji sequences and soft hyphens are accepted. A variant title may still be empty. The refusal is a TypeError naming the field, for example \"catalog: title\" or \"catalog.variants.update: title\". Values stored before this release are not changed."
+        },
+        {
+          "title": "A webhook delivery records the receiver's HTTP status",
+          "body": "b.httpClient rejects a non-2xx response with http-client/http-error, and the delivery code recorded every rejection as status 0. A receiver that answered 404 or 500 therefore showed last_status 0 in the delivery log, the same value a timeout or a refused connection produces. The delivery now records the status the receiver answered. A transport failure still records 0."
+        },
+        {
+          "title": "An R2 upload the worker refuses reports the worker's error code",
+          "body": "The R2 upload bridge parses the worker's JSON error body (for example UNAUTHORIZED or PUT_FAILED) to set the error code and message. b.httpClient rejected the non-2xx response before that code ran, so the caller received http-client/http-error with the body as text. The request now sets responseMode \"always-resolve\", and the caller receives the worker's own code, its message and the HTTP status."
+        }
+      ]
+    },
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Vendored framework refreshed to 0.21.6",
+          "body": "Advances the vendored framework from 0.21.4 to 0.21.6, verified against the pinned ML-DSA-65 signing key before unpacking. Changes the store inherits without code changes: an outbound https connection is closed when its response ends instead of being reused, so a server cannot have a response it wrote unprompted read as the answer to a later request (CVE-2026-105481); a TLS connection to a host written as a non-canonical IPv4 address (such as 127.1 or 0x7f.0.0.1) is refused with tls/non-canonical-ip-host, and a host with an empty label is refused with tls/bad-host; on a Node release without the Brotli decoder fix (CVE-2026-111497), TLS connections stop offering Brotli certificate compression and b.safeDecompress refuses Brotli input; and the vendored @blamejs/pki moves to 0.9.9. The framework's Node floor is now 24.22.1, the same as this store's.",
+          "migration": "If a webhook endpoint is configured with an IPv4 address that is not written in dotted decimal, change it to the dotted-decimal address or a DNS name; deliveries to it are refused until then."
+        }
+      ]
+    }
+  ]
+}

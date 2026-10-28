@@ -26,7 +26,9 @@ var r2factory = bShop.r2Bridge;
 
 function _makeFakeHttp(responses) {
   // Mimics b.httpClient.request — returns { statusCode, headers, body:
-  // Buffer }. Each queued response can be `{ status, body, throws? }`.
+  // Buffer }. Each queued response can be `{ status, body, throws? }`. Like
+  // the real client, a non-2xx status rejects with http-client/http-error
+  // unless the caller asked for responseMode "always-resolve".
   var calls = [];
   var i = 0;
   var httpClient = {
@@ -41,6 +43,12 @@ function _makeFakeHttp(responses) {
         throw e;
       }
       var bodyStr = typeof r.body === "string" ? r.body : JSON.stringify(r.body);
+      if ((r.status < 200 || r.status >= 300) && opts.responseMode !== "always-resolve") {
+        var httpErr = new Error("HTTP " + r.status + ": " + bodyStr.slice(0, 500));
+        httpErr.code = "http-client/http-error";
+        httpErr.statusCode = r.status;
+        throw httpErr;
+      }
       return {
         statusCode: r.status,
         headers:    r.headers || { "content-type": "application/json" },
@@ -114,7 +122,7 @@ async function _workerErrorEnvelope() {
   try { await r2.put("media/x.png", Buffer.from("x"), "image/png"); }
   catch (e) {
     threw = true;
-    check("error code preserved",  e.code === "UNAUTHORIZED" || e.code === "R2_HTTP_401");
+    check("error code is the bridge's own", e.code === "UNAUTHORIZED");
     check("status surfaced",       e.status === 401);
   }
   check("HTTP error throws", threw);

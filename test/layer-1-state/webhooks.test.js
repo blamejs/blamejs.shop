@@ -65,7 +65,9 @@ function _makeQuery() {
 // record into `received` and returns the next response from
 // `responses` (or a default 200). When `responses` runs out, returns
 // the trailing entry — convenient for "always succeed" / "always fail"
-// scenarios.
+// scenarios. A non-2xx status rejects the way b.httpClient.request does:
+// code http-client/http-error, the status on the error, and `permanent`
+// set for a 4xx other than 408 / 425 / 429.
 function _captureTransport(responses) {
   var queue = (responses || []).slice();
   var received = [];
@@ -77,6 +79,14 @@ function _captureTransport(responses) {
       var e = new Error(r.throw.message || "transport-error");
       e.code = r.throw.code || "ECONNRESET";
       throw e;
+    }
+    if (r.statusCode < 200 || r.statusCode >= 300) {
+      var httpErr = new Error("HTTP " + r.statusCode + ": ");
+      httpErr.code = "http-client/http-error";
+      httpErr.statusCode = r.statusCode;
+      httpErr.permanent = r.statusCode >= 400 && r.statusCode < 500 &&
+        [408, 425, 429].indexOf(r.statusCode) === -1;
+      throw httpErr;
     }
     return { statusCode: r.statusCode };
   };
@@ -272,12 +282,14 @@ async function _retryOnTransient() {
 
 async function _manualRetry() {
   var q = _makeQuery();
-  var transport = _captureTransport([{ statusCode: 500 }, { statusCode: 200 }]);
+  // A 5xx is retried once inside send(), so the first send consumes two 500s.
+  var transport = _captureTransport([{ statusCode: 500 }, { statusCode: 500 }, { statusCode: 200 }]);
   var webhooks = bShop.webhooks.create({ query: q, transport: transport });
   var ep = await webhooks.endpoints.create({ url: "https://example.com/", events: "*" });
 
   var d1 = await webhooks.send("order.mark_paid", { x: 1 });
   check("initial delivery failed", d1[0].last_status === 500);
+  check("a 5xx is retried once inside send", transport.received.length === 2);
 
   // Manual retry — transport returns 200 this time.
   var d2 = await webhooks.deliveries.retry(d1[0].id);
