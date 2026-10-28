@@ -1,0 +1,18 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.28",
+  "date": "2026-10-28",
+  "headline": "The vendored framework moves to 0.21.8, which turns TLS certificate compression off by default and reports a truncated HTTP response body as an error",
+  "summary": "The vendored framework moves from 0.21.6 to 0.21.8. The store needs no code changes for it. The changes that affect the store's outbound requests and its logs are listed below.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Vendored framework refreshed to 0.21.8",
+          "body": "Advances the vendored framework from 0.21.6 to 0.21.8, verified against the pinned ML-DSA-65 signing key before unpacking. Changes the store inherits without code changes: outbound TLS connections, including the Stripe, PayPal and webhook requests, no longer offer TLS certificate compression, so a server or an on-path attacker cannot reach a decompressor before the certificate chain is verified; a response body that ends short of its Content-Length, or an HTTP/2 stream reset before the body ends, now rejects with the transient http-client/truncated-body instead of resolving with a short body; a TLS session is resumed on a host that has both IPv4 and IPv6 addresses; the router, error-page and shutdown log lines replace token-shaped values (long hex strings, UUIDs, base64 and similar tokens) with [redacted]; and the vendored @blamejs/pki moves to 0.9.10."
+        }
+      ]
+    }
+  ]
+}
