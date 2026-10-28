@@ -322,8 +322,57 @@ async function _cascadeDelete() {
   check("variant media cascades on variant delete", mv.length === 0);
 }
 
+// Product copy is shown to every shopper, so titles, descriptions, variant
+// titles and alt text go through the shared codepoint screen on every write.
+async function _copyScreen() {
+  var catalog = bShop.catalog.create({ query: _makeQuery() });
+  var RLO = "‮";
+
+  // Accepted: right-to-left copy with a direction mark, joined emoji, soft
+  // hyphens and a multi-line description.
+  var arabic = "منتج ‏123";
+  var family = "Family \u{1F468}‍\u{1F469}‍\u{1F467}";
+  var p = await catalog.products.create({
+    slug: "copy-ok", title: arabic, status: "active",
+    description: "Line one\nLine two\twith a tab and an extra­ordinary " + family,
+  });
+  check("title with a bidi direction mark is accepted", p.title === arabic);
+  var p2 = await catalog.products.create({ slug: "copy-emoji", title: family, status: "active" });
+  check("title with a joined emoji is accepted", p2.title === family);
+
+  // Refused on create.
+  await assert.rejects(catalog.products.create({ slug: "copy-rlo", title: "a" + RLO + "b", status: "active" }),
+    /catalog: title contains a Unicode bidi override/);
+  await assert.rejects(catalog.products.create({ slug: "copy-nl", title: "two\nlines", status: "active" }),
+    /catalog: title contains a line break/);
+  await assert.rejects(catalog.products.create({ slug: "copy-ctl", title: "ok", status: "active", description: "bell\u0007" }),
+    /catalog: description contains a C0 control character/);
+  await assert.rejects(catalog.products.create({ slug: "copy-del", title: "ok", status: "active", description: "del\u007f" }),
+    /catalog: description contains a C0 control character/);
+
+  // Refused on update, and the stored row is unchanged.
+  await assert.rejects(catalog.products.update(p.id, { title: "x" + RLO }), /bidi override/);
+  await assert.rejects(catalog.products.update(p.id, { description: "nul\u0000" }), /null byte/);
+  check("a refused update leaves the title as it was", (await catalog.products.get(p.id)).title === arabic);
+
+  // Variant titles: empty is allowed, a control character is not.
+  var v = await catalog.variants.create(p.id, { sku: "COPY-1", title: "" });
+  check("an empty variant title is accepted", v.title === "");
+  await assert.rejects(catalog.variants.create(p.id, { sku: "COPY-2", title: "a" + RLO }),
+    /catalog\.variants\.create: title contains a Unicode bidi override/);
+  await assert.rejects(catalog.variants.update(v.id, { title: "a\u0001" }),
+    /catalog\.variants\.update: title contains a C0 control character/);
+
+  // Alt text.
+  await assert.rejects(catalog.media.attach({
+    product_id: p.id, r2_key: "media/copy/a.webp", content_type: "image/webp",
+    width: 10, height: 10, position: 0, alt_text: "alt" + RLO,
+  }), /catalog: alt_text contains a Unicode bidi override/);
+}
+
 async function run() {
   await _products();
+  await _copyScreen();
   await _search();
   await _variants();
   await _prices();
