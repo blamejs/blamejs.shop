@@ -1,0 +1,24 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.29",
+  "date": "2026-11-20",
+  "headline": "The minimum Node.js is now 26.13.1, the current Active LTS release, and the CodeQL and cosign actions move to their latest releases",
+  "summary": "The store now requires Node.js 26.13.1, the security release of the 26.x Active LTS line published on 2026-11-10. The engines floor, the container base image, the CI and publish runners and the documentation all require 26.13.1. The CodeQL actions move to v4.39.4 and the cosign installer moves to v4.1.3.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Minimum Node.js raised to 26.13.1",
+          "body": "engines.node is now >=26.13.1, up from >=24.22.1. The .nvmrc, the Dockerfile NODE_VERSION argument, the CI, publish and upstream-currency workflow runners, the ESLint target comment, and the README and architecture docs all move to the same version. A container rebuilt from this release uses the node:26.13.1-alpine base image. The new floor is ahead of the vendored framework's own floor of 24.22.1, which the version gate allows.",
+          "migration": "Install Node.js 26.13.1 or newer before upgrading. This crosses an LTS major line, so a self-hosted install on 24.x has to switch runtimes rather than update in place. npm refuses to install this release on an older Node when engine-strict is set."
+        },
+        {
+          "title": "GitHub Actions pins updated",
+          "body": "github/codeql-action/init and github/codeql-action/analyze move from v4.39.1 to v4.39.4. sigstore/cosign-installer, which the publish workflow uses to sign release artifacts, moves from v4.1.2 to v4.1.3. Every action stays pinned to a full commit SHA.",
+          "migration": "None."
+        }
+      ]
+    }
+  ]
+}

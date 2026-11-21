@@ -6,7 +6,7 @@
 // the codebase has settled conventions documented in CLAUDE.md that
 // ESLint shouldn't second-guess.
 //
-// Target: Node 24 LTS, CommonJS modules, ES2024 syntax. Vendored
+// Target: Node 26 LTS, CommonJS modules, ES2024 syntax. Vendored
 // dependencies under `lib/vendor/` and any other build/test scratch
 // directories are excluded.
 //
@@ -36,7 +36,7 @@ const NODE_GLOBALS = {
   queueMicrotask:   "readonly",
   performance:      "readonly",
   structuredClone:  "readonly",
-  // Web-platform APIs that Node 24 ships
+  // Web-platform APIs that Node 26 ships
   fetch:            "readonly",
   crypto:           "readonly",
   URL:              "readonly",
