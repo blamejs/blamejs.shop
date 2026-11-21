@@ -1,0 +1,19 @@
+{
+  "$schema": "../scripts/release-notes-schema.json",
+  "version": "0.5.30",
+  "date": "2026-11-21",
+  "headline": "The vendored framework moves to 0.21.9, which requires Node.js 26.13.1 and fails an HTTP/2 stream that closes early without waiting for the timeout",
+  "summary": "Advances the vendored framework from 0.21.8 to 0.21.9. Its Node.js floor is now 26.13.1, the same floor the store has required since 0.5.29. An HTTP/2 request whose stream closes before the response headers arrive now rejects at once, and a body cut off by a closed session rejects as a retryable truncation.",
+  "sections": [
+    {
+      "heading": "Changed",
+      "items": [
+        {
+          "title": "Vendored framework refreshed to 0.21.9",
+          "body": "The framework's engines.node is now >=26.13.1. Node.js 26.13.1 fixes CVE-2026-123863, CVE-2026-123865, CVE-2026-123866 and CVE-2026-123868 in the HTTP/2 server, CVE-2026-123864 in the HTTPS server, and CVE-2026-123872 and CVE-2026-126051 in TLS. b.security.assertProduction() reports security/node-version on Node 24 and earlier, and security/node-patch-level on a Node release that lacks those fixes. b.httpClient.request rejects with http-client/h2-stream-error when an HTTP/2 stream closes before its response headers arrive, where it previously waited for timeoutMs. A buffered or streamed HTTP/2 body whose session closes early rejects with the transient http-client/truncated-body. configurePool({ trustedKeepAliveOrigins }) no longer destroys pooled connections, and the list now applies to an agent passed in opts.agent. The bundled PKI toolkit moves to 0.9.13 and the Public Suffix List is the 2026-11-20 snapshot. ML-KEM and ML-DSA keys written on Node 24 load on Node 26, so vault keys and sealed values need no migration. The store's application code does not change.",
+          "migration": "None beyond the Node.js 26.13.1 requirement introduced in 0.5.29."
+        }
+      ]
+    }
+  ]
+}
